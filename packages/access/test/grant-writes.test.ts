@@ -162,6 +162,11 @@ test("A1_GUARDS last-admin and self checks hold in the decision itself", () => {
   assert.deepEqual(decideGrantChange(ADMIN, change({ targetPrincipalId: ADMIN }), snapshot, OPS), { kind: "refused", reason: "self_change" });
   assert.deepEqual(decideGrantChange(ADMIN, change(), { ...snapshot, targetExists: false }, OPS), { kind: "refused", reason: "unknown_person" });
   assert.deepEqual(decideGrantChange(ADMIN, change(), { ...snapshot, orgLive: false }, OPS), { kind: "refused", reason: "unknown_organization" });
+  // A company grant left after the operator grant is gone grants nothing at commit time.
+  const companyOnly = { ...snapshot, callerGrants: [{ orgId: "acme", role: "staff", scope: "self" }], current: null };
+  assert.deepEqual(decideGrantChange(STAFF, change({ orgId: "acme", role: "recruiter", scope: "self", action: "grant" }), companyOnly, OPS), { kind: "refused", reason: "not_allowed" });
+  const withOperator = { ...companyOnly, callerGrants: [...companyOnly.callerGrants, { orgId: "root", role: "staff", scope: "subtree" }] };
+  assert.equal(decideGrantChange(STAFF, change({ orgId: "acme", role: "recruiter", scope: "self", action: "grant" }), withOperator, OPS).kind, "apply");
 });
 
 test("A1_GUARDS a grant already held at that scope or wider is a no-op that records nothing", async () => {

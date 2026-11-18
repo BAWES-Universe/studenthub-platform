@@ -41,7 +41,6 @@ export type AccessGrantApplyOutcome<R extends string = string> =
 
 const ORG_LOCK_KEY = 5960;
 const PRINCIPAL_LOCK_KEY = 5959; // the key PostgresAuthzStore takes per principal
-const ANCESTOR_DEPTH = 64;
 const LOOKUP_LIMIT = 25;
 const HISTORY_LIMIT = 50;
 
@@ -88,16 +87,29 @@ export class PostgresAccessGrantsStore {
     readonly expectedBefore: Scope | null;
     readonly decide: (snapshot: AccessGrantSnapshotRow) => AccessGrantStoreDecision<R>;
     readonly requestId?: string;
-  }): Promise<AccessGrantApplyOutcome<R>> {
+    /** The review token's deadline (epoch milliseconds), checked again once the locks are held. */
+    readonly expiresAt?: number;
+    readonly now?: () => number;
+  }): Promise<AccessGrantApplyOutcome<R | "token_expired">> {
     const { callerId, request } = input;
     const audit = resolveAuthorizationMutationContext({ actorPrincipalId: callerId, ...(input.requestId ? { requestId: input.requestId } : {}) });
     const client = await this.#pool.connect();
     let broken = false;
     try {
       await client.query("BEGIN");
-      // Organization first, then principal: every writer takes them in this order.
+      // The organization tree first (the lock every reparent holds, so the
+      // ancestry read below can't go stale), then the organization, then both
+      // principals in a fixed order, so two confirms that touch each other's
+      // grants serialize instead of deadlocking on grant rows.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('studenthub:organizations:tree'))");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [`access:org:${request.orgId}`, ORG_LOCK_KEY]);
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [request.targetPrincipalId, PRINCIPAL_LOCK_KEY]);
+      for (const principal of [...new Set([request.targetPrincipalId, callerId])].sort()) {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [principal, PRINCIPAL_LOCK_KEY]);
+      }
+      if (input.expiresAt !== undefined && (input.now ?? Date.now)() >= input.expiresAt) {
+        await client.query("ROLLBACK");
+        return { kind: "refused", reason: "token_expired" };
+      }
       const used = await client.query("SELECT 1 FROM access_grant_events WHERE token_id = $1", [input.tokenId]);
       if (used.rowCount) {
         await client.query("ROLLBACK");
@@ -312,16 +324,16 @@ async function ancestorsOf(db: pg.Pool | pg.PoolClient, orgIds: readonly string[
   const result = new Map<string, string[]>();
   if (orgIds.length === 0) return result;
   const { rows } = await db.query<{ origin: string; ancestors: string[] }>(
-    `WITH RECURSIVE up(origin, id, parent, depth) AS (
-       SELECT o.id, o.id, o.parent_org_id, 0 FROM organizations o WHERE o.id = ANY($1::text[])
+    `WITH RECURSIVE up(origin, id, parent, depth, path) AS (
+       SELECT o.id, o.id, o.parent_org_id, 0, ARRAY[o.id] FROM organizations o WHERE o.id = ANY($1::text[])
        UNION ALL
-       SELECT up.origin, p.id, p.parent_org_id, up.depth + 1
+       SELECT up.origin, p.id, p.parent_org_id, up.depth + 1, up.path || p.id
        FROM up JOIN organizations p ON p.id = up.parent
-       WHERE up.depth < $2
+       WHERE NOT p.id = ANY(up.path)
      )
      SELECT origin, COALESCE(array_agg(id ORDER BY depth) FILTER (WHERE depth > 0), '{}') AS ancestors
      FROM up GROUP BY origin`,
-    [[...orgIds], ANCESTOR_DEPTH]);
+    [[...orgIds]]);
   for (const row of rows) result.set(row.origin, row.ancestors);
   return result;
 }

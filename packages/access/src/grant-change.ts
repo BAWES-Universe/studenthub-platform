@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { isGrantScope, isRole, type GrantScope, type Role } from "@studenthub/contracts";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
-import { catalogueAllows, grantCatalogue, isOperatorOrg, type HeldGrant } from "./grant-catalogue.js";
+import { catalogueAllows, grantCatalogue, isOperatorOrg, mayOpenAccessAdmin, type HeldGrant } from "./grant-catalogue.js";
 
 /**
  * Access lane A1: one grant change (give or take away one role on one
@@ -80,6 +80,9 @@ export function decideGrantChange(
   const refuse = (reason: GrantRefusal): GrantDecision => ({ kind: "refused", reason });
   // No self-escalation, and no self-removal either: another admin does it.
   if (request.targetPrincipalId === callerId) return refuse("self_change");
+  // The right to use the Access pages at all is re-read here, at commit time:
+  // a company grant left over after the operator grant is gone grants nothing.
+  if (!mayOpenAccessAdmin(snapshot.callerGrants, operatorOrgIds)) return refuse("not_allowed");
   if (!snapshot.targetExists) return refuse("unknown_person");
   if (!snapshot.orgLive) return refuse("unknown_organization");
   const options = grantCatalogue({

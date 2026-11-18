@@ -81,7 +81,8 @@ test("A1_ATOMIC a failure of the event write rolls back the grant and the audit 
   // A one-character reason passes the decision but fails the events CHECK, which runs last.
   const request = change({ targetPrincipalId: target, orgId: acme, reason: "x" });
   await assert.rejects(store.apply({ callerId: admin, request, tokenId: "e".repeat(64), expectedBefore: null,
-    decide: (snapshot) => decideGrantChange(admin, request, snapshot, [root]) }));
+    decide: (snapshot) => decideGrantChange(admin, request, snapshot, [root]) }),
+  { code: "23514", table: "access_grant_events" }, "the event insert, which runs last, is what fails");
   assert.deepEqual(await authz.listGrantsForPrincipal(target), []);
   assert.equal((await audits(target)).length, auditBefore);
   assert.deepEqual(await events(target), []);
@@ -114,7 +115,8 @@ test("A1_GUARDS the caller's right is read inside the transaction, and the last 
 });
 
 test("A1_LIST the person's grants show granter, date and reason, and unknown for older grants; lookups are bounded", async () => {
-  const acme = await organization("Zenith Trading");
+  const zenith = `Zenith ${randomUUID().slice(0, 8)}`;
+  const acme = await organization(zenith);
   const admin = await person("Grace Admin", [{ orgId: root, role: "admin", scope: "subtree" }]);
   const target = await person(`Quinn ${randomUUID().slice(0, 8)}`, [{ orgId: acme, role: "finance" }]);
   const request = change({ targetPrincipalId: target, orgId: acme, role: "org-owner", scope: "subtree", reason: "Founder" });
@@ -123,20 +125,20 @@ test("A1_LIST the person's grants show granter, date and reason, and unknown for
   await writes().confirm(admin, request, preview.token);
   const rows = await store.grants(target);
   const owner = rows.find((row) => row.role === "org-owner")!, finance = rows.find((row) => row.role === "finance")!;
-  assert.deepEqual({ ...owner, grantedAt: typeof owner.grantedAt }, { orgId: acme, orgName: `Zenith Trading ${acme}`, role: "org-owner", scope: "subtree", grantedBy: { principalId: admin, displayName: "Grace Admin" }, grantedAt: "string", reason: "Founder" });
-  assert.deepEqual(finance, { orgId: acme, orgName: `Zenith Trading ${acme}`, role: "finance", scope: "self", grantedBy: null, grantedAt: null, reason: null }, "a grant made before the page is shown as unknown, never hidden");
+  assert.deepEqual({ ...owner, grantedAt: typeof owner.grantedAt }, { orgId: acme, orgName: `${zenith} ${acme}`, role: "org-owner", scope: "subtree", grantedBy: { principalId: admin, displayName: "Grace Admin" }, grantedAt: "string", reason: "Founder" });
+  assert.deepEqual(finance, { orgId: acme, orgName: `${zenith} ${acme}`, role: "finance", scope: "self", grantedBy: null, grantedAt: null, reason: null }, "a grant made before the page is shown as unknown, never hidden");
   const history = await store.history(target);
   assert.deepEqual(history.map((row) => [row.action, row.role, row.actor.displayName, row.reason]), [["grant", "org-owner", "Grace Admin", "Founder"]]);
   assert.deepEqual(await store.ownGrants(target), [
-    { orgId: acme, orgName: `Zenith Trading ${acme}`, role: "finance", scope: "self" },
-    { orgId: acme, orgName: `Zenith Trading ${acme}`, role: "org-owner", scope: "subtree" },
+    { orgId: acme, orgName: `${zenith} ${acme}`, role: "finance", scope: "self" },
+    { orgId: acme, orgName: `${zenith} ${acme}`, role: "org-owner", scope: "subtree" },
   ]);
   // Exact email, any case; name prefix of at least 3 characters.
   assert.deepEqual((await store.findPeople({ kind: "email", value: `${target}@example.INVALID`.toLowerCase() })).map((row) => row.principalId), [target]);
   const name = (await store.person(target))!.displayName!;
   assert.ok((await store.findPeople({ kind: "name", value: name.slice(0, 12).toUpperCase() })).some((row) => row.principalId === target));
   assert.deepEqual(await store.findPeople({ kind: "name", value: "%%%" }), [], "LIKE wildcards are matched literally");
-  const orgs = await store.findOrganizations("zenith trading");
+  const orgs = await store.findOrganizations(zenith.toLowerCase());
   assert.ok(orgs.some((org) => org.orgId === acme && org.ancestors.includes(root)));
   assert.ok((await store.findOrganizations("Zenith")).length <= 25);
   assert.deepEqual((await store.organizations([acme, "missing"])).map((org) => org.orgId), [acme]);
@@ -152,4 +154,43 @@ test("A1_ATOMIC access grant events are append-only", async () => {
   await writes().confirm(admin, request, preview.token);
   await assert.rejects(pool.query("UPDATE access_grant_events SET reason = 'edited' WHERE target_principal_id = $1", [target]), /append-only/);
   await assert.rejects(pool.query("DELETE FROM access_grant_events WHERE target_principal_id = $1", [target]), /append-only/);
+});
+
+test("A1_GUARDS a token that expires while the confirm waits for its locks is refused at the write", async () => {
+  const acme = await organization("Acme");
+  const admin = await person("Admin", [{ orgId: root, role: "admin", scope: "subtree" }]);
+  const target = await person();
+  const request = change({ targetPrincipalId: target, orgId: acme });
+  const outcome = await store.apply({ callerId: admin, request, tokenId: "f".repeat(64), expectedBefore: null,
+    decide: (snapshot) => decideGrantChange(admin, request, snapshot, [root]), expiresAt: 1_000, now: () => 1_000 });
+  assert.deepEqual(outcome, { kind: "refused", reason: "token_expired" });
+  assert.deepEqual(await authz.listGrantsForPrincipal(target), []);
+  assert.deepEqual(await events(target), []);
+});
+
+test("A1_GUARDS two staff removing each other's company roles at the same time both succeed without a deadlock", async () => {
+  const [acme, zenith] = [await organization("Acme"), await organization("Zenith")];
+  const one = await person("One", [{ orgId: root, role: "staff", scope: "subtree" }, { orgId: acme, role: "finance" }]);
+  const two = await person("Two", [{ orgId: root, role: "staff", scope: "subtree" }, { orgId: zenith, role: "finance" }]);
+  for (let round = 0; round < 5; round += 1) {
+    if (round > 0) {
+      await authz.grantMany(one, [{ orgId: acme, role: "finance", scope: "self" }]);
+      await authz.grantMany(two, [{ orgId: zenith, role: "finance", scope: "self" }]);
+    }
+    const removeTwo = change({ targetPrincipalId: two, orgId: zenith, role: "finance", action: "revoke", reason: "Left finance" });
+    const removeOne = change({ targetPrincipalId: one, orgId: acme, role: "finance", action: "revoke", reason: "Left finance" });
+    const [a, b] = await Promise.all([writes().preview(one, removeTwo), writes().preview(two, removeOne)]);
+    if (!a.ok || a.kind !== "change" || !b.ok || b.kind !== "change") throw new Error("expected two changes");
+    const outcomes = await Promise.all([writes().confirm(one, removeTwo, a.token), writes().confirm(two, removeOne, b.token)]);
+    assert.deepEqual(outcomes.map((outcome) => outcome.kind), ["applied", "applied"]);
+  }
+});
+
+test("A1_LIST a company deep in the tree still sees the operator root as its ancestor", async () => {
+  let parent = root;
+  for (let depth = 0; depth < 70; depth += 1) parent = await organization(`Level ${depth}`, parent);
+  const staff = await person("Staff", [{ orgId: root, role: "staff", scope: "subtree" }]);
+  const target = await person();
+  const preview = await writes().preview(staff, change({ targetPrincipalId: target, orgId: parent }));
+  assert.ok(preview.ok && preview.kind === "change", JSON.stringify(preview));
 });

@@ -28,6 +28,9 @@ export interface AccessGrantWriteStore {
     readonly expectedBefore: GrantScope | null;
     readonly decide: (snapshot: GrantSnapshot) => GrantDecision;
     readonly requestId?: string;
+    /** The token's deadline in epoch milliseconds: the store refuses with token_expired once its locks are held past it. */
+    readonly expiresAt?: number;
+    readonly now?: () => number;
   }): Promise<GrantApplyOutcome>;
 }
 
@@ -78,6 +81,8 @@ export function createAccessGrantService(options: {
         tokenId: token.tokenId,
         expectedBefore: verified.before,
         decide: (snapshot) => decideGrantChange(callerId, request, snapshot, operatorOrgIds),
+        expiresAt: Date.parse(token.expiresAt),
+        now: () => now().getTime(),
         ...(requestId ? { requestId } : {}),
       });
     },

@@ -162,7 +162,7 @@ export interface PersonPageModel {
 }
 
 const reasonField = (id: string): string =>
-  `<label for="${id}">Reason (shown to administrators only)</label><textarea id="${id}" name="reason" minlength="3" maxlength="${REASON_MAX}" required></textarea>`;
+  `<label for="${id}">Reason (shown to StudentHub administrators and staff, never to the person)</label><textarea id="${id}" name="reason" minlength="3" maxlength="${REASON_MAX}" required></textarea>`;
 
 export function renderPersonAccess(model: PersonPageModel): string {
   const e = escapeHtml;
@@ -214,6 +214,11 @@ export function renderGrantReview(input: {
     ? input.result.before === null ? "Give this role" : "Widen this role to the sub-companies"
     : "Take this role away";
   return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(personName(person))}’s next request. Confirm within 15 minutes.</p>${facts}<form method="post" action="/admin/access/confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
+}
+
+/** A confirm whose outcome is unknown: the change may or may not have been made. */
+export function renderUnconfirmed(back: string): string {
+  return layout(`<div class="error-page"><h1>We couldn’t confirm the change.</h1><p>The change may or may not have been made. Check this person’s roles and history before you start a new review.</p><a class="button primary" href="${escapeHtml(back)}">Check their access</a></div>`, "access");
 }
 
 export function renderAccessRefusal(reason: GrantRefusal | "invalid_request" | "unavailable", back: string): string {
@@ -281,6 +286,7 @@ export async function handleAccess(
     if (req.method !== "GET") return false;
     let principalId: string;
     try { principalId = decodeURIComponent(personMatch[1]!); } catch { return false; }
+    if (principalId.includes("\u0000")) return false;
     const person = await ports.reads.person(principalId);
     if (!person) return false;
     const orgQuery = (url.searchParams.get("org") ?? "").trim().slice(0, 200);
@@ -339,13 +345,16 @@ export async function handleAccess(
         return true;
       }
       const result = await ports.writes.preview(caller, request);
+      // An unknown person is the unknown-path 404, as on the person page.
+      if (!result.ok && result.reason === "unknown_person") return false;
       if (!result.ok) {
         write(refusalStatus(result.reason), "Access", renderAccessRefusal(result.reason, back));
         return true;
       }
       const [person, org] = await Promise.all([ports.reads.person(request.targetPrincipalId), ports.reads.organization(request.orgId)]);
-      if (!person || !org) {
-        write(404, "Access", renderAccessRefusal(!person ? "unknown_person" : "unknown_organization", back));
+      if (!person) return false;
+      if (!org) {
+        write(404, "Access", renderAccessRefusal("unknown_organization", back));
         return true;
       }
       write(200, "Review access change", renderGrantReview({
@@ -365,6 +374,7 @@ export async function handleAccess(
       return true;
     }
     const outcome = await ports.writes.confirm(caller, request, token, `access_${randomUUID()}`);
+    if (outcome.kind === "refused" && outcome.reason === "unknown_person") return false;
     if (outcome.kind === "refused") {
       write(refusalStatus(outcome.reason), "Access", renderAccessRefusal(outcome.reason, back));
       return true;
@@ -374,7 +384,9 @@ export async function handleAccess(
     res.end();
     return true;
   } catch {
-    if (!res.headersSent) write(503, "Access", renderAccessRefusal("unavailable", back));
+    // A failed preview wrote nothing. A failed confirm may have committed
+    // before the error reached us, so it never claims that nothing changed.
+    if (!res.headersSent) write(503, "Access", path === "/admin/access/confirm" ? renderUnconfirmed(back) : renderAccessRefusal("unavailable", back));
     else res.destroy();
     return true;
   }

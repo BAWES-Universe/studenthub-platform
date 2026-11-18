@@ -129,6 +129,7 @@ test("A1_READ_SITES a signed-out visitor, a non-admin and an unknown person all 
       }
     }
     await sameAsUnknown(await http.get("/admin/access/people/nobody", "admin-1", accept), await http.get("/definitely-unknown", "admin-1", accept), `unknown person ${accept}`);
+    await sameAsUnknown(await http.get("/admin/access/people/nobody%00x", "admin-1", accept), await http.get("/definitely-unknown", "admin-1", accept), `NUL in a person id ${accept}`);
     await sameAsUnknown(await http.get("/profile/access", undefined, accept), await http.get("/definitely-unknown", undefined, accept), `own list signed out ${accept}`);
   }
   for (const principalId of [undefined, "candidate-1", "owner-1"]) {
@@ -136,6 +137,8 @@ test("A1_READ_SITES a signed-out visitor, a non-admin and an unknown person all 
       await sameAsUnknown(await http.post(path, principalId, grantForm), await http.get("/definitely-unknown", principalId), `${principalId ?? "signed out"} POST ${path}`);
     }
   }
+  // A preview for an unknown person is the unknown-path 404 too.
+  await sameAsUnknown(await http.post("/admin/access/preview", "admin-1", { ...grantForm, targetPrincipalId: "nobody" }), await http.get("/definitely-unknown", "admin-1"), "preview for an unknown person");
   // Unconfigured: the paths do not exist.
   const off = await serve(t, undefined);
   await sameAsUnknown(await off.get("/admin/access", "admin-1"), await off.get("/definitely-unknown", "admin-1"), "unconfigured");
@@ -248,4 +251,16 @@ test("A1_READ_SITES the workspace shows the Access link to operator admins and s
   assert.doesNotMatch(render({ orgId: "acme", role: "org-owner", organizationName: "Acme" }), /\/admin\/access/);
   assert.doesNotMatch(render({ orgId: "acme", role: "admin", organizationName: "Acme" }), /\/admin\/access/);
   assert.doesNotMatch(render({ orgId: "root", role: "admin", organizationName: "StudentHub" }, false), /\/admin\/access/);
+});
+
+test("A1_GUARDS a confirm that fails with an unknown outcome never claims nothing changed", async (t) => {
+  const { ports } = world();
+  const failing: AccessPorts = { ...ports, writes: { ...ports.writes!, confirm: async () => { throw new Error("connection lost after COMMIT"); } } };
+  const http = await serve(t, failing);
+  const preview = await http.post("/admin/access/preview", "admin-1", grantForm);
+  const response = await http.post("/admin/access/confirm", "admin-1", hiddenFields(await preview.text()));
+  assert.equal(response.status, 503);
+  const html = await response.text();
+  assert.match(html, /The change may or may not have been made/);
+  assert.doesNotMatch(html, /Nothing was changed/);
 });
