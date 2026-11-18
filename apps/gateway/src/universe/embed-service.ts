@@ -53,7 +53,9 @@ export interface UniverseEmbedRuntime {
 type Binding =
   | { readonly kind: "refused"; readonly state: "signed_out" | "start_again" }
   | { readonly kind: "bound"; readonly instanceId: string; readonly personId: string; readonly generation: number;
-      readonly verified: boolean; readonly leaseSubjectDigest?: string };
+      readonly verified: boolean; readonly leaseSubjectDigest?: string;
+      /** Monotonic (performance.now) time by which the lease read here has ended, counted from before the read. */
+      readonly leaseDeadline: number };
 
 const MAX_BODY_BYTES = 8192;
 
@@ -71,10 +73,12 @@ function language(request: IncomingMessage): "en" | "ar" {
 const PAGE_TEXT = {
   en: { title: "StudentHub in Universe", signIn: "Sign in", signOut: "Sign out", link: "Link your StudentHub account",
     full: "Open StudentHub", open: "Open this in Universe.", done: "You're signed in. Go back to Universe.",
-    again: "Start again. Close this tab and open StudentHub from Universe.", loading: "Checking your StudentHub account…" },
+    again: "Start again. Close this tab and open StudentHub from Universe.", loading: "Checking your StudentHub account…",
+    paused: "Your StudentHub access is paused, so you can't sign in for now. Your Universe account is not affected. If you think this is a mistake, contact StudentHub support." },
   ar: { title: "StudentHub في Universe", signIn: "تسجيل الدخول", signOut: "تسجيل الخروج", link: "اربط حسابك في StudentHub",
     full: "افتح StudentHub", open: "افتح هذه الصفحة داخل Universe.", done: "تم تسجيل دخولك. عد إلى Universe.",
-    again: "ابدأ من جديد. أغلق هذا التبويب وافتح StudentHub من Universe.", loading: "جارٍ التحقق من حسابك في StudentHub…" },
+    again: "ابدأ من جديد. أغلق هذا التبويب وافتح StudentHub من Universe.", loading: "جارٍ التحقق من حسابك في StudentHub…",
+    paused: "تم إيقاف وصولك إلى StudentHub مؤقتًا، لذا لا يمكنك تسجيل الدخول الآن. حسابك في Universe غير متأثر. إذا كنت تعتقد أن هذا خطأ، فتواصل مع دعم StudentHub." },
 } as const;
 
 function page(lang: "en" | "ar", main: string, script = false, dataset = ""): string {
@@ -174,6 +178,7 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
     // readBinding re-checks the live session in the same statement, so neither a lease
     // expiry nor a logout or revocation can land between the checks and the response.
     const session = await runtime.sessions.get(sessionId);
+    const readStarted = performance.now();
     const view = await runtime.store.readBinding(instanceId, browser, sessionId);
     if (!view) return { kind: "refused", state: "signed_out" };
     if (!session || session.personId !== view.personId || view.locked) {
@@ -183,6 +188,7 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
       return { kind: "refused", state: session ? "start_again" : "signed_out" };
     }
     return { kind: "bound", instanceId, personId: view.personId, generation: view.generation, verified: view.lease !== undefined,
+      leaseDeadline: view.lease ? readStarted + view.lease.remainingSeconds * 1000 : readStarted,
       ...(view.lease ? { leaseSubjectDigest: view.lease.hostSubjectDigest } : {}) };
   }
 
@@ -240,7 +246,10 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
       // The read can outlast the lease or the binding: authorize again before releasing fields.
       const again = await binding();
       if (again.kind === "refused") { json(response, 200, { state: again.state }); return true; }
-      if (!again.verified || again.generation !== bound.generation || again.personId !== bound.personId) {
+      // The lease seen by that final read may still end before this response is written
+      // (the read's commit and reply take time): its deadline is checked last, synchronously.
+      if (!again.verified || again.generation !== bound.generation || again.personId !== bound.personId
+        || performance.now() >= again.leaseDeadline) {
         json(response, 200, { state: "needs_universe" }); return true;
       }
       json(response, 200, view.state === "populated" ? { state: view.state, fields: view.fields } : { state: view.state });
@@ -264,13 +273,14 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
       const body = await readJson(request);
       const bound = await binding();
       if (bound.kind === "refused") { json(response, 200, { state: bound.state }); return true; }
-      const refuse = async (state: "start_again" | "different_account") => {
+      const refuse = async (state: "start_again" | "different_account", close = false) => {
         // A failed verification or renewal invalidates the binding version it checked;
         // a binding renewed or replaced meanwhile (another tab, another /done) stays.
         await runtime.store.invalidateBinding(bound.instanceId, bound.generation);
-        json(response, 200, { state });
+        writeEmbedResponse(response, 200, JSON.stringify({ state }), JSON_TYPE, APP_POLICY, close ? { connection: "close" } : {});
       };
-      if (!body || Object.keys(body).length !== 1) return refuse("start_again").then(() => true);
+      // An unreadable body may be an oversized one with bytes still unread: close after the refusal.
+      if (!body || Object.keys(body).length !== 1) return refuse("start_again", !body).then(() => true);
       const attestation = await verifyHostAttestation(body.attestation, runtime.hostIdentity);
       if (!attestation.ok) {
         // A replay (a duplicate delivery of an attestation already used) or an unavailable
@@ -374,6 +384,10 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
     const result = await application.callback({ browserSessionId: browser, state: state[0], code: code[0] });
     // A store failure during completion is an outage: rethrown so the request answers 503.
     if (wrapped.failure() !== undefined) throw wrapped.failure();
+    // A paused person is told so (as the main login does), not sent to start again.
+    if (result.status === 403 && result.body?.error === "access_paused") {
+      writeEmbedResponse(response, 403, messagePage(lang, PAGE_TEXT[lang].paused), HTML_TYPE, APP_POLICY); return true;
+    }
     const location = result.headers?.location;
     const cookie = result.headers?.["set-cookie"];
     if (result.status !== 302 || location !== `${config.origin}${DONE_PATH}` || typeof cookie !== "string") { startAgain(); return true; }
