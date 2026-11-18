@@ -34,10 +34,11 @@ Job: `tools/legacy-import/src/refresh-cli.ts` (`node dist/tools/legacy-import/sr
 
 - copies the legacy MySQL database into a staging database that must be named `legacy_mirror`, on a different host from the source, with one consistent snapshot (`mysqldump --single-transaction`), then drops mirror tables legacy no longer has;
 - refuses to run unless the source account is read-only: `SHOW GRANTS` may list only `USAGE`, `SELECT` and `SHOW VIEW` (an allowlist; any other privilege, grant option or unreadable role grant stops it before anything is copied);
-- never copies bearer-token tables (`*_token`, `session`, `queue`);
+- never copies bearer-token tables (`*_token`, `*_tokens`, `session`, `queue`, any case), and prunes any it copied before;
 - passes passwords only through each child's `MYSQL_PWD`, discards mysql's stderr, and reports a fixed code per step, so no value, host or credential reaches a log;
 - writes `last-run.json` with table names, row counts, the row total and timings only, and prints one line in the same terms; every run that ends rewrites it (bad config, lock held and crashes included), and it says `running` while a copy is in progress;
-- takes an exclusive lock, and takes over a lock left by a crash after six hours.
+- runs one at a time under a kernel `flock` on the lock file, held by the run and every mysql child it starts and released by the kernel when the last exits, so there is no stale lock and no takeover;
+- refuses when source and target are the same server under different names (`@@server_uuid`), so staging and legacy must both be MySQL.
 
 Configuration (root-only env file on the staging host): `LEGACY_REFRESH_SOURCE_URL` (read-only legacy account), `LEGACY_REFRESH_TARGET_URL` (mirror account, `legacy_mirror` database), optional `LEGACY_REFRESH_REPORT` and `LEGACY_REFRESH_LOCK`. Consumers read the mirror only after checking `last-run.json` says `ok`. The matrix row `REFRESH` closes with the first scheduled run's time and counts.
 

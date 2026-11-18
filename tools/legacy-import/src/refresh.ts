@@ -5,14 +5,15 @@
  * counts rows. Conditions it enforces rather than trusts:
  *  - read-only against legacy: the source account may hold only USAGE, SELECT and
  *    SHOW VIEW; any other privilege refuses the run;
- *  - the target is a database named `legacy_mirror` on a host other than the source;
+ *  - the target is a database named `legacy_mirror` on a server other than the source
+ *    (different host name in config, and a different @@server_uuid at run time);
  *  - bearer-token tables are never copied;
  *  - nothing private leaves staging: the report carries table names, row counts and
  *    timings only, and error text is reduced to a fixed code so no value, host or
  *    credential can reach a log;
  *  - credentials reach mysql/mysqldump through MYSQL_PWD in the child environment,
  *    never through argv, and never appear in the report;
- *  - one run at a time (exclusive lock file);
+ *  - one run at a time (a kernel flock held for the life of the run and its children);
  *  - every run that ends, however it ends, leaves a fresh last-run.json, and a run in
  *    progress marks it `running`, so a consumer checking `ok` never reads a stale or
  *    half-copied mirror.
@@ -23,8 +24,11 @@
 
 export const MIRROR_DATABASE = "legacy_mirror";
 
-/** Tables holding live bearer tokens; a mirror never needs them. */
-export const EXCLUDED_TABLE_PATTERNS: readonly RegExp[] = [/_token$/, /^queue$/, /^session$/];
+/**
+ * Tables holding live bearer tokens, sessions or queued jobs; a mirror never needs them.
+ * Case-insensitive and plural-tolerant, because MySQL on Linux keeps table-name case.
+ */
+export const EXCLUDED_TABLE_PATTERNS: readonly RegExp[] = [/_tokens?$/i, /^queues?$/i, /^sessions?$/i];
 
 /**
  * The only privileges the source account may hold. Anything else, including a privilege
@@ -92,7 +96,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): RefreshConfig {
     source,
     target,
     reportPath: reportPathFrom(env),
-    lockPath: env.LEGACY_REFRESH_LOCK ?? "/var/lib/legacy-refresh/run.lock",
+    lockPath: env.LEGACY_REFRESH_LOCK || "/var/lib/legacy-refresh/run.lock",
   };
 }
 
@@ -151,6 +155,8 @@ export interface RefreshReport {
 
 /** What the refresh needs from MySQL. The CLI backs this with the mysql client tools. */
 export interface MysqlPort {
+  /** The server's own identity (`@@server_uuid`), whatever host name reached it. */
+  serverId(db: DatabaseUrl): Promise<string>;
   grants(db: DatabaseUrl): Promise<string[]>;
   tables(db: DatabaseUrl): Promise<string[]>;
   /** Streams a consistent snapshot of `tables` from source into target, replacing them. */
@@ -179,8 +185,13 @@ export async function runRefresh(
     };
   };
 
-  let step = "grants";
+  let step = "server";
   try {
+    // Host names can alias (an IP, a proxy, a second DNS name); the server identity cannot.
+    const [sourceId, targetId] = [await mysql.serverId(config.source), await mysql.serverId(config.target)];
+    if (sourceId === targetId) return finish(false, "target.isSource");
+
+    step = "grants";
     const writes = writePrivileges(await mysql.grants(config.source));
     if (writes.length > 0) return finish(false, "source.notReadOnly");
 
