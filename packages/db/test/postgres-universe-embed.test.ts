@@ -48,6 +48,19 @@ test("E2_DB one instance per browser binding, also under concurrent first loads"
   assert.equal(await store.findInstance(cookie, ref()), undefined, "a cookie never names another browser's instance");
 });
 
+test("E2_DB a new instance sweeps other browsers' expired instances and their rows", async () => {
+  const { instance } = await bound();
+  await pool.query("UPDATE universe_embed_instances SET expires_at = clock_timestamp() - interval '1 second' WHERE id = $1", [instance]);
+  // A cookieless visit from an unrelated browser removes the expired instance and its cascade.
+  await store.ensureInstance(ref(), ref(), 43_200);
+  for (const table of ["universe_embed_instances", "universe_embed_instance_refs", "universe_embed_handoffs"]) {
+    const { rows } = await pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE ${table === "universe_embed_instances" ? "id" : "instance_id"} = $1`, [instance]);
+    assert.equal(rows[0].n, 0, `${table} rows of the expired instance are gone`);
+  }
+  const { rows } = await pool.query("SELECT count(*)::int AS n FROM universe_embed_bindings WHERE instance_id = $1", [instance]);
+  assert.equal(rows[0].n, 0);
+});
+
 test("E2_DB a second connect supersedes the first; the older start cannot attach a state", async () => {
   const browser = ref();
   const instance = await store.ensureInstance(browser, ref(), 43_200);

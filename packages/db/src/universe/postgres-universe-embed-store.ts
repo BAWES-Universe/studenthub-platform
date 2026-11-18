@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import pg from "pg";
 import type { Pool, PoolClient, PoolConfig } from "pg";
 
+/** Expired instances removed per new instance; more than one, so the sweep outpaces creation. */
+const SWEEP_BATCH = 50;
+
 /** Every bearer reference is kept only as this digest (same as login stores). */
 export function universeEmbedDigest(value: string): string {
   if (typeof value !== "string" || value.length === 0) throw new TypeError("reference must be non-empty");
@@ -82,6 +85,12 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
       // An expired instance is replaced; its handoffs, binding and lease go with it.
       await client.query(
         "DELETE FROM universe_embed_instances WHERE browser_binding_digest = $1 AND expires_at <= clock_timestamp()", [browser]);
+      // Bounded sweep of other browsers' expired instances (refs, handoffs, bindings and
+      // challenges cascade), so cookieless visits cannot grow the tables without limit.
+      await client.query(
+        `DELETE FROM universe_embed_instances WHERE id IN (
+           SELECT id FROM universe_embed_instances WHERE expires_at <= clock_timestamp()
+           LIMIT ${SWEEP_BATCH} FOR UPDATE SKIP LOCKED)`);
       await client.query(
         `INSERT INTO universe_embed_instances (browser_binding_digest, expires_at)
          VALUES ($1, clock_timestamp() + ($2 * interval '1 second'))
