@@ -158,30 +158,39 @@ export async function handleAbuseGate(
 
   // Signing out is never limited: a limited person must still be able to end their session.
   const kind = path === "/logout" ? undefined : limitKind(req.method, req.headers["content-type"], path);
-  // The block-list page is cookie-only. A counted request is charged with the
-  // same credential the document routes accept: a bearer session token, else
-  // the session cookie, so both transports charge the same person.
+  // The block-list page is cookie-only. A counted request is charged to every
+  // person its credentials name: the bearer session token (the document
+  // routes' credential) and the session cookie (every other route's). So an
+  // unknown or foreign bearer token next to a cookie never skips the count.
   const admin = path === "/admin/ip-blocks";
-  const session = admin ? sessionCookie(req.headers.cookie) : bearerSession(req.headers.authorization) ?? sessionCookie(req.headers.cookie);
-  let person: string | undefined;
-  if ((kind || admin) && session) {
-    // A failed lookup skips the count (a brake, not a gate); the admin page
-    // then answers as an unknown path, and every other route keeps its own
-    // authentication.
-    try { person = (await ports.sessions.get(session))?.personId; } catch { person = undefined; }
+  const cookie = sessionCookie(req.headers.cookie);
+  const sessions = admin ? [cookie] : [bearerSession(req.headers.authorization), cookie];
+  const people: string[] = [];
+  if (kind || admin) {
+    for (const session of new Set(sessions.filter((value): value is string => value !== undefined))) {
+      // A failed lookup skips that credential (a brake, not a gate); the admin
+      // page then answers as an unknown path, and every other route keeps its
+      // own authentication.
+      try {
+        const personId = (await ports.sessions.get(session))?.personId;
+        if (personId && !people.includes(personId)) people.push(personId);
+      } catch { /* skip this credential */ }
+    }
   }
-  if (kind && person) {
+  const person = people[0];
+  if (kind && people.length > 0) {
     const limit = PERSON_LIMITS[kind];
     let decision: ReturnType<typeof decideLimit> = { kind: "allow" };
-    try {
-      const count = await ports.store.hit(person, kind, windowStart(now, limit));
-      // Retry-After counts from when the answer is sent, to the end of the window charged.
-      decision = decideLimit(count, now, limit);
-      if (decision.kind === "limited") {
-        const sent = (ports.nowEpochSeconds ?? (() => Math.floor(Date.now() / 1000)))();
-        decision = { kind: "limited", retryAfterSeconds: Math.max(1, windowStart(now, limit) + limit.windowSeconds - sent) };
-      }
-    } catch { /* the limit is a brake, not a gate */ }
+    for (const charged of people) {
+      try {
+        const count = await ports.store.hit(charged, kind, windowStart(now, limit));
+        if (decideLimit(count, now, limit).kind === "limited") {
+          // Retry-After counts from when the answer is sent, to the end of the window charged.
+          const sent = (ports.nowEpochSeconds ?? (() => Math.floor(Date.now() / 1000)))();
+          decision = { kind: "limited", retryAfterSeconds: Math.max(1, windowStart(now, limit) + limit.windowSeconds - sent) };
+        }
+      } catch { /* the limit is a brake, not a gate */ }
+    }
     if (decision.kind === "limited") {
       req.resume();
       const headers = { "retry-after": String(decision.retryAfterSeconds), "cache-control": "no-store" };

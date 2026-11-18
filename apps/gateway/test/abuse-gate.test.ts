@@ -192,3 +192,17 @@ test("A8_LIMITS a bearer session is charged like a cookie, and JSON document upl
   const admin = await http("/admin/ip-blocks", { headers: { authorization: `Bearer ${"a".repeat(43)}` } });
   assert.equal(admin.status, 404, "the block-list page takes the session cookie only");
 });
+
+test("A8_LIMITS an unknown or foreign bearer token next to a cookie never skips the cookie person's count", async (t) => {
+  const w = world();
+  const http = await serve(t, w.ports);
+  const window = (person: string) => `${person}|write|${1_800_000_000 - (1_800_000_000 % PERSON_LIMITS.write.windowSeconds)}`;
+  const form = { "content-type": "application/x-www-form-urlencoded", ...cookieFor("p") };
+  await http("/definitely-unknown", { method: "POST", headers: { ...form, authorization: `Bearer ${"z".repeat(43)}` }, body: "a=1" });
+  assert.equal(w.counts.get(window("person-1")), 1, "a shape-valid bearer token that names no session does not hide the cookie");
+  await http("/definitely-unknown", { method: "POST", headers: { ...form, authorization: `Bearer ${"s".repeat(43)}` }, body: "a=1" });
+  assert.equal(w.counts.get(window("person-1")), 2, "the cookie's person is charged");
+  assert.equal(w.counts.get(window("staff-1")), 1, "and so is the bearer token's");
+  await http("/definitely-unknown", { method: "POST", headers: { ...form, authorization: `Bearer ${"q".repeat(43)}` }, body: "a=1" });
+  assert.equal(w.counts.get(window("person-1")), 3, "two credentials of one person charge them once");
+});
