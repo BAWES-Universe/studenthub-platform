@@ -64,14 +64,22 @@ export interface LegacyInvoiceMapping {
 }
 
 const ID = /^[1-9][0-9]{0,18}$/;
+const BIGINT_MAX = 9223372036854775807n;
+/** A positive id that fits PostgreSQL BIGINT, checked exactly. */
+function validId(value: unknown): value is string {
+  return typeof value === "string" && ID.test(value) && BigInt(value) <= BIGINT_MAX;
+}
+/** NUMERIC(18, 3) holds at most 15 integer digits. */
+const MAX_TOTAL_INTEGER_DIGITS = 15;
 
 export function legacyInvoiceNumber(invoiceId: string): string {
-  if (typeof invoiceId !== "string" || !ID.test(invoiceId)) throw new TypeError("invalid legacy invoice id");
+  if (!validId(invoiceId)) throw new TypeError("invalid legacy invoice id");
   return `LEGACY-${invoiceId}`;
 }
 
 function validDate(value: unknown): value is string {
-  if (typeof value !== "string" || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value)) return false;
+  // PostgreSQL has no year zero; JavaScript's proleptic calendar does.
+  if (typeof value !== "string" || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) || value.startsWith("0000")) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
@@ -94,8 +102,8 @@ export function mapLegacyInvoices(rows: readonly LegacyInvoiceSourceRow[]): Lega
   for (const row of rows) {
     const invoiceId = String(row.invoiceId);
     const reject = (kind: LegacyInvoiceAnomalyKind) => { rejected.push({ invoiceId, kind }); };
-    if (!ID.test(invoiceId) || !ID.test(String(row.transferId)) || !ID.test(String(row.companyId))
-      || !(row.parentTransferId === null || ID.test(String(row.parentTransferId)))) { reject("invalid_id"); continue; }
+    if (!validId(invoiceId) || !validId(String(row.transferId)) || !validId(String(row.companyId))
+      || !(row.parentTransferId === null || validId(String(row.parentTransferId)))) { reject("invalid_id"); continue; }
     if (seen.has(invoiceId)) { reject("duplicate_invoice_id"); continue; }
     seen.add(invoiceId);
     if (!validDate(row.invoiceDate)) { reject("invalid_date"); continue; }
@@ -103,6 +111,8 @@ export function mapLegacyInvoices(rows: readonly LegacyInvoiceSourceRow[]): Lega
     if (typeof row.currencyCode !== "string" || !/^[A-Z]{3}$/.test(row.currencyCode)) { reject("invalid_currency"); continue; }
     let total: DecimalString;
     try { total = normalizeLegacyAmount(row.companyTotal); } catch { reject("invalid_total"); continue; }
+    // Per-row storage range only; aggregate sums stay unbounded.
+    if (total.replace("-", "").split(".")[0]!.length > MAX_TOTAL_INTEGER_DIGITS) { reject("invalid_total"); continue; }
     const deleted = row.invoiceDeleted === true || row.transferDeleted === true;
     if (!deleted && row.transferStatus === LEGACY_TRANSFER_STATUS.cancel) flagged.push({ invoiceId, kind: "invoice_on_cancelled_transfer" });
     if (!deleted && row.transferStatus === LEGACY_TRANSFER_STATUS.initiated) flagged.push({ invoiceId, kind: "invoice_on_draft_transfer" });

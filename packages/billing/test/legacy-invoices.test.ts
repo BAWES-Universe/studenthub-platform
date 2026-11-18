@@ -46,13 +46,22 @@ test("LEGACY_INVOICE_REJECTS unimportable rows are rejected by id, never silentl
     row({ invoiceId: "5", currencyCode: "kwd" }),
     row({ invoiceId: "1" }),
     row({ invoiceId: "x" }),
+    row({ invoiceId: "6", transferId: "9223372036854775808" }),
+    row({ invoiceId: "7", invoiceDate: "0000-01-01" }),
+    row({ invoiceId: "8", companyTotal: "1000000000000000" }),
+    row({ invoiceId: "9", companyTotal: "-1000000000000000.5" }),
+    row({ invoiceId: "9223372036854775807", transferId: "9223372036854775807", companyTotal: "999999999999999.999", invoiceDate: "0001-01-01" }),
   ]);
-  assert.deepEqual(records.map(r => r.legacyInvoiceId), ["1"]);
+  assert.deepEqual(records.map(r => r.legacyInvoiceId), ["1", "9223372036854775807"], "BIGINT max, the NUMERIC(18,3) max and year 0001 are accepted");
   assert.deepEqual(rejected, [
     { invoiceId: "2", kind: "unknown_status" }, { invoiceId: "3", kind: "invalid_date" },
     { invoiceId: "4", kind: "invalid_total" }, { invoiceId: "5", kind: "invalid_currency" },
     { invoiceId: "1", kind: "duplicate_invoice_id" }, { invoiceId: "x", kind: "invalid_id" },
+    { invoiceId: "6", kind: "invalid_id" }, { invoiceId: "7", kind: "invalid_date" },
+    { invoiceId: "8", kind: "invalid_total" }, { invoiceId: "9", kind: "invalid_total" },
   ]);
+  assert.throws(() => legacyInvoiceNumber("9223372036854775808"), TypeError);
+  assert.equal(legacyInvoiceNumber("9223372036854775807"), "LEGACY-9223372036854775807");
 });
 
 test("LEGACY_INVOICE_FLAGS invoices on cancelled or draft transfers are imported and flagged; deleted rows are kept", () => {

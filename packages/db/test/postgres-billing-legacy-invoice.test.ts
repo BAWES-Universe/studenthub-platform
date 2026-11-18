@@ -92,6 +92,14 @@ test("LEGACY_INVOICE_PG_FROZEN the table refuses edits, removal and backwards mo
   assert.equal((await store.readAll()).length, 1);
 });
 
+test("LEGACY_INVOICE_PG_EDGES the widest values the mapper accepts are stored and read back exactly", async () => {
+  const store = new PostgresLegacyInvoiceStore(pool);
+  const source = [row({ invoiceId: "9223372036854775807", transferId: "9223372036854775807", companyId: "9223372036854775807",
+    parentTransferId: "9223372036854775807", companyTotal: "-999999999999999.999", invoiceDate: "0001-01-01" })];
+  assert.deepEqual(await store.importBatch(mapLegacyInvoices(source).records), { inserted: 1, advanced: 0, unchanged: 0, conflicts: [] });
+  assert.deepEqual(await store.readAll(), mapLegacyInvoices(source).records);
+});
+
 test("LEGACY_INVOICE_PG_ATOMIC a failing batch leaves nothing behind", async () => {
   const store = new PostgresLegacyInvoiceStore(pool);
   const records = mapLegacyInvoices([row({ invoiceId: "1" }), row({ invoiceId: "2" })]).records;
