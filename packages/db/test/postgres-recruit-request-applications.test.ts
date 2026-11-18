@@ -5,7 +5,7 @@ import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitPipelineStore, PostgresRecruitRequestApplicationsStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
-import { revokeDuring } from "./recruit-races.js";
+import { revokeDuring, rowFreeWhileTreeHeld } from "./recruit-races.js";
 import {
   acceptCardEffect, interviewCompanyDecision, jobCandidateDecision, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision,
   requestAcceptsCards, requestApplicationOutbox, requestApplicationTransitionAllowed, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTakesApplications,
@@ -149,4 +149,13 @@ test("REC7B_REVOKE_RACE a candidate grant revoked before or during an apply or a
   assert.equal((await pool.query("SELECT 1 FROM recruit_pipeline_cards WHERE request_id = $1", [s.requestId])).rowCount, 0, "nobody joined the pipeline");
   assert.deepEqual(await applications.decide(s.owner, a, "rejected"), { kind: "decided", status: "rejected", cardId: null });
   assert.deepEqual(await revokeDuring(pool, s.recruiter, () => applications.decide(s.recruiter, b, "accepted")), { kind: "not_found" }, "the assigned recruiter loses authority with the grant");
+});
+
+test("REC7B_LOCK_ORDER a decision waiting on the organization tree holds no request row, so it cannot deadlock with apply and a grant change", async () => {
+  const tag = `rec7b${randomUUID().slice(0, 8)}`, s = await setup(`Cashier ${tag}`);
+  const noor = await person([], "Noor");
+  const a = ((await applications.apply(noor, s.requestId)) as { applicationId: string }).applicationId;
+  const r = await rowFreeWhileTreeHeld(pool, "SELECT 1 FROM recruit_requests WHERE id = $1 FOR UPDATE NOWAIT", [s.requestId], () => applications.decide(s.owner, a, "rejected"));
+  assert.equal(r.rowFree, true, "the request row is free while the decision waits for the tree");
+  assert.deepEqual(r.result, { kind: "decided", status: "rejected", cardId: null });
 });
