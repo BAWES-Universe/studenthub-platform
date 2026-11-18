@@ -82,11 +82,13 @@ test("A8_LIMITS a person past the write limit gets a 429 page with Retry-After, 
   assert.match(await limited.text(), /Please slow down\./);
   assert.equal((await post("q")).status, 429, "the other session of the same person is limited too");
   assert.equal((await http("/definitely-unknown", { headers: cookieFor("q") })).status, 404, "reading still works");
+  const signOut = await http("/logout", { method: "POST", headers: { ...cookieFor("p"), origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" }, body: "" });
+  assert.notEqual(signOut.status, 429, "signing out is never limited");
   assert.equal((await post("s")).status, 404, "another person is not limited");
+  const upload = await http("/definitely-unknown", { method: "POST", headers: { ...cookieFor("p"), accept: "application/json", "content-type": "multipart/form-data; boundary=x" }, body: "--x--" });
+  assert.equal(upload.status, 404, "uploads have their own count, even while writes are limited");
   w.tick(600);
   assert.equal((await post("p")).status, 404, "the next window starts afresh");
-  const upload = await http("/definitely-unknown", { method: "POST", headers: { ...cookieFor("p"), accept: "application/json", "content-type": "multipart/form-data; boundary=x" }, body: "--x--" });
-  assert.equal(upload.status, 404, "uploads have their own count");
 });
 
 test("A8_BLOCKS only an operator admin opens and changes the block list; their own address is refused", async (t) => {

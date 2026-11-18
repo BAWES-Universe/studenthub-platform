@@ -20,7 +20,7 @@ export interface StoreManagerPorts {
   readonly stores: { rows(principalId: string): Promise<readonly ManagedStoreRow[]> };
 }
 
-const STORE = /^\/workspace\/stores\/([0-9a-f-]{36})$/;
+const STORE = /^\/workspace\/stores\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const e = escapeHtml;
 const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
 

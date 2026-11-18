@@ -45,19 +45,52 @@ export interface AbuseGatePorts {
 
 export type AbusePageWriter = (status: number, title: string, body: string, headers?: Record<string, string>) => void;
 
-const cache = new WeakMap<AbuseGatePorts, { readonly list: BlockList; readonly rows: readonly IpBlockRow[]; readonly readAt: number }>();
+interface HeldList { readonly list: BlockList; readonly rows: readonly IpBlockRow[]; readonly readAt: number; readonly generation: number }
+interface ListState { held?: HeldList; inflight?: { readonly generation: number; readonly read: Promise<HeldList | undefined> }; generation: number; failedAt?: number }
 
-async function blockList(ports: AbuseGatePorts, now: number, fresh = false) {
-  const held = cache.get(ports);
-  if (!fresh && held && now - held.readAt < (ports.blockListSeconds ?? 15)) return held;
-  try {
-    const rows = await ports.store.blocks();
-    const next = { rows, list: blockListOf(rows.map((row) => parseCidr(row.cidr)).filter((cidr) => cidr !== undefined)), readAt: now };
-    cache.set(ports, next);
-    return next;
-  } catch {
-    return held;
+const states = new WeakMap<AbuseGatePorts, ListState>();
+/** How long a request waits for a block-list read before using the last list (or none). */
+const REFRESH_DEADLINE_MS = 2_000;
+/** After a failed read, the last list is used this long before reading again. */
+const RETRY_SECONDS = 5;
+
+function deadline<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), ms); timer.unref?.(); });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * The block list, read at most once per refresh window per gateway: concurrent
+ * requests share one read, a failed read is retried only after RETRY_SECONDS,
+ * and a read never replaces a list read after a later change (fresh = true
+ * starts a new generation, so a read that began before a block change can't
+ * restore the old list). A slow read is waited on for REFRESH_DEADLINE_MS at
+ * most; the request then goes on with the last list.
+ */
+async function blockList(ports: AbuseGatePorts, now: number, fresh = false): Promise<HeldList | undefined> {
+  let state = states.get(ports);
+  if (!state) { state = { generation: 0 }; states.set(ports, state); }
+  const { held } = state;
+  if (!fresh) {
+    if (held && now - held.readAt < (ports.blockListSeconds ?? 15)) return held;
+    if (state.failedAt !== undefined && now - state.failedAt < RETRY_SECONDS) return held;
   }
+  if (fresh) state.generation += 1;
+  const generation = state.generation;
+  let inflight = state.inflight;
+  if (!inflight || inflight.generation < generation) {
+    const s = state;
+    const read = ports.store.blocks().then((rows) => {
+      const next: HeldList = { rows, list: blockListOf(rows.map((row) => parseCidr(row.cidr)).filter((cidr) => cidr !== undefined)), readAt: now, generation };
+      if (!s.held || s.held.generation <= generation) { s.held = next; s.failedAt = undefined; }
+      return next;
+    }, () => { s.failedAt = now; return undefined; }).finally(() => { if (s.inflight?.read === read) s.inflight = undefined; });
+    inflight = { generation, read };
+    state.inflight = inflight;
+  }
+  const read = fresh ? await inflight.read : await deadline(inflight.read, REFRESH_DEADLINE_MS);
+  return read ?? (fresh ? undefined : state.held);
 }
 
 const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
@@ -112,14 +145,27 @@ export async function handleAbuseGate(
     return true;
   }
 
-  const kind = limitKind(req.method, req.headers["content-type"]);
+  // Signing out is never limited: a limited person must still be able to end their session.
+  const kind = path === "/logout" ? undefined : limitKind(req.method, req.headers["content-type"]);
   const session = sessionCookie(req.headers.cookie);
-  const person = kind || path === "/admin/ip-blocks" ? (session ? (await ports.sessions.get(session))?.personId : undefined) : undefined;
+  let person: string | undefined;
+  if ((kind || path === "/admin/ip-blocks") && session) {
+    // A failed lookup skips the count (a brake, not a gate); the admin page
+    // then answers as an unknown path, and every other route keeps its own
+    // authentication.
+    try { person = (await ports.sessions.get(session))?.personId; } catch { person = undefined; }
+  }
   if (kind && person) {
     const limit = PERSON_LIMITS[kind];
     let decision: ReturnType<typeof decideLimit> = { kind: "allow" };
     try {
-      decision = decideLimit(await ports.store.hit(person, kind, windowStart(now, limit)), now, limit);
+      const count = await ports.store.hit(person, kind, windowStart(now, limit));
+      // Retry-After counts from when the answer is sent, to the end of the window charged.
+      decision = decideLimit(count, now, limit);
+      if (decision.kind === "limited") {
+        const sent = (ports.nowEpochSeconds ?? (() => Math.floor(Date.now() / 1000)))();
+        decision = { kind: "limited", retryAfterSeconds: Math.max(1, windowStart(now, limit) + limit.windowSeconds - sent) };
+      }
     } catch { /* the limit is a brake, not a gate */ }
     if (decision.kind === "limited") {
       req.resume();

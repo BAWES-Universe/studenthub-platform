@@ -151,7 +151,7 @@ export function createCompanyTeamService(options: {
       if (!email) return { kind: "refused", reason: "invalid_email" };
       if (input.scope !== "self" && input.scope !== "subtree") return { kind: "refused", reason: "role_not_allowed" };
       const storeId = input.role === STORE_MANAGER ? input.storeId ?? null : null;
-      if (input.role === STORE_MANAGER && (!storeId || !/^[0-9a-f-]{36}$/.test(storeId))) return { kind: "refused", reason: "unknown_store" };
+      if (input.role === STORE_MANAGER && (!storeId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(storeId))) return { kind: "refused", reason: "unknown_store" };
       const { token, tokenHash } = newInvitationToken(entropy);
       const at = now();
       const result = await store.invite({
@@ -183,7 +183,7 @@ export function createCompanyTeamService(options: {
     },
 
     async removeStoreManager(callerId, orgId, storeId, targetId) {
-      if (!/^[0-9a-f-]{36}$/.test(storeId)) return { kind: "refused", reason: "unknown_store" };
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(storeId)) return { kind: "refused", reason: "unknown_store" };
       return store.removeStoreManager<StoreAccessRefusal>({
         callerId, orgId, storeId, targetId, reason: STORE_ACCESS_REMOVED_REASON, now: now(),
         decide: (snapshot) => decideStoreAccessChange(orgId, snapshot),

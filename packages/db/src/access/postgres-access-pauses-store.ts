@@ -84,6 +84,7 @@ export class PostgresAccessPausesStore {
       const orgs = new Set<string>();
       for (const row of (await client.query<{ org_id: string }>("SELECT org_id FROM grants WHERE principal_id = $1", [target])).rows) orgs.add(row.org_id);
       for (const grant of live.rows[0]?.suspended_grants ?? []) orgs.add(grant.orgId);
+      for (const grant of live.rows[0]?.suspended_stores ?? []) orgs.add(grant.orgId);
       for (const orgId of [...orgs].sort()) {
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [`access:org:${orgId}`, ORG_LOCK_KEY]);
       }
@@ -96,7 +97,8 @@ export class PostgresAccessPausesStore {
         "SELECT id, suspended_grants, suspended_stores FROM account_pauses WHERE principal_id = $1 AND resumed_at IS NULL FOR UPDATE", [target])).rows[0];
       const held = await client.query<{ org_id: string; role: string; scope: string }>(
         "SELECT org_id, role, scope FROM grants WHERE principal_id = $1 ORDER BY org_id, role FOR UPDATE", [target]);
-      if (held.rows.some((row) => !orgs.has(row.org_id))) {
+      if (held.rows.some((row) => !orgs.has(row.org_id))
+        || (pause && [...pause.suspended_grants, ...pause.suspended_stores].some((grant) => !orgs.has(grant.orgId)))) {
         // A grant appeared in an organization this transaction has not locked: start again.
         await client.query("ROLLBACK");
         return RETRY;
@@ -138,26 +140,36 @@ export class PostgresAccessPausesStore {
 
       // Resume: give back what can still be given, in one read per kind.
       const suspended = pause!.suspended_grants;
-      const liveOrgs = new Set((await client.query<{ id: string }>(
-        `SELECT o.id FROM organizations o WHERE o.id = ANY($1::text[])
-           AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = o.id) FOR SHARE OF o`,
-        [[...new Set([...suspended.map((grant) => grant.orgId), ...pause!.suspended_stores.map((grant) => grant.orgId)])]])).rows.map((row) => row.id));
-      const grants = suspended.filter((grant) => liveOrgs.has(grant.orgId));
-      for (const grant of grants) {
-        await client.query(
+      // Lock the organizations first, then read deletions in a separate
+      // statement: under READ COMMITTED a statement whose row lock waited keeps
+      // its old snapshot and could miss a deletion committed meanwhile.
+      const lockedOrgs = (await client.query<{ id: string }>(
+        "SELECT id FROM organizations WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE",
+        [[...new Set([...suspended.map((grant) => grant.orgId), ...pause!.suspended_stores.map((grant) => grant.orgId)])]])).rows.map((row) => row.id);
+      const deleted = new Set((await client.query<{ org_id: string }>(
+        "SELECT org_id FROM organization_deletions WHERE org_id = ANY($1::text[])", [lockedOrgs])).rows.map((row) => row.org_id));
+      const liveOrgs = new Set(lockedOrgs.filter((id) => !deleted.has(id)));
+      // Only what was actually given back counts: a role the person was given
+      // again during the pause (at any scope) is left as it is, and reported as left out.
+      const grants: Grant[] = [];
+      for (const grant of suspended.filter((item) => liveOrgs.has(item.orgId))) {
+        const inserted = await client.query(
           `INSERT INTO grants (principal_id, org_id, role, scope) VALUES ($1, $2, $3, $4)
-           ON CONFLICT (principal_id, org_id, role) DO NOTHING`, [target, grant.orgId, grant.role, grant.scope]);
+           ON CONFLICT (principal_id, org_id, role) DO NOTHING RETURNING 1`, [target, grant.orgId, grant.role, grant.scope]);
+        if (inserted.rowCount) grants.push(grant);
       }
       const activeStores = new Set((await client.query<{ id: string }>(
         "SELECT id FROM organization_stores WHERE id = ANY($1::uuid[]) AND status = 'active' FOR SHARE",
         [pause!.suspended_stores.map((grant) => grant.storeId)])).rows.map((row) => row.id));
-      const stores = pause!.suspended_stores.filter((grant) => liveOrgs.has(grant.orgId) && activeStores.has(grant.storeId));
-      for (const grant of stores) {
-        await client.query(
+      const stores: StoreGrant[] = [];
+      for (const grant of pause!.suspended_stores.filter((item) => liveOrgs.has(item.orgId) && activeStores.has(item.storeId))) {
+        const inserted = await client.query(
           `INSERT INTO store_manager_access (id, org_id, store_id, principal_id, granted_by)
            SELECT $1, $2, $3, $4, $5
-            WHERE NOT EXISTS (SELECT 1 FROM store_manager_access WHERE store_id = $3 AND principal_id = $4 AND revoked_at IS NULL)`,
+            WHERE NOT EXISTS (SELECT 1 FROM store_manager_access WHERE store_id = $3 AND principal_id = $4 AND revoked_at IS NULL)
+           RETURNING 1`,
           [randomUUID(), grant.orgId, grant.storeId, target, callerId]);
+        if (inserted.rowCount) stores.push(grant);
       }
       if (grants.length > 0) {
         await insertAuthorizationMutationAudit(client, {

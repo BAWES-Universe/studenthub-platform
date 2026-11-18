@@ -14,6 +14,7 @@ test("A8_ADDRESS forwarding headers count only from a trusted proxy, read from t
   assert.equal(clientAddress("10.1.2.3", "10.2.2.2, 10.3.3.3", proxies), "10.1.2.3", "all hops trusted: the peer");
   assert.equal(clientAddress("10.1.2.3", "203.0.113.7, not-an-ip", proxies), "10.1.2.3", "a malformed hop ends the chain");
   assert.equal(clientAddress("10.1.2.3", undefined, proxies), "10.1.2.3");
+  assert.equal(clientAddress("10.1.2.3", "203.0.113.7, , 10.9.9.9", proxies), "10.1.2.3", "an empty hop inside the chain ends it too");
   assert.equal(clientAddress("::ffff:10.1.2.3", ["203.0.113.7"], proxies), "203.0.113.7", "IPv4-mapped peers are normalized");
   assert.equal(clientAddress("2001:db8:ffff::1", "2001:db8:1::5", proxies), "2001:db8:1::5");
   assert.equal(clientAddress(undefined, "203.0.113.7", proxies), undefined);
@@ -32,6 +33,14 @@ test("A8_ADDRESS a block is an address or a network starting at its first addres
   assert.equal(parseCidr("2001:db8::1/32"), undefined);
   assert.equal(parseCidr("::/0"), undefined);
   for (const bad of ["", "203.0.113.7/33", "203.0.113.7/24/1", "example.com", "203.0.113.7/ 24", "1.2.3"]) assert.equal(parseCidr(bad), undefined, bad);
+  // Mapped and dotted spellings, as PostgreSQL renders them, mean the same network.
+  assert.equal(cidrText(parseCidr("::ffff:cb00:7100/120")!), "203.0.113.0/24");
+  assert.equal(cidrText(parseCidr("::ffff:203.0.113.0/120")!), "203.0.113.0/24");
+  assert.equal(cidrText(parseCidr("::ffff:203.0.113.9/128")!), "203.0.113.9/32");
+  assert.equal(cidrText(parseCidr("::ffff:203.0.113.9")!), "203.0.113.9/32");
+  assert.equal(parseCidr("::ffff:203.0.113.0/95"), undefined, "a mapped prefix inside the ffff part");
+  assert.equal(cidrText(parseCidr("::192.0.2.1/128")!), "::192.0.2.1/128");
+  assert.equal(parseCidr("::192.0.2.1/120"), undefined, "host bits set in the dotted tail");
   const list = blockListOf([parseCidr("203.0.113.0/24")!, parseCidr("2001:db8::/32")!]);
   assert.equal(listed(list, "203.0.113.200"), true);
   assert.equal(listed(list, "203.0.114.1"), false);

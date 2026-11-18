@@ -32,7 +32,7 @@ BEGIN
   IF TG_OP = 'DELETE' THEN
     RAISE EXCEPTION 'account pauses are resumed, never deleted' USING ERRCODE = '55000';
   END IF;
-  IF OLD.resumed_at IS NOT NULL OR NEW.resumed_at IS NULL
+  IF OLD.resumed_at IS NOT NULL OR NEW.resumed_at IS NULL OR NEW.id IS DISTINCT FROM OLD.id
      OR NEW.principal_id <> OLD.principal_id OR NEW.paused_by <> OLD.paused_by OR NEW.reason <> OLD.reason
      OR NEW.paused_at <> OLD.paused_at OR NEW.suspended_grants <> OLD.suspended_grants OR NEW.suspended_stores <> OLD.suspended_stores THEN
     RAISE EXCEPTION 'an account pause can only be resumed, once' USING ERRCODE = '55000';
@@ -48,6 +48,10 @@ CREATE TRIGGER account_pauses_no_delete BEFORE DELETE ON account_pauses
 
 CREATE FUNCTION login_sessions_refuse_paused() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  -- The pause transaction holds this principal's lock (the same key
+  -- PostgresAuthzStore uses) while it deletes sessions, so a sign-in either
+  -- commits first (and its session is deleted) or waits and sees the pause.
+  PERFORM pg_advisory_xact_lock(hashtextextended(NEW.person_id, 5959));
   IF EXISTS (SELECT 1 FROM account_pauses p WHERE p.principal_id = NEW.person_id AND p.resumed_at IS NULL) THEN
     RAISE EXCEPTION 'StudentHub access is paused for this person' USING ERRCODE = '42501';
   END IF;

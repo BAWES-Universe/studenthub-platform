@@ -58,9 +58,18 @@ export interface Cidr {
 /** Strips the IPv4-mapped IPv6 form so one address has one spelling. */
 export function normalizeAddress(raw: string): string | undefined {
   const value = raw.trim();
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(value);
-  const address = mapped ? mapped[1]! : value;
+  const address = unmapped(value) ?? value;
   return isIP(address) ? address.toLowerCase() : undefined;
+}
+
+/** The IPv4 address inside an IPv4-mapped IPv6 address, in either spelling (::ffff:203.0.113.9 or ::ffff:cb00:7109). */
+function unmapped(value: string): string | undefined {
+  const dotted = /^(?:0{0,4}:){0,5}:?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(value);
+  if (dotted && isIP(value) === 6) return dotted[1]!;
+  const hex = /^(?:0{0,4}:){0,5}:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(value);
+  if (!hex || isIP(value) !== 6) return undefined;
+  const high = parseInt(hex[1]!, 16), low = parseInt(hex[2]!, 16);
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
 }
 
 /** "203.0.113.7", "203.0.113.0/24" or "2001:db8::/32"; host bits must be zero. */
@@ -72,7 +81,11 @@ export function parseCidr(raw: string): Cidr | undefined {
   const family = isIP(address) === 4 ? "ipv4" : "ipv6";
   const width = family === "ipv4" ? 32 : 128;
   if (prefixPart !== undefined && !/^\d{1,3}$/.test(prefixPart)) return undefined;
-  const prefix = prefixPart === undefined ? width : Number(prefixPart);
+  // A mapped address keeps its IPv6 prefix (PostgreSQL renders ::ffff:cb00:7100/120
+  // as ::ffff:203.0.113.0/120): count it from the IPv4 part, so /120 is /24.
+  const mapped = family === "ipv4" && isIP(addressPart.trim()) === 6;
+  if (mapped && prefixPart !== undefined && Number(prefixPart) < 96) return undefined;
+  const prefix = prefixPart === undefined ? width : Number(prefixPart) - (mapped ? 96 : 0);
   if (prefix < (family === "ipv4" ? 8 : 16) || prefix > width) return undefined;
   // Host bits must be zero, so one network has one spelling.
   if (!sameNetwork(address, prefix, family)) return undefined;
@@ -94,7 +107,15 @@ function ipv6Bits(address: string): number[] | undefined {
   const [head, tail] = address.split("::");
   const groups = (part: string | undefined) => (part ? part.split(":") : []);
   const left = groups(head), right = groups(tail);
-  if (address.includes(".")) return undefined;
+  // A dotted tail (::192.0.2.1, as PostgreSQL renders it) is the last two groups.
+  const last = tail === undefined ? left : right;
+  const dotted = last.length ? /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(last[last.length - 1]!) : null;
+  if (dotted) {
+    const octets = dotted.slice(1).map(Number);
+    if (octets.some((octet) => octet > 255)) return undefined;
+    last.splice(last.length - 1, 1, ((octets[0]! << 8) | octets[1]!).toString(16), ((octets[2]! << 8) | octets[3]!).toString(16));
+  }
+  if ([...left, ...right].some((group) => group.includes("."))) return undefined;
   const missing = 8 - left.length - right.length;
   if (tail === undefined ? left.length !== 8 : missing < 1) return undefined;
   const all = [...left, ...Array(tail === undefined ? 0 : missing).fill("0"), ...right];
@@ -121,7 +142,7 @@ export function clientAddress(remoteAddress: string | undefined, forwardedFor: s
   const peer = remoteAddress ? normalizeAddress(remoteAddress) : undefined;
   if (!peer || !listed(trustedProxies, peer)) return peer;
   const header = Array.isArray(forwardedFor) ? forwardedFor.join(",") : forwardedFor ?? "";
-  const hops = header.split(",").map((hop) => hop.trim()).filter((hop) => hop.length > 0);
+  const hops = header.trim() === "" ? [] : header.split(",").map((hop) => hop.trim());
   for (let index = hops.length - 1; index >= 0; index -= 1) {
     const hop = normalizeAddress(hops[index]!);
     if (!hop) return peer; // A malformed hop ends the trusted chain: never guess past it.

@@ -125,6 +125,9 @@ export class PostgresAccessRegistrationsStore {
     let broken = false;
     try {
       await client.query("BEGIN");
+      // The tree lock (taken by every rename and reparent) and then the
+      // parent's creation lock, so the name check below holds until the insert.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('studenthub:organizations:tree'))");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [parentOrgId, CREATION_LOCK_KEY]);
       const row = (await client.query<{ submitter_principal_id: string; status: Status; company_name: string }>(
         "SELECT submitter_principal_id, status, company_name FROM company_registrations WHERE id = $1 FOR UPDATE", [review.registrationId])).rows[0];

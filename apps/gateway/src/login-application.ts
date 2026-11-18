@@ -69,7 +69,8 @@ export function upstreamLogger(sink: (event: UpstreamSessionEvent) => void = (ev
   const counts = { upstream_end_unreachable: 0, upstream_check_unknown: 0 };
   return (event: UpstreamSessionEvent["event"], reason: UpstreamSessionEvent["reason"]) => {
     counts[event] += 1;
-    sink({ event, reason, count: counts[event] });
+    // A failing log sink must never change a session's outcome or reject a detached sign-out.
+    try { sink({ event, reason, count: counts[event] }); } catch { /* logging is best effort */ }
   };
 }
 
@@ -93,6 +94,9 @@ export interface UpstreamConfirmationOptions {
 export function confirmingSessions(store: SessionStore, options: UpstreamConfirmationOptions): SessionStore {
   if ((store as { readonly [CONFIRMING]?: true })[CONFIRMING]) return store;
   const bound = upstreamCheckSeconds(options.boundSeconds);
+  if (!store.claimUpstreamCheck || !store.confirmUpstream) {
+    throw new TypeError("upstream session checks need a session store with claimUpstreamCheck and confirmUpstream");
+  }
   const timeoutMs = options.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
   const wrapped: SessionStore & { readonly [CONFIRMING]: true } = {
     [CONFIRMING]: true,
@@ -112,7 +116,8 @@ export function confirmingSessions(store: SessionStore, options: UpstreamConfirm
         return undefined;
       }
       if (session.lastCheckedAt !== undefined && now - session.lastCheckedAt < bound) return session;
-      if (!store.claimUpstreamCheck || !await store.claimUpstreamCheck(id, now - bound, now)) return session;
+      // Another request won the claim, or the row is gone: answer from the row as it is now.
+      if (!await store.claimUpstreamCheck!(id, now - bound, now)) return store.get(id);
       let activity: Awaited<ReturnType<UpstreamSessions["isActive"]>> | typeof TIMED_OUT | "error";
       try {
         activity = await bounded(() => options.upstream.isActive(reference), timeoutMs);
@@ -123,12 +128,17 @@ export function confirmingSessions(store: SessionStore, options: UpstreamConfirm
         await store.delete(id);
         return undefined;
       }
-      if (activity === "active") {
-        await store.confirmUpstream?.(id, now);
-        return { ...session, lastCheckedAt: now, lastConfirmedAt: now };
+      if (activity === "active") await store.confirmUpstream!(id, now);
+      else options.log("upstream_check_unknown", activity === TIMED_OUT ? "timeout" : activity === "error" ? "error" : "unknown");
+      // Read the row again after the wait: a sign-out meanwhile removed it, and
+      // the 2*T deadline may have passed while the issuer was being asked.
+      const current = await store.get(id);
+      if (!current) return undefined;
+      if (options.clock.nowEpochSeconds() - (current.lastConfirmedAt ?? Number.NEGATIVE_INFINITY) >= 2 * bound) {
+        await store.delete(id);
+        return undefined;
       }
-      options.log("upstream_check_unknown", activity === TIMED_OUT ? "timeout" : activity === "error" ? "error" : "unknown");
-      return { ...session, lastCheckedAt: now };
+      return current;
     },
   };
   return wrapped;
@@ -331,7 +341,9 @@ export const createLoginApplication: LoginApplicationFactory = (
           "set-cookie": `__Host-studenthub_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
         },
       };
-    } catch {
+    } catch (error) {
+      // A pause that committed after the check above: the session insert is refused (42501).
+      if ((error as { code?: string }).code === "42501") return { status: 403, body: { error: "access_paused" } };
       return rejected();
     }
   },

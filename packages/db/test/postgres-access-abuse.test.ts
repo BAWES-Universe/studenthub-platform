@@ -39,7 +39,7 @@ test("A8_LIMITS the count is per person and kind, exact under concurrency, and s
 
 test("A8_BLOCKS blocks keep who, when and why, can be removed once, and are never deleted", async () => {
   const admin = await person();
-  const net = `198.18.${Math.floor(Math.random() * 250)}.0/24`;
+  const net = `198.18.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}/32`;
   assert.deepEqual(await store.changeBlock(admin, { action: "block", cidr: parseCidr(net)!, reason: "Credential stuffing" }), { kind: "blocked" });
   assert.deepEqual(await store.changeBlock(admin, { action: "block", cidr: parseCidr(net)!, reason: "Again" }), { kind: "refused", reason: "already_blocked" });
   const row = (await store.blocks()).find((item) => item.cidr === net);
@@ -50,5 +50,6 @@ test("A8_BLOCKS blocks keep who, when and why, can be removed once, and are neve
   assert.deepEqual(await store.changeBlock(admin, { action: "unblock", cidr: parseCidr(net)!, reason: "Was a shared office" }), { kind: "refused", reason: "not_blocked" });
   await assert.rejects(pool.query("DELETE FROM ip_blocks WHERE cidr = $1::cidr", [net]), /never deleted/);
   await assert.rejects(pool.query("UPDATE ip_blocks SET reason = 'edited' WHERE cidr = $1::cidr", [net]), /only be removed, once/);
-  assert.equal((await pool.query("SELECT count(*)::int AS n FROM ip_blocks WHERE cidr = $1::cidr", [net])).rows[0].n, 1, "the row stays");
+  await assert.rejects(pool.query("UPDATE ip_blocks SET id = gen_random_uuid() WHERE cidr = $1::cidr AND created_by = $2", [net, admin]), /only be removed, once/);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM ip_blocks WHERE cidr = $1::cidr AND created_by = $2", [net, admin])).rows[0].n, 1, "this test's row stays");
 });

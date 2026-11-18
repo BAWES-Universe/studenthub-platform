@@ -34,7 +34,9 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM organization_stores s WHERE s.id = NEW.store_id AND s.org_id = NEW.org_id) THEN
     RAISE EXCEPTION 'store manager access must name the store''s own company' USING ERRCODE = '23514';
   END IF;
-  IF TG_OP = 'UPDATE' AND (OLD.revoked_at IS NOT NULL OR NEW.store_id <> OLD.store_id OR NEW.principal_id <> OLD.principal_id OR NEW.org_id <> OLD.org_id) THEN
+  IF TG_OP = 'UPDATE' AND (OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL OR NEW.id IS DISTINCT FROM OLD.id
+      OR NEW.store_id <> OLD.store_id OR NEW.principal_id <> OLD.principal_id OR NEW.org_id <> OLD.org_id
+      OR NEW.granted_by IS DISTINCT FROM OLD.granted_by OR NEW.created_at IS DISTINCT FROM OLD.created_at) THEN
     RAISE EXCEPTION 'store manager access can only be revoked' USING ERRCODE = '55000';
   END IF;
   RETURN NEW;

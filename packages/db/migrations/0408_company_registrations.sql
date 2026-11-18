@@ -4,6 +4,10 @@
 -- fields). A row is pending until operator staff approve or reject it with a
 -- reason; approval records the organization it created. A person has at most
 -- one pending registration. A decided row never changes again.
+--
+-- Deleting a person deletes their registrations by cascade, decided or not
+-- (the row holds their contact details); the guard below runs only for a
+-- direct change. A company an approval created, and its audit rows, stay.
 
 CREATE TABLE company_registrations (
   id                     UUID PRIMARY KEY,
@@ -20,7 +24,8 @@ CREATE TABLE company_registrations (
   reviewed_at            TIMESTAMPTZ,
   review_reason          TEXT CHECK (review_reason IS NULL OR char_length(btrim(review_reason)) BETWEEN 3 AND 500),
   org_id                 TEXT REFERENCES organizations (id),
-  CHECK ((status = 'pending') = (reviewed_by IS NULL AND reviewed_at IS NULL AND review_reason IS NULL)),
+  CHECK (CASE WHEN status = 'pending' THEN reviewed_by IS NULL AND reviewed_at IS NULL AND review_reason IS NULL
+              ELSE reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL AND review_reason IS NOT NULL END),
   CHECK ((status = 'approved') = (org_id IS NOT NULL)),
   CHECK (reviewed_by IS NULL OR reviewed_by <> submitter_principal_id)
 );

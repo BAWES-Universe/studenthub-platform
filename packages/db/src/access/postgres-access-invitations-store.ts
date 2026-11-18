@@ -294,7 +294,11 @@ export class PostgresAccessInvitationsStore {
   }): Promise<{ readonly kind: "removed"; readonly roles: readonly string[] } | Refused<R>> {
     return this.#transaction(async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [`access:org:${input.orgId}`, ORG_LOCK_KEY]);
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [input.targetId, PRINCIPAL_LOCK_KEY]);
+      // Both principals, in a fixed order, before any grant row: two owners
+      // removing each other from different companies serialize instead of deadlocking.
+      for (const principal of [...new Set([input.targetId, input.callerId])].sort()) {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [principal, PRINCIPAL_LOCK_KEY]);
+      }
       const callerGrants = await this.#grantsOf(client, input.callerId, true);
       const orgLive = await organizationLive(client, input.orgId, true);
       const ancestors = orgLive ? (await ancestorsOf(client, [input.orgId])).get(input.orgId) ?? [] : [];

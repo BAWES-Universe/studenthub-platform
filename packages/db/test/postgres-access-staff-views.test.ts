@@ -42,3 +42,12 @@ test("A9_RECORD a view keeps both identities, the reason and a 15 minute window;
   assert.equal(await views.open(staff, other), null);
   assert.equal((await views.viewedOn(target)).length, 2);
 });
+
+test("A9_RULES a paused person is judged by the grants their pause holds, so a paused admin stays an admin", async () => {
+  const target = await person();
+  const root = `a9-root-${randomUUID()}`;
+  await pool.query("INSERT INTO organizations (id, name) VALUES ($1, $2)", [root, `Root ${root}`]);
+  await pool.query("INSERT INTO account_pauses (id, principal_id, paused_by, reason, suspended_grants, suspended_stores) VALUES ($1, $2, $3, $4, $5::jsonb, '[]')",
+    [randomUUID(), target, "someone", "Reported for misuse", JSON.stringify([{ orgId: root, role: "admin", scope: "subtree" }])]);
+  assert.deepEqual(await views.grantsOf(target), [{ orgId: root, role: "admin", scope: "subtree" }]);
+});

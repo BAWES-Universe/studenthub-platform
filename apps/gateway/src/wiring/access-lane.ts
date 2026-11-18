@@ -21,6 +21,11 @@ import type { Wired, WiringSettings } from "./context.js";
  * names the proxies whose forwarding headers are read. A9: staff view a
  * person's account read-only for 15 minutes. A7: "Register a company" and
  * the staff review queue.
+ *
+ * The signing key gates only the writes that use a signed review token (A1
+ * grant changes and A6 pauses). A2, A3, A7 and A8 writes have no token: each
+ * is a same-origin form post whose caller's right is read again inside the
+ * write's transaction, so they run with or without the key.
  */
 export function wireAccessLane(settings: WiringSettings, access: ReturnType<typeof wireAccess>["services"], env: NodeJS.ProcessEnv = {}): Wired<{
   readonly application: { readonly access: AccessPorts; readonly team: CompanyTeamPorts; readonly contacts: CompanyContactsPorts; readonly storeManager: StoreManagerPorts; readonly abuse: AbuseGatePorts; readonly staffView: StaffViewPorts; readonly registrations: CompanyRegistrationPorts };

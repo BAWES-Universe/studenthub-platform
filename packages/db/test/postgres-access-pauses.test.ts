@@ -120,3 +120,35 @@ test("A6_IDENTITY an email address reused by another identity inherits nothing f
   await login.sessions.put({ id: randomUUID(), personId: second });
   assert.equal(await sessions(second), 1, "the pause is keyed by principal, not by email");
 });
+
+test("A6_RESUME a role given again during the pause is left as it is and counted as left out, not restored", async () => {
+  const acme = await company();
+  const admin = await person([{ orgId: ROOT, role: "admin", scope: "subtree" }]);
+  const target = await person([{ orgId: acme, role: "recruiter", scope: "subtree" }, { orgId: acme, role: "finance" }]);
+  await service.change(admin, { targetPrincipalId: target, action: "pause", reason });
+  await authz.grantMany(target, [{ orgId: acme, role: "recruiter", scope: "self" }]);
+  assert.deepEqual(await service.change(admin, { targetPrincipalId: target, action: "resume", reason }), { kind: "resumed", restored: 1, leftOut: 1 });
+  assert.deepEqual(await held(target), [{ org_id: acme, role: "finance", scope: "self" }, { org_id: acme, role: "recruiter", scope: "self" }]);
+  const restored = (await pool.query("SELECT restored_grants FROM account_pauses WHERE principal_id = $1", [target])).rows[0].restored_grants;
+  assert.deepEqual(restored.grants.map((grant: { role: string }) => grant.role), ["finance"]);
+});
+
+test("A6_PAUSE a sign-in racing a pause either ends with the pause or is refused; no session survives", async () => {
+  const admin = await person([{ orgId: ROOT, role: "admin", scope: "subtree" }]);
+  const target = await person([{ orgId: await company(), role: "finance" }]);
+  // Hold the person's lock as a pause would, while a sign-in tries to insert a session.
+  const holder = await pool.connect();
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [target]);
+    const signIn = login.sessions.put({ id: randomUUID(), personId: target }).then(() => "created", (error: Error) => error.message);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await holder.query("INSERT INTO account_pauses (id, principal_id, paused_by, reason, suspended_grants, suspended_stores) VALUES ($1, $2, $3, $4, '[]', '[]')",
+      [randomUUID(), target, admin, reason]);
+    await holder.query("COMMIT");
+    assert.match(await signIn, /access is paused/, "the sign-in waited for the pause and was refused");
+  } finally {
+    holder.release();
+  }
+  assert.equal(await sessions(target), 0);
+});

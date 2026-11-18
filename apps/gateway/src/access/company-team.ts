@@ -39,7 +39,7 @@ export interface CompanyTeamPorts {
 
 export const INVITE_COOKIE = "__Host-studenthub_invite";
 const INVITE_COOKIE_SECONDS = 3600;
-const TEAM = /^\/workspace\/companies\/([^/]+)\/team(?:\/(invite|invitations\/([^/]+)\/revoke|members\/([^/]+)\/remove|stores\/([0-9a-f-]{36})\/managers\/([^/]+)\/remove))?$/;
+const TEAM = /^\/workspace\/companies\/([^/]+)\/team(?:\/(invite|invitations\/([^/]+)\/revoke|members\/([^/]+)\/remove|stores\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/managers\/([^/]+)\/remove))?$/;
 const INVITATION = /^\/invitations\/([^/]+)(\/accept)?$/;
 
 const REFUSAL_TEXT: Readonly<Record<InvitationRefusal | "invalid_email" | "not_allowed" | "invalid_request" | "unavailable", string>> = Object.freeze({
@@ -304,7 +304,7 @@ export async function handleCompanyTeam(
       return result.kind === "refused" ? refuse(result.reason) : redirect(res, teamHref(view.orgId));
     }
     const invitationId = decode(teamMatch[3]!);
-    if (!invitationId || !/^[0-9a-f-]{36}$/.test(invitationId)) return refuse("not_found");
+    if (!invitationId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(invitationId)) return refuse("not_found");
     const result = await ports.team.revoke(principalId, view.orgId, invitationId);
     return result.kind === "refused" ? refuse(result.reason) : redirect(res, teamHref(view.orgId));
   } catch {

@@ -40,7 +40,7 @@ export type RegistrationPageWriter = (status: number, title: string, body: strin
 
 const REGISTER = "/companies/register";
 const QUEUE = "/admin/access/registrations";
-const REVIEW = /^\/admin\/access\/registrations\/([0-9a-f-]{36})$/;
+const REVIEW = /^\/admin\/access\/registrations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const e = escapeHtml;
 
 const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;

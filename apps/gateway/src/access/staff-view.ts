@@ -115,7 +115,7 @@ export async function handleStaffView(
   }
   const banner = `<section class="notice context-notice" role="status"><strong>Viewing as ${e(name)}, read-only, until ${e(timeText(open.expiresAt))}.</strong> <a class="text-link" href="${e(back)}">End and go back</a></section>`;
   // The banner keeps its link: it is added after the links are taken out.
-  const html = readOnlyDocument(document, "\u0000BANNER\u0000").replace("\u0000BANNER\u0000", banner);
+  const html = readOnlyDocument(document, "\u0000BANNER\u0000").replace("\u0000BANNER\u0000", () => banner);
   res.writeHead(200, {
     "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff",
     "x-frame-options": "DENY", "referrer-policy": "no-referrer",

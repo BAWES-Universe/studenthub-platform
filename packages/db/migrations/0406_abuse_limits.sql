@@ -34,7 +34,7 @@ BEGIN
   IF TG_OP = 'DELETE' THEN
     RAISE EXCEPTION 'address blocks are removed with removed_at, never deleted' USING ERRCODE = '55000';
   END IF;
-  IF OLD.removed_at IS NOT NULL OR NEW.removed_at IS NULL OR NEW.cidr <> OLD.cidr OR NEW.reason <> OLD.reason
+  IF OLD.removed_at IS NOT NULL OR NEW.removed_at IS NULL OR NEW.id IS DISTINCT FROM OLD.id OR NEW.cidr <> OLD.cidr OR NEW.reason <> OLD.reason
      OR NEW.created_by <> OLD.created_by OR NEW.created_at <> OLD.created_at THEN
     RAISE EXCEPTION 'an address block can only be removed, once' USING ERRCODE = '55000';
   END IF;

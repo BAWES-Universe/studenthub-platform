@@ -53,7 +53,15 @@ export class PostgresAccessStaffViewsStore {
 
   async grantsOf(principalId: string) {
     const { rows } = await this.#pool.query<{ org_id: string; role: string; scope: string }>(
-      "SELECT org_id, role, scope FROM grants WHERE principal_id = $1 ORDER BY id", [principalId]);
+      // A paused person is judged by the grants their pause holds, so pausing an
+      // operator admin never opens their account to ordinary staff.
+      `SELECT org_id, role, scope FROM (
+         SELECT org_id, role, scope, 0 AS src, id::text AS ord FROM grants WHERE principal_id = $1
+         UNION ALL
+         SELECT g."orgId", g.role, g.scope, 1, '' FROM account_pauses p,
+                jsonb_to_recordset(p.suspended_grants) AS g("orgId" text, role text, scope text)
+          WHERE p.principal_id = $1 AND p.resumed_at IS NULL) AS held
+        ORDER BY src, ord`, [principalId]);
     return rows.map((row) => ({ orgId: row.org_id, role: row.role, scope: row.scope }));
   }
 }

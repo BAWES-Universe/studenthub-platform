@@ -410,7 +410,8 @@ export async function handleAccess(
       res.writeHead(303, { location: personHref(principalId, { done: outcome.kind }), "cache-control": "no-store" });
       res.end();
     } catch {
-      if (!res.headersSent) write(503, "Access", renderPauseRefusal("unavailable", back));
+      // The write may have committed before the error: say so, don't claim nothing changed.
+      if (!res.headersSent) write(503, "Access", renderUnconfirmed(back));
       else res.destroy();
     }
     return true;

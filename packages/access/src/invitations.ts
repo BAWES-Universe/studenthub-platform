@@ -40,7 +40,8 @@ const EMAIL = /^[^\s@<>"']{1,64}@[^\s@<>"']{1,189}\.[^\s@<>"'.]{1,63}$/;
 export function normalizeInvitationEmail(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
   const value = raw.trim().toLowerCase();
-  if (value.length > 254 || !EMAIL.test(value)) return undefined;
+  // eslint-disable-next-line no-control-regex
+  if (value.length > 254 || /[\u0000-\u001f\u007f]/.test(value) || !EMAIL.test(value)) return undefined;
   return value;
 }
 

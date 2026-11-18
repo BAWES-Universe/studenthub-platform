@@ -31,7 +31,7 @@ export interface CompanyContactsPorts {
   readonly contacts: CompanyContactsService;
 }
 
-const PATH = /^\/workspace\/companies\/([^/]+)\/contacts(?:\/([0-9a-f-]{36})(\/edit|\/remove)?)?$/;
+const PATH = /^\/workspace\/companies\/([^/]+)\/contacts(?:\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/edit|\/remove)?)?$/;
 const e = escapeHtml;
 const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
 export const contactsHref = (orgId: string, suffix = ""): string => `/workspace/companies/${encodeURIComponent(orgId)}/contacts${suffix}`;
