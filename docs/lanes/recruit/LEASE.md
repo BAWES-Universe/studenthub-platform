@@ -29,7 +29,7 @@ Shared seams, additive lines only (one contiguous block each, no other line chan
 Lease extension, 2026-11-17 (coordinator, for decision SHU-200 employer document links), additive only:
 - `packages/private-documents/src/employer-delivery.ts` (new file beside `staff-delivery.ts`; no existing private-documents line changes), `packages/private-documents/test/employer-delivery.test.mjs`, `packages/private-documents/test/employer-delivery-mutations.mjs`
 - `apps/gateway/test/contributions.test.ts` and `apps/gateway/test/profile-kit.test.ts`: the recruit navigation entry and the copy count it moves
-- Store-manager sight codes against the access lane's A4 read port (`managedStores(principalId)`, PR #509 lane); until A4 lands the requests store takes it as an optional option and no store manager has sight
+- Store-manager sight codes against the access lane's A4 read port (`managedStores(principalId)`, PR #509 lane); the requests store requires it, and the recruit wiring passes `NO_STORE_MANAGERS` (nobody manages a store) until A4's store-manager grants are on main, when A4 swaps in its reader; the db test `REC5_STORE_MANAGER` covers own-store sight, sibling and other-company refusal, and the production source
 
 Read only: `packages/search/**` (Typesense adapter), `packages/notifications/**` and `packages/db/src/notifications/**` (outbox), `packages/organizations/**`, `packages/pay-contracts/**`, `tools/legacy-import/**`.
 

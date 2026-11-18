@@ -6,7 +6,7 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitInvitationsStore, PostgresRecruitPipelineStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
 import {
-jobCandidateDecision,   acceptCardEffect, invitationOutbox, invitationTransitionAllowed, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed,
+NO_STORE_MANAGERS, jobCandidateDecision, acceptCardEffect, invitationOutbox, invitationTransitionAllowed, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed,
   recruitNotesDecision, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision,
 } from "../../recruit/src/index.js";
 
@@ -24,7 +24,7 @@ before(async () => {
   stores = new PostgresOrganizationStoresStore({ pool, writeDecision: organizationStoreWriteDecision, readDecision: organizationStoreReadDecision });
   requests = new PostgresRecruitRequestsStore({
     pool, createDecision: (r, o, a) => requestCreateDecision(r, o, a, OPS), readDecision: (r, o, a) => requestReadDecision(r, o, a, OPS),
-    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed,
+    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: NO_STORE_MANAGERS,
   });
   pipeline = new PostgresRecruitPipelineStore({
     pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
@@ -55,7 +55,7 @@ async function setup() {
   const recruiter = await person([{ orgId: OPS_ORG, role: "recruiter", scope: "subtree" }], "Rami Recruiter");
   const other = await person([{ orgId: OPS_ORG, role: "recruiter", scope: "subtree" }]);
   await pipeline.assign(staff, requestId, recruiter);
-  return { orgId, owner, requestId, staff, recruiter, other };
+  return { orgId, owner, storeId, requestId, staff, recruiter, other };
 }
 const REF = "c".repeat(64);
 async function catalogue(type: string, name: string) {
@@ -90,4 +90,23 @@ test("REC5_SIGHT a company reads people on its own requests only; links decide; 
   assert.equal((await requests.person(s.staff, s.requestId, noor))!.staff, true);
   await pipeline.move(s.recruiter, cardId, "withdrawn");
   assert.deepEqual((await requests.person(s.owner, s.requestId, noor))!.link, { stage: "withdrawn", invitation_status: null }, "the page decides that a withdrawn card gives no sight");
+});
+
+test("REC5_STORE_MANAGER a store manager sees the people of their own store's requests only; the production source names nobody", async () => {
+  const s = await setup(), noor = await person();
+  const manager = await person();
+  const sibling = ((await stores.create(s.owner, s.orgId, { name: "Marina", location: null, brandId: null, mallId: null })) as { storeId: string }).storeId;
+  const siblingRequest = ((await requests.create(s.owner, s.orgId, { storeId: sibling, positionTitle: "Packer", description: "d", compensationText: "3 KWD an hour", positionType: "part_time", headcount: 1, periodStart: "2026-12-01", periodEnd: "2026-12-31", payModel: "hourly", gender: "any", location: null, priority: 0, draft: false })) as { requestId: string }).requestId;
+  await pipeline.assign(s.staff, siblingRequest, s.recruiter);
+  await pipeline.addCard(s.recruiter, s.requestId, noor);
+  await pipeline.addCard(s.recruiter, siblingRequest, noor);
+  const managed = new PostgresRecruitRequestsStore({ ...requests.options, pool, managedStores: async (id) => id === manager ? [{ orgId: s.orgId, storeId: s.storeId }] : [] });
+  const seen = (await managed.person(manager, s.requestId, noor))!;
+  assert.deepEqual(seen.link, { stage: "suggested", invitation_status: null });
+  assert.equal(seen.staff, false);
+  assert.equal(await managed.person(manager, siblingRequest, noor), null, "a sibling store's request stays hidden");
+  const other = await setup();
+  await pipeline.addCard(other.recruiter, other.requestId, noor);
+  assert.equal(await managed.person(manager, other.requestId, noor), null, "another company's store stays hidden");
+  assert.equal(await requests.person(manager, s.requestId, noor), null, "with the production source nobody manages a store yet");
 });

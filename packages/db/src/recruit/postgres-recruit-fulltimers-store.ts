@@ -83,6 +83,8 @@ export class PostgresRecruitFulltimersStore {
     const byName = (await c.query<{ id: string }>("SELECT id FROM recruit_fulltimers WHERE name_key = $1::text AND archived_at IS NULL AND ($2::uuid IS NULL OR id <> $2::uuid)", [this.options.nameKey(input.name), self])).rows[0];
     if (byName) return { kind: "duplicate", field: "name", fulltimerId: byName.id };
     if (input.phone) {
+      // And on the phone, always after the name lock, so saves with different names and one phone cannot both pass.
+      await c.query("SELECT pg_advisory_xact_lock(hashtext('recruit_fulltimer_phone:' || $1::text))", [input.phone]);
       const byPhone = (await c.query<{ id: string }>("SELECT id FROM recruit_fulltimers WHERE phone = $1::text AND archived_at IS NULL AND ($2::uuid IS NULL OR id <> $2::uuid)", [input.phone, self])).rows[0];
       if (byPhone) return { kind: "duplicate", field: "phone", fulltimerId: byPhone.id };
     }

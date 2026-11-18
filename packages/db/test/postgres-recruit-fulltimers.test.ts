@@ -27,7 +27,7 @@ before(async () => {
   stores = new PostgresOrganizationStoresStore({ pool, writeDecision: organizationStoreWriteDecision, readDecision: organizationStoreReadDecision });
   requests = new PostgresRecruitRequestsStore({
     pool, createDecision: (r, o, a) => requestCreateDecision(r, o, a, OPS), readDecision: (r, o, a) => requestReadDecision(r, o, a, OPS),
-    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed,
+    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [],
   });
   pipeline = new PostgresRecruitPipelineStore({
     pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
@@ -118,4 +118,15 @@ test("REC9_PIPELINE a full-timer joins a request's pipeline once; placing record
   assert.deepEqual((await fulltimers.get(staff, ft))!.cards.map((c) => [c.request_id, c.stage]), [[requestId, "placed"]]);
   await assert.rejects(pool.query("INSERT INTO recruit_pipeline_cards(id, request_id, person_principal_id, fulltimer_id, stage) VALUES($1, $2, $3, $4, 'suggested')", [randomUUID(), requestId, owner, ft]), /one_subject/);
   await assert.rejects(pool.query("UPDATE recruit_pipeline_cards SET fulltimer_id = $2 WHERE id = $1", [cardId, archived]), /cannot move/);
+});
+
+test("REC9_PHONE_RACE simultaneous saves with different names and one phone: exactly one is saved, the other is told the phone is taken", async () => {
+  // Different staff accounts, so nothing but the duplicate check serialises the saves.
+  const staff = await Promise.all(Array.from({ length: 6 }, () => person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }])));
+  const phone = `+9656${String(Date.now()).slice(-7)}`;
+  const results = await Promise.all(staff.map((who) => fulltimers.create(who, fields({ phone }))));
+  const saved = results.filter((r) => r.kind === "saved");
+  assert.equal(saved.length, 1);
+  const winner = (saved[0] as { fulltimerId: string }).fulltimerId;
+  for (const r of results) if (r.kind !== "saved") assert.deepEqual(r, { kind: "duplicate", field: "phone", fulltimerId: winner });
 });

@@ -27,6 +27,15 @@ export interface EmployerPersonView {
 }
 
 /** Whole years between a birth date and today (both YYYY-MM-DD); null when unknown or not a sane age. */
+/** The stores a principal manages, as the access lane's store-manager grants record them. */
+export type ManagedStores = (principalId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
+
+/**
+ * The store-manager source until the access lane's store-manager grants (A4) are on main: nobody manages a store,
+ * so only company readers and operator staff see a request's people. A4 replaces this in the recruit wiring.
+ */
+export const NO_STORE_MANAGERS: ManagedStores = async () => [];
+
 export function ageOn(birthDate: string | null, today: string): number | null {
   if (!birthDate || !/^\d{4}-\d{2}-\d{2}$/.test(birthDate) || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return null;
   const [by, bm, bd] = birthDate.split("-").map(Number) as [number, number, number];

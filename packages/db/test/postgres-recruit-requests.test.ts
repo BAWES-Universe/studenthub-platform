@@ -24,6 +24,7 @@ before(async () => {
     transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS),
     staffDecision: (r) => recruitStaffDecision(r, OPS),
     transitionAllowed: requestTransitionAllowed,
+    managedStores: async () => [],
   });
 });
 after(async () => pool.end());

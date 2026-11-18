@@ -62,8 +62,11 @@ export interface RecruitRequestsStoreOptions {
   readonly readDecision: Decision;
   readonly transitionDecision: Decision;
   readonly staffDecision: (rows: readonly Grant[]) => boolean;
-  /** Stores the principal manages (access lane A4); empty when not a store manager. Defaults to none. */
-  readonly managedStores?: (principalId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
+  /**
+   * Stores the principal manages; empty when they manage none. Required, so production wiring names its source:
+   * until the access lane's store-manager grants land, that source is NO_STORE_MANAGERS (nobody manages a store).
+   */
+  readonly managedStores: (principalId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
   readonly transitionAllowed: (from: Status, to: Status) => boolean;
 }
 
@@ -207,7 +210,7 @@ export class PostgresRecruitRequestsStore {
     if (!request) return null;
     const [read, staff] = await this.#allowed(this.#pool, principalId, request.org_id, [this.options.readDecision, (rows) => this.options.staffDecision(rows)]);
     // A store manager sees the people of requests for the stores they manage, and no other.
-    const manages = !read && !staff && (await this.options.managedStores?.(principalId) ?? []).some((s) => s.orgId === request.org_id && s.storeId === request.store_id);
+    const manages = !read && !staff && (await this.options.managedStores(principalId)).some((s) => s.orgId === request.org_id && s.storeId === request.store_id);
     if (!read && !staff && !manages) return null;
     const link = (await this.#pool.query<RecruitRequestPersonLink>(
       `SELECT (SELECT stage FROM recruit_pipeline_cards WHERE request_id = $1::uuid AND person_principal_id = $2::text) AS stage,
