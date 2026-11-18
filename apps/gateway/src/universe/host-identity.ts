@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { verifyAssertion, type KeyResolver, type ReplayStore, type SubjectPolicy } from "@bawes/actor-assertion";
+import { AssertionErrorCode, verifyAssertion, type KeyResolver, type ReplayStore, type SubjectPolicy } from "@bawes/actor-assertion";
 
 /** E2 host attestation bounds (universe-bot-bridge.md: new callers 60 s lifetime, 5 s skew). */
 export const ATTESTATION_LIFETIME_SECONDS = 60;
@@ -46,11 +46,15 @@ export function sameProviderSubjectMapping(
 
 export type AttestationResult =
   | { readonly ok: true; readonly subject: string; readonly issuedAt: number; readonly challenge: string }
-  | { readonly ok: false };
+  | { readonly ok: false; readonly reason: "invalid" | "replayed" | "unavailable" };
 
-/** Verifies a `bawes-aa.v1` host attestation. Every failure is a plain refusal. */
+/**
+ * Verifies a `bawes-aa.v1` host attestation. A replayed attestation and an
+ * unavailable dependency are reported apart from an invalid one, so the caller
+ * never treats a duplicate delivery or an outage as evidence against a binding.
+ */
 export async function verifyHostAttestation(token: unknown, config: HostIdentityConfig): Promise<AttestationResult> {
-  if (typeof token !== "string" || token.length === 0 || token.length > 4096) return { ok: false };
+  if (typeof token !== "string" || token.length === 0 || token.length > 4096) return { ok: false, reason: "invalid" };
   // The challenge is a bearer reference: the shared replay table only ever sees its digest.
   const replay: ReplayStore = {
     consume: (issuer, jti, expiresAt, now, constraints) =>
@@ -62,9 +66,12 @@ export async function verifyHostAttestation(token: unknown, config: HostIdentity
     maxLifetimeSeconds: ATTESTATION_LIFETIME_SECONDS,
     maxIatSkewSeconds: ATTESTATION_SKEW_SECONDS,
   });
-  if (!result.ok) return { ok: false };
+  if (!result.ok) {
+    return { ok: false, reason: result.code === AssertionErrorCode.REPLAYED ? "replayed"
+      : result.code === AssertionErrorCode.UNAVAILABLE ? "unavailable" : "invalid" };
+  }
   const claims = result.claims;
   // A person's OIDC issuer (or any other registered issuer) is never a host attestor.
-  if (claims.iss !== config.pusherIssuer || claims.act !== undefined) return { ok: false };
+  if (claims.iss !== config.pusherIssuer || claims.act !== undefined) return { ok: false, reason: "invalid" };
   return { ok: true, subject: claims.sub, issuedAt: claims.iat, challenge: claims.jti };
 }

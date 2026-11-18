@@ -6,7 +6,7 @@ import { universeEmbedDigest } from "@studenthub/db/universe";
 import { createLoginApplication } from "../login-application.js";
 import { APP_POLICY, universeEmbedPolicy, writeEmbedResponse, type UniverseEmbedConfig } from "./embed-policy.js";
 import { BROWSER_COOKIE, EMBED_COOKIE, SESSION_COOKIE, clearCookie, newReference, readCookie, requestToken, setCookie } from "./embed-cookies.js";
-import { handoffBoundStates } from "./embed-login-states.js";
+import { HandoffNotCurrentError, handoffBoundStates } from "./embed-login-states.js";
 import { completingStores } from "./embed-completion.js";
 import { verifyHostAttestation, type HostIdentityConfig, type HostIdentityMapping } from "./host-identity.js";
 import { UNIVERSE_EMBED_E2_SCRIPT } from "./embed-script.js";
@@ -272,7 +272,13 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
       };
       if (!body || Object.keys(body).length !== 1) return refuse("start_again").then(() => true);
       const attestation = await verifyHostAttestation(body.attestation, runtime.hostIdentity);
-      if (!attestation.ok) return refuse("start_again").then(() => true);
+      if (!attestation.ok) {
+        // A replay (a duplicate delivery of an attestation already used) or an unavailable
+        // verifier says nothing against the current binding: refuse without invalidating.
+        if (attestation.reason === "unavailable") { json(response, 503, { error: "unavailable" }); return true; }
+        if (attestation.reason === "replayed") { json(response, 200, { state: "start_again" }); return true; }
+        return refuse("start_again").then(() => true);
+      }
       const generation = await runtime.store.consumeChallenge(bound.instanceId, attestation.challenge);
       if (generation === undefined || generation !== bound.generation) {
         // A used, expired or older-generation challenge says nothing about the current
@@ -311,9 +317,11 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
       let result;
       try {
         result = await application.start({ browserSessionId: browser, returnTo: `${config.origin}${DONE_PATH}` });
-      } catch {
+      } catch (error) {
         // Superseded, expired or already bound: no authorization request is issued.
-        startAgain(); return true;
+        // Anything else (a store outage) reaches the 503 handler.
+        if (error instanceof HandoffNotCurrentError) { startAgain(); return true; }
+        throw error;
       }
       const location = result.headers?.location;
       if (result.status !== 302 || typeof location !== "string") { startAgain(); return true; }
@@ -337,9 +345,12 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
     }
     case "POST /logout": {
       if (!transactionOk(true)) { json(response, 403, { error: "forbidden" }); return true; }
-      if (browser && embedRef) {
+      if (browser && embedRef && sessionId) {
+        // Only the binding of the session being logged out: a sign-in that replaced it
+        // on this instance meanwhile (another /done) keeps its binding.
         const instanceId = await runtime.store.findInstance(embedRef, browser);
-        if (instanceId) await runtime.store.invalidateBinding(instanceId);
+        const view = instanceId ? await runtime.store.readBinding(instanceId, browser, sessionId) : undefined;
+        if (instanceId && view) await runtime.store.invalidateBinding(instanceId, view.generation);
       }
       // Through the embed login instance, so SHU-457's upstream end applies when it lands.
       if (sessionId) {

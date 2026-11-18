@@ -422,17 +422,40 @@ test('E2 lease: host A with platform B, wrong issuer/audience, replayed or old c
   const replay = JSON.parse((await browser.api('POST', '/universe/embed/identity', { attestation: await h.attest(challenge) })).body);
   assert.deepEqual(replay, { state: 'start_again' });
   assert.deepEqual(h.profileReads, []);
+  // A duplicate delivery says nothing against the binding it already made.
+  assert.deepEqual(JSON.parse((await browser.api('GET', '/universe/embed/status')).body).state, 'ready');
+});
+
+test('E2 lease: a replayed attestation after renewal, or an unavailable verifier, keeps the binding', async () => {
+  const h = await harness();
+  h.store.subjects.set(`person-1\u0000${h.rig.config.issuer}`, [SUBJECT]);
+  const { browser } = await signIn(h);
+  const first = await verifyHost(h, browser);
+  assert.equal(first.reply.state, 'ready');
+  assert.equal((await verifyHost(h, browser)).reply.state, 'ready', 'renewed');
+  const replayed = await browser.api('POST', '/universe/embed/identity', { attestation: await h.attest(first.challenge) });
+  assert.deepEqual(JSON.parse(replayed.body), { state: 'start_again' });
+  assert.equal(JSON.parse((await browser.api('GET', '/universe/embed/status')).body).state, 'ready');
+  // Key resolution down: an outage, not evidence against the person.
+  const keys = h.runtime.hostIdentity.keys;
+  Object.assign(h.runtime.hostIdentity, { keys: async () => { throw new Error('key service down'); } });
+  const challenge = JSON.parse((await browser.api('POST', '/universe/embed/challenge', {})).body).challenge as string;
+  const down = await browser.api('POST', '/universe/embed/identity', { attestation: await h.attest(challenge) });
+  assert.equal(down.status, 503);
+  Object.assign(h.runtime.hostIdentity, { keys });
+  assert.equal(JSON.parse((await browser.api('GET', '/universe/embed/status')).body).state, 'ready');
 });
 
 test('E2 lease ends at attestation iat + 600 s, never at receipt time; expiry clears; renewal keeps the same person', async () => {
   const h = await harness();
   h.store.subjects.set(`person-1\u0000${h.rig.config.issuer}`, [SUBJECT]);
   const { browser } = await signIn(h);
-  const now = Math.floor(Date.now() / 1000);
+  // One clock for the attestation and the store, so the remaining lease is exact.
+  const now = h.store.now;
   const { reply } = await verifyHost(h, browser, { iat: now - 50, exp: now + 10 });
   assert.equal(reply.state, 'ready');
   assert.equal(h.store.leaseWrites.at(-1)!.iat, now - 50, 'the lease is computed from the attested iat');
-  assert.ok(reply.leaseSeconds <= 550 - LEASE_CLOCK_MARGIN_SECONDS, 'the client is told the remaining lease, not a fresh 600 s');
+  assert.equal(reply.leaseSeconds, 550 - LEASE_CLOCK_MARGIN_SECONDS, 'the client is told the remaining lease, not a fresh 600 s');
   assert.equal(LEASE_SECONDS, 600);
   // Renewal with a fresh challenge and the same person succeeds.
   assert.equal((await verifyHost(h, browser)).reply.state, 'ready');
@@ -463,6 +486,38 @@ test('E2 lock, session revocation and sign-out invalidate the binding', async ()
   assert.match(String(out.headers['set-cookie']), /^__Host-studenthub_session=; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=0$/);
   assert.deepEqual(JSON.parse((await browser.api('GET', '/universe/embed/profile')).body), { state: 'signed_out' });
   assert.deepEqual(h.profileReads, []);
+});
+
+test('E2 sign-out ends only the binding of the session it signs out', async () => {
+  const h = await harness();
+  h.store.subjects.set(`person-1\u0000${h.rig.config.issuer}`, [SUBJECT]);
+  const { browser } = await signIn(h);
+  await verifyHost(h, browser);
+  const older = browser.jar.get('__Host-studenthub_session')!;
+  // A second sign-in on the same instance replaces the binding.
+  await signIn(h, browser);
+  assert.equal((await verifyHost(h, browser)).reply.state, 'ready');
+  const current = browser.jar.get('__Host-studenthub_session')!;
+  assert.notEqual(current, older);
+  // A sign-out still carrying the older session leaves the newer binding alone.
+  browser.jar.set('__Host-studenthub_session', older);
+  assert.equal((await browser.api('POST', '/logout', {})).status, 200);
+  browser.jar.set('__Host-studenthub_session', current);
+  assert.equal(JSON.parse((await browser.api('GET', '/universe/embed/status')).body).state, 'ready');
+  // Signing out the current session does end it.
+  assert.equal((await browser.api('POST', '/logout', {})).status, 200);
+  assert.deepEqual(JSON.parse((await browser.api('GET', '/universe/embed/status')).body), { state: 'signed_out' });
+});
+
+test('E2 a store outage while starting sign-in is an outage, not a start-again', async () => {
+  const h = await harness();
+  const browser = new Browser(h.server);
+  await browser.go('GET', '/universe/embed', { 'sec-fetch-dest': 'iframe' });
+  h.store.attachState = async () => { throw new Error('database down'); };
+  const connect = await browser.go('POST', '/universe/embed/connect',
+    { origin: EMBED, 'content-type': 'application/x-www-form-urlencoded' }, `t=${browser.token()}`);
+  assert.equal(connect.status, 503);
+  assert.equal(h.rig.provider.authorizationRequests.length, 0);
 });
 
 test('E2 link and data states come from My profile\'s reader with provenance', async () => {
@@ -506,7 +561,8 @@ test('E2 wiring: absent E2 names keep E1 behaviour; partial or unpinned configur
     { UNIVERSE_EMBED_SITE: 'embed.example.test' }, { UNIVERSE_EMBED_HOST_MAPPING: 'preferred_email' }, { UNIVERSE_EMBED_IDENTITY_AUDIENCE: 'studenthub-embed/identity@prod' },
     { UNIVERSE_EMBED_PUSHER_KEYS: '{}' }, { UNIVERSE_EMBED_HOST_SUBJECT_FORMAT: 'anything' },
     { UNIVERSE_EMBED_HOST_SUBJECT_FORMAT: 'hashed_user_id' }, { OIDC_AUTHORIZATION_URL: 'http://identity.test.invalid/a' },
-    { OIDC_AUTHORIZATION_URL: 'not a url' }]) {
+    { OIDC_AUTHORIZATION_URL: 'not a url' }, { OIDC_AUTHORIZATION_URL: 'https://identity.test.invalid./a' },
+    { UNIVERSE_EMBED_PUSHER_KEYS: JSON.stringify({ k1: (await generateEd25519KeyPair()).privateKeyPem }) }]) {
     await assert.rejects(wireUniverse({ ...full, ...broken }, base, reader), /Invalid Universe embed E2 configuration/);
   }
   const disabled = createUniverseEmbedConfigFromEnv({ UNIVERSE_EMBED_ORIGIN: EMBED, UNIVERSE_EMBED_ENABLED: 'false' }, MAIN);
@@ -568,11 +624,17 @@ function scriptRig(options: { visibility?: 'visible' | 'hidden' } = {}) {
   const windowListeners = new Map<string, Array<(e: unknown) => void>>();
   const routes = new Map<string, () => Promise<unknown>>();
   const calls: string[] = [];
+  const documentListeners = new Map<string, Array<(e: unknown) => void>>();
   const document = {
     body, documentElement: { lang: 'en' }, visibilityState: options.visibility ?? 'visible',
     getElementById: (id: string) => ids[id], createElement: () => new El(), createTextNode: (text: string) => ({ text }),
-    addEventListener() {},
+    addEventListener(type: string, fn: (e: unknown) => void) { documentListeners.set(type, [...(documentListeners.get(type) ?? []), fn]); },
   };
+  async function visibility(state: 'visible' | 'hidden') {
+    document.visibilityState = state;
+    for (const fn of documentListeners.get('visibilitychange') ?? []) fn({});
+    await settle();
+  }
   const window: Record<string, unknown> = {
     parent,
     addEventListener(type: string, fn: (e: unknown) => void) { windowListeners.set(type, [...(windowListeners.get(type) ?? []), fn]); },
@@ -613,7 +675,7 @@ function scriptRig(options: { visibility?: 'visible' | 'hidden' } = {}) {
     await settle();
   }
   return {
-    ids, body, routes, calls, posted, advance, settle, attest,
+    ids, body, routes, calls, posted, advance, settle, attest, visibility,
     start: async () => { window.window = window; runInNewContext(UNIVERSE_EMBED_E2_SCRIPT, { ...context, window }); await settle(); },
     shown: () => !ids.profile!.hidden && ids.profile!.textContent.includes('Synthetic'),
   };
@@ -788,10 +850,26 @@ test('E2 script: while waiting for the sign-in tab, the frame notices the comple
   assert.equal(rig.posted.length, 1, 'verification started without any visibility change');
 });
 
+test('E2 script: a visibility change while signing in keeps the waiting message and its quick poll', async () => {
+  const rig = scriptRig();
+  let status = 'signed_out';
+  rig.routes.set('GET /universe/embed/status', async () => ({ state: status }));
+  rig.routes.set('POST /universe/embed/challenge', async () => ({ challenge: 'c1' }));
+  await rig.start();
+  for (const fn of rig.ids.connect!.listeners.get('submit') ?? []) fn({});
+  // The person switches to the sign-in tab and back before finishing.
+  await rig.visibility('hidden');
+  await rig.visibility('visible');
+  assert.equal(rig.body.getAttribute('data-state'), 'waiting');
+  status = 'needs_universe';
+  await rig.advance(3_000);
+  assert.equal(rig.body.getAttribute('data-state'), 'needs_universe', 'noticed within the quick poll, not the 60 s one');
+});
+
 test('E2 hosts: the embed never shares a hostname with the main app, and the site is never a public suffix', () => {
   assert.doesNotThrow(() => assertSeparateHosts(MAIN, EMBED));
   assert.throws(() => assertSeparateHosts('https://app.example.test', 'https://app.example.test:8443'), /Invalid Universe embed E2 configuration/);
-  for (const site of ['co.uk', 'com.kw', 'edu.kw', 'org.uk']) {
+  for (const site of ['co.uk', 'com.kw', 'edu.kw', 'org.uk', 'github.io', 'pages.dev', 'vercel.app']) {
     assert.throws(() => assertSameSiteEmbed(site, `https://embed.${site}`, [`https://universe.${site}`]), /Invalid Universe embed E2 configuration/, site);
   }
   assert.doesNotThrow(() => assertSameSiteEmbed('bawes.co.uk', 'https://embed.bawes.co.uk', ['https://universe.bawes.co.uk']));
@@ -814,7 +892,8 @@ test('E2 the host challenge reaches the shared replay store only as its digest',
   assert.equal((await verifyHostAttestation(token, config)).ok, false, 'replay is still detected');
 });
 
-test('E2 an oversized connect body gets its refusal over a real connection', async () => {
+// The rest of the body is never sent: a missing refusal fails at the deadline instead of hanging the run.
+test('E2 an oversized connect body gets its refusal over a real connection', { timeout: 5_000 }, async () => {
   const h = await harness();
   const browser = new Browser(h.server);
   await browser.go('GET', '/universe/embed', { 'sec-fetch-dest': 'iframe' });
