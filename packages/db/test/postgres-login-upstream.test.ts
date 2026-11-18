@@ -5,6 +5,7 @@ import pg from "pg";
 
 import { PostgresLoginStore, runMigrations } from "@studenthub/db";
 import type { SessionStore } from "@studenthub/login-contract";
+import { confirmingSessions } from "../../../apps/gateway/src/login-application.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "";
 let pool: pg.Pool;
@@ -30,7 +31,7 @@ async function person(): Promise<string> {
   return id;
 }
 
-test("SHU457_RECORD migration 0404 adds the reference and the two times to login_sessions and nothing else", async () => {
+test("SHU457_RECORD migration 0404 adds the reference and the three times to login_sessions and nothing else", async () => {
   const { rows } = await pool.query<{ column_name: string; is_nullable: string; data_type: string }>(
     `SELECT column_name, is_nullable, data_type FROM information_schema.columns
       WHERE table_schema = current_schema() AND table_name = 'login_sessions' ORDER BY ordinal_position`,
@@ -38,6 +39,7 @@ test("SHU457_RECORD migration 0404 adds the reference and the two times to login
   assert.deepEqual(rows.map((row) => [row.column_name, row.is_nullable, row.data_type]), [
     ["id", "NO", "text"], ["person_id", "NO", "text"], ["expires_at", "NO", "timestamp with time zone"],
     ["upstream_session_ref", "YES", "text"], ["last_confirmed_at", "YES", "timestamp with time zone"], ["last_checked_at", "YES", "timestamp with time zone"],
+    ["last_settled_at", "YES", "timestamp with time zone"],
   ]);
 });
 
@@ -95,5 +97,39 @@ test("SHU457_BOUND a check put on the store applies to every reader of its sessi
     assert.equal((checked.sessions as unknown as Record<symbol, unknown>)[Symbol.for("studenthub.login.upstream-confirming")], true);
   } finally {
     await checked.close();
+  }
+});
+
+test("SHU457_BOUND a reader in another process waits for an in-flight check and never rides on the row", async () => {
+  const second = new PostgresLoginStore({ connectionString: databaseUrl });
+  const wrap = () => confirmingSessions(store.sessions, {
+    upstream: { isActive: async () => "active", end: async () => "ended" } as never,
+    clock: { nowEpochSeconds: () => NOW }, boundSeconds: 900, timeoutMs: 200, log: () => undefined,
+  });
+  const due = async (sid: string) => {
+    const id = randomUUID();
+    await store.sessions.put({ id, personId: await person(), upstreamReference: sid, lastCheckedAt: NOW - 900, lastConfirmedAt: NOW - 900 });
+    assert.equal(await second.sessions.claimUpstreamCheck!(id, NOW - 900, NOW), true, "the other process claims the check");
+    return id;
+  };
+  const later = (ms: number, step: () => Promise<void>) => new Promise<void>((resolve, reject) => setTimeout(() => step().then(resolve, reject), ms));
+  try {
+    const ended = await due("sid-race-ended");
+    const [seen] = await Promise.all([wrap().get(ended), later(100, () => second.sessions.delete(ended))]);
+    assert.equal(seen, undefined, "the other process's answer of ended wins");
+
+    const active = await due("sid-race-active");
+    const [kept] = await Promise.all([wrap().get(active), later(100, () => second.sessions.confirmUpstream!(active, NOW))]);
+    assert.equal(kept?.id, active, "an answer of active lets the reader through");
+
+    const unknown = await due("sid-race-unknown");
+    const [after] = await Promise.all([wrap().get(unknown), later(100, () => second.sessions.settleUpstreamCheck!(unknown, NOW))]);
+    assert.equal(after?.id, unknown, "a settled unknown answer keeps the session within 2T");
+
+    const stuck = await due("sid-race-stuck");
+    assert.equal(await wrap().get(stuck), undefined, "a check that never settles fails closed");
+    assert.ok(await store.sessions.get(stuck), "failing closed for one request deletes nothing");
+  } finally {
+    await second.close();
   }
 });

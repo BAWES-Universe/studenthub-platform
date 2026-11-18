@@ -67,6 +67,12 @@ export interface LoginSession {
   readonly lastCheckedAt?: number;
   /** Epoch seconds of the last upstream answer of `active` (or the sign-in). */
   readonly lastConfirmedAt?: number;
+  /**
+   * Epoch seconds of the last claimed check that ended without ending the
+   * session. A check is in flight while lastCheckedAt is later than both this
+   * and lastConfirmedAt.
+   */
+  readonly lastSettledAt?: number;
 }
 
 export interface SessionStore {
@@ -83,6 +89,8 @@ export interface SessionStore {
   claimUpstreamCheck?(id: string, checkedAtOrBefore: number, now: number): Promise<boolean>;
   /** Records an upstream answer of `active` at `now`. */
   confirmUpstream?(id: string, now: number): Promise<void>;
+  /** Records that the check claimed at `checkedAt` ended without an answer of `active` or `ended`. */
+  settleUpstreamCheck?(id: string, checkedAt: number): Promise<void>;
 }
 
 /** Answer of the issuer when asked to end its session. */

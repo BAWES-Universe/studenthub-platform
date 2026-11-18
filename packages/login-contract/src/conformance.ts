@@ -134,6 +134,10 @@ class MemorySessions implements SessionStore {
     const record = this.records.get(id);
     if (record) this.records.set(id, { ...record, lastConfirmedAt: Math.max(now, record.lastConfirmedAt ?? now) });
   }
+  async settleUpstreamCheck(id: string, checkedAt: number): Promise<void> {
+    const record = this.records.get(id);
+    if (record) this.records.set(id, { ...record, lastSettledAt: Math.max(checkedAt, record.lastSettledAt ?? checkedAt) });
+  }
 }
 
 /** A fake issuer session service: answers are set by the scenario, calls are recorded. */
@@ -747,6 +751,20 @@ const UPSTREAM_SCENARIOS: readonly Scenario[] = [
       const answers = await Promise.all([rig.app.profile({ sessionId }), rig.app.profile({ sessionId }), rig.app.profile({ sessionId })]);
       assert.deepEqual(answers.map((answer) => answer.status), [200, 200, 200]);
       assert.equal(upstream.checked.length, 1, "one upstream call at most");
+    },
+  },
+  {
+    name: "concurrent reads of a session whose check answers ended are all refused",
+    run: async (factory) => {
+      const upstream = new FakeUpstreamSessions();
+      upstream.activity = "ended";
+      const rig = upstreamRig(factory, upstream);
+      const sessionId = await signedIn(rig);
+      rig.clock.epoch = NOW + BOUND;
+      const answers = await Promise.all([rig.app.profile({ sessionId }), rig.app.profile({ sessionId }), rig.app.profile({ sessionId })]);
+      assert.deepEqual(answers.map((answer) => answer.status), [401, 401, 401], "no request rides on the row while its check is in flight");
+      assert.equal(upstream.checked.length, 1, "one upstream call at most");
+      assert.equal(rig.sessions.records.has(sessionId), false);
     },
   },
 ];

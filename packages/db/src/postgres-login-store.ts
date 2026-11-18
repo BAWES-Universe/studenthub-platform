@@ -26,6 +26,7 @@ interface SessionRow {
   upstream_session_ref: string | null;
   last_checked_at: string | null;
   last_confirmed_at: string | null;
+  last_settled_at: string | null;
 }
 
 interface IdentityRow {
@@ -72,6 +73,7 @@ export class PostgresLoginStore {
       take: (id) => this.#takeSession(id),
       claimUpstreamCheck: (id, checkedAtOrBefore, now) => this.#claimUpstreamCheck(id, checkedAtOrBefore, now),
       confirmUpstream: (id, now) => this.#confirmUpstream(id, now),
+      settleUpstreamCheck: (id, checkedAt) => this.#settleUpstreamCheck(id, checkedAt),
     };
     this.identities = {
       findBySubject: (issuer, subject) => this.#findIdentity(issuer, subject),
@@ -99,6 +101,7 @@ export class PostgresLoginStore {
       take: (id) => this.#takeSession(id),
       claimUpstreamCheck: (id, checkedAtOrBefore, now) => this.#claimUpstreamCheck(id, checkedAtOrBefore, now),
       confirmUpstream: (id, now) => this.#confirmUpstream(id, now),
+      settleUpstreamCheck: (id, checkedAt) => this.#settleUpstreamCheck(id, checkedAt),
     };
     const checked = check(plain);
     this.#sessionRead = (id) => checked.get(id);
@@ -162,7 +165,8 @@ export class PostgresLoginStore {
        )
        SELECT id, person_id, upstream_session_ref,
               extract(epoch FROM last_checked_at)::text AS last_checked_at,
-              extract(epoch FROM last_confirmed_at)::text AS last_confirmed_at
+              extract(epoch FROM last_confirmed_at)::text AS last_confirmed_at,
+              extract(epoch FROM last_settled_at)::text AS last_settled_at
          FROM login_sessions WHERE id = $1 AND expires_at > now()`,
       [storedToken(id)],
     );
@@ -175,7 +179,8 @@ export class PostgresLoginStore {
       `DELETE FROM login_sessions WHERE id = $1
        RETURNING id, person_id, upstream_session_ref,
                  extract(epoch FROM last_checked_at)::text AS last_checked_at,
-                 extract(epoch FROM last_confirmed_at)::text AS last_confirmed_at`,
+                 extract(epoch FROM last_confirmed_at)::text AS last_confirmed_at,
+              extract(epoch FROM last_settled_at)::text AS last_settled_at`,
       [storedToken(id)],
     );
     const row = rows[0];
@@ -200,6 +205,15 @@ export class PostgresLoginStore {
           SET last_confirmed_at = GREATEST(last_confirmed_at, to_timestamp($2::double precision))
         WHERE id = $1`,
       [storedToken(id), now],
+    );
+  }
+
+  async #settleUpstreamCheck(id: string, checkedAt: number): Promise<void> {
+    await this.#pool.query(
+      `UPDATE login_sessions
+          SET last_settled_at = GREATEST(last_settled_at, to_timestamp($2::double precision))
+        WHERE id = $1`,
+      [storedToken(id), checkedAt],
     );
   }
 
@@ -352,6 +366,7 @@ function sessionFromRow(id: string, row: SessionRow): LoginSession {
     upstreamReference: row.upstream_session_ref,
     ...(row.last_checked_at !== null ? { lastCheckedAt: Number(row.last_checked_at) } : {}),
     ...(row.last_confirmed_at !== null ? { lastConfirmedAt: Number(row.last_confirmed_at) } : {}),
+    ...(row.last_settled_at !== null ? { lastSettledAt: Number(row.last_settled_at) } : {}),
   };
 }
 

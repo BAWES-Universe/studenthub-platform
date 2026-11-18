@@ -39,6 +39,9 @@ function upstreamReferenceFrom(claims: IdTokenClaims): string | undefined {
 
 export const DEFAULT_UPSTREAM_CHECK_SECONDS = 900;
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 3_000;
+/** How long past the issuer timeout a reader waits for another process's check before failing closed. */
+const UPSTREAM_SETTLE_GRACE_SECONDS = 2;
+const UPSTREAM_SETTLE_POLL_MS = 50;
 
 /** Bound T: an integer from 60 to 3600 seconds, default 900. */
 export function upstreamCheckSeconds(value: number | undefined): number {
@@ -94,8 +97,8 @@ export interface UpstreamConfirmationOptions {
 export function confirmingSessions(store: SessionStore, options: UpstreamConfirmationOptions): SessionStore {
   if ((store as { readonly [CONFIRMING]?: true })[CONFIRMING]) return store;
   const bound = upstreamCheckSeconds(options.boundSeconds);
-  if (!store.claimUpstreamCheck || !store.confirmUpstream) {
-    throw new TypeError("upstream session checks need a session store with claimUpstreamCheck and confirmUpstream");
+  if (!store.claimUpstreamCheck || !store.confirmUpstream || !store.settleUpstreamCheck) {
+    throw new TypeError("upstream session checks need a session store with claimUpstreamCheck, confirmUpstream and settleUpstreamCheck");
   }
   const timeoutMs = options.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
   const wrapped: SessionStore & { readonly [CONFIRMING]: true } = {
@@ -105,42 +108,84 @@ export function confirmingSessions(store: SessionStore, options: UpstreamConfirm
     ...(store.take ? { take: (id: string) => store.take!(id) } : {}),
     ...(store.claimUpstreamCheck ? { claimUpstreamCheck: (id: string, before: number, now: number) => store.claimUpstreamCheck!(id, before, now) } : {}),
     ...(store.confirmUpstream ? { confirmUpstream: (id: string, now: number) => store.confirmUpstream!(id, now) } : {}),
-    async get(id) {
-      const session = await store.get(id);
-      const reference = session?.upstreamReference;
-      if (!session || !reference) return session;
-      const now = options.clock.nowEpochSeconds();
-      const confirmedAt = session.lastConfirmedAt ?? Number.NEGATIVE_INFINITY;
-      if (now - confirmedAt >= 2 * bound) {
-        await store.delete(id);
-        return undefined;
-      }
-      if (session.lastCheckedAt !== undefined && now - session.lastCheckedAt < bound) return session;
-      // Another request won the claim, or the row is gone: answer from the row as it is now.
-      if (!await store.claimUpstreamCheck!(id, now - bound, now)) return store.get(id);
-      let activity: Awaited<ReturnType<UpstreamSessions["isActive"]>> | typeof TIMED_OUT | "error";
-      try {
-        activity = await bounded(() => options.upstream.isActive(reference), timeoutMs);
-      } catch {
-        activity = "error";
-      }
-      if (activity === "ended") {
-        await store.delete(id);
-        return undefined;
-      }
-      if (activity === "active") await store.confirmUpstream!(id, now);
-      else options.log("upstream_check_unknown", activity === TIMED_OUT ? "timeout" : activity === "error" ? "error" : "unknown");
-      // Read the row again after the wait: a sign-out meanwhile removed it, and
-      // the 2*T deadline may have passed while the issuer was being asked.
+    ...(store.settleUpstreamCheck ? { settleUpstreamCheck: (id: string, checkedAt: number) => store.settleUpstreamCheck!(id, checkedAt) } : {}),
+    get: (id) => read(id),
+  };
+  // One check per session at a time in this process: every reader awaits it.
+  const inflight = new Map<string, Promise<LoginSession | undefined>>();
+  const waitSeconds = timeoutMs / 1000 + UPSTREAM_SETTLE_GRACE_SECONDS;
+  const expired = (session: LoginSession, now: number) => now - (session.lastConfirmedAt ?? Number.NEGATIVE_INFINITY) >= 2 * bound;
+  const unsettled = (session: LoginSession) => session.lastCheckedAt !== undefined
+    && session.lastCheckedAt > Math.max(session.lastSettledAt ?? Number.NEGATIVE_INFINITY, session.lastConfirmedAt ?? Number.NEGATIVE_INFINITY);
+
+  async function read(id: string): Promise<LoginSession | undefined> {
+    const session = await store.get(id);
+    const reference = session?.upstreamReference;
+    if (!session || !reference) return session;
+    const now = options.clock.nowEpochSeconds();
+    if (expired(session, now)) {
+      await store.delete(id);
+      return undefined;
+    }
+    const shared = inflight.get(id);
+    if (shared) return shared;
+    // A check claimed elsewhere and not yet answered: its answer may be
+    // `ended`, so this request never rides on the row as it was before it.
+    if (unsettled(session) && now - session.lastCheckedAt! < waitSeconds) return settled(id);
+    if (session.lastCheckedAt !== undefined && now - session.lastCheckedAt < bound) return session;
+    const run = check(id, reference, now);
+    inflight.set(id, run);
+    try {
+      return await run;
+    } finally {
+      if (inflight.get(id) === run) inflight.delete(id);
+    }
+  }
+
+  /** Waits for another process's check to settle; fails closed (without deleting) if it doesn't in time. */
+  async function settled(id: string): Promise<LoginSession | undefined> {
+    const deadline = Date.now() + waitSeconds * 1000;
+    for (;;) {
       const current = await store.get(id);
       if (!current) return undefined;
-      if (options.clock.nowEpochSeconds() - (current.lastConfirmedAt ?? Number.NEGATIVE_INFINITY) >= 2 * bound) {
+      if (expired(current, options.clock.nowEpochSeconds())) {
         await store.delete(id);
         return undefined;
       }
-      return current;
-    },
-  };
+      if (!unsettled(current)) return current;
+      if (Date.now() >= deadline) return undefined;
+      await new Promise((resolve) => setTimeout(resolve, UPSTREAM_SETTLE_POLL_MS));
+    }
+  }
+
+  async function check(id: string, reference: string, now: number): Promise<LoginSession | undefined> {
+    // Another process won the claim, or the row is gone: wait for that answer.
+    if (!await store.claimUpstreamCheck!(id, now - bound, now)) return settled(id);
+    let activity: Awaited<ReturnType<UpstreamSessions["isActive"]>> | typeof TIMED_OUT | "error";
+    try {
+      activity = await bounded(() => options.upstream.isActive(reference), timeoutMs);
+    } catch {
+      activity = "error";
+    }
+    if (activity === "ended") {
+      await store.delete(id);
+      return undefined;
+    }
+    if (activity === "active") await store.confirmUpstream!(id, now);
+    else {
+      await store.settleUpstreamCheck!(id, now);
+      options.log("upstream_check_unknown", activity === TIMED_OUT ? "timeout" : activity === "error" ? "error" : "unknown");
+    }
+    // Read the row again after the wait: a sign-out meanwhile removed it, and
+    // the 2*T deadline may have passed while the issuer was being asked.
+    const current = await store.get(id);
+    if (!current) return undefined;
+    if (expired(current, options.clock.nowEpochSeconds())) {
+      await store.delete(id);
+      return undefined;
+    }
+    return current;
+  }
   return wrapped;
 }
 

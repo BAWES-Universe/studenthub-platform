@@ -12,4 +12,9 @@
 ALTER TABLE login_sessions
   ADD COLUMN upstream_session_ref TEXT,
   ADD COLUMN last_confirmed_at    timestamptz,
-  ADD COLUMN last_checked_at      timestamptz;
+  ADD COLUMN last_checked_at      timestamptz,
+  -- Set when a claimed check ends without ending the session (an answer of
+  -- active also moves last_confirmed_at to the claim time). A check is in
+  -- flight while last_checked_at is later than both, and every other request
+  -- for the session waits for it or fails closed; none rides on the old row.
+  ADD COLUMN last_settled_at      timestamptz;
