@@ -61,6 +61,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const ref = (value: unknown): string | null | undefined => (value === undefined || value === null || value === "" ? null : typeof value === "string" && UUID.test(value) ? value.toLowerCase() : undefined);
 const closed = (value: unknown, keys: readonly string[]) => typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).every((k) => keys.includes(k));
 
+/** A real calendar day: 2020-13-01 and 2021-02-29 are refused instead of throwing or rolling over. */
+const calendarDate = (value: string): boolean => { const d = new Date(`${value}T00:00:00Z`); return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value; };
+
 export interface FulltimerFields {
   readonly name: string; readonly phone: string | null; readonly email: string | null; readonly nationalityId: string | null; readonly countryId: string | null; readonly areaId: string | null; readonly universityId: string | null;
   readonly latitude: number | null; readonly longitude: number | null; readonly gender: FulltimerGender | null; readonly birthDate: string | null; readonly employed: boolean | null; readonly drivingLicence: boolean | null;
@@ -81,7 +84,7 @@ export function parseFulltimer(value: unknown, today: string): FulltimerFields |
   const latitude = coordinate(r.latitude, 90), longitude = coordinate(r.longitude, 180);
   const gender = r.gender === undefined || r.gender === null || r.gender === "" ? null : typeof r.gender === "string" && (FULLTIMER_GENDERS as readonly string[]).includes(r.gender) ? r.gender as FulltimerGender : undefined;
   const birthDate = r.birthDate === undefined || r.birthDate === null || r.birthDate === "" ? null
-    : typeof r.birthDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.birthDate) && new Date(`${r.birthDate}T00:00:00Z`).toISOString().startsWith(r.birthDate) && r.birthDate >= "1900-01-01" && r.birthDate <= today ? r.birthDate : undefined;
+    : typeof r.birthDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.birthDate) && calendarDate(r.birthDate) && r.birthDate >= "1900-01-01" && r.birthDate <= today ? r.birthDate : undefined;
   const employed = flag(r.employed), drivingLicence = flag(r.drivingLicence);
   const currentSalary = text(r.currentSalary, 64), expectedSalary = text(r.expectedSalary, 64);
   const currencyCode = r.currencyCode === undefined || r.currencyCode === "" ? "KWD" : typeof r.currencyCode === "string" && /^[A-Za-z]{3}$/.test(r.currencyCode) ? r.currencyCode.toUpperCase() : undefined;

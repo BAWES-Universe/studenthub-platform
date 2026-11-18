@@ -5,6 +5,7 @@ import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, langua
 import { organizationProfileRoute, organizationStatusRoute, organizationCommercialTermsRoute, organizationApprovedToHireRoute, organizationNotesRoute, organizationBrandsRoute, organizationStoresRoute, organizationDeletionRoute, organizationCreationRoute, organizationAccountManagerPageRoute, organizationAccountManagerRoute } from "./organizations.js";
 import { payContractsRoute } from "./pay-contracts.js";
 import { recruitChecklistRoute, recruitEmployerViewRoute, recruitFulltimersRoute, recruitInterviewsRoute, recruitInvitationsRoute, recruitJobsRoute, recruitPeopleSearchRoute, recruitPipelineRoute, recruitRequestsRoute } from "./recruit.js";
+import { accessRoute } from "./access.js";
 import { handleLegacyLink } from "../legacy-link-http.js";
 import { handleDocumentsUpload } from "../documents-upload-http.js";
 import { handleDocumentsActions } from "../documents-actions-http.js";
@@ -69,6 +70,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   areaRoute,
   peopleDirectoryRoute,
   civilIdReviewRoute,
+  accessRoute,
   recruitRequestsRoute,
   recruitPipelineRoute,
   recruitChecklistRoute,

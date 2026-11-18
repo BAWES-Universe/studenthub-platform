@@ -27,7 +27,7 @@ test("REC9_PARSE the legacy form: lists split and de-duplicated, phone compacted
     employed: false, drivingLicence: true, currentSalary: null, expectedSalary: "600", currencyCode: "KWD", tags: ["sales", "retail"], skills: ["Arabic", "English"], experience: ["Cashier at X", "2 years", "Supervisor"], cvReference: "cv/fahad.pdf" });
   assert.equal(m.parseFulltimer({ name: "A" }, TODAY)?.currencyCode, "KWD");
   for (const bad of [{}, { name: "A", phone: "nope" }, { name: "A", email: "no-at" }, { name: "A", latitude: "29" }, { name: "A", latitude: "91", longitude: "0" }, { name: "A", birthDate: "2026-11-18" },
-    { name: "A", birthDate: "2001-02-30" }, { name: "A", gender: "4" }, { name: "A", employed: "maybe" }, { name: "A", areaId: "Hawalli" }, { name: "A", currencyCode: "KW" }, { name: "A", tags: Array.from({ length: 31 }, (_, i) => `t${i}`) },
+    { name: "A", birthDate: "2001-02-30" }, { name: "A", birthDate: "2020-13-01" }, { name: "A", birthDate: "2020-00-10" }, { name: "A", birthDate: "2020-01-32" }, { name: "A", gender: "4" }, { name: "A", employed: "maybe" }, { name: "A", areaId: "Hawalli" }, { name: "A", currencyCode: "KW" }, { name: "A", tags: Array.from({ length: 31 }, (_, i) => `t${i}`) },
     { name: "line\nbreak" }, { name: "A", salary: "1" }])
     assert.equal(m.parseFulltimer(bad, TODAY), undefined, JSON.stringify(bad));
   assert.deepEqual(m.parseFulltimerQuery({ q: " fahad ", currency: "usd", tag: "sales", archived: "1", page: "3", request: "x" }), { q: "fahad", currency: "USD", tag: "sales", archived: true, page: 3 });
