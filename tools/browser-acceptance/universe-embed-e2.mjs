@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {generateKeyPairSync} from 'node:crypto';
 export const universeEmbedE2Names = [
   ...['en','ar'].flatMap(language=>[320,390].map(width=>`universe-e2-signin-return-${language}-${width}`)),
+  'universe-e2-cancel-retry-en',
+  'universe-e2-cancel-retry-ar',
   'universe-e2-copied-url',
   'universe-e2-cross-site-startup-refused',
 ];
@@ -35,10 +37,11 @@ export async function runUniverseEmbedE2({browser,run,screenshot,sourceRevision}
   const {createE2Fixture}=await import('./universe-embed-e2-fixture.mjs');
   for(const name of universeEmbedE2Names.filter(n=>n!=='universe-e2-cross-site-startup-refused')) {
     await run(name,async()=>{
-      const fixture=await createE2Fixture({sourceRevision});let context;
+      const cancelLanguage=/cancel-retry-(en|ar)$/.exec(name)?.[1];
+      const fixture=await createE2Fixture({sourceRevision,cancelFirstAuthorization:Boolean(cancelLanguage)});let context;
       try {
         const match=/signin-return-(en|ar)-(320|390)$/.exec(name);
-        const language=match?.[1]??'en',width=Number(match?.[2]??390);
+        const language=match?.[1]??cancelLanguage??'en',width=Number(match?.[2]??390);
         context=await browser.newContext({viewport:{width,height:900},locale:language,serviceWorkers:'block'});
         await context.exposeBinding('syntheticHostAttestation',async({page,frame},challenge)=>{
           assert.equal(frame,page.mainFrame(),'Only the synthetic parent can request an attestation');
@@ -46,7 +49,7 @@ export async function runUniverseEmbedE2({browser,run,screenshot,sourceRevision}
           return fixture.attest(challenge);
         });
         const page=await context.newPage();page.setDefaultTimeout(15000);page.setDefaultNavigationTimeout(15000);
-        if(!match) {
+        if(!match && !cancelLanguage) {
           await page.goto(`${fixture.origin}/universe/embed`);
           assert.ok((await page.locator('body').innerText()).includes('Open this in Universe'));
           assert.equal(await page.locator('#profile').count(),0);
@@ -57,6 +60,23 @@ export async function runUniverseEmbedE2({browser,run,screenshot,sourceRevision}
         const frame=page.frameLocator('iframe');
         await frame.locator('body[data-state="signed_out"]').waitFor();
         assert.equal(fixture.facts.profileReads,0,'No profile read before sign-in and host verification');
+        if(cancelLanguage){
+          const canceledPopupPromise=context.waitForEvent('page');
+          await frame.locator('#connect button').click();
+          const canceledPopup=await canceledPopupPromise;
+          await canceledPopup.getByRole('heading',{name:'Finish synthetic sign-in',exact:true}).waitFor();
+          // Use native tab focus/close only. Never dispatch visibility events,
+          // navigate/reload the app, or call its APIs to manufacture recovery.
+          await canceledPopup.bringToFront();
+          assert.equal(fixture.facts.callbacks,0,'Canceled attempt never reached callback');
+          assert.equal(fixture.facts.exchanges,0,'Canceled attempt never exchanged a code');
+          assert.equal(fixture.facts.profileReads,0,'Canceled attempt never read profile');
+          assert.deepEqual(await fixture.recoveryCounts(),{sessions:0,handoffs:{pending:1}});
+          await canceledPopup.close();await page.bringToFront();
+          await frame.locator('body[data-state="signed_out"]').waitFor();
+          assert.equal(await frame.locator('#profile').innerText(),'','Canceled attempt leaves no profile');
+          await frame.locator('#connect button').waitFor({state:'visible'});
+        }
         const popupPromise=context.waitForEvent('page');
         await frame.locator('#connect button').click();
         const popup=await popupPromise;
@@ -75,7 +95,13 @@ export async function runUniverseEmbedE2({browser,run,screenshot,sourceRevision}
         assert.equal(fixture.facts.connectCookie,true,'Native cookie delivered on form POST');
         assert.equal(fixture.facts.callbackCookie,true,'Native cookie delivered on callback');
         assert.equal(fixture.facts.profileCookie,true,'Native session cookie delivered on iframe profile read');
-        return {screenshot:await screenshot(page,name),nativeCookies:true,realGateway:true,realPostgres:true,
+        if(cancelLanguage){
+          assert.equal(fixture.facts.authorizations,2,'Retry starts a fresh authorization');
+          assert.equal(fixture.facts.callbacks,1,'Exactly one callback completes');
+          assert.equal(fixture.facts.exchanges,1,'Exactly one code exchanged');
+          assert.deepEqual(await fixture.recoveryCounts(),{sessions:1,handoffs:{superseded:1,consumed:1}});
+        }
+        return {...(cancelLanguage?{cancelRecovery:true,freshLogin:true,singleCompletion:true}:{}),screenshot:await screenshot(page,name),nativeCookies:true,realGateway:true,realPostgres:true,
           returnMode:'native tab close and foreground; no reload or synthetic visibility event',syntheticOidcAndPusher:true,liveEnablement:false};
       } finally {if(context)await context.close();await fixture.close();}
     });

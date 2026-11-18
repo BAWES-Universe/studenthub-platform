@@ -1,9 +1,9 @@
 # Synthetic E2 browser integration
 
 This slice is based on #507 at `460a5e25294620196f5341f97fe7355165c8857f`.
-It adds six separately named evidence cases to the existing runner: four English/
+It adds eight separately named evidence cases to the existing runner: four English/
 Arabic mobile sign-in → callback → native tab return → own-profile cases, a copied
-URL case, and unsupported cross-site startup refusal. Existing E1 cases remain.
+URL case, unsupported cross-site startup refusal, and English/Arabic cancel → retry recovery. Existing E1 cases remain.
 
 The fixture uses the actual gateway, E2 browser script, Postgres login states,
 sessions, identities, embed instances, handoffs and leases. OIDC transport/JWKS,
@@ -54,6 +54,27 @@ hidden by a test workaround. A Chromium viewport case is not mobile Safari proof
   process-singleton socket creation. No workaround or permission change was used.
   CI must execute the real Postgres/native-cookie fixture before claiming E2 proof.
 
-Cancellation/retry, repeated login, BFCache, background revocation, failed renewal
+Repeated login, BFCache, background revocation, failed renewal
 and cookie-path negative-control cases from the larger proposed matrix are not
 claimed by this minimal slice.
+
+## Cancel/retry increment
+
+Based on published draft #515 at `198821ff5f2794c0bd7acd253f4343ce40b33688`.
+The synthetic provider holds the first authorization on a visible page, without
+issuing a code or callback. The browser focuses and closes that native tab, then
+returns to the unchanged parent. Recovery must reveal Sign in again without
+reload, script event injection or API calls from the test. The second normal
+sign-in must complete and reveal only the synthetic person's profile.
+
+The fixture separately checks no callback, exchange, profile read or session on
+the canceled attempt, then exactly one callback/exchange/session after retry.
+Real PostgreSQL handoff rows must finish with one superseded and one consumed
+handoff. All counts are sanitized; no state, cookie or token values are recorded.
+
+Local syntax, four non-browser tests, and whitespace checks passed. Both new
+browser cases remain NOT_RUN under the already observed Chromium socket denial;
+no sandbox workaround was attempted. Static source review alone does not prove
+that cancel/retry is broken: the real script revalidates on visible return, but
+its waiting state suppresses periodic polling. Native focus/visibility behavior
+is exactly what CI must exercise rather than assuming success or failure.

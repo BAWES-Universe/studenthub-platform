@@ -6,7 +6,7 @@ import {randomBytes, generateKeyPairSync, createHash, sign} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {createServer} from 'node:https';
 
-export async function createE2Fixture({sourceRevision = null} = {}) {
+export async function createE2Fixture({sourceRevision = null, cancelFirstAuthorization = false} = {}) {
   const database = process.env.BROWSER_ACCEPTANCE_DATABASE_URL;
   assert.ok(database, 'Disposable E2 database required');
   const db = new URL(database);
@@ -37,7 +37,7 @@ export async function createE2Fixture({sourceRevision = null} = {}) {
     const pusher=await aa.generateEd25519KeyPair();
     const requests=new Map(), codes=new Map();
     const subject='universe:student:synthetic-e2', issuer='https://synthetic-issuer.invalid';
-    const facts={connectCookie:false,callbackCookie:false,profileCookie:false,profileReads:0};
+    const facts={connectCookie:false,callbackCookie:false,profileCookie:false,profileReads:0,authorizations:0,exchanges:0,callbacks:0};
     let gateway, origin, parentOrigin, providerOrigin;
     const encode=x=>Buffer.from(JSON.stringify(x)).toString('base64url');
     const oidc={
@@ -47,7 +47,7 @@ export async function createE2Fixture({sourceRevision = null} = {}) {
         return `${providerOrigin}/authorize?id=${id}`;
       },
       async exchange(request) {
-        const auth=codes.get(request.code);assert.ok(auth,'Synthetic code exists');codes.delete(request.code);
+        const auth=codes.get(request.code);assert.ok(auth,'Synthetic code exists');codes.delete(request.code);facts.exchanges++;
         assert.equal(request.clientId,'synthetic-e2');assert.equal(request.clientSecret,'synthetic-e2-secret');
         assert.equal(request.redirectUri,auth.redirectUri);
         assert.equal(createHash('sha256').update(request.codeVerifier).digest('base64url'),auth.codeChallenge);
@@ -70,6 +70,12 @@ export async function createE2Fixture({sourceRevision = null} = {}) {
       }
       if(host==='provider.browser.test'&&url.pathname==='/authorize') {
         const auth=requests.get(url.searchParams.get('id'));if(!auth){res.writeHead(400);res.end();return;}
+        facts.authorizations++;
+        if(cancelFirstAuthorization && facts.authorizations===1){
+          // Hold only the synthetic provider: no callback/code/session is issued.
+          res.writeHead(200,{'content-type':'text/html','cache-control':'no-store'});
+          res.end('<!doctype html><title>Synthetic sign-in</title><h1>Finish synthetic sign-in</h1>');return;
+        }
         requests.delete(url.searchParams.get('id'));const code=randomBytes(24).toString('base64url');codes.set(code,auth);
         const callback=new URL(auth.redirectUri);callback.search=new URLSearchParams({state:auth.state,code}).toString();
         res.writeHead(302,{location:callback.href,'cache-control':'no-store'});res.end();return;
@@ -77,7 +83,7 @@ export async function createE2Fixture({sourceRevision = null} = {}) {
       if(host!=='embed.browser.test'){res.writeHead(404);res.end();return;}
       // Record booleans only; never retain header values, URLs, states or tokens.
       if(url.pathname==='/universe/embed/connect')facts.connectCookie=Boolean(req.headers.cookie?.includes('__Host-studenthub_browser='));
-      if(url.pathname==='/login/callback')facts.callbackCookie=Boolean(req.headers.cookie?.includes('__Host-studenthub_browser='));
+      if(url.pathname==='/login/callback'){facts.callbacks++;facts.callbackCookie=Boolean(req.headers.cookie?.includes('__Host-studenthub_browser='));}
       if(url.pathname==='/universe/embed/profile')facts.profileCookie=Boolean(req.headers.cookie?.includes('__Host-studenthub_session='));
       gateway.emit('request',req,res);
     });
@@ -96,6 +102,11 @@ export async function createE2Fixture({sourceRevision = null} = {}) {
     };
     gateway=createGatewayServer(undefined,undefined,undefined,undefined,sourceRevision,undefined,undefined,undefined,undefined,undefined,{...base,runtime});
     return {origin,parentOrigin,facts,close,
+      async recoveryCounts(){
+        const sessions=Number((await pool.query('SELECT count(*) AS n FROM login_sessions')).rows[0].n);
+        const handoffs=(await pool.query('SELECT status, count(*)::int AS n FROM universe_embed_handoffs GROUP BY status')).rows;
+        return {sessions,handoffs:Object.fromEntries(handoffs.map(row=>[row.status,row.n]))};
+      },
       async attest(challenge){assert.match(challenge,/^[A-Za-z0-9_-]{43}$/);const now=Math.floor(Date.now()/1000);return aa.signAssertion({v:1,iss:'universe-pusher@browser',kid:'synthetic-e2',aud:'studenthub-embed/identity@browser',sub:subject,iat:now,exp:now+60,jti:challenge},pusher.privateKeyPem);},
     };
   } catch(error) {await close();throw error;}
