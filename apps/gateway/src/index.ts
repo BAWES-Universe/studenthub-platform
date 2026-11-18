@@ -7,6 +7,7 @@ import { createRuntimeOrganizationDocumentsFromEnv } from './organization-docume
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import { StaffDocuments } from '../../../packages/private-documents/src/staff-delivery.js';
 import { DEFAULT_OPERATOR_ORG_IDS } from '@studenthub/organizations';
+import { managedStores } from "../../../packages/access/src/index.js";
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import type {BrowserResponse} from "@studenthub/login-contract";
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
@@ -32,7 +33,7 @@ import { renderAdminJobs, type AdminJobsPage } from "./admin-jobs.js";
 import {renderAdminOutbox,type AdminOutboxPage}from"./admin-outbox.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
 import {
-  type BrowserLoginApplication, profileDocument, renderError, renderLanding,
+  type BrowserLoginApplication, profileDocument, renderError, renderLanding, renderSignedOut, renderAccessPaused,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,renderNotifications,
 } from "./web-ui.js";
 import {addNotificationBell} from "./web-ui.js";
@@ -190,6 +191,10 @@ export function createGatewayServer(
       writeHtml(response, 200, renderLanding(login));
       return;
     }
+    if (request.method === "GET" && request.url && requestPath(request.url) === "/signed-out") {
+      writeHtml(response, 200, renderSignedOut(login));
+      return;
+    }
     if (request.method === "GET" && request.url === "/assets/studenthub.css") {
       response.writeHead(200, {
         "content-type": "text/css; charset=utf-8", "cache-control": "no-cache",
@@ -299,8 +304,15 @@ export function createGatewayServer(
         const principalId=identity.status===200&&typeof identity.body?.personId==="string"?identity.body.personId:undefined;
         if(principalId&&await login.civilIdReview.isStaff(principalId))civilIdReviewCount=await login.civilIdReview.store.countPending({excludePrincipalId:principalId});
       }catch{civilIdReviewCount=undefined;}
+      // A4: a person who manages a store gets a My stores link, even with no company role.
+      let managesStores=false;
+      if(html&&login?.storeManager&&result.status===200)try{
+        const session=cookieValue(request.headers.cookie,"__Host-studenthub_session");
+        const personId=session?(await login.storeManager.sessions.get(session))?.personId:undefined;
+        managesStores=personId?managedStores(personId,await login.storeManager.stores.rows(personId)).length>0:false;
+      }catch{managesStores=false;}
       if (html) {
-        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined, civilIdReviewCount) : renderError(503)), {}, true);
+        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined, civilIdReviewCount, managesStores) : renderError(503)), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }
@@ -348,6 +360,7 @@ export function createGatewayServer(
         fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
       }
+      if (html && result.body?.error === "access_paused") { writeHtml(response, 403, renderAccessPaused()); return; }
       if (html && result.status >= 400) { writeHtml(response, result.status, renderError(result.status, login)); return; }
       writeBrowserResponseSafely(response, result);
       return;
@@ -440,7 +453,7 @@ export function createGatewayServer(
       }
       if (html) {
         if (result.status === 204) {
-          response.writeHead(303, { ...result.headers, location: "/", "cache-control": "no-store", vary: "Accept" });
+          response.writeHead(303, { ...result.headers, location: "/signed-out", "cache-control": "no-store", vary: "Accept" });
           response.end();
         } else {
           writeHtml(response, result.status, renderError(result.status, login));

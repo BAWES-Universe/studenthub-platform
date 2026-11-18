@@ -56,12 +56,62 @@ export interface LoginStateStore {
 export interface LoginSession {
   readonly id: string;
   readonly personId: string;
+  /**
+   * The upstream (issuer) session reference from the identity token's `sid`
+   * claim. A lookup value, not a secret, but never logged, put in a URL we
+   * build, or shown. Absent when the token carried no `sid` or the login has
+   * no UpstreamSessions port.
+   */
+  readonly upstreamReference?: string;
+  /** Epoch seconds of the last upstream check, whatever its answer. */
+  readonly lastCheckedAt?: number;
+  /** Epoch seconds of the last upstream answer of `active` (or the sign-in). */
+  readonly lastConfirmedAt?: number;
+  /**
+   * Epoch seconds of the last claimed check that ended without ending the
+   * session. A check is in flight while lastCheckedAt is later than both this
+   * and lastConfirmedAt.
+   */
+  readonly lastSettledAt?: number;
 }
 
 export interface SessionStore {
   put(record: LoginSession): Promise<void>;
   get(id: string): Promise<LoginSession | undefined>;
   delete(id: string): Promise<void>;
+  /** Deletes the session and returns what it held, in one step. */
+  take?(id: string): Promise<LoginSession | undefined>;
+  /**
+   * Claims the right to check this session upstream: sets last_checked_at to
+   * `now` only if it is unset or at or before `checkedAtOrBefore`, and answers
+   * whether this call won. Two concurrent requests make one upstream call.
+   */
+  claimUpstreamCheck?(id: string, checkedAtOrBefore: number, now: number): Promise<boolean>;
+  /** Records an upstream answer of `active` at `now`. */
+  confirmUpstream?(id: string, now: number): Promise<void>;
+  /** Records that the check claimed at `checkedAt` ended without an answer of `active` or `ended`. */
+  settleUpstreamCheck?(id: string, checkedAt: number): Promise<void>;
+}
+
+/** Answer of the issuer when asked to end its session. */
+export type UpstreamEndResult = "ended" | "unreachable";
+/** Answer of the issuer when asked whether its session is still alive. */
+export type UpstreamActivity = "active" | "ended" | "unknown";
+
+/**
+ * SHU-457: the issuer's own session. Optional; a login application built
+ * without it behaves exactly as contract 1.0.0 describes.
+ */
+export interface UpstreamSessions {
+  end(reference: string): Promise<UpstreamEndResult>;
+  isActive(reference: string): Promise<UpstreamActivity>;
+}
+
+/** One log event for an upstream call that did not answer: a count and a reason class, never the reference or the person. */
+export interface UpstreamSessionEvent {
+  readonly event: "upstream_end_unreachable" | "upstream_check_unknown";
+  readonly reason: "timeout" | "error" | "unreachable" | "unknown";
+  readonly count: number;
 }
 
 export interface ExternalIdentity {
@@ -112,6 +162,14 @@ export interface LoginDependencies {
   readonly identities: IdentityStore;
   readonly authorization: AuthorizationStore;
   readonly jwks: JwksResolver;
+  readonly upstreamSessions?: UpstreamSessions;
+  readonly upstreamLog?: (event: UpstreamSessionEvent) => void;
+  /** Access lane A6: a paused person gets no session (403 access_paused). */
+  readonly accessPause?: AccessPauseReader;
+}
+
+export interface AccessPauseReader {
+  isPaused(personId: string): Promise<boolean>;
 }
 
 export interface LoginConfig {
@@ -122,6 +180,10 @@ export interface LoginConfig {
   readonly allowedReturnUrls: readonly string[];
   readonly clockSkewSeconds: number;
   readonly subjectPolicy: (subject: string) => boolean;
+  /** Bound T in seconds for an upstream-ended session (default 900, valid 60 to 3600). */
+  readonly upstreamCheckSeconds?: number;
+  /** Bound on each upstream call in milliseconds (default 3000). */
+  readonly upstreamTimeoutMs?: number;
 }
 
 export interface StartLoginRequest {
