@@ -45,6 +45,7 @@ test("COMMS_STAFF_MSG_PG a repeat send key is already_sent with no second row; a
   assert.deepEqual(await send({ sendKey, kind: "message", body: "different" }), { status: "send_key_conflict" });
   assert.deepEqual(await send({ sendKey, recipientPrincipalId: other }), { status: "send_key_conflict" });
   assert.deepEqual(await send({ sendKey, kind: "profile_photo_request" }), { status: "send_key_conflict" });
+  assert.deepEqual(await send({ sendKey, recipientPrincipalId: `missing-${randomUUID()}` }), { status: "send_key_conflict" });
   const feedRows = await pool.query("SELECT count(*)::int n FROM notifications WHERE subject_reference=$1", [`staff_message:${(first as { id: string }).id}`]);
   assert.equal(feedRows.rows[0].n, 1);
 });

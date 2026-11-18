@@ -31,10 +31,23 @@ export class PostgresStaffMessagesStore {
   #database(): pg.Pool { return this.#pool ??= new pg.Pool({ connectionString: this.#connectionString }); }
   async close(): Promise<void> { if (this.#pool && !this.#providedPool) await this.#pool.end(); }
 
+  async #existing(client: pg.PoolClient, draft: StaffMessageDraftRow): Promise<StaffMessageSendRow | undefined> {
+    const existing = await client.query<{ id: string; recipient_principal_id: string; kind: string }>(
+      "SELECT id::text id,recipient_principal_id,kind FROM staff_messages WHERE send_key=$1", [draft.sendKey]);
+    const row = existing.rows[0];
+    if (!row) return undefined;
+    if (row.recipient_principal_id === draft.recipientPrincipalId && row.kind === draft.kind) return { status: "already_sent", id: row.id };
+    return { status: "send_key_conflict" };
+  }
+
   async send(draft: StaffMessageDraftRow): Promise<StaffMessageSendRow> {
     const client = await this.#database().connect();
     try {
       await client.query("BEGIN");
+      // An existing send key is resolved first, so reuse for another recipient or kind is a
+      // conflict even when that recipient does not exist.
+      const prior = await this.#existing(client, draft);
+      if (prior) { await client.query("COMMIT"); return prior; }
       const recipient = await client.query("SELECT 1 FROM principals WHERE id=$1", [draft.recipientPrincipalId]);
       if (recipient.rowCount === 0) { await client.query("ROLLBACK"); return { status: "recipient_not_found" }; }
       const inserted = await client.query<{ id: string }>(
@@ -43,14 +56,10 @@ export class PostgresStaffMessagesStore {
         [draft.recipientPrincipalId, draft.senderPrincipalId, draft.kind, draft.body, draft.sendKey]);
       const created = inserted.rows[0];
       if (!created) {
-        const existing = await client.query<{ id: string; recipient_principal_id: string; kind: string; body: string | null }>(
-          "SELECT id::text id,recipient_principal_id,kind,body FROM staff_messages WHERE send_key=$1", [draft.sendKey]);
+        // A concurrent send took the key between the lookup and the insert.
+        const raced = await this.#existing(client, draft);
         await client.query("COMMIT");
-        const row = existing.rows[0];
-        if (row && row.recipient_principal_id === draft.recipientPrincipalId && row.kind === draft.kind) {
-          return { status: "already_sent", id: row.id };
-        }
-        return { status: "send_key_conflict" };
+        return raced ?? { status: "send_key_conflict" };
       }
       await client.query(
         `INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key)
