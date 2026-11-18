@@ -36,6 +36,8 @@ class MemoryEmbedStore implements UniverseEmbedStore {
   readonly sessionExpiry = new Map<string, number>();
   readonly locked = new Set<string>();
   readonly subjects = new Map<string, string[]>();
+  /** Like the login_sessions join in readBinding: is the session behind a digest still live? */
+  sessionLive: (sessionDigest: string) => boolean = () => true;
   leaseWrites: Array<{ iat: number }> = [];
   /** Like the database sequence: a generation value is never reused. */
   nextGeneration = 1;
@@ -89,7 +91,7 @@ class MemoryEmbedStore implements UniverseEmbedStore {
   }
   async readBinding(instance: string, browser: string, session: string): Promise<UniverseEmbedBindingView | undefined> {
     const b = this.bindings.get(instance);
-    if (!b || b.browser !== digest(browser) || b.session !== digest(session)) return undefined;
+    if (!b || b.browser !== digest(browser) || b.session !== digest(session) || !this.sessionLive(b.session)) return undefined;
     const live = b.leaseExpires !== undefined && b.leaseExpires > this.now;
     return { personId: b.person, generation: b.generation, locked: this.locked.has(b.person),
       ...(live ? { lease: { hostSubjectDigest: b.leaseSubject!, expiresAt: new Date(b.leaseExpires! * 1000) } } : {}) };
@@ -194,6 +196,7 @@ async function harness(options: { profile?: EmbedProfileView; duringRead?: () =>
   const base = createUniverseEmbedConfigFromEnv({ UNIVERSE_EMBED_ORIGIN: EMBED, UNIVERSE_EMBED_ENABLED: 'true',
     UNIVERSE_EMBED_ANCESTORS: UNIVERSE, UNIVERSE_EMBED_OIDC_CALLBACK_URL: `${EMBED}/login/callback` }, MAIN)!;
   const profileReads: string[] = [];
+  store.sessionLive = (sessionDigest) => [...rig.sessions.records.keys()].some(id => digest(id) === sessionDigest);
   const sessionGet = rig.sessions.get.bind(rig.sessions);
   rig.sessions.get = async (id) => { const found = await sessionGet(id); options.duringSessionGet?.(); return found; };
   const runtime: UniverseEmbedRuntime = {
@@ -705,6 +708,28 @@ test('E2 profile: a lease that expires during the final session lookup releases 
   assert.deepEqual(reply, { state: 'needs_universe' });
   assert.equal(h.profileReads.length, 1);
 });
+
+for (const when of ['before', 'after'] as const) {
+  test(`E2 profile: a logout landing just after the session lookup ${when} the read releases no fields`, async () => {
+    let h!: Awaited<ReturnType<typeof harness>>;
+    let armed = false;
+    let sessionId = '';
+    // Revoke the session right after sessions.get() has returned it, before the binding read.
+    h = await harness({ duringSessionGet: () => {
+      if (!armed || (when === 'after') !== (h.profileReads.length > 0)) return;
+      armed = false;
+      h.rig.sessions.records.delete(sessionId);
+    } });
+    h.store.subjects.set(`person-1\u0000${h.rig.config.issuer}`, [SUBJECT]);
+    const { browser } = await signIn(h);
+    assert.equal((await verifyHost(h, browser)).reply.state, 'ready');
+    sessionId = browser.jar.get('__Host-studenthub_session')!;
+    armed = true;
+    const reply = JSON.parse((await browser.api('GET', '/universe/embed/profile')).body);
+    assert.equal(armed, false, 'the revocation ran');
+    assert.deepEqual(reply, { state: 'signed_out' });
+  });
+}
 
 test('E2 a stale refusal never deletes a renewed or replaced binding', async () => {
   const h = await harness();

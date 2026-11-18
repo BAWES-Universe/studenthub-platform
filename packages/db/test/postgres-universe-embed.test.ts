@@ -61,6 +61,15 @@ test("E2_DB a new instance sweeps other browsers' expired instances and their ro
   assert.equal(rows[0].n, 0);
 });
 
+test("E2_DB readBinding authorizes only while the bound session is live", async () => {
+  const { browser, session, instance } = await bound();
+  assert.equal((await store.readBinding(instance, browser, session))?.personId, person);
+  await pool.query("UPDATE login_sessions SET expires_at = clock_timestamp() - interval '1 second' WHERE person_id = $1", [person]);
+  assert.equal(await store.readBinding(instance, browser, session), undefined, "an expired session authorizes nothing");
+  await login.sessions.delete(session);
+  assert.equal(await store.readBinding(instance, browser, session), undefined, "a removed session authorizes nothing");
+});
+
 test("E2_DB a second connect supersedes the first; the older start cannot attach a state", async () => {
   const browser = ref();
   const instance = await store.ensureInstance(browser, ref(), 43_200);

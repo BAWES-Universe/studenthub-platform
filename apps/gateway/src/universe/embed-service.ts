@@ -170,8 +170,9 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
     const instanceId = await runtime.store.findInstance(embedRef, browser);
     if (!instanceId) return { kind: "refused", state: "start_again" };
     if (!sessionId) return { kind: "refused", state: "signed_out" };
-    // Session first, binding and lease last: the lease check is the final await,
-    // so a lease cannot expire between this check and the caller's response.
+    // Session first, binding and lease last: the lease check is the final await, and
+    // readBinding re-checks the live session in the same statement, so neither a lease
+    // expiry nor a logout or revocation can land between the checks and the response.
     const session = await runtime.sessions.get(sessionId);
     const view = await runtime.store.readBinding(instanceId, browser, sessionId);
     if (!view) return { kind: "refused", state: "signed_out" };

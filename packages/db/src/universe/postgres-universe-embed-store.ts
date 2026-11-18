@@ -205,7 +205,12 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
                        WHERE e.person_id = b.person_id AND e.locked_at IS NOT NULL) AS locked
          FROM universe_embed_bindings b
          JOIN universe_embed_instances i ON i.id = b.instance_id AND i.expires_at > clock_timestamp()
-        WHERE b.instance_id = $1 AND b.browser_binding_digest = $2 AND b.session_digest = $3`,
+         -- The live session is checked in the same statement and share-locked, so a logout
+         -- or revocation either removed it before this read (no row) or waits until after it.
+         JOIN login_sessions s ON s.id = b.session_digest AND s.person_id = b.person_id
+                              AND s.expires_at > clock_timestamp()
+        WHERE b.instance_id = $1 AND b.browser_binding_digest = $2 AND b.session_digest = $3
+        FOR SHARE OF s`,
       [instanceId, universeEmbedDigest(browserBinding), universeEmbedDigest(sessionId)]);
     const row = rows[0];
     if (!row) return undefined;
