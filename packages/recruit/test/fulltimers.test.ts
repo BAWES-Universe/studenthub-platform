@@ -18,6 +18,8 @@ test("REC9_RULES operator staff, admins and recruiters keep full-timers; duplica
   assert.equal(m.normalizePhone("(965) 9999 1234"), "96599991234");
   assert.equal(m.normalizePhone("call me"), undefined);
   assert.equal(m.normalizePhone("12345"), undefined);
+  assert.equal(m.normalizePhone("00965 9999 1234"), "+96599991234", "the 00 international prefix is the same number as +");
+  assert.equal(m.normalizePhone("0012345"), undefined, "too short once the prefix is written +");
 });
 
 test("REC9_PARSE the legacy form: lists split and de-duplicated, phone compacted, coordinates paired, sane dates, nothing extra", () => {

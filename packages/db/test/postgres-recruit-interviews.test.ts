@@ -9,7 +9,7 @@ import {
 jobCandidateDecision,   evaluationAllowed, interviewCompanyDecision, internalNoteDecision, interviewOutbox, interviewStageAllowed, interviewTransitionAllowed, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed,
   recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision,
 } from "../../recruit/src/index.js";
-import { revokeDuring } from "./recruit-races.js";
+import { revokeDuring, whileUncommitted } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS_ORG = `rec6-ops-${randomUUID()}`;
@@ -128,4 +128,31 @@ test("REC6_REVOKE_RACE the assigned recruiter or the company losing the grant wh
   assert.deepEqual(await interviews.schedule(s.recruiter, s.requestId, fields(s.cardId)), { kind: "not_found" }, "still assigned, but no longer a recruiter");
   assert.equal((await pool.query<{ status: string }>("SELECT status FROM recruit_interviews WHERE id = $1::uuid", [id])).rows[0]!.status, "scheduled");
   assert.equal((await pool.query("SELECT 1 FROM recruit_interview_evaluations WHERE interview_id = $1::uuid", [id])).rowCount, 0);
+});
+
+test("REC6_STALE_FORM a correction from a form that showed an older version is refused; the current version stands", async () => {
+  const s = await setup();
+  await pipeline.move(s.recruiter, s.cardId, "contacted");
+  const id = ((await interviews.schedule(s.owner, s.requestId, fields(s.cardId))) as { interviewId: string }).interviewId;
+  assert.deepEqual(await interviews.evaluate(s.recruiter, id, { outcome: "not_passed", rating: 2, sharedNote: "Late", internalNote: "Twice late", expectedVersion: 0 }), { kind: "evaluated", version: 1 });
+  assert.deepEqual(await interviews.evaluate(s.owner, id, { outcome: "not_passed", rating: 2, sharedNote: "Late, apologised", internalNote: null, expectedVersion: 1 }), { kind: "evaluated", version: 2 });
+  assert.deepEqual(await interviews.evaluate(s.recruiter, id, { outcome: "passed", rating: 5, sharedNote: null, internalNote: null, expectedVersion: 1 }), { kind: "stale", version: 2 });
+  const now = (await interviews.forRequest(s.recruiter, s.requestId))!.interviews[0]!;
+  assert.deepEqual([now.outcome, now.rating, now.shared_note, now.internal_note, now.evaluation_version], ["not_passed", 2, "Late, apologised", "Twice late", 2], "the company's correction kept the staff note");
+});
+
+test("REC6_TREE_RACE a reparent that removes the company caller's ancestor authority while an interview write is in flight refuses it", async () => {
+  const s = await setup();
+  await pipeline.move(s.recruiter, s.cardId, "contacted");
+  // The company sits under a holding group; the holding owner's subtree grant is what authorises them.
+  const group = `rec6-group-${randomUUID()}`, elsewhere = `rec6-elsewhere-${randomUUID()}`;
+  await authz.upsertOrganization(createOrganization({ id: group, name: "Group", parentOrgId: OPS_ORG }));
+  await authz.upsertOrganization(createOrganization({ id: elsewhere, name: "Elsewhere", parentOrgId: OPS_ORG }));
+  const middle = `rec6-middle-${randomUUID()}`;
+  await authz.upsertOrganization(createOrganization({ id: middle, name: "Middle", parentOrgId: group }));
+  await pool.query("UPDATE organizations SET parent_org_id = $2 WHERE id = $1", [s.orgId, middle]);
+  const holder = await person([{ orgId: group, role: "org-owner", scope: "subtree" }]);
+  const reparent = `SELECT pg_advisory_xact_lock(hashtext('studenthub:organizations:tree')); UPDATE organizations SET parent_org_id = '${elsewhere}' WHERE id = '${middle}'`;
+  assert.deepEqual(await whileUncommitted(pool, reparent, [], () => interviews.schedule(holder, s.requestId, fields(s.cardId))), { kind: "not_found" });
+  assert.equal((await pool.query("SELECT 1 FROM recruit_interviews WHERE card_id = $1", [s.cardId])).rowCount, 0);
 });

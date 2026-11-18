@@ -96,7 +96,12 @@ export function interviewInstant(value: string): Date | undefined {
     const back = new Date(date.getTime() + 3 * 3_600_000);
     return back.getUTCFullYear() === y && back.getUTCMonth() === mo - 1 && back.getUTCDate() === d && back.getUTCHours() === h ? date : undefined;
   }
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(value)) return undefined;
+  const offset = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!offset) return undefined;
+  // The written calendar day must exist: 2027-02-30 is refused, not rolled into March.
+  const [y, mo, d] = [Number(offset[1]), Number(offset[2]), Number(offset[3])];
+  const day = new Date(Date.UTC(y, mo - 1, d));
+  if (day.getUTCFullYear() !== y || day.getUTCMonth() !== mo - 1 || day.getUTCDate() !== d) return undefined;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
@@ -106,9 +111,10 @@ export function kuwaitWallClock(instant: string | Date): string {
   return d.toISOString().slice(0, 16).replace("T", " ");
 }
 
-export interface EvaluationFields { readonly outcome: InterviewOutcome; readonly rating: number | null; readonly sharedNote: string | null; readonly internalNote: string | null }
+/** `expectedVersion` (the version the form showed, 0 for none) refuses a correction from a stale form; absent, no check. */
+export interface EvaluationFields { readonly outcome: InterviewOutcome; readonly rating: number | null; readonly sharedNote: string | null; readonly internalNote: string | null; readonly expectedVersion?: number }
 export function parseEvaluation(value: unknown): EvaluationFields | undefined {
-  if (!closed(value, ["outcome", "rating", "sharedNote", "internalNote"])) return undefined;
+  if (!closed(value, ["outcome", "rating", "sharedNote", "internalNote", "version"])) return undefined;
   const r = value as Record<string, unknown>;
   const outcome = typeof r.outcome === "string" && (INTERVIEW_OUTCOMES as readonly string[]).includes(r.outcome) ? r.outcome as InterviewOutcome : undefined;
   const rawRating = r.rating === undefined || r.rating === null || r.rating === "" ? null : typeof r.rating === "string" && /^[1-5]$/.test(r.rating) ? Number(r.rating) : r.rating;
@@ -116,7 +122,10 @@ export function parseEvaluation(value: unknown): EvaluationFields | undefined {
   const sharedNote = text(r.sharedNote, EVALUATION_NOTE_MAX, true), internalNote = text(r.internalNote, EVALUATION_NOTE_MAX, true);
   if (!outcome || rating === undefined || sharedNote === undefined || internalNote === undefined) return undefined;
   if (outcome === "no_show" && rating !== null) return undefined;
-  return { outcome, rating, sharedNote, internalNote };
+  if (r.version === undefined) return { outcome, rating, sharedNote, internalNote };
+  const expectedVersion = typeof r.version === "string" && /^(0|[1-9][0-9]{0,8})$/.test(r.version) ? Number(r.version) : typeof r.version === "number" && Number.isInteger(r.version) && r.version >= 0 && r.version < 1e9 ? r.version : undefined;
+  if (expectedVersion === undefined) return undefined;
+  return { outcome, rating, sharedNote, internalNote, expectedVersion };
 }
 
 export interface InterviewRow {

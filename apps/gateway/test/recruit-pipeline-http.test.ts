@@ -11,13 +11,13 @@ const store: RecruitPipelineStore = {
   assign: async (_p, r, who) => { calls.push(`assign:${r}:${who}`); return r !== REQ ? { kind: "not_found" } : who === "company-person" ? { kind: "recruiter_ineligible" } : { kind: "assigned" }; },
   addCard: async (_p, r, who) => { calls.push(`add:${r}:${who}`); return r !== REQ ? { kind: "not_found" } : who === "again" ? { kind: "duplicate", cardId: CARD } : { kind: "added", cardId: CARD }; },
   addFulltimerCard: async (_p, r, who) => { calls.push(`addFulltimer:${r}:${who}`); return r !== REQ ? { kind: "not_found" } : { kind: "added", cardId: CARD }; },
-  move: async (_p, c, to) => { calls.push(`move:${c}:${to}`); return c !== CARD ? { kind: "not_found" } : to === "placed" ? { kind: "placement_refused", code: "work_unavailable" } : to === "suggested" ? { kind: "refused", stage: "contacted" } : { kind: "moved", stage: to }; },
+  move: async (_p, c, to) => { calls.push(`move:${c}:${to}`); return c === FT_CARD ? { kind: "subject_unavailable" } : c !== CARD ? { kind: "not_found" } : to === "placed" ? { kind: "placement_refused", code: "work_unavailable" } : to === "suggested" ? { kind: "refused", stage: "contacted" } : { kind: "moved", stage: to }; },
   view: async (_p, r) => r !== REQ ? null : {
     request: { id: REQ, org_name: "Co", store_name: "Avenues <x>", position_title: "Cashier", headcount: 2, status: "filling", assigned_recruiter_principal_id: "rec", recruiter_name: "Rami", assigned_at: "2026-11-17T10:00:00.000Z" },
     cards: [{ id: CARD, person_principal_id: "p1", person_name: "Noor <b>", stage: "contacted", updated_at: "2026-11-17T10:00:00.000Z" },
       { id: FT_CARD, person_principal_id: null, fulltimer_id: FT, person_name: "Fahad <i>", stage: "suggested", updated_at: "2026-11-17T10:00:00.000Z" }],
     events: [{ card_id: CARD, from_stage: null, to_stage: "suggested", actor_name: "Rami", at: "2026-11-17T10:00:00.000Z" }],
-    canAssign: true, canMove: true, recruiters: [{ principal_id: "rec", name: "Rami" }],
+    canAssign: true, canMove: true, canPlacePeople: true, recruiters: [{ principal_id: "rec", name: "Rami" }],
   },
 };
 const service = createRecruitPipeline({ sessions: { get: async (id) => (id === SESSION ? { id, personId: "staff" } : undefined) }, store });
@@ -43,6 +43,7 @@ test("REC2_HTTP assign, add and move answer by outcome; refusals reveal nothing"
   assert.deepEqual((await call(`/recruit/staff/cards/${CARD}/move`, post({ to: "suggested" }))).json, { error: "move_not_allowed", stage: "contacted" });
   assert.deepEqual((await call(`/recruit/staff/cards/${CARD}/move`, post({ to: "placed" }))).json, { error: "placement_refused", code: "work_unavailable" });
   assert.deepEqual((await call(`/recruit/staff/cards/${CARD}/move`, post({ to: "hired" }))).json, { error: "invalid_request" });
+  assert.deepEqual((await call(`/recruit/staff/cards/${FT_CARD}/move`, post({ to: "contacted" }))).json, { error: "subject_unavailable" }, "an archived full-timer or a revoked candidate moves no further");
   assert.deepEqual((await call(`/recruit/staff/cards/${CARD}/move`, post({ to: "offered", extra: 1 }))).json, { error: "invalid_request" });
   const other = "423e4567-e89b-42d3-a456-426614174000";
   for (const path of [`/recruit/staff/requests/${other}/assign`, `/recruit/staff/requests/${other}/cards`]) assert.deepEqual((await call(path, post(path.endsWith("assign") ? { recruiterId: "rec" } : { personId: "p" }))).json, { error: "not_found" });

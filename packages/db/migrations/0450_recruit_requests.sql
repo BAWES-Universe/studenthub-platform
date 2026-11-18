@@ -49,7 +49,11 @@ BEGIN
    ('filling','filled'),('filling','closed'),('filled','filling'),('filled','closed')) THEN
    RAISE EXCEPTION 'recruit request transition % to % is not allowed', OLD.status, NEW.status USING ERRCODE = '23514';
   END IF;
-  IF OLD.status = 'closed' AND NEW IS DISTINCT FROM OLD THEN
+  -- A deleted creator or recruiter is forgotten (ON DELETE SET NULL); nothing else on a closed request moves.
+  IF OLD.status = 'closed' AND (
+    to_jsonb(NEW) - 'created_by_principal_id' - 'assigned_recruiter_principal_id' IS DISTINCT FROM to_jsonb(OLD) - 'created_by_principal_id' - 'assigned_recruiter_principal_id'
+    OR (NEW.created_by_principal_id IS NOT NULL AND NEW.created_by_principal_id IS DISTINCT FROM OLD.created_by_principal_id)
+    OR (NEW.assigned_recruiter_principal_id IS NOT NULL AND NEW.assigned_recruiter_principal_id IS DISTINCT FROM OLD.assigned_recruiter_principal_id)) THEN
    RAISE EXCEPTION 'closed recruit request is read-only' USING ERRCODE = '23514';
   END IF;
  END IF;
@@ -71,5 +75,13 @@ CREATE TABLE recruit_request_events (
  CHECK ((to_status = 'closed') = (close_reason IS NOT NULL))
 );
 CREATE INDEX recruit_request_events_request_idx ON recruit_request_events(request_id, at, id);
-CREATE FUNCTION refuse_recruit_request_event_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'recruit request activity is append-only' USING ERRCODE = '23514'; END $$;
+CREATE FUNCTION refuse_recruit_request_event_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ -- Shared by request and pipeline events: a deleted actor is forgotten (ON DELETE SET NULL), actor_ref and the rest stay.
+ IF TG_OP = 'UPDATE' AND OLD.actor_principal_id IS NOT NULL AND NEW.actor_principal_id IS NULL
+   AND to_jsonb(NEW) - 'actor_principal_id' = to_jsonb(OLD) - 'actor_principal_id' THEN
+  RETURN NEW;
+ END IF;
+ RAISE EXCEPTION 'recruit request activity is append-only' USING ERRCODE = '23514';
+END $$;
 CREATE TRIGGER recruit_request_events_append_only BEFORE UPDATE OR DELETE ON recruit_request_events FOR EACH ROW EXECUTE FUNCTION refuse_recruit_request_event_change();

@@ -14,10 +14,10 @@ export interface RecruitPipelineStore {
   assign(principalId: string, requestId: string, recruiterId: string): Promise<{ kind: "assigned" | "not_found" | "recruiter_ineligible" | "request_closed" }>;
   addCard(principalId: string, requestId: string, personId: string): Promise<{ kind: "added"; cardId: string } | { kind: "duplicate"; cardId: string } | { kind: "not_found" | "request_not_open" }>;
   addFulltimerCard(principalId: string, requestId: string, fulltimerId: string): Promise<{ kind: "added"; cardId: string } | { kind: "duplicate"; cardId: string } | { kind: "not_found" | "request_not_open" }>;
-  move(principalId: string, cardId: string, to: PipelineStage): Promise<{ kind: "moved"; stage: PipelineStage } | { kind: "refused"; stage: PipelineStage } | { kind: "placement_refused"; code: string } | { kind: "not_found" }>;
+  move(principalId: string, cardId: string, to: PipelineStage): Promise<{ kind: "moved"; stage: PipelineStage } | { kind: "refused"; stage: PipelineStage } | { kind: "placement_refused"; code: string } | { kind: "subject_unavailable" } | { kind: "not_found" }>;
   view(principalId: string, requestId: string): Promise<{
     request: { id: string; org_name: string; store_name: string; position_title: string; headcount: number; status: RequestStatus; assigned_recruiter_principal_id: string | null; recruiter_name: string | null; assigned_at: string | Date | null };
-    cards: readonly PipelineCardRow[]; events: readonly PipelineEventRow[]; canAssign: boolean; canMove: boolean; recruiters: readonly { principal_id: string; name: string | null }[];
+    cards: readonly PipelineCardRow[]; events: readonly PipelineEventRow[]; canAssign: boolean; canMove: boolean; canPlacePeople: boolean; recruiters: readonly { principal_id: string; name: string | null }[];
   } | null>;
 }
 
@@ -58,7 +58,7 @@ export function createRecruitPipeline(p: { sessions: Pick<SessionStore, "get">; 
       return { status: 200, body: {
         request: { requestId: r.request.id, organizationName: r.request.org_name, storeName: r.request.store_name, positionTitle: r.request.position_title, headcount: r.request.headcount,
           status: r.request.status, recruiter: r.request.assigned_recruiter_principal_id ? { personId: r.request.assigned_recruiter_principal_id, name: r.request.recruiter_name } : null, assignedAt: iso(r.request.assigned_at) },
-        stages: pipelineView(r.cards, r.events, r.canMove), canAssign: r.canAssign, canMove: r.canMove,
+        stages: pipelineView(r.cards, r.events, r.canMove, { requestClosed: r.request.status === "closed", people: r.canPlacePeople }), canAssign: r.canAssign, canMove: r.canMove,
         recruiters: r.recruiters.map((x) => ({ personId: x.principal_id, name: x.name })),
       } };
     },
@@ -93,6 +93,7 @@ export function createRecruitPipeline(p: { sessions: Pick<SessionStore, "get">; 
       if (r.kind === "moved") return { status: 200, body: { cardId: cardId.toLowerCase(), stage: r.stage } };
       if (r.kind === "refused") return { status: 409, body: { error: "move_not_allowed", stage: r.stage } };
       if (r.kind === "placement_refused") return { status: 409, body: { error: "placement_refused", code: r.code } };
+      if (r.kind === "subject_unavailable") return { status: 409, body: { error: "subject_unavailable" } };
       return NOT_FOUND;
     },
   };

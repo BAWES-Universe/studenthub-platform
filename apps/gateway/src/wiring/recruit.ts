@@ -17,7 +17,7 @@ import type { Wired, WiringSettings } from "./context.js";
 type Access = ReturnType<typeof wireAccess>["services"];
 
 // Until the work lane's placement lands, "placed" is refused rather than recorded without an assignment.
-const PLACEMENT_UNAVAILABLE: RecruitPlacementPort = { placeFromRecruit: async () => ({ kind: "refused", code: "work_unavailable" }) };
+const PLACEMENT_UNAVAILABLE: RecruitPlacementPort = { placeFromRecruit: async () => ({ kind: "refused", code: "work_unavailable" }), available: false };
 
 export function wireRecruit(settings: WiringSettings, access: Access, placement: RecruitPlacementPort = PLACEMENT_UNAVAILABLE): Wired<{
   readonly recruitRequests: ReturnType<typeof createRecruitRequests>;

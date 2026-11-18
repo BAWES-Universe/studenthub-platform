@@ -38,7 +38,7 @@ export interface RecruitJobRecord {
 }
 export interface RecruitJobApplicationRecord { readonly id: string; readonly person_principal_id: string; readonly person_name: string | null; readonly status: ApplicationStatus; readonly note: string | null; readonly created_at: string; readonly decided_at: string | null }
 
-export type RecruitJobWriteResult = { kind: "saved"; jobId: string } | { kind: "not_found" } | { kind: "area_invalid" };
+export type RecruitJobWriteResult = { kind: "saved"; jobId: string } | { kind: "not_found" } | { kind: "area_invalid" } | { kind: "request_locked" };
 export type RecruitApplyResult = { kind: "applied"; applicationId: string } | { kind: "not_found" } | { kind: "job_closed" } | { kind: "duplicate"; applicationId: string };
 export type RecruitDecideResult = { kind: "decided"; status: ApplicationStatus } | { kind: "not_found" } | { kind: "refused"; status: ApplicationStatus };
 
@@ -113,7 +113,12 @@ export class PostgresRecruitJobsStore {
   async update(principalId: string, jobId: string, input: RecruitJobInput): Promise<RecruitJobWriteResult> {
     return this.#transaction<RecruitJobWriteResult>(async (c) => {
       if (!await this.#staff(c, principalId, true)) return { rollback: { kind: "not_found" } };
-      if (!(await c.query("SELECT 1 FROM recruit_jobs WHERE id = $1::uuid FOR UPDATE", [jobId])).rowCount) return { rollback: { kind: "not_found" } };
+      const job = (await c.query<{ request_id: string | null }>("SELECT request_id FROM recruit_jobs WHERE id = $1::uuid FOR UPDATE", [jobId])).rows[0];
+      if (!job) return { rollback: { kind: "not_found" } };
+      // Applications belong to the request the job had when people applied; apply holds the job FOR SHARE, so this count is current.
+      if (input.requestId.toLowerCase() !== job.request_id && (await c.query("SELECT 1 FROM recruit_job_applications WHERE job_id = $1::uuid LIMIT 1", [jobId])).rowCount) {
+        return { rollback: { kind: "request_locked" } };
+      }
       const refused = await this.#checkRefs(c, input);
       if (refused) return { rollback: { kind: refused } };
       await c.query(`UPDATE recruit_jobs SET request_id = $2::uuid, area_id = $3::uuid, position = $4, position_ar = $5, description = $6, description_ar = $7, hours_per_day = $8, days_per_week = $9,

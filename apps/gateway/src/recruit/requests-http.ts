@@ -135,13 +135,14 @@ const CLOSE_LABEL: Readonly<Record<CloseReason, string>> = { fulfilled: "fulfill
 const statusText = (status: RequestStatus, reason: CloseReason | null) => reason ? `${STATUS_LABEL[status]} (${CLOSE_LABEL[reason]})` : STATUS_LABEL[status];
 const when = (value: string) => new Date(value).toISOString().slice(0, 16).replace("T", " ");
 
-export function renderRequestList(title: string, body: RecruitPage, base: string, extra: Record<string, string>, createHref?: string): string {
+/** `rowBase` is where a row opens: the company detail for a company list, the staff pipeline for the staff queue. */
+export function renderRequestList(title: string, body: RecruitPage, base: string, extra: Record<string, string>, createHref?: string, rowBase = "/recruit/requests"): string {
   const filters = ["", ...REQUEST_STATUSES].map((status) => {
     const href = `${base}?${new URLSearchParams({ ...extra, ...(status ? { status } : {}) })}`;
     const current = (body.status ?? "") === status;
     return `<a class="text-link"${current ? ' aria-current="page"' : ""} href="${html(href)}">${status ? STATUS_LABEL[status as RequestStatus] : "All"}</a>`;
   }).join(" · ");
-  const rows = body.requests.map((r) => `<tr><td><a class="text-link" href="/recruit/requests/${html(r.requestId)}">${html(r.positionTitle)}</a></td><td>${html(r.organizationName)}</td><td>${html(r.storeName)}</td><td>${r.headcount}</td><td>${html(statusText(r.status, r.closeReason))}</td><td><time datetime="${html(r.lastChange)}">${html(when(r.lastChange))}</time></td></tr>`).join("");
+  const rows = body.requests.map((r) => `<tr><td><a class="text-link" href="${html(rowBase)}/${html(r.requestId)}">${html(r.positionTitle)}</a></td><td>${html(r.organizationName)}</td><td>${html(r.storeName)}</td><td>${r.headcount}</td><td>${html(statusText(r.status, r.closeReason))}</td><td><time datetime="${html(r.lastChange)}">${html(when(r.lastChange))}</time></td></tr>`).join("");
   const next = body.nextCursor ? `<p><a class="text-link" href="${html(`${base}?${new URLSearchParams({ ...extra, ...(body.status ? { status: body.status } : {}), cursor: body.nextCursor })}`)}">Next page</a></p>` : "";
   return `<main id="main" class="profile-main"><h1>${html(title)}<span class="accent">.</span></h1>${createHref ? `<p><a class="button primary" href="${html(createHref)}">New request</a></p>` : ""}<nav aria-label="Filter by status"><p>${filters}</p></nav>${body.requests.length ? `<table><thead><tr><th scope="col">Role</th><th scope="col">Company</th><th scope="col">Store</th><th scope="col">People</th><th scope="col">Status</th><th scope="col">Last change</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No requests yet.</p>"}${next}</main>`;
 }
@@ -259,7 +260,7 @@ export async function handleRecruitRequests(
       }
       if (path === STAFF) {
         const r = await s.listStaff(session, url.searchParams);
-        answer(r, () => renderRequestList("All requests", (r as { body: RecruitPage }).body, STAFF, {}), "All requests");
+        answer(r, () => renderRequestList("All requests", (r as { body: RecruitPage }).body, STAFF, {}, undefined, "/recruit/staff/requests"), "All requests");
         return true;
       }
       if (path === NEW) {

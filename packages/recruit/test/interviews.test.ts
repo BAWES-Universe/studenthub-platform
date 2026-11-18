@@ -29,6 +29,9 @@ test("REC6_PARSE a schedule is a Kuwait wall-clock or offset instant within a ye
   assert.deepEqual(ok, { cardId: CARD, scheduledAt: "2026-11-18T07:30:00.000Z", durationMinutes: 45, mode: "in_person", location: "Avenues, gate 3" });
   assert.equal(m.parseInterview({ cardId: CARD, scheduledAt: "2026-11-18T10:30:00+03:00", mode: "phone" }, NOW)!.durationMinutes, 30, "30 minutes by default");
   assert.equal(m.parseInterview({ cardId: CARD, scheduledAt: "2026-11-18T10:30:00+03:00", mode: "phone" }, NOW)!.scheduledAt, "2026-11-18T07:30:00.000Z");
+  assert.equal(m.parseInterview({ cardId: CARD, scheduledAt: "2027-02-30T10:00:00+03:00", mode: "phone" }, NOW), undefined, "a day that does not exist is refused, not rolled over");
+  assert.equal(m.interviewInstant("2026-11-31T10:00:00Z"), undefined);
+  assert.equal(m.interviewInstant("2028-02-29T10:00:00Z")?.toISOString(), "2028-02-29T10:00:00.000Z", "a leap day exists");
   assert.equal(m.parseInterview({ cardId: CARD, scheduledAt: "2026-11-16T16:00", mode: "video" }, NOW)?.scheduledAt, "2026-11-16T13:00:00.000Z", "yesterday's interview may still be recorded");
   for (const bad of [
     { cardId: CARD, scheduledAt: "2026-11-15T10:00", mode: "video" },
@@ -50,6 +53,9 @@ test("REC6_PARSE a schedule is a Kuwait wall-clock or offset instant within a ye
 test("REC6_EVALUATION outcome and an optional 1 to 5 rating; a no-show has no rating; notes are bounded and kept apart", () => {
   assert.deepEqual(m.parseEvaluation({ outcome: "passed", rating: "4", sharedNote: " Good fit ", internalNote: "" }), { outcome: "passed", rating: 4, sharedNote: "Good fit", internalNote: null });
   assert.deepEqual(m.parseEvaluation({ outcome: "no_show", rating: "", sharedNote: "Line one\nLine two" }), { outcome: "no_show", rating: null, sharedNote: "Line one\nLine two", internalNote: null });
+  assert.deepEqual(m.parseEvaluation({ outcome: "passed", version: "2" }), { outcome: "passed", rating: null, sharedNote: null, internalNote: null, expectedVersion: 2 }, "a form carries the version it showed");
+  assert.deepEqual(m.parseEvaluation({ outcome: "passed", version: 0 })?.expectedVersion, 0);
+  for (const version of ["-1", "x", "01", 1.5, null]) assert.equal(m.parseEvaluation({ outcome: "passed", version }), undefined, String(version));
   for (const bad of [{ outcome: "no_show", rating: 2 }, { outcome: "passed", rating: 6 }, { outcome: "passed", rating: 0 }, { outcome: "maybe" }, { outcome: "passed", sharedNote: "x".repeat(5001) }, { outcome: "passed", internalNote: "bell\u0007" }, { outcome: "passed", other: 1 }])
     assert.equal(m.parseEvaluation(bad), undefined, JSON.stringify(bad));
 });

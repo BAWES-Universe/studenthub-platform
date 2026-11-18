@@ -37,6 +37,13 @@ CREATE INDEX recruit_request_notes_item_idx ON recruit_request_notes(checklist_i
 
 CREATE FUNCTION enforce_recruit_request_note() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+ -- A deleted author or editor is forgotten (ON DELETE SET NULL), even on a removed note; nothing else moves.
+ IF TG_OP = 'UPDATE' AND (OLD.author_principal_id IS NOT NULL AND NEW.author_principal_id IS NULL OR OLD.updated_by_principal_id IS NOT NULL AND NEW.updated_by_principal_id IS NULL)
+   AND (NEW.author_principal_id IS NULL OR NEW.author_principal_id = OLD.author_principal_id)
+   AND (NEW.updated_by_principal_id IS NULL OR NEW.updated_by_principal_id = OLD.updated_by_principal_id)
+   AND to_jsonb(NEW) - 'author_principal_id' - 'updated_by_principal_id' = to_jsonb(OLD) - 'author_principal_id' - 'updated_by_principal_id' THEN
+  RETURN NEW;
+ END IF;
  IF TG_OP = 'UPDATE' AND (NEW.request_id <> OLD.request_id OR NEW.card_id IS DISTINCT FROM OLD.card_id
    OR NEW.checklist_item_id IS DISTINCT FROM OLD.checklist_item_id OR NEW.author_principal_id IS DISTINCT FROM OLD.author_principal_id OR NEW.created_at <> OLD.created_at) THEN
   RAISE EXCEPTION 'only a note type and text can be edited' USING ERRCODE = '23514';

@@ -11,7 +11,7 @@ const row = { id: INT, card_id: CARD, person_name: "Noor <b>", scheduled_at: "20
 const store: RecruitInterviewsStore = {
   schedule: async (p, r, f) => { calls.push(`schedule:${p}:${r}:${f.cardId}:${f.scheduledAt}:${f.durationMinutes}:${f.mode}:${f.location}`); return r !== REQ ? { kind: "not_found" } : f.mode === "video" ? { kind: "stage_refused", stage: "suggested" } : { kind: "scheduled", interviewId: INT }; },
   cancel: async (_p, id) => { calls.push(`cancel:${id}`); return id !== INT ? { kind: "not_found" } : { kind: "refused", status: "completed" }; },
-  evaluate: async (p, id, f) => { calls.push(`evaluate:${p}:${id}:${f.outcome}:${f.rating}:${f.sharedNote}:${f.internalNote}`); return id !== INT ? { kind: "not_found" } : f.internalNote && p !== "staff" ? { kind: "internal_note_refused" } : { kind: "evaluated", version: 3 }; },
+  evaluate: async (p, id, f) => { calls.push(`evaluate:${p}:${id}:${f.outcome}:${f.rating}:${f.sharedNote}:${f.internalNote}`); return id !== INT ? { kind: "not_found" } : f.expectedVersion === 1 ? { kind: "stale", version: 2 } : f.internalNote && p !== "staff" ? { kind: "internal_note_refused" } : { kind: "evaluated", version: 3 }; },
   forRequest: async (p, r) => r !== REQ ? null : { request: { id: REQ, position_title: "Cashier", store_name: "Avenues", org_name: "Sultan Co" }, interviews: [row], cards: [{ id: CARD, person_name: "Noor <b>", stage: "contacted" }], canWrite: p !== "reader", seesInternal: p === "staff" },
   mine: async () => [{ id: INT, org_name: "Sultan Co", store_name: "Avenues", position_title: "Cashier", scheduled_at: "2026-11-18T07:30:00.000Z", duration_minutes: 30, mode: "phone", location: null, status: "scheduled", outcome: null }],
 };
@@ -57,6 +57,11 @@ test("REC6_HTTP_PAGE pages escape every value, show internal notes only to staff
   assert.equal(company.includes("Staff"), false, "no internal note or its field for the company");
   const staff = (await call(`/recruit/requests/${REQ}/interviews`, { html: true, session: STAFF })).page!.body;
   assert.ok(staff.includes("Internal: Staff &lt;only&gt;") && staff.includes('name="internalNote"'));
+  // A correction starts from the current evaluation and carries its version, so an old form cannot overwrite a newer one.
+  for (const text of ['name="version" value="2"', '<option value="passed" selected>', 'name="rating" inputmode="numeric" pattern="[1-5]" maxlength="1" value="4"', ">Good &lt;fit&gt;</textarea>"]) assert.ok(company.includes(text), text);
+  assert.ok(staff.includes(">Staff &lt;only&gt;</textarea>"), "staff see the internal note in their form");
+  assert.equal((await call(`/recruit/interviews/${INT}/evaluate`, form(`outcome=passed&version=1&requestId=${REQ}`))).page!.status, 409);
+  assert.deepEqual((await call(`/recruit/interviews/${INT}/evaluate`, post({ outcome: "passed", version: 1 }))).json, { error: "evaluation_changed", version: 2 });
   const sent = await call(`/recruit/interviews/${INT}/evaluate`, form(`outcome=passed&rating=5&sharedNote=Great&internalNote=&requestId=${REQ}`));
   assert.deepEqual([sent.status, sent.headers.location], [303, `/recruit/requests/${REQ}/interviews`]);
   assert.equal((await call(`/recruit/interviews/${INT}/cancel`, form(`requestId=${REQ}`))).page!.status, 409);

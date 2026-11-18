@@ -25,7 +25,11 @@ export interface RecruitPlacementRequest {
   readonly endDate: string | null;
 }
 export type RecruitPlacementResult = { kind: "placed"; assignmentId: string; created: boolean } | { kind: "refused"; code: string };
-export interface RecruitPlacementPort { placeFromRecruit(actorId: string, request: RecruitPlacementRequest): Promise<RecruitPlacementResult> }
+export interface RecruitPlacementPort {
+  placeFromRecruit(actorId: string, request: RecruitPlacementRequest): Promise<RecruitPlacementResult>;
+  /** False while no work-lane placement is wired: "placed" is then not offered for person cards (full-timers need no port). */
+  readonly available?: boolean;
+}
 
 export interface RecruitPipelineStoreOptions {
   readonly connectionString?: string;
@@ -46,7 +50,7 @@ export interface RecruitPipelineStoreOptions {
 
 export type RecruitAssignResult = { kind: "assigned" } | { kind: "not_found" } | { kind: "recruiter_ineligible" } | { kind: "request_closed" };
 export type RecruitAddCardResult = { kind: "added"; cardId: string } | { kind: "not_found" } | { kind: "request_not_open" } | { kind: "duplicate"; cardId: string };
-export type RecruitMoveResult = { kind: "moved"; stage: Stage } | { kind: "not_found" } | { kind: "refused"; stage: Stage } | { kind: "placement_refused"; code: string };
+export type RecruitMoveResult = { kind: "moved"; stage: Stage } | { kind: "not_found" } | { kind: "refused"; stage: Stage } | { kind: "placement_refused"; code: string } | { kind: "subject_unavailable" };
 
 export interface RecruitPipelineCardRecord { id: string; person_principal_id: string | null; fulltimer_id: string | null; person_name: string | null; stage: Stage; updated_at: string }
 export interface RecruitPipelineEventRecord { card_id: string; from_stage: Stage | null; to_stage: Stage; actor_name: string | null; at: string }
@@ -56,6 +60,8 @@ export interface RecruitPipelineDetail {
   readonly events: readonly RecruitPipelineEventRecord[];
   readonly canAssign: boolean;
   readonly canMove: boolean;
+  /** Whether a person card can be placed now: a work placement is wired. Full-timer cards need none. */
+  readonly canPlacePeople: boolean;
   readonly recruiters: readonly { principal_id: string; name: string | null }[];
 }
 
@@ -164,6 +170,15 @@ export class PostgresRecruitPipelineStore {
       const callerGrants = await this.#grants(c, principalId, true), isLead = this.options.leadDecision(callerGrants), isRecruiter = this.options.recruiterEligible(callerGrants);
       if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead, isRecruiter)) return { rollback: { kind: "not_found" } };
       if (!this.options.transitionAllowed(card.stage, to)) return { rollback: { kind: "refused", stage: card.stage } };
+      // A closed request records no new hire, even from a card left at offered.
+      if (to === "placed" && request.status === "closed") return { rollback: { kind: "refused", stage: card.stage } };
+      // The subject must still be eligible for every move forward; withdrawing stays possible so staff can clear the card.
+      if (to !== "withdrawn") {
+        const eligible = card.person_principal_id !== null
+          ? this.options.candidateDecision(await this.#grants(c, card.person_principal_id, true))
+          : (await c.query("SELECT 1 FROM recruit_pipeline_cards c JOIN recruit_fulltimers f ON f.id = c.fulltimer_id WHERE c.id = $1::uuid AND f.archived_at IS NULL FOR SHARE OF f", [cardId])).rowCount === 1;
+        if (!eligible) return { rollback: { kind: "subject_unavailable" } };
+      }
       let assignmentId: string | null = null;
       // A full-timer has no account to pay: "placed" records the hire without a work assignment.
       if (to === "placed" && card.person_principal_id !== null) {
@@ -186,7 +201,9 @@ export class PostgresRecruitPipelineStore {
   /** The staff pipeline page in a fixed number of queries; null unless the caller is staff. */
   async view(principalId: string, requestId: string): Promise<RecruitPipelineDetail | null> {
     const grants = await this.#grants(this.#pool, principalId);
-    if (!this.options.assignDecision(grants)) return null;
+    const canAssign = this.options.assignDecision(grants), isLead = this.options.leadDecision(grants), isRecruiter = this.options.recruiterEligible(grants);
+    // Staff who assign see every pipeline; a recruiter (with no staff grant) sees the one they are assigned to.
+    if (!canAssign && !isRecruiter) return null;
     const request = (await this.#pool.query<RecruitPipelineDetail["request"]>(
       `SELECT r.id, r.org_id, o.name AS org_name, s.name AS store_name, r.position_title, r.headcount, r.status, r.assigned_recruiter_principal_id,
         COALESCE(pp.display_name, p.display_name) AS recruiter_name, r.assigned_at
@@ -194,6 +211,8 @@ export class PostgresRecruitPipelineStore {
        LEFT JOIN principals p ON p.id = r.assigned_recruiter_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = r.assigned_recruiter_principal_id
        WHERE r.id = $1::uuid`, [requestId])).rows[0];
     if (!request) return null;
+    const canMove = this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead, isRecruiter);
+    if (!canAssign && !canMove) return null;
     const [cards, events, recruiters] = await Promise.all([
       this.#pool.query<RecruitPipelineCardRecord>(
         `SELECT c.id, c.person_principal_id, c.fulltimer_id, COALESCE(pp.display_name, p.display_name, f.name) AS person_name, c.stage, c.updated_at
@@ -210,12 +229,11 @@ export class PostgresRecruitPipelineStore {
          FROM grants g JOIN principals p ON p.id = g.principal_id LEFT JOIN person_profiles pp ON pp.principal_id = g.principal_id
          WHERE g.org_id = ANY($1::text[]) AND g.role IN ('recruiter','staff') ORDER BY name NULLS LAST, g.principal_id`, [this.options.operatorOrgIds]),
     ]);
-    const isLead = this.options.leadDecision(grants), isRecruiter = this.options.recruiterEligible(grants);
     const eligible = new Map<string, string | null>();
-    for (const row of recruiters.rows) if (this.options.recruiterEligible([row])) eligible.set(row.principal_id, row.name);
+    if (canAssign) for (const row of recruiters.rows) if (this.options.recruiterEligible([row])) eligible.set(row.principal_id, row.name);
     return {
-      request, cards: cards.rows, events: events.rows, canAssign: request.status !== "closed",
-      canMove: this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead, isRecruiter),
+      request, cards: cards.rows, events: events.rows, canAssign: canAssign && request.status !== "closed", canMove,
+      canPlacePeople: this.options.placement.available !== false,
       recruiters: [...eligible].map(([principal_id, name]) => ({ principal_id, name })),
     };
   }

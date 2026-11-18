@@ -37,7 +37,7 @@ export interface RecruitInterviewsStoreOptions {
 }
 
 export interface RecruitInterviewInput { readonly cardId: string; readonly scheduledAt: string; readonly durationMinutes: number; readonly mode: Mode; readonly location: string | null }
-export interface RecruitEvaluationInput { readonly outcome: Outcome; readonly rating: number | null; readonly sharedNote: string | null; readonly internalNote: string | null }
+export interface RecruitEvaluationInput { readonly outcome: Outcome; readonly rating: number | null; readonly sharedNote: string | null; readonly internalNote: string | null; readonly expectedVersion?: number }
 export interface RecruitInterviewRecord {
   readonly id: string; readonly card_id: string; readonly person_name: string | null; readonly scheduled_at: string; readonly duration_minutes: number; readonly mode: Mode;
   readonly location: string | null; readonly status: Status; readonly outcome: Outcome | null; readonly rating: number | null;
@@ -55,7 +55,7 @@ export interface RecruitPersonInterviewRecord { readonly id: string; readonly or
 
 export type RecruitScheduleResult = { kind: "scheduled"; interviewId: string } | { kind: "not_found" } | { kind: "stage_refused"; stage: string };
 export type RecruitInterviewCloseResult = { kind: "cancelled" } | { kind: "not_found" } | { kind: "refused"; status: Status };
-export type RecruitEvaluateResult = { kind: "evaluated"; version: number } | { kind: "not_found" } | { kind: "refused"; status: Status } | { kind: "internal_note_refused" };
+export type RecruitEvaluateResult = { kind: "evaluated"; version: number } | { kind: "not_found" } | { kind: "refused"; status: Status } | { kind: "internal_note_refused" } | { kind: "stale"; version: number };
 
 type Located = { interview_id: string | null; card_id: string; request_id: string };
 type Access = { read: boolean; write: boolean; internal: boolean };
@@ -77,6 +77,8 @@ export class PostgresRecruitInterviewsStore {
   async close() { if (this.#owns) await this.#pool.end(); }
 
   async #access(c: Client, principalId: string, request: { org_id: string; assigned_recruiter_principal_id: string | null }, lock = false): Promise<Access> {
+    // A write holds the organization tree lock (shared) before it reads ancestry, so a reparent waits for it to commit.
+    if (lock) await c.query("SELECT pg_advisory_xact_lock_shared(hashtext('studenthub:organizations:tree'))");
     const grants = (await c.query<Grant>(`SELECT org_id, role, scope FROM grants WHERE principal_id = $1::text${lock ? " FOR SHARE" : ""}`, [principalId])).rows;
     const staff = this.options.staffDecision(grants);
     let company = false;
@@ -170,6 +172,8 @@ export class PostgresRecruitInterviewsStore {
       if (!this.options.evaluationAllowed(interview.status)) return { rollback: { kind: "refused", status: interview.status } };
       const previous = (await c.query<{ version: number; internal_note: string | null }>(
         "SELECT version, internal_note FROM recruit_interview_evaluations WHERE interview_id = $1::uuid ORDER BY version DESC LIMIT 1", [interviewId])).rows[0];
+      // The request row lock serializes evaluations, so the version read here is the one a correction replaces.
+      if (input.expectedVersion !== undefined && input.expectedVersion !== (previous?.version ?? 0)) return { rollback: { kind: "stale", version: previous?.version ?? 0 } };
       const version = (previous?.version ?? 0) + 1;
       // A company correction keeps the staff internal note it cannot see.
       const internal = access.internal ? input.internalNote : previous?.internal_note ?? null;
@@ -185,19 +189,35 @@ export class PostgresRecruitInterviewsStore {
 
   /** A request's interviews for its company, its pipeline authority and operator staff; internal notes only for internal callers. */
   async forRequest(principalId: string, requestId: string): Promise<RecruitRequestInterviews | null> {
-    const request = (await this.#pool.query<{ id: string; org_id: string; assigned_recruiter_principal_id: string | null; position_title: string; store_name: string; org_name: string }>(
+    // The assignment, the caller's grants and the interviews come from one snapshot, so access never mixes two moments.
+    const c = await this.#pool.connect();
+    let broken = false;
+    try {
+      await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const result = await this.#forRequest(c, principalId, requestId);
+      await c.query("COMMIT");
+      return result;
+    } catch (error) {
+      try { await c.query("ROLLBACK"); } catch { broken = true; }
+      throw error;
+    } finally {
+      c.release(broken);
+    }
+  }
+
+  async #forRequest(c: pg.PoolClient, principalId: string, requestId: string): Promise<RecruitRequestInterviews | null> {
+    const request = (await c.query<{ id: string; org_id: string; assigned_recruiter_principal_id: string | null; position_title: string; store_name: string; org_name: string }>(
       `SELECT r.id, r.org_id, r.assigned_recruiter_principal_id, r.position_title, s.name AS store_name, o.name AS org_name
        FROM recruit_requests r JOIN organizations o ON o.id = r.org_id JOIN organization_stores s ON s.id = r.store_id WHERE r.id = $1::uuid`, [requestId])).rows[0];
     if (!request) return null;
-    const access = await this.#access(this.#pool, principalId, request);
+    const access = await this.#access(c, principalId, request);
     if (!access.read) return null;
-    const [interviews, cards] = await Promise.all([
-      this.#pool.query<RecruitInterviewRecord>(`${SELECT_INTERVIEWS} WHERE c.request_id = $1::uuid ORDER BY i.scheduled_at, i.id`, [requestId]),
-      this.#pool.query<RecruitInterviewCardOption>(
+    // One client answers one query at a time: read in sequence inside the snapshot.
+    const interviews = await c.query<RecruitInterviewRecord>(`${SELECT_INTERVIEWS} WHERE c.request_id = $1::uuid ORDER BY i.scheduled_at, i.id`, [requestId]);
+    const cards = await c.query<RecruitInterviewCardOption>(
         `SELECT c.id, COALESCE(pp.display_name, p.display_name, f.name) AS person_name, c.stage FROM recruit_pipeline_cards c
          LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id
-         WHERE c.request_id = $1::uuid ORDER BY person_name NULLS LAST, c.id`, [requestId]),
-    ]);
+         WHERE c.request_id = $1::uuid ORDER BY person_name NULLS LAST, c.id`, [requestId]);
     return {
       request: { id: request.id, position_title: request.position_title, store_name: request.store_name, org_name: request.org_name },
       interviews: interviews.rows.map((row) => (access.internal ? row : { ...row, internal_note: null })),

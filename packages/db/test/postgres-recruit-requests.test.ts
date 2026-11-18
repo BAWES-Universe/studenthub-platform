@@ -6,7 +6,7 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
 import { recruitStaffDecision, requestCreateDecision, requestReadDecision, requestTransitionAllowed, requestTransitionDecision, type RequestStatus } from "../../recruit/src/index.js";
-import { revokeDuring } from "./recruit-races.js";
+import { revokeDuring, whileUncommitted } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS = ["root"];
@@ -183,4 +183,35 @@ test("REC1_REVOKE_RACE a grant revoked while a create or a transition is in flig
   assert.deepEqual(await revokeDuring(pool, closer, () => requests.transition(closer, requestId, "closed", "cancelled")), { kind: "not_found" });
   assert.equal((await statusOf(requestId)).status, "open");
   assert.equal(await eventCount(requestId), 1);
+});
+
+test("REC1_TREE_RACE a reparent that removes the caller's ancestor authority while a transition is in flight refuses it", async () => {
+  // root > group > middle > company; the owner holds org-owner:subtree on group. Moving middle out of group takes the
+  // organization tree lock first, as every reparent does; the transition waits for it and reads the new ancestry.
+  const group = await organization(), middle = await organization(group), company = await organization(middle), elsewhere = await organization();
+  const owner = await principal(group, "org-owner", "subtree"), storeId = await store(company);
+  const requestId = await create(company, owner, storeId);
+  const reparent = `SELECT pg_advisory_xact_lock(hashtext('studenthub:organizations:tree')); UPDATE organizations SET parent_org_id = '${elsewhere}' WHERE id = '${middle}'`;
+  assert.deepEqual(await whileUncommitted(pool, reparent, [], () => requests.transition(owner, requestId, "closed", "cancelled")), { kind: "not_found" });
+  assert.equal((await statusOf(requestId)).status, "open");
+  assert.equal(await eventCount(requestId), 1);
+});
+
+test("REC1_FORGET deleting a principal forgets them on closed requests and their activity; nothing else on the request moves", async () => {
+  const orgId = await organization(), storeId = await store(orgId);
+  const owner = await principal(orgId), requestId = await create(orgId, owner, storeId);
+  await pool.query("UPDATE recruit_requests SET assigned_recruiter_principal_id = $2, assigned_at = clock_timestamp() WHERE id = $1", [requestId, owner]);
+  assert.equal((await requests.transition(owner, requestId, "closed", "fulfilled")).kind, "transitioned");
+  const before = (await pool.query("SELECT to_jsonb(r) - 'created_by_principal_id' - 'assigned_recruiter_principal_id' AS rest FROM recruit_requests r WHERE id = $1", [requestId])).rows[0].rest;
+  await pool.query("DELETE FROM grants WHERE principal_id = $1", [owner]);
+  await pool.query("DELETE FROM principals WHERE id = $1", [owner]);
+  const after = (await pool.query("SELECT created_by_principal_id, assigned_recruiter_principal_id, to_jsonb(r) - 'created_by_principal_id' - 'assigned_recruiter_principal_id' AS rest FROM recruit_requests r WHERE id = $1", [requestId])).rows[0];
+  assert.deepEqual([after.created_by_principal_id, after.assigned_recruiter_principal_id, after.rest], [null, null, before]);
+  const events = (await pool.query<{ actor_principal_id: string | null; actor_ref: string }>("SELECT actor_principal_id, actor_ref FROM recruit_request_events WHERE request_id = $1", [requestId])).rows;
+  assert.ok(events.length === 2 && events.every((e) => e.actor_principal_id === null && /^[0-9a-f]{64}$/.test(e.actor_ref)), "the audit ref stays");
+  // The guards still hold for everything else.
+  await assert.rejects(pool.query("UPDATE recruit_requests SET position_title = 'Changed' WHERE id = $1", [requestId]), /read-only/);
+  await assert.rejects(pool.query("UPDATE recruit_requests SET created_by_principal_id = $2 WHERE id = $1", [requestId, await principal(orgId)]), /read-only/);
+  await assert.rejects(pool.query("UPDATE recruit_request_events SET to_status = 'open' WHERE request_id = $1", [requestId]), /append-only/);
+  await assert.rejects(pool.query("UPDATE recruit_request_events SET actor_principal_id = NULL, actor_ref = $2 WHERE request_id = $1", [requestId, "1".repeat(64)]), /append-only/);
 });

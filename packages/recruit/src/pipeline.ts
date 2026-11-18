@@ -93,15 +93,20 @@ export interface PipelineCardView { readonly cardId: string; readonly personId: 
 
 const iso = (value: string | Date) => (value instanceof Date ? value : new Date(value)).toISOString();
 
-/** Cards grouped in stage order, each with its own history oldest first; moves only for those who may move. */
-export function pipelineView(cards: readonly PipelineCardRow[], events: readonly PipelineEventRow[], canMove: boolean): Readonly<Record<PipelineStage, readonly PipelineCardView[]>> {
+/**
+ * Cards grouped in stage order, each with its own history oldest first; moves only for those who may move.
+ * "placed" is offered only where it can succeed: never on a closed request, and for a person card only once a
+ * work placement is wired (a full-timer needs none).
+ */
+export function pipelineView(cards: readonly PipelineCardRow[], events: readonly PipelineEventRow[], canMove: boolean, place: { readonly requestClosed: boolean; readonly people: boolean } = { requestClosed: false, people: true }): Readonly<Record<PipelineStage, readonly PipelineCardView[]>> {
+  const placeable = (card: PipelineCardRow) => !place.requestClosed && (card.person_principal_id === null || place.people);
   const byCard = new Map<string, PipelineEventRow[]>();
   for (const event of events) byCard.set(event.card_id, [...(byCard.get(event.card_id) ?? []), event]);
   const out = Object.fromEntries(PIPELINE_STAGES.map((stage) => [stage, [] as PipelineCardView[]])) as Record<PipelineStage, PipelineCardView[]>;
   for (const card of cards) {
     out[card.stage].push({
       cardId: card.id, personId: card.person_principal_id, fulltimerId: card.fulltimer_id ?? null, personName: card.person_name, stage: card.stage,
-      allowedMoves: canMove ? PIPELINE_TRANSITIONS.filter(([from]) => from === card.stage).map(([, to]) => to) : [],
+      allowedMoves: canMove ? PIPELINE_TRANSITIONS.filter(([from, to]) => from === card.stage && (to !== "placed" || placeable(card))).map(([, to]) => to) : [],
       history: (byCard.get(card.id) ?? []).sort((a, b) => iso(a.at).localeCompare(iso(b.at)))
         .map((e) => ({ from: e.from_stage, to: e.to_stage, actor: e.actor_name, at: iso(e.at) })),
     });

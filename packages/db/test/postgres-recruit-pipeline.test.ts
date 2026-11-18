@@ -198,7 +198,11 @@ test("REC2_VIEW the staff page reads cards, names, recruiter and history in a fi
   (pool as unknown as { query: unknown }).query = (...args: Parameters<typeof pool.query>) => { queries += 1; return (original as (...a: unknown[]) => unknown)(...args); };
   let view;
   try { view = await pipeline.view(s.recruiter, s.requestId); } finally { (pool as unknown as { query: unknown }).query = original; }
-  assert.equal(view, null, "a recruiter grant on the operator is not staff");
+  assert.equal(queries, 5, "grants, request, cards, events, recruiters");
+  assert.deepEqual([view?.canMove, view?.canAssign, view?.recruiters], [true, false, []], "the assigned recruiter works the pipeline but does not reassign it");
+  const otherRecruiter = await person([{ orgId: OPS_ORG, role: "recruiter", scope: "subtree" }]);
+  assert.equal(await pipeline.view(otherRecruiter, s.requestId), null, "a recruiter grant alone opens only the pipeline they are assigned to");
+  assert.deepEqual(await pipeline.assign(s.recruiter, s.requestId, otherRecruiter), { kind: "not_found" }, "nor can they reassign it");
   queries = 0;
   (pool as unknown as { query: unknown }).query = (...args: Parameters<typeof pool.query>) => { queries += 1; return (original as (...a: unknown[]) => unknown)(...args); };
   try { view = await pipeline.view(s.staff, s.requestId); } finally { (pool as unknown as { query: unknown }).query = original; }
@@ -223,4 +227,39 @@ test("REC2_REVOKE_RACE revoking the assigned recruiter's or a lead's grant, befo
   assert.deepEqual(await revokeDuring(pool, assigner, () => pipeline.assign(assigner, s.requestId, next)), { kind: "not_found" });
   assert.deepEqual(await revokeDuring(pool, next, () => pipeline.assign(s.staff, s.requestId, next)), { kind: "recruiter_ineligible" }, "a recruiter losing the grant while being assigned is not assigned");
   assert.equal((await request(s.requestId)).assigned_recruiter_principal_id, s.recruiter);
+});
+
+test("REC2_NO_HIRE_AFTER_CLOSE a card left at offered on a closed request is not placed; the work placement is never asked", async () => {
+  const s = await setup(2);
+  await pipeline.assign(s.staff, s.requestId, s.recruiter);
+  const cardId = await add(s.recruiter, s.requestId);
+  await walk(s.recruiter, cardId, ["contacted", "offered"]);
+  assert.equal((await requests.transition(s.owner, s.requestId, "closed", "fulfilled")).kind, "transitioned");
+  const asked = placements.length;
+  assert.deepEqual(await pipeline.move(s.recruiter, cardId, "placed"), { kind: "refused", stage: "offered" });
+  assert.equal(placements.length, asked);
+  assert.equal((await card(cardId)).stage, "offered");
+  const view = (await pipeline.view(s.staff, s.requestId))!;
+  assert.equal(view.request.status, "closed");
+  assert.equal((await pipeline.move(s.recruiter, cardId, "withdrawn")).kind, "moved", "withdrawing still clears the card");
+});
+
+test("REC2_SUBJECT_GONE a candidate whose grant is revoked, before or during a move, moves no further; withdrawing still works", async () => {
+  const s = await setup(5);
+  await pipeline.assign(s.staff, s.requestId, s.recruiter);
+  const noor = await person(), sami = await person();
+  const first = await add(s.recruiter, s.requestId, noor), second = await add(s.recruiter, s.requestId, sami);
+  await pool.query("DELETE FROM grants WHERE principal_id = $1", [noor]);
+  assert.deepEqual(await pipeline.move(s.recruiter, first, "contacted"), { kind: "subject_unavailable" });
+  assert.equal((await card(first)).stage, "suggested");
+  assert.equal((await pipeline.move(s.recruiter, first, "withdrawn")).kind, "moved");
+  assert.deepEqual(await revokeDuring(pool, sami, () => pipeline.move(s.recruiter, second, "contacted")), { kind: "subject_unavailable" });
+  assert.equal((await card(second)).stage, "suggested");
+});
+
+test("REC2_PLACEMENT_UNWIRED with no work placement wired the store says so, and the page offers no Placed for a person", async () => {
+  const unwired = new PostgresRecruitPipelineStore({ ...pipeline.options, placement: { placeFromRecruit: async () => ({ kind: "refused", code: "work_unavailable" }), available: false } });
+  const s = await setup();
+  assert.equal((await unwired.view(s.staff, s.requestId))?.canPlacePeople, false);
+  assert.equal((await pipeline.view(s.staff, s.requestId))?.canPlacePeople, true);
 });

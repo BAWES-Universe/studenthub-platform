@@ -50,5 +50,6 @@ test("REC3_HTTP_PAGE the page escapes people and facets, keeps choices ticked an
   assert.equal(page.status, 200);
   for (const text of ["Noor &lt;b&gt;", "Retail &lt;i&gt;", "Salmiya &lt;x&gt;", "(profile incomplete)", `value="${AREA}" checked`, "30 people", "Page 2 of 2", `href="/recruit/staff/people?q=noor&amp;area=${AREA}"`, 'value="noor"']) assert.ok(page.body.includes(text) || page.body.includes(text.replace("&amp;", "&")), text);
   assert.equal(page.body.includes("<b>"), false);
+  assert.match(page.body, /Person id \(to invite or add to a pipeline\): <code>[^<]+<\/code>/, "each result shows the id the invitation form needs");
   assert.equal((await call("/recruit/staff/people", { html: true, cookie: "c".repeat(43) })).page?.status, 404);
 });

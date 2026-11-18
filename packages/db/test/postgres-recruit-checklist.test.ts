@@ -151,3 +151,20 @@ test("REC2B_REVOKE_RACE a grant revoked while a checklist or note write is in fl
   assert.deepEqual(ticked, { kind: "item_not_found" });
   assert.equal((await pool.query("SELECT 1 FROM recruit_request_notes WHERE checklist_item_id = $1::uuid", [step])).rowCount, 0, "no note points at a removed step");
 });
+
+test("REC2B_FORGET deleting a principal forgets them as a note's author and editor, removed notes included; nothing else moves", async () => {
+  const s = await setup();
+  const writer = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  const kept = ((await checklist.addNote(writer, s.requestId, { type: "internal_note", text: "kept", checklistItemId: null, cardId: null })) as { noteId: string }).noteId;
+  const removed = ((await checklist.addNote(writer, s.requestId, { type: "internal_note", text: "removed", checklistItemId: null, cardId: null })) as { noteId: string }).noteId;
+  assert.equal((await checklist.removeNote(writer, removed)).kind, "removed");
+  const rest = async (id: string) => (await pool.query("SELECT to_jsonb(n) - 'author_principal_id' - 'updated_by_principal_id' AS rest FROM recruit_request_notes n WHERE id = $1", [id])).rows[0].rest;
+  const before = [await rest(kept), await rest(removed)];
+  await pool.query("DELETE FROM grants WHERE principal_id = $1", [writer]);
+  await pool.query("DELETE FROM principals WHERE id = $1", [writer]);
+  const people = (await pool.query("SELECT author_principal_id, updated_by_principal_id FROM recruit_request_notes WHERE id = ANY($1::uuid[])", [[kept, removed]])).rows;
+  assert.ok(people.length === 2 && people.every((r) => r.author_principal_id === null && r.updated_by_principal_id === null));
+  assert.deepEqual([await rest(kept), await rest(removed)], before);
+  await assert.rejects(pool.query("UPDATE recruit_request_notes SET note_text = 'rewritten' WHERE id = $1", [removed]), /read-only/);
+  await assert.rejects(pool.query("UPDATE recruit_request_notes SET author_principal_id = $2 WHERE id = $1", [kept, s.staff]), /only a note type and text/);
+});

@@ -96,6 +96,10 @@ test("REC1_READS lists page by 50 with a stable cursor, filter by status, and sh
   const page = (await call("/recruit/requests?org=co", { html: true })).page!;
   assert.equal(page.status, 200);
   for (const text of ["Cashier 1", "Avenues", "Co &lt;b&gt;", "<td>2</td>", "Open", "2026-11-17 11:00", "/recruit/requests/new?org=co"]) assert.ok(page.body.includes(text), text);
+  assert.ok(page.body.includes(`href="/recruit/requests/${row(1).id}"`), "a company row opens the company detail");
+  const queue = (await call("/recruit/staff/requests", { html: true })).page!;
+  assert.ok(queue.body.includes(`href="/recruit/staff/requests/${row(1).id}"`), "a staff queue row opens the staff pipeline, which staff of any company can read");
+  assert.equal(queue.body.includes(`href="/recruit/requests/${row(1).id}"`), false);
 });
 
 test("REC1_HTTP_PAGE the request page escapes every value and shows the activity and allowed actions", async () => {

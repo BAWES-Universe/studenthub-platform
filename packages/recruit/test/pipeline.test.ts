@@ -75,4 +75,10 @@ test("REC2_VIEW cards group by stage, carry their own history oldest first, and 
   assert.deepEqual(view.contacted[0]!.history.map((h) => h.to), ["suggested", "contacted"]);
   assert.deepEqual(view.placed[0]!.allowedMoves, []);
   assert.deepEqual(m.pipelineView(cards, events, false).contacted[0]!.allowedMoves, []);
+  const offered = [{ id: "o1", person_principal_id: "p1", person_name: "Noor", stage: "offered" as const, updated_at: "2026-11-17T10:00:00Z" },
+    { id: "o2", person_principal_id: null, fulltimer_id: "f1", person_name: "Fahad", stage: "offered" as const, updated_at: "2026-11-17T10:00:00Z" }];
+  assert.deepEqual(m.pipelineView(offered, [], true).offered.map((c) => c.allowedMoves), [["placed", "withdrawn"], ["placed", "withdrawn"]]);
+  assert.deepEqual(m.pipelineView(offered, [], true, { requestClosed: false, people: false }).offered.map((c) => c.allowedMoves), [["withdrawn"], ["placed", "withdrawn"]],
+    "with no work placement wired a person is not offered Placed; a full-timer still is");
+  assert.deepEqual(m.pipelineView(offered, [], true, { requestClosed: true, people: true }).offered.map((c) => c.allowedMoves), [["withdrawn"], ["withdrawn"]], "a closed request offers no hire");
 });

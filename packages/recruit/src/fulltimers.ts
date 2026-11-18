@@ -24,10 +24,12 @@ export function fulltimerNameKey(name: string): string {
   return name.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-/** Phone digits with an optional leading plus; spaces, dashes and brackets dropped. */
+/** Phone digits with an optional leading plus; spaces, dashes and brackets dropped; the international 00 prefix is written +. */
 export function normalizePhone(value: string): string | undefined {
   const compact = value.replace(/[\s\-().]/g, "");
-  return /^\+?[0-9]{6,20}$/.test(compact) ? compact : undefined;
+  if (!/^\+?[0-9]{6,20}$/.test(compact)) return undefined;
+  const canonical = compact.startsWith("00") ? `+${compact.slice(2)}` : compact;
+  return /^\+?[0-9]{6,20}$/.test(canonical) ? canonical : undefined;
 }
 
 const CONTROL_LINE = /[\u0000-\u001f\u007f]/;

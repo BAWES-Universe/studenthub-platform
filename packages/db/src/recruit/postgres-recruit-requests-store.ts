@@ -97,6 +97,9 @@ export class PostgresRecruitRequestsStore {
   }
 
   async #allowed(c: Client, principalId: string, orgId: string, decisions: readonly Decision[], lock = false): Promise<boolean[]> {
+    // A write holds the organization tree lock (shared: writes don't serialize each other) before it reads ancestry,
+    // so a reparent that would change who has authority waits until the write commits, as Access's grant store does.
+    if (lock) await c.query("SELECT pg_advisory_xact_lock_shared(hashtext('studenthub:organizations:tree'))");
     // A missing or deleted organization answers exactly as a refused one.
     if (!await organizationLive(c, orgId, lock)) return decisions.map(() => false);
     const [grants, ancestors] = await Promise.all([this.#grants(c, principalId, lock), this.#ancestors(c, orgId)]);

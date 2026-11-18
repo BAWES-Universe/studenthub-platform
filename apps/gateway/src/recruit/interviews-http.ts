@@ -13,7 +13,7 @@ import { BAD, NOT_FOUND, UNAUTHORIZED, decodeSegment, errorPage, html, readBody,
 export interface RecruitInterviewsStore {
   schedule(principalId: string, requestId: string, input: InterviewFields): Promise<{ kind: "scheduled"; interviewId: string } | { kind: "not_found" } | { kind: "stage_refused"; stage: string }>;
   cancel(principalId: string, interviewId: string): Promise<{ kind: "cancelled" } | { kind: "not_found" } | { kind: "refused"; status: InterviewStatus }>;
-  evaluate(principalId: string, interviewId: string, input: EvaluationFields): Promise<{ kind: "evaluated"; version: number } | { kind: "not_found" } | { kind: "refused"; status: InterviewStatus } | { kind: "internal_note_refused" }>;
+  evaluate(principalId: string, interviewId: string, input: EvaluationFields): Promise<{ kind: "evaluated"; version: number } | { kind: "not_found" } | { kind: "refused"; status: InterviewStatus } | { kind: "internal_note_refused" } | { kind: "stale"; version: number }>;
   forRequest(principalId: string, requestId: string): Promise<{
     request: { id: string; position_title: string; store_name: string; org_name: string };
     interviews: readonly InterviewRow[]; cards: readonly { id: string; person_name: string | null; stage: string }[]; canWrite: boolean; seesInternal: boolean;
@@ -82,6 +82,7 @@ export function createRecruitInterviews(p: { sessions: Pick<SessionStore, "get">
       const r = await p.store.evaluate(id, interviewId.toLowerCase(), input);
       if (r.kind === "evaluated") return { status: 200, body: { interviewId: interviewId.toLowerCase(), version: r.version } };
       if (r.kind === "not_found") return NOT_FOUND;
+      if (r.kind === "stale") return { status: 409, body: { error: "evaluation_changed", version: r.version } };
       return r.kind === "internal_note_refused" ? { status: 409, body: { error: "internal_note_refused" } } : { status: 409, body: { error: "interview_closed", status: r.status } };
     },
     async mine(s) {
@@ -102,10 +103,11 @@ export function renderRequestInterviews(b: RequestInterviewsBody): string {
     const facts = [`${v.kuwaitTime} (Kuwait)`, `${v.durationMinutes} min`, MODE[v.mode], v.location].filter((x): x is string => Boolean(x)).map(html).join(" · ");
     const evaluation = v.outcome ? `<p>${OUTCOME[v.outcome]}${v.rating ? ` · ${v.rating}/5` : ""}${v.evaluationVersion && v.evaluationVersion > 1 ? ` · corrected (version ${v.evaluationVersion})` : ""}</p>${v.sharedNote ? `<p style="white-space:pre-wrap">${html(v.sharedNote)}</p>` : ""}${v.internalNote ? `<p class="muted" style="white-space:pre-wrap">Internal: ${html(v.internalNote)}</p>` : ""}` : "";
     const actions = !b.canWrite || v.status === "cancelled" ? "" : `<details><summary>${v.status === "scheduled" ? "Record the evaluation" : "Correct the evaluation"}</summary><form method="post" action="/recruit/interviews/${html(v.interviewId)}/evaluate">${hidden}
-<p><label for="o-${html(v.interviewId)}">Outcome</label> <select id="o-${html(v.interviewId)}" name="outcome" required>${(Object.keys(OUTCOME) as InterviewOutcome[]).map((o) => `<option value="${o}">${OUTCOME[o]}</option>`).join("")}</select></p>
-<p><label for="r-${html(v.interviewId)}">Rating (1 to 5, optional)</label> <input id="r-${html(v.interviewId)}" name="rating" inputmode="numeric" pattern="[1-5]" maxlength="1"></p>
-<p><label for="n-${html(v.interviewId)}">Note for the company</label><br><textarea id="n-${html(v.interviewId)}" name="sharedNote" maxlength="5000" rows="3"></textarea></p>
-${b.seesInternal ? `<p><label for="i-${html(v.interviewId)}">Internal note (staff only)</label><br><textarea id="i-${html(v.interviewId)}" name="internalNote" maxlength="5000" rows="3"></textarea></p>` : ""}
+<input type="hidden" name="version" value="${v.evaluationVersion ?? 0}">
+<p><label for="o-${html(v.interviewId)}">Outcome</label> <select id="o-${html(v.interviewId)}" name="outcome" required>${(Object.keys(OUTCOME) as InterviewOutcome[]).map((o) => `<option value="${o}"${o === v.outcome ? " selected" : ""}>${OUTCOME[o]}</option>`).join("")}</select></p>
+<p><label for="r-${html(v.interviewId)}">Rating (1 to 5, optional)</label> <input id="r-${html(v.interviewId)}" name="rating" inputmode="numeric" pattern="[1-5]" maxlength="1"${v.rating ? ` value="${v.rating}"` : ""}></p>
+<p><label for="n-${html(v.interviewId)}">Note for the company</label><br><textarea id="n-${html(v.interviewId)}" name="sharedNote" maxlength="5000" rows="3">${html(v.sharedNote ?? "")}</textarea></p>
+${b.seesInternal ? `<p><label for="i-${html(v.interviewId)}">Internal note (staff only)</label><br><textarea id="i-${html(v.interviewId)}" name="internalNote" maxlength="5000" rows="3">${html(v.internalNote ?? "")}</textarea></p>` : ""}
 <button class="button primary" type="submit">Save evaluation</button></form></details>${v.status === "scheduled" ? `<form method="post" action="/recruit/interviews/${html(v.interviewId)}/cancel">${hidden}<button class="button" type="submit">Cancel the interview</button></form>` : ""}`;
     return `<li><h2>${html(v.personName ?? "Unnamed person")} <span class="badge">${STATUS[v.status]}</span></h2><p>${facts}</p>${v.scheduledBy ? `<p class="muted">Scheduled by ${html(v.scheduledBy)}</p>` : ""}${evaluation}${actions}</li>`;
   };

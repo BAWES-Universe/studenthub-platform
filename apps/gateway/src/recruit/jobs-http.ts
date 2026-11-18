@@ -14,8 +14,8 @@ import { BAD, NOT_FOUND, UNAUTHORIZED, decodeSegment, errorPage, html, readBody,
 //   POST /recruit/staff/applications/<id>/(shortlist|reject)
 
 export interface RecruitJobsStore {
-  create(principalId: string, input: JobFields): Promise<{ kind: "saved"; jobId: string } | { kind: "not_found" } | { kind: "area_invalid" }>;
-  update(principalId: string, jobId: string, input: JobFields): Promise<{ kind: "saved"; jobId: string } | { kind: "not_found" } | { kind: "area_invalid" }>;
+  create(principalId: string, input: JobFields): Promise<{ kind: "saved"; jobId: string } | { kind: "not_found" } | { kind: "area_invalid" } | { kind: "request_locked" }>;
+  update(principalId: string, jobId: string, input: JobFields): Promise<{ kind: "saved"; jobId: string } | { kind: "not_found" } | { kind: "area_invalid" } | { kind: "request_locked" }>;
   board(personId: string, query: { q: string | null; applied: boolean; page: number }): Promise<{ jobs: readonly (JobRow & { area_id: string | null })[]; total: number } | null>;
   get(principalId: string, jobId: string): Promise<{ job: JobRow & { area_id: string | null; applications: number }; staff: boolean } | null>;
   apply(personId: string, jobId: string, note: string | null): Promise<{ kind: "applied"; applicationId: string } | { kind: "not_found" } | { kind: "job_closed" } | { kind: "duplicate"; applicationId: string }>;
@@ -88,6 +88,7 @@ export function createRecruitJobs(p: { sessions: Pick<SessionStore, "get">; stor
       if (!fields) return BAD;
       const r = jobId === null ? await p.store.create(id, fields) : await p.store.update(id, jobId.toLowerCase(), fields);
       if (r.kind === "saved") return { status: 200, body: { jobId: r.jobId } };
+      if (r.kind === "request_locked") return { status: 409, body: { error: "request_locked" } };
       return r.kind === "not_found" ? NOT_FOUND : { status: 400, body: { error: "area_invalid" } };
     },
     async staffJob(s, jobId) {

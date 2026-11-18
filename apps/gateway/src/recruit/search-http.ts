@@ -46,7 +46,7 @@ export function renderPeopleSearch(body: PeopleSearchBody): string {
   };
   const person = (v: SearchPersonView) => {
     const facts = [v.availability === "active" ? "Actively looking" : "Open to offers", v.area, v.nationality, ...v.universities, v.drivingLicence === true ? "Driving licence" : null].filter((x): x is string => Boolean(x));
-    return `<li><p><strong>${html(v.name ?? "Unnamed person")}</strong>${v.arabicName ? ` <span dir="rtl" lang="ar">${html(v.arabicName)}</span>` : ""}${v.complete ? "" : ` <span class="muted">(profile incomplete)</span>`}</p>${v.objective ? `<p>${html(v.objective)}</p>` : ""}<p class="muted">${facts.map(html).join(" · ")}</p></li>`;
+    return `<li><p><strong>${html(v.name ?? "Unnamed person")}</strong>${v.arabicName ? ` <span dir="rtl" lang="ar">${html(v.arabicName)}</span>` : ""}${v.complete ? "" : ` <span class="muted">(profile incomplete)</span>`}</p>${v.objective ? `<p>${html(v.objective)}</p>` : ""}<p class="muted">${facts.map(html).join(" · ")}</p><p class="muted">Person id (to invite or add to a pipeline): <code>${html(v.personId)}</code></p></li>`;
   };
   const pages = Math.max(1, Math.ceil(body.total / body.pageSize));
   const link = (page: number, label: string) => `<a class="text-link" href="/recruit/staff/people${searchQueryString(body.query, page) ? `?${searchQueryString(body.query, page)}` : ""}">${label}</a>`;

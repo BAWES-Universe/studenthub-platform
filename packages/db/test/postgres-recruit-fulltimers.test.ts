@@ -109,6 +109,11 @@ test("REC9_PIPELINE a full-timer joins a request's pipeline once; placing record
   assert.equal((await pool.query("SELECT 1 FROM recruit_outbox WHERE subject_id = $1", [(interview as { interviewId: string }).interviewId])).rowCount, 0, "a full-timer has no account to notify");
   assert.equal((await interviews.forRequest(owner, requestId))!.interviews[0]!.person_name?.startsWith("Fahad"), true);
   assert.equal((await pipeline.move(recruiter, cardId, "offered")).kind, "moved");
+  // Archived after the offer: no hire is recorded for a record staff have retired; restoring it allows the hire again.
+  await fulltimers.archive(staff, ft, true);
+  assert.deepEqual(await pipeline.move(recruiter, cardId, "placed"), { kind: "subject_unavailable" });
+  assert.equal((await requests.get(owner, requestId))!.request.status, "filling", "the request is not filled by an archived record");
+  await fulltimers.archive(staff, ft, false);
   assert.deepEqual(await pipeline.move(recruiter, cardId, "placed"), { kind: "moved", stage: "placed" });
   assert.deepEqual(placements.includes(cardId), false, "the work lane is never asked to pay a full-timer");
   const card = (await pool.query<{ assignment_id: string | null }>("SELECT assignment_id FROM recruit_pipeline_cards WHERE id = $1", [cardId])).rows[0]!;

@@ -147,3 +147,14 @@ test("REC7_REVOKE_RACE staff losing the grant while publishing, editing or decid
   assert.deepEqual(await revokeDuring(pool, decider, () => jobs.decide(decider, applicationId, "shortlisted")), { kind: "not_found" });
   assert.deepEqual((await jobs.applications(s.staff, jobId))!.map((a) => [a.person_principal_id, a.status]), [[noor, "interested"]]);
 });
+
+test("REC7_RELINK a job moves to another request only until someone applies; other edits stay open", async () => {
+  const s = await setup(), t = await setup();
+  const id = ((await jobs.create(s.staff, job(s.requestId))) as { jobId: string }).jobId;
+  assert.deepEqual(await jobs.update(s.staff, id, job(t.requestId)), { kind: "saved", jobId: id }, "no applications yet: relinking is a correction");
+  assert.deepEqual(await jobs.update(s.staff, id, job(s.requestId)), { kind: "saved", jobId: id });
+  assert.equal((await jobs.apply(await candidate(), id, null)).kind, "applied");
+  assert.deepEqual(await jobs.update(s.staff, id, job(t.requestId)), { kind: "request_locked" }, "applications keep the company they applied to");
+  assert.deepEqual(await jobs.update(s.staff, id, job(s.requestId, { position: `Head cashier ${unique}` })), { kind: "saved", jobId: id });
+  assert.equal((await pool.query<{ request_id: string }>("SELECT request_id FROM recruit_jobs WHERE id = $1", [id])).rows[0]!.request_id, s.requestId);
+});
