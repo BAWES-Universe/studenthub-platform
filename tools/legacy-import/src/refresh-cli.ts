@@ -172,15 +172,19 @@ export function acquireLock(lockPath: string): Promise<LockResult> {
     } catch {
       return resolve({ held: false, code: "lock.unavailable" });
     }
-    const fail = (code: "locked" | "lock.unavailable") => {
-      closeSync(fd);
-      resolve({ held: false, code });
+    // A failed spawn emits both "error" and "close"; settle once so fd is closed once.
+    let settled = false;
+    const settle = (result: LockResult) => {
+      if (settled) return;
+      settled = true;
+      if (!result.held) closeSync(fd);
+      resolve(result);
     };
     const helper = spawn("flock", ["--nonblock", "--conflict-exit-code", "75", "3"], { stdio: ["ignore", "ignore", "ignore", fd] });
-    helper.on("error", () => fail("lock.unavailable"));
+    helper.on("error", () => settle({ held: false, code: "lock.unavailable" }));
     helper.on("close", (code) => {
-      if (code === 0) resolve({ held: true, fd });
-      else fail(code === 75 ? "locked" : "lock.unavailable");
+      if (code === 0) settle({ held: true, fd });
+      else settle({ held: false, code: code === 75 ? "locked" : "lock.unavailable" });
     });
   });
 }

@@ -293,3 +293,20 @@ test("two CLI runs at once: one refreshes, the other exits locked and copies not
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a missing flock binary fails closed once, with no double close and no crash", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "refresh-noflock-"));
+  const savedPath = process.env.PATH;
+  try {
+    process.env.PATH = dir;
+    const result = await acquireLock(path.join(dir, "run.lock"));
+    assert.deepEqual(result, { held: false, code: "lock.unavailable" });
+    await new Promise((r) => setTimeout(r, 50));
+  } finally {
+    process.env.PATH = savedPath;
+    rmSync(dir, { recursive: true, force: true });
+  }
+  const again = await acquireLock(path.join(mkdtempSync(path.join(tmpdir(), "refresh-relock-")), "run.lock"));
+  assert.equal(again.held, true);
+  if (again.held) closeSync(again.fd);
+});
