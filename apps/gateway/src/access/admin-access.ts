@@ -312,8 +312,9 @@ export async function handleAccess(
     return true;
   }
 
-  // Writes: same-origin form posts only.
-  if (req.method !== "POST") return false;
+  // Writes: same-origin form posts to the two write paths only; any other
+  // method or path is not handled, so the unknown-path 404 answers.
+  if (req.method !== "POST" || (path !== "/admin/access/preview" && path !== "/admin/access/confirm")) return false;
   if (!origin || req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {
     req.resume();
     write(403, "Access", renderAccessRefusal("invalid_request", "/admin/access"));

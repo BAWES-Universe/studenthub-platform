@@ -193,6 +193,12 @@ test("A1_PREVIEW_CONFIRM a form preview shows the change, the confirm applies it
   assert.equal((await http.post("/admin/access/confirm", "admin-1", fields, "https://evil.example")).status, 403);
   // An altered field is refused.
   assert.equal((await http.post("/admin/access/confirm", "admin-1", { ...fields, role: "finance" })).status, 409);
+  // A valid confirmation posted anywhere but /admin/access/confirm is the unknown-path 404 and changes nothing.
+  for (const path of ["/admin/access", "/admin/access/people/candidate-1", "/admin/access/elsewhere"]) {
+    assert.equal((await http.post(path, "admin-1", fields)).status, 404, path);
+  }
+  assert.equal(events.length, 0, "no other path applies a grant");
+  assert.ok(!grants.some((grant) => grant.principalId === "candidate-1" && grant.role === "recruiter"));
   const confirm = await http.post("/admin/access/confirm", "admin-1", fields);
   assert.equal(confirm.status, 303);
   assert.equal(confirm.headers.get("location"), "/admin/access/people/candidate-1?done=granted");
