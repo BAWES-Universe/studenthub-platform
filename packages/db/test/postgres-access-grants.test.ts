@@ -216,3 +216,16 @@ test("A1_LIST a company deep in the tree still sees the operator root as its anc
   const preview = await writes().preview(staff, change({ targetPrincipalId: target, orgId: parent }));
   assert.ok(preview.ok && preview.kind === "change", JSON.stringify(preview));
 });
+
+test("A1_GUARDS a grant to a person paused after the preview is refused and writes nothing", async () => {
+  const acme = await organization("Acme");
+  const staff = await person("Staff Member", [{ orgId: root, role: "staff", scope: "subtree" }]);
+  const target = await person();
+  const preview = await writes().preview(staff, change({ targetPrincipalId: target, orgId: acme }));
+  if (!preview.ok || preview.kind !== "change") throw new Error("expected a change");
+  await pool.query("INSERT INTO account_pauses (id, principal_id, paused_by, reason, suspended_grants, suspended_stores) VALUES ($1, $2, $3, 'Reported misuse', '[]', '[]')",
+    [randomUUID(), target, staff]);
+  assert.deepEqual(await writes().confirm(staff, change({ targetPrincipalId: target, orgId: acme }), preview.token), { kind: "refused", reason: "state_changed" });
+  assert.deepEqual(await events(target), []);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM grants WHERE principal_id = $1", [target])).rows[0].n, 0);
+});
