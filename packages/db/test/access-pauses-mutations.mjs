@@ -16,7 +16,7 @@ const mutations = [
   ["keep the store grants of a paused person", "A6_PAUSE",
     "WHERE principal_id = $1 AND revoked_at IS NULL RETURNING org_id, store_id", "WHERE false AND principal_id = $1 RETURNING org_id, store_id"],
   ["give back a grant at a deleted company", "A6_RESUME",
-    "const grants = suspended.filter((grant) => liveOrgs.has(grant.orgId));", "const grants = suspended;"],
+    "for (const grant of suspended.filter((item) => liveOrgs.has(item.orgId))) {", "for (const grant of suspended) {"],
 ];
 const original = await readFile(store, "utf8");
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-concurrency=1",
