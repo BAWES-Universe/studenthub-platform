@@ -1699,7 +1699,9 @@ async function repairInterrupted({ io, paths, limits, config, revision, next, sk
 // no claim and no report. Under the policy's code_label the same review covers
 // a Claude-written change to the coordinator's own code: any path under
 // .github/coordinator, with the same contracts and trailer rules. It still
-// reviews only; Card B never installs coordinator code.
+// reviews only; Card B never installs coordinator code. Under the policy's
+// product_label it covers a Claude-written product change: any path outside
+// .github, with the same trailer rule. Each label admits only its own paths.
 export const QUEUE_CONFIG_REVIEWER = "codex-verifier";
 export const QUEUE_CONFIG_AUTHOR_FAMILY = "claude";
 export const QUEUE_CONFIG_PATHS = Object.freeze([
@@ -1728,6 +1730,13 @@ export function queueConfigPath(file) {
   return QUEUE_CONFIG_PATHS.includes(file) || parts.slice(2, -1).includes("test");
 }
 
+// A product path: a plain relative path outside .github, so a product label
+// never carries coordinator code, workflows or queue config.
+export function productPath(file) {
+  if (typeof file !== "string" || file.startsWith(".github/") || file === ".github") return false;
+  return file.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
 // Any file of the coordinator's own tree.
 export function coordinatorCodePath(file) {
   if (typeof file !== "string" || !file.startsWith(".github/coordinator/")) return false;
@@ -1750,10 +1759,11 @@ export function queueConfigChange(files, head, commits, allowed = queueConfigPat
   if (!Array.isArray(files) || files.length === 0 || files.length >= GITHUB_PAGE) return { ok: false, reason: "its changed files are not one readable page" };
   if (!Array.isArray(commits) || commits.length === 0 || commits.length >= GITHUB_PAGE) return { ok: false, reason: "its commits are not one readable page" };
   if (commits.at(-1)?.sha !== head) return { ok: false, reason: "its head moved while it was read" };
-  const blobs = {};
+  // No prototype, so a product file named __proto__ is an own entry too.
+  const blobs = Object.create(null);
   for (const file of files) {
     const names = [file?.filename, ...(file?.previous_filename === undefined ? [] : [file.previous_filename])];
-    if (!names.every(allowed)) return { ok: false, reason: `${String(file?.filename)} is not a ${allowed === queueConfigPath ? "queue config" : "coordinator"} path` };
+    if (!names.every(allowed)) return { ok: false, reason: `${String(file?.filename)} is not a ${allowed === queueConfigPath ? "queue config" : allowed === productPath ? "product" : "coordinator"} path` };
     const contracts = CONTRACTS_PATHS.find((entry) => names.includes(entry));
     if (contracts && file.status !== "modified") return { ok: false, reason: `${contracts} may only be edited` };
     if (!SHA_RE.test(file.sha ?? "") || !Number.isInteger(file.additions) || !Number.isInteger(file.deletions) || Object.hasOwn(blobs, file.filename)) {
@@ -1821,7 +1831,7 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   const open = await get(`${api}/pulls?state=open&base=main&per_page=${GITHUB_PAGE}`);
   if (!Array.isArray(open) || open.length >= GITHUB_PAGE) refuse("CARD_RUN_REVIEW_UNREADABLE", "the open pull requests are not one readable page");
   const capped = [];
-  const labels = [policy.label, ...(policy.codeLabel ? [policy.codeLabel] : [])];
+  const labels = [policy.label, ...(policy.codeLabel ? [policy.codeLabel] : []), ...(policy.productLabel ? [policy.productLabel] : [])];
   // Velocity A: the pull request reviewed least at this revision goes first,
   // then the oldest. By number alone, every new head on an older pull request
   // (each merge of main gives one) went ahead of a newer one for ever.
@@ -1831,6 +1841,9 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   for (const { pull, claims } of listed) {
     const pr = pull.number;
     const head = pull.head.sha;
+    // A product pull request carries the product label alone, so no other
+    // label can admit coordinator code, workflows or queue config beside it.
+    if (hasLabel(pull, policy.productLabel) && (hasLabel(pull, policy.label) || hasLabel(pull, policy.codeLabel))) continue;
     if (claims.heads.has(head)) continue;
     if (claims.atRevision >= policy.maxHeadsPerPr) {
       capped.push(pr);
@@ -1840,6 +1853,7 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
     const commits = await get(`${api}/pulls/${pr}/commits?per_page=${GITHUB_PAGE}`);
     let change = hasLabel(pull, policy.label) ? queueConfigChange(files, head, commits) : { ok: false };
     if (!change.ok && hasLabel(pull, policy.codeLabel)) change = queueConfigChange(files, head, commits, coordinatorCodePath);
+    if (!change.ok && hasLabel(pull, policy.productLabel)) change = queueConfigChange(files, head, commits, productPath);
     if (!change.ok) continue;
     // The approved base is the merge base with main, as the coordinator's
     // own check of a review-only pull request reads it.

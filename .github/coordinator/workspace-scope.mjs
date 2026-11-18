@@ -148,8 +148,11 @@ export function resolveReviewOnlyLane(config = {}, issueId) {
 // code_label, when present, is a second label: a Claude-written change to the
 // coordinator's own code under it gets the same review-only verdict, so a
 // person no longer relays it to Codex (Khalid, 2026-10-25).
+// product_label, when present, is a third label: a Claude-written product
+// change (any path outside .github) gets the same review-only verdict, so a
+// lane's pull request has an independent reviewer without a relay.
 export const QUEUE_CONFIG_REVIEW_KEYS = Object.freeze(["label", "lane", "max_heads_per_pr"]);
-export const QUEUE_CONFIG_REVIEW_OPTIONAL_KEYS = Object.freeze(["code_label"]);
+export const QUEUE_CONFIG_REVIEW_OPTIONAL_KEYS = Object.freeze(["code_label", "product_label"]);
 export const MAX_QUEUE_CONFIG_REVIEW_HEADS = 10;
 const LABEL_RE = /^[a-z0-9][a-z0-9:._-]{0,49}$/;
 export function resolveQueueConfigReview(config = {}) {
@@ -169,10 +172,14 @@ export function resolveQueueConfigReview(config = {}) {
   if (Object.hasOwn(policy, "code_label") && (typeof policy.code_label !== "string" || !LABEL_RE.test(policy.code_label) || policy.code_label === policy.label)) {
     throw new Error("queue_config_review.code_label must be one plain GitHub label other than label");
   }
+  if (Object.hasOwn(policy, "product_label") && (typeof policy.product_label !== "string" || !LABEL_RE.test(policy.product_label)
+      || policy.product_label === policy.label || policy.product_label === policy.code_label)) {
+    throw new Error("queue_config_review.product_label must be one plain GitHub label other than label and code_label");
+  }
   if (!Number.isInteger(policy.max_heads_per_pr) || policy.max_heads_per_pr < 1 || policy.max_heads_per_pr > MAX_QUEUE_CONFIG_REVIEW_HEADS) {
     throw new Error(`queue_config_review.max_heads_per_pr must be 1 to ${MAX_QUEUE_CONFIG_REVIEW_HEADS}`);
   }
-  return Object.freeze({ lane: policy.lane, label: policy.label, codeLabel: policy.code_label ?? null, maxHeadsPerPr: policy.max_heads_per_pr });
+  return Object.freeze({ lane: policy.lane, label: policy.label, codeLabel: policy.code_label ?? null, productLabel: policy.product_label ?? null, maxHeadsPerPr: policy.max_heads_per_pr });
 }
 
 // Repo-mode paths never reach what the host's dependency install owns.
