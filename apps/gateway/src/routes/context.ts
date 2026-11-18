@@ -32,6 +32,10 @@ import type { RecruitInterviews } from "../recruit/interviews-http.js";
 import type { RecruitJobs } from "../recruit/jobs-http.js";
 import type { RecruitFulltimers } from "../recruit/fulltimers-http.js";
 import type { AccessPorts } from "../access/admin-access.js";
+import type { CompanyTeamPorts } from "../access/company-team.js";
+import type { CompanyContactsPorts } from "../access/company-contacts.js";
+import type { StoreManagerPorts } from "../access/store-manager.js";
+import type { AbuseGatePorts } from "../access/abuse-gate.js";
 import type { RecruitRequestApplications } from "../recruit/request-applications-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
@@ -62,6 +66,12 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly recruitJobs?: RecruitJobs;
   readonly recruitFulltimers?: RecruitFulltimers;
   readonly access?: AccessPorts;
+  readonly team?: CompanyTeamPorts;
+  readonly contacts?: CompanyContactsPorts;
+  readonly storeManager?: StoreManagerPorts;
+  readonly abuse?: AbuseGatePorts;
+  readonly staffView?: import("../access/staff-view.js").StaffViewPorts;
+  readonly registrations?: import("../access/company-registration.js").CompanyRegistrationPorts;
   readonly recruitRequestApplications?: RecruitRequestApplications;
   readonly staffMessages?: StaffMessagesHttpService;
 };

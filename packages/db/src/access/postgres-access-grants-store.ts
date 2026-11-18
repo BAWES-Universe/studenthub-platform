@@ -127,6 +127,13 @@ export class PostgresAccessGrantsStore {
         await client.query("ROLLBACK");
         return decision;
       }
+      // A grant to a paused person would sit outside the pause's record and
+      // survive it; the pause holds this principal's lock, so this read is final.
+      if (decision.after !== null && (await client.query(
+        "SELECT 1 FROM account_pauses WHERE principal_id = $1 AND resumed_at IS NULL", [request.targetPrincipalId])).rowCount) {
+        await client.query("ROLLBACK");
+        return { kind: "refused", reason: "state_changed" };
+      }
       const before = await grantSummary(client, request.targetPrincipalId);
       if (decision.after === null) {
         await client.query("DELETE FROM grants WHERE principal_id = $1 AND org_id = $2 AND role = $3",
@@ -311,7 +318,7 @@ export class PostgresAccessGrantsStore {
   }
 }
 
-async function grantSummary(client: pg.PoolClient, principalId: string): Promise<Readonly<Record<string, number>>> {
+export async function grantSummary(client: pg.PoolClient, principalId: string): Promise<Readonly<Record<string, number>>> {
   const { rows } = await client.query<{ total: number; self_count: number; subtree_count: number }>(
     `SELECT count(*)::int AS total,
             count(*) FILTER (WHERE scope = 'self')::int AS self_count,
@@ -322,7 +329,7 @@ async function grantSummary(client: pg.PoolClient, principalId: string): Promise
 }
 
 /** Ancestors of each organization (never the organization itself), in one query. */
-async function ancestorsOf(db: pg.Pool | pg.PoolClient, orgIds: readonly string[]): Promise<Map<string, string[]>> {
+export async function ancestorsOf(db: pg.Pool | pg.PoolClient, orgIds: readonly string[]): Promise<Map<string, string[]>> {
   const result = new Map<string, string[]>();
   if (orgIds.length === 0) return result;
   const { rows } = await db.query<{ origin: string; ancestors: string[] }>(
