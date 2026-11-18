@@ -13,7 +13,7 @@ import {
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, recoverMarker, selectLock, repairIntent, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
   autoServiceName, autoTimerName,
-  reviewClaim, queueConfigPath, coordinatorCodePath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
+  reviewClaim, queueConfigPath, coordinatorCodePath, productPath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
 } from "../service/card-run.mjs";
 import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS,
   readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
@@ -4177,7 +4177,7 @@ test("SHU-321 R6: under a queue the scope narrows to the committed review lane o
   const { narrowQueueScope } = await import("../single-run-activation.mjs");
   const { resolveDispatchScope } = await import("../reconcile.mjs");
   const { resolveQueueConfigReview } = await import("../workspace-scope.mjs");
-  assert.deepEqual({ ...resolveQueueConfigReview(COMMITTED) }, { lane: "SHU-304", label: "coordinator:queue-config", codeLabel: "coordinator:code", maxHeadsPerPr: 3 });
+  assert.deepEqual({ ...resolveQueueConfigReview(COMMITTED) }, { lane: "SHU-304", label: "coordinator:queue-config", codeLabel: "coordinator:code", productLabel: "box:product-review", maxHeadsPerPr: 3 });
   const review = { pr: 240, head: PR_HEAD, base: PR_BASE, authorFamily: "claude" };
   const record = planRun({ config: queueConfig(), revision: REV, now: START, review, cardId: "SHU-304" }).record;
   const file = (text) => ({ lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }), readFile: () => text });
@@ -4202,6 +4202,59 @@ test("SHU-321 R6: under a queue the scope narrows to the committed review lane o
     { ...COMMITTED.queue_config_review, lane: "SHU-301" }, { ...COMMITTED.queue_config_review, note: "x" }, []
     , { ...COMMITTED.queue_config_review, code_label: "a b" }, { ...COMMITTED.queue_config_review, code_label: COMMITTED.queue_config_review.label },
     { ...COMMITTED.queue_config_review, code_label: 1 }]) {
+    assert.throws(() => resolveQueueConfigReview({ ...COMMITTED, queue_config_review: policy }), /queue_config_review/, JSON.stringify(policy));
+  }
+});
+
+// 2026-11-17: Claude lane product pull requests had no independent reviewer.
+// Under the policy's product_label the box gives them the same Codex verdict
+// at the exact head; the label admits only paths outside .github.
+test("Box review C4: a box:product-review pull request is reviewed by Codex, and only outside .github", async () => {
+  const { resolveQueueConfigReview } = await import("../workspace-scope.mjs");
+  const PRODUCT = COMMITTED.queue_config_review.product_label;
+  assert.equal(PRODUCT, "box:product-review");
+  const productFiles = () => [
+    { filename: "apps/gateway/src/index.ts", status: "modified", sha: "6".repeat(40), additions: 9, deletions: 3 },
+    { filename: "packages/invoices/src/invoices.ts", status: "added", sha: "7".repeat(40), additions: 90, deletions: 0 }];
+  const host = reviewHost([queuePull(260, { labels: [PRODUCT], files: productFiles() })]);
+  const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(run.outcome, "REVIEW_PASS", JSON.stringify(run));
+  assert.deepEqual(run.review, { pr: 260, head: PR_HEAD, base: PR_BASE });
+  assert.equal(host.armedRecords[0].reviewer_lane, "codex-verifier");
+  assert.equal(JSON.parse(host.files.get(reviewClaim(PATHS, 260, PR_HEAD)).text).files["apps/gateway/src/index.ts"].additions, 9);
+  const proto = reviewHost([queuePull(260, { labels: [PRODUCT], files: [...productFiles(), { filename: "__proto__", status: "added", sha: "9".repeat(40), additions: 1, deletions: 0 }] })]);
+  assert.equal((await attempt(() => autoRun({ io: proto.io, paths: PATHS }))).outcome, "REVIEW_PASS");
+  assert.equal(Object.hasOwn(JSON.parse(proto.files.get(reviewClaim(PATHS, 260, PR_HEAD)).text).files, "__proto__"), true, "a file named __proto__ stays in the claim");
+  const files = (edit) => { const list = productFiles(); edit(list); return list; };
+  for (const [label, pull] of [
+    ["product label on queue config", queuePull(260, { labels: [PRODUCT] })],
+    ["product label on coordinator code", queuePull(260, { labels: [PRODUCT], files: files((list) => list.push({ filename: ".github/coordinator/service/card-run.mjs", status: "modified", sha: "8".repeat(40), additions: 1, deletions: 0 })) })],
+    ["product label on a workflow", queuePull(260, { labels: [PRODUCT], files: files((list) => list.push({ filename: ".github/workflows/ci.yml", status: "modified", sha: "8".repeat(40), additions: 1, deletions: 0 })) })],
+    ["a rename from .github", queuePull(260, { labels: [PRODUCT], files: files((list) => list.push({ filename: "docs/ci.yml", previous_filename: ".github/workflows/ci.yml", status: "renamed", sha: "8".repeat(40), additions: 0, deletions: 0 })) })],
+    ["code label on product files", queuePull(260, { labels: [COMMITTED.queue_config_review.code_label], files: productFiles() })],
+    ["product and code labels on coordinator code", queuePull(260, { labels: [PRODUCT, COMMITTED.queue_config_review.code_label], files: [{ filename: ".github/coordinator/service/card-run.mjs", status: "modified", sha: "8".repeat(40), additions: 1, deletions: 0 }] })],
+    ["product and queue config labels on queue config", queuePull(260, { labels: [PRODUCT, COMMITTED.queue_config_review.label] })],
+    ["product and code labels on product files", queuePull(260, { labels: [PRODUCT, COMMITTED.queue_config_review.code_label], files: productFiles() })],
+    ["a commit without the trailer", queuePull(260, { labels: [PRODUCT], files: productFiles(), messages: ["feat: b\n\nCo-Authored-By: Claude <noreply@anthropic.com>"] })],
+    ["a draft", queuePull(260, { labels: [PRODUCT], files: productFiles(), draft: true })],
+    ["a fork", queuePull(260, { labels: [PRODUCT], files: productFiles(), fork: true })],
+  ]) {
+    const quiet = reviewHost([pull]);
+    const skipped = await attempt(() => autoRun({ io: quiet.io, paths: PATHS }));
+    assert.equal(skipped.skipped, "QUEUE_DONE", `${label}: ${JSON.stringify(skipped)}`);
+    notReviewed(quiet, label);
+  }
+  // Without product_label the policy reviews no product change, as before.
+  const config = queueConfig();
+  delete config.queue_config_review.product_label;
+  const off = reviewHost([queuePull(260, { labels: [PRODUCT], files: productFiles() })], { config });
+  assert.equal((await attempt(() => autoRun({ io: off.io, paths: PATHS }))).skipped, "QUEUE_DONE");
+  notReviewed(off, "no product_label");
+  for (const file of ["apps/gateway/src/index.ts", "README.md", "docs/lanes/a.md"]) assert.equal(productPath(file), true, file);
+  for (const file of [".github", ".github/coordinator/config.json", ".github/workflows/ci.yml", "apps/../.github/x", "apps//a.ts", "./a.ts", "", null])
+    assert.equal(productPath(file), false, String(file));
+  for (const policy of [{ ...COMMITTED.queue_config_review, product_label: "a b" }, { ...COMMITTED.queue_config_review, product_label: COMMITTED.queue_config_review.label },
+    { ...COMMITTED.queue_config_review, product_label: COMMITTED.queue_config_review.code_label }, { ...COMMITTED.queue_config_review, product_label: 1 }]) {
     assert.throws(() => resolveQueueConfigReview({ ...COMMITTED, queue_config_review: policy }), /queue_config_review/, JSON.stringify(policy));
   }
 });
