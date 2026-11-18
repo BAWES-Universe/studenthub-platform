@@ -241,6 +241,9 @@ export class PostgresAccessInvitationsStore {
       const ancestors = orgLive ? (await ancestorsOf(client, [row.org_id])).get(row.org_id) ?? [] : [];
       const principal = await client.query<{ email: string | null }>("SELECT email FROM principals WHERE id = $1 FOR SHARE", [input.principalId]);
       if (!principal.rowCount) return { kind: "invalid" };
+      // A pause holds this principal's lock while it takes access away, so a
+      // live pause seen here is final: nothing is granted, the link stays unused.
+      if ((await client.query("SELECT 1 FROM account_pauses WHERE principal_id = $1 AND resumed_at IS NULL", [input.principalId])).rowCount) return { kind: "invalid" };
       const inviterGrants = await this.#grantsOf(client, row.invited_by, true);
       const store = await this.#store(client, row.store_id);
       const at = input.clock ? input.clock() : input.now;

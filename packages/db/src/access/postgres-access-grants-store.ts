@@ -127,6 +127,13 @@ export class PostgresAccessGrantsStore {
         await client.query("ROLLBACK");
         return decision;
       }
+      // A grant to a paused person would sit outside the pause's record and
+      // survive it; the pause holds this principal's lock, so this read is final.
+      if (decision.after !== null && (await client.query(
+        "SELECT 1 FROM account_pauses WHERE principal_id = $1 AND resumed_at IS NULL", [request.targetPrincipalId])).rowCount) {
+        await client.query("ROLLBACK");
+        return { kind: "refused", reason: "state_changed" };
+      }
       const before = await grantSummary(client, request.targetPrincipalId);
       if (decision.after === null) {
         await client.query("DELETE FROM grants WHERE principal_id = $1 AND org_id = $2 AND role = $3",

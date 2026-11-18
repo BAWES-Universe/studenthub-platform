@@ -218,3 +218,16 @@ test("A2_REPLAY a link that expires while acceptance waits on the company lock i
   assert.deepEqual(await grantsOn(invitee, acme), []);
   assert.deepEqual(await service().accept(token, invitee), { kind: "accepted", orgId: acme, role: "recruiter" }, "still live once the clock is back");
 });
+
+test("A2_ACCEPT a paused person's acceptance grants nothing and leaves the link unused", async () => {
+  const acme = await company();
+  const owner = await person(address(), [{ orgId: acme, role: "org-owner" }]);
+  const email = address();
+  const invitee = await person(email);
+  const token = await invite(owner, acme, email);
+  await pool.query("INSERT INTO account_pauses (id, principal_id, paused_by, reason, suspended_grants, suspended_stores) VALUES ($1, $2, $3, 'Reported misuse', '[]', '[]')",
+    [randomUUID(), invitee, owner]);
+  assert.deepEqual(await service().accept(token, invitee), { kind: "invalid" });
+  assert.deepEqual(await grantsOn(invitee, acme), []);
+  assert.equal((await pool.query("SELECT used_at FROM company_invitations WHERE token_hash = $1", [hashInvitationToken(token)])).rows[0].used_at, null);
+});
