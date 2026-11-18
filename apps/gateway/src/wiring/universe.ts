@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createPublicKey } from "node:crypto";
 import { UNIVERSE_SUBJECT_POLICY, USER_EMAIL_SUBJECT_POLICY, type SubjectPolicy } from "@bawes/actor-assertion";
 import { InMemoryIssuerKeyRegistry } from "@studenthub/contracts";
-import { PostgresLoginStore } from "@studenthub/db/access";
+import { PostgresAccessPausesStore, PostgresLoginStore } from "@studenthub/db/access";
 import { PostgresReplayStore } from "@studenthub/db/assertions";
 import { PostgresUniverseEmbedStore } from "@studenthub/db/universe";
 import type { OwnProfileReader } from "@studenthub/profile";
@@ -84,6 +84,9 @@ export function assertSameSiteEmbed(site: string, embedOrigin: string, ancestors
   // Without a bundled public-suffix list, refuse the common two-label suffix
   // shapes: a generic second level under a two-letter country code.
   if (labels.length === 2 && labels[1]!.length === 2 && PUBLIC_SECOND_LEVELS.has(labels[0]!)) fail();
+  // Common private suffixes from the public-suffix list (shared hosting platforms):
+  // each customer subdomain is its own site there.
+  if (PRIVATE_SUFFIXES.has(site)) fail();
   if (ancestors.length === 0) fail();
   for (const value of [embedOrigin, ...ancestors]) {
     const url = new URL(value);
@@ -98,6 +101,9 @@ export function assertSameSiteEmbed(site: string, embedOrigin: string, ancestors
  * stored external subject, which the login keeps in its own (email) form. Only
  * the matching host format is accepted; hashed_user_id could never match.
  */
+const PRIVATE_SUFFIXES = new Set(["github.io", "gitlab.io", "pages.dev", "workers.dev", "vercel.app", "netlify.app",
+  "herokuapp.com", "web.app", "firebaseapp.com", "appspot.com", "azurewebsites.net", "cloudfront.net", "onrender.com",
+  "fly.dev", "railway.app", "glitch.me", "blogspot.com"]);
 const PUBLIC_SECOND_LEVELS = new Set(["ac", "co", "com", "edu", "gov", "gv", "ltd", "me", "mil", "net", "nic", "or", "org", "plc", "sch"]);
 
 /**
@@ -124,10 +130,16 @@ async function pusherKeys(issuer: string, raw: string): Promise<InMemoryIssuerKe
   const registry = new InMemoryIssuerKeyRegistry();
   for (const [keyId, publicKey] of entries) {
     if (!/^[A-Za-z0-9._-]{1,64}$/.test(keyId) || typeof publicKey !== "string") return fail();
+    // Only a public SPKI key: createPublicKey would also accept (and derive from) a
+    // private key, which must never sit in this configuration or the registry.
+    if (!/^-----BEGIN PUBLIC KEY-----/.test(publicKey.trim())) return fail();
+    let spki: string;
     try {
-      if (createPublicKey(publicKey).asymmetricKeyType !== "ed25519") return fail();
+      const key = createPublicKey(publicKey);
+      if (key.asymmetricKeyType !== "ed25519") return fail();
+      spki = key.export({ type: "spki", format: "pem" }).toString();
     } catch { return fail(); }
-    await registry.registerKey({ issuer, keyId, algorithm: "EdDSA", publicKey });
+    await registry.registerKey({ issuer, keyId, algorithm: "EdDSA", publicKey: spki });
   }
   return registry;
 }
@@ -170,12 +182,18 @@ export async function wireUniverse(
 
   let authorization: URL;
   try { authorization = new URL(env.OIDC_AUTHORIZATION_URL!); } catch { return fail(); }
+  // The CSP form-action source is the origin; a trailing-dot host would be redirected
+  // to as written but normalized in the policy, so the two would not match.
+  if (authorization.hostname.endsWith(".")) fail();
   if (authorization.protocol !== "https:") fail();
 
   const databaseUrl = env.DATABASE_URL!;
   const loginStore = new PostgresLoginStore({ connectionString: databaseUrl });
   const store = new PostgresUniverseEmbedStore({ connectionString: databaseUrl });
   const replay = new PostgresReplayStore({ connectionString: databaseUrl });
+  // A paused person gets no session here either (A6). Pausing also ends existing
+  // sessions, which ends any embed binding through readBinding's live-session join.
+  const pauses = new PostgresAccessPausesStore({ connectionString: databaseUrl });
   const runtime: UniverseEmbedRuntime = {
     store,
     sessions: loginStore.sessions,
@@ -190,6 +208,7 @@ export async function wireUniverse(
         // The embed login only issues a session; reads go through the embed service.
         authorization: { async roleFor() { return "self"; } },
         jwks: new RefreshingJwksResolver(issuer, env.OIDC_JWKS_URL!),
+        accessPause: { isPaused: async (personId) => (await pauses.paused([personId])).has(personId) },
       },
       config: {
         issuer,
@@ -208,6 +227,6 @@ export async function wireUniverse(
   };
   return {
     config: Object.freeze({ ...config, runtime }),
-    async close() { await Promise.all([loginStore.close(), store.close(), replay.close()]); },
+    async close() { await Promise.all([loginStore.close(), store.close(), replay.close(), pauses.close()]); },
   };
 }

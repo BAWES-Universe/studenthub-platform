@@ -21,6 +21,21 @@ import type { CivilIdSuggestionService } from "../civil-id-suggestion-http.js";
 import type { CivilIdReviewHttpService } from "../civil-id-review-http.js";
 import type { AreaHttp } from "../area-http.js";
 import type { PeopleDirectoryPage } from "../people-directory.js";
+import type { RecruitRequests } from "../recruit/requests-http.js";
+import type { RecruitPipeline } from "../recruit/pipeline-http.js";
+import type { RecruitChecklist } from "../recruit/checklist-http.js";
+import type { RecruitPeopleSearch } from "../recruit/search-http.js";
+import type { RecruitInvitations } from "../recruit/invitations-http.js";
+import type { RecruitEmployerView } from "../recruit/employer-view-http.js";
+import type { RecruitInterviews } from "../recruit/interviews-http.js";
+import type { RecruitJobs } from "../recruit/jobs-http.js";
+import type { RecruitFulltimers } from "../recruit/fulltimers-http.js";
+import type { AccessPorts } from "../access/admin-access.js";
+import type { CompanyTeamPorts } from "../access/company-team.js";
+import type { CompanyContactsPorts } from "../access/company-contacts.js";
+import type { StoreManagerPorts } from "../access/store-manager.js";
+import type { AbuseGatePorts } from "../access/abuse-gate.js";
+import type { RecruitRequestApplications } from "../recruit/request-applications-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
@@ -40,6 +55,23 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly organizationDeletion?: OrganizationDeletion;
   readonly organizationCreation?: OrganizationCreation;
   readonly legacyLink?: LegacyLinkService;
+  readonly recruitRequests?: RecruitRequests;
+  readonly recruitPipeline?: RecruitPipeline;
+  readonly recruitChecklist?: RecruitChecklist;
+  readonly recruitPeopleSearch?: RecruitPeopleSearch;
+  readonly recruitInvitations?: RecruitInvitations;
+  readonly recruitEmployerView?: RecruitEmployerView;
+  readonly recruitInterviews?: RecruitInterviews;
+  readonly recruitJobs?: RecruitJobs;
+  readonly recruitFulltimers?: RecruitFulltimers;
+  readonly access?: AccessPorts;
+  readonly team?: CompanyTeamPorts;
+  readonly contacts?: CompanyContactsPorts;
+  readonly storeManager?: StoreManagerPorts;
+  readonly abuse?: AbuseGatePorts;
+  readonly staffView?: import("../access/staff-view.js").StaffViewPorts;
+  readonly registrations?: import("../access/company-registration.js").CompanyRegistrationPorts;
+  readonly recruitRequestApplications?: RecruitRequestApplications;
 };
 
 export interface GatewayRouteContext {

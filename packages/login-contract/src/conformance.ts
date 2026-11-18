@@ -20,6 +20,10 @@ import type {
   LoginStateStore,
   OidcTransport,
   SessionStore,
+  UpstreamActivity,
+  UpstreamEndResult,
+  UpstreamSessionEvent,
+  UpstreamSessions,
   TokenRequest,
   TokenResponse,
   TestJsonWebKey,
@@ -53,6 +57,7 @@ interface TokenOverrides {
   readonly signatureValid?: boolean;
   readonly profile?: ClaimedProfile;
   readonly role?: string;
+  readonly sid?: string;
 }
 
 function encoded(value: unknown): string {
@@ -113,6 +118,53 @@ class MemorySessions implements SessionStore {
     return record && structuredClone(record);
   }
   async delete(id: string): Promise<void> { this.records.delete(id); }
+  async take(id: string): Promise<LoginSession | undefined> {
+    const record = this.records.get(id);
+    this.records.delete(id);
+    return record && structuredClone(record);
+  }
+  async claimUpstreamCheck(id: string, checkedAtOrBefore: number, now: number): Promise<boolean> {
+    const record = this.records.get(id);
+    if (!record?.upstreamReference) return false;
+    if (record.lastCheckedAt !== undefined && record.lastCheckedAt > checkedAtOrBefore) return false;
+    this.records.set(id, { ...record, lastCheckedAt: now });
+    return true;
+  }
+  async confirmUpstream(id: string, now: number): Promise<void> {
+    const record = this.records.get(id);
+    if (record) this.records.set(id, { ...record, lastConfirmedAt: Math.max(now, record.lastConfirmedAt ?? now) });
+  }
+  async settleUpstreamCheck(id: string, checkedAt: number): Promise<void> {
+    const record = this.records.get(id);
+    if (record) this.records.set(id, { ...record, lastSettledAt: Math.max(checkedAt, record.lastSettledAt ?? checkedAt) });
+  }
+}
+
+/** A fake issuer session service: answers are set by the scenario, calls are recorded. */
+export class FakeUpstreamSessions implements UpstreamSessions {
+  readonly ended: string[] = [];
+  readonly checked: string[] = [];
+  endAnswer: UpstreamEndResult | "hang" | "throw" = "ended";
+  activity: UpstreamActivity | "hang" | "throw" = "active";
+  /** What the session store held for the reference when end() was called. */
+  onEnd?: (reference: string) => void;
+
+  async end(reference: string): Promise<UpstreamEndResult> {
+    this.ended.push(reference);
+    this.onEnd?.(reference);
+    if (this.endAnswer === "hang") return new Promise(() => undefined);
+    if (this.endAnswer === "throw") throw new Error("upstream unreachable");
+    return this.endAnswer;
+  }
+
+  async isActive(reference: string): Promise<UpstreamActivity> {
+    this.checked.push(reference);
+    // Yield once so concurrent reads really overlap.
+    await new Promise((resolve) => setImmediate(resolve));
+    if (this.activity === "hang") return new Promise(() => undefined);
+    if (this.activity === "throw") throw new Error("upstream unreachable");
+    return this.activity;
+  }
 }
 
 class MemoryIdentities implements IdentityStore {
@@ -216,6 +268,7 @@ class FakeProvider implements OidcTransport, JwksResolver {
       name: issued.overrides.profile?.name ?? "Synthetic Person",
       birthdate: issued.overrides.profile?.dateOfBirth ?? "2000-01-01",
       role: issued.overrides.role ?? "admin",
+      ...(issued.overrides.sid !== undefined ? { sid: issued.overrides.sid } : {}),
     };
     const header = encoded({ alg: "EdDSA", kid: "synthetic-key", typ: "JWT" });
     const payload = encoded(claims);
@@ -242,11 +295,18 @@ export interface SyntheticLoginRig {
   readonly sessions: MemorySessions;
   readonly identities: MemoryIdentities;
   readonly authorization: MemoryAuthorization;
+  readonly upstream?: FakeUpstreamSessions;
+  readonly upstreamEvents: UpstreamSessionEvent[];
 }
 
 export function createSyntheticLoginRig(
   factory: LoginApplicationFactory,
-  options: { readonly entropySeed?: number } = {},
+  options: {
+    readonly entropySeed?: number;
+    readonly upstream?: FakeUpstreamSessions;
+    readonly upstreamCheckSeconds?: number;
+    readonly upstreamTimeoutMs?: number;
+  } = {},
 ): SyntheticLoginRig {
   const provider = new FakeProvider();
   const clock = new FakeClock();
@@ -263,7 +323,10 @@ export function createSyntheticLoginRig(
     allowedReturnUrls: [RETURN_URL, "https://studenthub.test.invalid/profile"],
     clockSkewSeconds: 30,
     subjectPolicy: (subject: string) => /^universe:student:[a-z0-9-]+$/.test(subject),
+    ...(options.upstreamCheckSeconds !== undefined ? { upstreamCheckSeconds: options.upstreamCheckSeconds } : {}),
+    ...(options.upstreamTimeoutMs !== undefined ? { upstreamTimeoutMs: options.upstreamTimeoutMs } : {}),
   });
+  const upstreamEvents: UpstreamSessionEvent[] = [];
   const dependencies: LoginDependencies = {
     oidc: provider,
     jwks: provider,
@@ -273,8 +336,12 @@ export function createSyntheticLoginRig(
     sessions,
     identities,
     authorization,
+    ...(options.upstream ? { upstreamSessions: options.upstream, upstreamLog: (event: UpstreamSessionEvent) => { upstreamEvents.push(event); } } : {}),
   };
-  return { app: factory(dependencies, config), config, provider, clock, entropy, states, sessions, identities, authorization };
+  return {
+    app: factory(dependencies, config), config, provider, clock, entropy, states, sessions, identities, authorization,
+    ...(options.upstream ? { upstream: options.upstream } : {}), upstreamEvents,
+  };
 }
 
 async function begin(rig: SyntheticLoginRig, returnTo = RETURN_URL, browserSessionId = "browser-a") {
@@ -539,3 +606,180 @@ export async function runLoginConformance(factory: LoginApplicationFactory): Pro
 }
 
 export const LOGIN_CONTRACT_SCENARIOS = Object.freeze(SCENARIOS.map(({ name }) => name));
+
+// SHU-457: the optional UpstreamSessions port. These scenarios run only for a
+// login application that accepts the port; the scenarios above are unchanged.
+
+const SID = "synthetic-upstream-session-1";
+const BOUND = 900;
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+async function signedIn(rig: SyntheticLoginRig, overrides: TokenOverrides = { sid: SID }): Promise<string> {
+  await begin(rig);
+  const { response } = await complete(rig, overrides);
+  assert.equal(response.status, 302, "sign-in must succeed");
+  return cookieSession(response);
+}
+
+function upstreamRig(factory: LoginApplicationFactory, upstream = new FakeUpstreamSessions(), upstreamTimeoutMs?: number) {
+  return createSyntheticLoginRig(factory, {
+    upstream, upstreamCheckSeconds: BOUND, ...(upstreamTimeoutMs !== undefined ? { upstreamTimeoutMs } : {}),
+  });
+}
+
+const UPSTREAM_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "sign-in records the upstream session reference from sid and nothing more",
+    run: async (factory) => {
+      const rig = upstreamRig(factory);
+      const sessionId = await signedIn(rig);
+      const record = rig.sessions.records.get(sessionId);
+      assert.ok(record, "the session is stored");
+      assert.equal(record.upstreamReference, SID, "the sid claim is recorded as the reference");
+      const stored = JSON.stringify(record);
+      for (const token of ["synthetic-access-token", rig.provider.tokenResponses[0]?.idToken]) {
+        assert.ok(token && !stored.includes(token), "no identity or access token is stored with the session");
+      }
+      const browser = await rig.app.profile({ sessionId });
+      assert.equal(browser.status, 200);
+      assert.ok(!browserText(browser).includes(SID), "the reference is never shown");
+
+      const withoutSid = upstreamRig(factory);
+      const plain = await signedIn(withoutSid, {});
+      assert.equal(withoutSid.sessions.records.get(plain)?.upstreamReference, undefined, "no sid, no reference");
+      withoutSid.clock.epoch += BOUND * 10;
+      assert.equal((await withoutSid.app.profile({ sessionId: plain })).status, 200, "a session without a reference is checked only by its own expiry");
+      assert.equal(withoutSid.upstream?.checked.length, 0, "a session without a reference is never checked upstream");
+    },
+  },
+  {
+    name: "sign-out deletes the local session first and never depends on the upstream",
+    run: async (factory) => {
+      const upstream = new FakeUpstreamSessions();
+      const rig = upstreamRig(factory, upstream);
+      const sessionId = await signedIn(rig);
+      let heldAtEnd: boolean | undefined;
+      upstream.onEnd = () => { heldAtEnd = rig.sessions.records.has(sessionId); };
+      const logout = await rig.app.logout(sessionId);
+      assert.equal(logout.status, 204);
+      assert.match(logout.headers?.["set-cookie"] ?? "", /Max-Age=0/i);
+      await settle();
+      assert.deepEqual(upstream.ended, [SID], "the upstream session is asked to end");
+      assert.equal(heldAtEnd, false, "the local session is gone before the upstream is asked");
+      await expectRejected(rig.app.profile({ sessionId }), "signed-out session");
+
+      for (const answer of ["unreachable", "throw", "hang"] as const) {
+        const failing = new FakeUpstreamSessions();
+        failing.endAnswer = answer;
+        const other = upstreamRig(factory, failing, 50);
+        const id = await signedIn(other);
+        const started = Date.now();
+        const response = await other.app.logout(id);
+        assert.ok(Date.now() - started < 1_000, `an upstream that is ${answer} does not delay the sign-out`);
+        assert.equal(response.status, 204, `an upstream that is ${answer} does not fail the sign-out`);
+        assert.equal(response.headers?.["set-cookie"], logout.headers?.["set-cookie"], "the response is the same");
+        assert.equal(other.sessions.records.has(id), false, "the person is signed out locally");
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const events = other.upstreamEvents.filter((event) => event.event === "upstream_end_unreachable");
+        assert.equal(events.length, 1, `the ${answer} upstream is counted for the log`);
+        assert.ok(!JSON.stringify(events).includes(SID) && !JSON.stringify(events).includes("person-"), "the log carries no reference or person");
+      }
+    },
+  },
+  {
+    name: "an upstream-ended session stops working within T, checked at most once per T",
+    run: async (factory) => {
+      const upstream = new FakeUpstreamSessions();
+      const rig = upstreamRig(factory, upstream);
+      const sessionId = await signedIn(rig);
+      for (const step of [0, 1, BOUND / 2, BOUND - 1]) {
+        rig.clock.epoch = NOW + step;
+        assert.equal((await rig.app.profile({ sessionId })).status, 200);
+      }
+      assert.equal(upstream.checked.length, 0, "no check before T has passed since sign-in");
+      rig.clock.epoch = NOW + BOUND;
+      assert.equal((await rig.app.profile({ sessionId })).status, 200);
+      assert.deepEqual(upstream.checked, [SID], "one check once T has passed");
+      assert.equal(rig.sessions.records.get(sessionId)?.lastConfirmedAt, NOW + BOUND, "active sets last confirmed");
+      for (let index = 0; index < 5; index += 1) await rig.app.profile({ sessionId });
+      assert.equal(upstream.checked.length, 1, "a busy page costs no extra call");
+      upstream.activity = "ended";
+      rig.clock.epoch = NOW + 2 * BOUND - 1;
+      assert.equal((await rig.app.profile({ sessionId })).status, 200, "still within T of the last check");
+      rig.clock.epoch = NOW + 2 * BOUND;
+      assert.equal((await rig.app.profile({ sessionId })).status, 401, "ended answers 401 as for any missing session");
+      assert.equal(rig.sessions.records.has(sessionId), false, "ended deletes the session");
+    },
+  },
+  {
+    name: "an unknown upstream keeps the session until 2T after its last confirmation and then ends it",
+    run: async (factory) => {
+      const upstream = new FakeUpstreamSessions();
+      upstream.activity = "unknown";
+      const rig = upstreamRig(factory, upstream);
+      const sessionId = await signedIn(rig);
+      rig.clock.epoch = NOW + BOUND;
+      assert.equal((await rig.app.profile({ sessionId })).status, 200, "unknown keeps the session for now");
+      assert.equal(rig.sessions.records.get(sessionId)?.lastCheckedAt, NOW + BOUND, "every check sets last checked");
+      assert.equal(rig.sessions.records.get(sessionId)?.lastConfirmedAt, NOW, "unknown leaves last confirmed as it is");
+      rig.clock.epoch = NOW + 2 * BOUND - 1;
+      assert.equal((await rig.app.profile({ sessionId })).status, 200);
+      rig.clock.epoch = NOW + 2 * BOUND;
+      assert.equal((await rig.app.profile({ sessionId })).status, 401, "fails closed 2T after the last confirmation");
+      assert.equal(rig.sessions.records.has(sessionId), false);
+      assert.ok(rig.upstreamEvents.some((event) => event.event === "upstream_check_unknown"), "the unknown answer is counted");
+
+      for (const answer of ["throw", "hang"] as const) {
+        const failing = new FakeUpstreamSessions();
+        failing.activity = answer;
+        const other = upstreamRig(factory, failing, 50);
+        const id = await signedIn(other);
+        other.clock.epoch = NOW + BOUND;
+        assert.equal((await other.app.profile({ sessionId: id })).status, 200, `an upstream that is ${answer} reads as unknown`);
+        other.clock.epoch = NOW + 2 * BOUND;
+        assert.equal((await other.app.profile({ sessionId: id })).status, 401, `an upstream that is ${answer} never fails open`);
+      }
+    },
+  },
+  {
+    name: "two concurrent reads of a session due for a check make one upstream call",
+    run: async (factory) => {
+      const upstream = new FakeUpstreamSessions();
+      const rig = upstreamRig(factory, upstream);
+      const sessionId = await signedIn(rig);
+      rig.clock.epoch = NOW + BOUND;
+      const answers = await Promise.all([rig.app.profile({ sessionId }), rig.app.profile({ sessionId }), rig.app.profile({ sessionId })]);
+      assert.deepEqual(answers.map((answer) => answer.status), [200, 200, 200]);
+      assert.equal(upstream.checked.length, 1, "one upstream call at most");
+    },
+  },
+  {
+    name: "concurrent reads of a session whose check answers ended are all refused",
+    run: async (factory) => {
+      const upstream = new FakeUpstreamSessions();
+      upstream.activity = "ended";
+      const rig = upstreamRig(factory, upstream);
+      const sessionId = await signedIn(rig);
+      rig.clock.epoch = NOW + BOUND;
+      const answers = await Promise.all([rig.app.profile({ sessionId }), rig.app.profile({ sessionId }), rig.app.profile({ sessionId })]);
+      assert.deepEqual(answers.map((answer) => answer.status), [401, 401, 401], "no request rides on the row while its check is in flight");
+      assert.equal(upstream.checked.length, 1, "one upstream call at most");
+      assert.equal(rig.sessions.records.has(sessionId), false);
+    },
+  },
+];
+
+export async function runUpstreamSessionConformance(factory: LoginApplicationFactory): Promise<ConformanceReport> {
+  const results: ConformanceResult[] = [];
+  for (const scenario of UPSTREAM_SCENARIOS) {
+    try {
+      await scenario.run(factory);
+      results.push({ name: scenario.name, ok: true });
+    } catch (error) {
+      results.push({ name: scenario.name, ok: false, detail: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { ok: results.every((result) => result.ok), results };
+}
+
+export const UPSTREAM_SESSION_SCENARIOS = Object.freeze(UPSTREAM_SCENARIOS.map(({ name }) => name));

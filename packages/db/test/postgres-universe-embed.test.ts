@@ -48,6 +48,28 @@ test("E2_DB one instance per browser binding, also under concurrent first loads"
   assert.equal(await store.findInstance(cookie, ref()), undefined, "a cookie never names another browser's instance");
 });
 
+test("E2_DB a new instance sweeps other browsers' expired instances and their rows", async () => {
+  const { instance } = await bound();
+  await pool.query("UPDATE universe_embed_instances SET expires_at = clock_timestamp() - interval '1 second' WHERE id = $1", [instance]);
+  // A cookieless visit from an unrelated browser removes the expired instance and its cascade.
+  await store.ensureInstance(ref(), ref(), 43_200);
+  for (const table of ["universe_embed_instances", "universe_embed_instance_refs", "universe_embed_handoffs"]) {
+    const { rows } = await pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE ${table === "universe_embed_instances" ? "id" : "instance_id"} = $1`, [instance]);
+    assert.equal(rows[0].n, 0, `${table} rows of the expired instance are gone`);
+  }
+  const { rows } = await pool.query("SELECT count(*)::int AS n FROM universe_embed_bindings WHERE instance_id = $1", [instance]);
+  assert.equal(rows[0].n, 0);
+});
+
+test("E2_DB readBinding authorizes only while the bound session is live", async () => {
+  const { browser, session, instance } = await bound();
+  assert.equal((await store.readBinding(instance, browser, session))?.personId, person);
+  await pool.query("UPDATE login_sessions SET expires_at = clock_timestamp() - interval '1 second' WHERE person_id = $1", [person]);
+  assert.equal(await store.readBinding(instance, browser, session), undefined, "an expired session authorizes nothing");
+  await login.sessions.delete(session);
+  assert.equal(await store.readBinding(instance, browser, session), undefined, "a removed session authorizes nothing");
+});
+
 test("E2_DB a second connect supersedes the first; the older start cannot attach a state", async () => {
   const browser = ref();
   const instance = await store.ensureInstance(browser, ref(), 43_200);
@@ -131,6 +153,8 @@ test("E2_DB challenges are one-use and generation-bound; the lease ends at min(i
   const g1 = leased!.generation;
   assert.notEqual(g1, g0);
   assert.equal(leased?.lease?.hostSubjectDigest, universeEmbedDigest("subject@example.test"));
+  assert.ok(leased!.lease!.remainingSeconds > 540 && leased!.lease!.remainingSeconds <= 550,
+    "the read reports what is left of the lease by database time");
 
   // Session expiry caps the lease.
   await pool.query("UPDATE login_sessions SET expires_at = clock_timestamp() + interval '120 seconds' WHERE id=$1", [universeEmbedDigest(b.session)]);

@@ -122,3 +122,20 @@ This is a separate diagnostic command with `diagnosticOnly:true` and
 unfiltered and executes all eight E2 cases. Diagnostic success is not acceptance.
 The workflow checks out the pull-request HEAD, not a synthetic merge with its
 base; updating a PR's base alone does not update the tested E2 implementation.
+
+## #528 exact-head test stack
+
+Rebased locally onto product head `1f76ea52c0e2cab55f95bfdba3f6efb85498baae`.
+The Cancel/retry case now requires the visible Sign in control after native tab
+closure, rather than requiring the implementation's internal `signed_out` state.
+#528 intentionally keeps the waiting message and makes Sign in available there.
+The actual retry, native cookies, no-reload rule, zero canceled completions and
+exactly one successful completion assertions remain unchanged.
+
+Offline locked dependency installation, build and all nine focused test/fixture
+checks passed. A disposable PostgreSQL 17.11 instance started using the existing
+TCP-only local test configuration. The local distro Chromium 156.0.8078.79 could
+not launch: `process_singleton_posix.cc:297` reported `socket() failed: Operation
+not permitted`. No sandbox workaround was attempted. All dedicated browser cases
+therefore remain NOT_RUN on this head; the pinned hosted Chromium 156.0.8078.4
+matrix is required. No product, workflow, deployment or live-host change.

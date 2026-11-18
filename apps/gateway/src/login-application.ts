@@ -7,7 +7,12 @@ import type {
   LoginApplicationFactory,
   LoginConfig,
   LoginDependencies,
+  LoginSession,
+  SessionStore,
   TestJsonWebKey,
+  Clock,
+  UpstreamSessionEvent,
+  UpstreamSessions,
 } from "@studenthub/login-contract";
 
 interface IdTokenClaims {
@@ -23,6 +28,178 @@ interface IdTokenClaims {
   readonly birthdate?: string;
   readonly hashed_user_id?: unknown;
   readonly uid?: unknown;
+  readonly sid?: unknown;
+}
+
+/** SHU-457: the issuer's session reference, kept only when it is a plain bounded value. */
+function upstreamReferenceFrom(claims: IdTokenClaims): string | undefined {
+  const sid = claims.sid;
+  return typeof sid === "string" && /^[\x21-\x7e]{1,255}$/.test(sid) ? sid : undefined;
+}
+
+export const DEFAULT_UPSTREAM_CHECK_SECONDS = 900;
+export const DEFAULT_UPSTREAM_TIMEOUT_MS = 3_000;
+/** How long past the issuer timeout a reader waits for another process's check before failing closed. */
+const UPSTREAM_SETTLE_GRACE_SECONDS = 2;
+const UPSTREAM_SETTLE_POLL_MS = 50;
+
+/** Bound T: an integer from 60 to 3600 seconds, default 900. */
+export function upstreamCheckSeconds(value: number | undefined): number {
+  const seconds = value ?? DEFAULT_UPSTREAM_CHECK_SECONDS;
+  if (!Number.isSafeInteger(seconds) || seconds < 60 || seconds > 3600) {
+    throw new RangeError("the upstream session check bound must be an integer from 60 to 3600 seconds");
+  }
+  return seconds;
+}
+
+const TIMED_OUT = Symbol("timed out");
+
+/** Races one upstream call against the bound. */
+async function bounded<T>(call: () => Promise<T>, timeoutMs: number): Promise<T | typeof TIMED_OUT> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
+  });
+  try {
+    return await Promise.race([call(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Counts upstream calls that did not answer; the log line carries a count and a reason class only. */
+export function upstreamLogger(sink: (event: UpstreamSessionEvent) => void = (event) => console.warn(JSON.stringify(event))) {
+  const counts = { upstream_end_unreachable: 0, upstream_check_unknown: 0 };
+  return (event: UpstreamSessionEvent["event"], reason: UpstreamSessionEvent["reason"]) => {
+    counts[event] += 1;
+    // A failing log sink must never change a session's outcome or reject a detached sign-out.
+    try { sink({ event, reason, count: counts[event] }); } catch { /* logging is best effort */ }
+  };
+}
+
+const CONFIRMING = Symbol.for("studenthub.login.upstream-confirming");
+
+export interface UpstreamConfirmationOptions {
+  readonly upstream: UpstreamSessions;
+  readonly clock: Clock;
+  readonly boundSeconds: number;
+  readonly timeoutMs?: number;
+  readonly log: (event: UpstreamSessionEvent["event"], reason: UpstreamSessionEvent["reason"]) => void;
+}
+
+/**
+ * SHU-457 bound T on a session store: a session with an upstream reference is
+ * checked upstream at most once per T, measured from last_checked_at, which
+ * the store's conditional claim sets whatever the answer. `ended` deletes the
+ * session; `active` sets last_confirmed_at; `unknown` (or a failed or slow
+ * call) leaves it, and the session ends 2*T after its last confirmation.
+ */
+export function confirmingSessions(store: SessionStore, options: UpstreamConfirmationOptions): SessionStore {
+  if ((store as { readonly [CONFIRMING]?: true })[CONFIRMING]) return store;
+  const bound = upstreamCheckSeconds(options.boundSeconds);
+  if (!store.claimUpstreamCheck || !store.confirmUpstream || !store.settleUpstreamCheck) {
+    throw new TypeError("upstream session checks need a session store with claimUpstreamCheck, confirmUpstream and settleUpstreamCheck");
+  }
+  const timeoutMs = options.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
+  const wrapped: SessionStore & { readonly [CONFIRMING]: true } = {
+    [CONFIRMING]: true,
+    put: (record) => store.put(record),
+    delete: (id) => store.delete(id),
+    // Sign-out takes the row from the unchecked store: ending a session must
+    // never wait on (or be refused by) an upstream check.
+    take: (id: string) => takeSession(store, id),
+    ...(store.claimUpstreamCheck ? { claimUpstreamCheck: (id: string, before: number, now: number) => store.claimUpstreamCheck!(id, before, now) } : {}),
+    ...(store.confirmUpstream ? { confirmUpstream: (id: string, now: number) => store.confirmUpstream!(id, now) } : {}),
+    ...(store.settleUpstreamCheck ? { settleUpstreamCheck: (id: string, checkedAt: number) => store.settleUpstreamCheck!(id, checkedAt) } : {}),
+    get: (id) => read(id),
+  };
+  // One check per session at a time in this process: every reader awaits it.
+  const inflight = new Map<string, Promise<LoginSession | undefined>>();
+  const waitSeconds = timeoutMs / 1000 + UPSTREAM_SETTLE_GRACE_SECONDS;
+  const expired = (session: LoginSession, now: number) => now - (session.lastConfirmedAt ?? Number.NEGATIVE_INFINITY) >= 2 * bound;
+  const unsettled = (session: LoginSession) => session.lastCheckedAt !== undefined
+    && session.lastCheckedAt > Math.max(session.lastSettledAt ?? Number.NEGATIVE_INFINITY, session.lastConfirmedAt ?? Number.NEGATIVE_INFINITY);
+
+  async function read(id: string): Promise<LoginSession | undefined> {
+    const session = await store.get(id);
+    const reference = session?.upstreamReference;
+    if (!session || !reference) return session;
+    const now = options.clock.nowEpochSeconds();
+    if (expired(session, now)) {
+      await store.delete(id);
+      return undefined;
+    }
+    const shared = inflight.get(id);
+    if (shared) return shared;
+    // A check claimed elsewhere and not yet answered: its answer may be
+    // `ended`, so this request never rides on the row as it was before it.
+    if (unsettled(session)) {
+      if (now - session.lastCheckedAt! < waitSeconds) return settled(id);
+      // A claim that never settled (its process died mid-check) is not a
+      // recent answer: refuse, without deleting, until a new claim is allowed.
+      if (now - session.lastCheckedAt! < bound) return undefined;
+    } else if (session.lastCheckedAt !== undefined && now - session.lastCheckedAt < bound) return session;
+    const run = check(id, reference, now);
+    inflight.set(id, run);
+    try {
+      return await run;
+    } finally {
+      if (inflight.get(id) === run) inflight.delete(id);
+    }
+  }
+
+  /** Waits for another process's check to settle; fails closed (without deleting) if it doesn't in time. */
+  async function settled(id: string): Promise<LoginSession | undefined> {
+    const deadline = Date.now() + waitSeconds * 1000;
+    for (;;) {
+      const current = await store.get(id);
+      if (!current) return undefined;
+      if (expired(current, options.clock.nowEpochSeconds())) {
+        await store.delete(id);
+        return undefined;
+      }
+      if (!unsettled(current)) return current;
+      if (Date.now() >= deadline) return undefined;
+      await new Promise((resolve) => setTimeout(resolve, UPSTREAM_SETTLE_POLL_MS));
+    }
+  }
+
+  async function check(id: string, reference: string, now: number): Promise<LoginSession | undefined> {
+    // Another process won the claim, or the row is gone: wait for that answer.
+    if (!await store.claimUpstreamCheck!(id, now - bound, now)) return settled(id);
+    let activity: Awaited<ReturnType<UpstreamSessions["isActive"]>> | typeof TIMED_OUT | "error";
+    try {
+      activity = await bounded(() => options.upstream.isActive(reference), timeoutMs);
+    } catch {
+      activity = "error";
+    }
+    if (activity === "ended") {
+      await store.delete(id);
+      return undefined;
+    }
+    if (activity === "active") await store.confirmUpstream!(id, now);
+    else {
+      await store.settleUpstreamCheck!(id, now);
+      options.log("upstream_check_unknown", activity === TIMED_OUT ? "timeout" : activity === "error" ? "error" : "unknown");
+    }
+    // Read the row again after the wait: a sign-out meanwhile removed it, and
+    // the 2*T deadline may have passed while the issuer was being asked.
+    const current = await store.get(id);
+    if (!current) return undefined;
+    if (expired(current, options.clock.nowEpochSeconds())) {
+      await store.delete(id);
+      return undefined;
+    }
+    return current;
+  }
+  return wrapped;
+}
+
+async function takeSession(store: SessionStore, id: string): Promise<LoginSession | undefined> {
+  if (store.take) return store.take(id);
+  const session = await store.get(id);
+  await store.delete(id);
+  return session;
 }
 
 function stableUserIdFrom(claims: IdTokenClaims): string | undefined {
@@ -118,7 +295,23 @@ async function validateIdToken(
 export const createLoginApplication: LoginApplicationFactory = (
   dependencies,
   config,
-): LoginApplication => ({
+): LoginApplication => {
+  const upstream = dependencies.upstreamSessions;
+  const timeoutMs = config.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
+  const log = upstreamLogger(dependencies.upstreamLog);
+  const sessions = upstream
+    ? confirmingSessions(dependencies.sessions, {
+      upstream, clock: dependencies.clock, boundSeconds: upstreamCheckSeconds(config.upstreamCheckSeconds), timeoutMs, log,
+    })
+    : dependencies.sessions;
+  // Local sign-out never waits on the issuer: the session is already gone.
+  const endUpstream = (reference: string): void => {
+    void bounded(() => upstream!.end(reference), timeoutMs).then(
+      (answer) => { if (answer !== "ended") log("upstream_end_unreachable", answer === TIMED_OUT ? "timeout" : "unreachable"); },
+      () => log("upstream_end_unreachable", "error"),
+    );
+  };
+  return {
   async start(request) {
     if (!config.allowedReturnUrls.includes(request.returnTo)) return rejected();
     const state = opaqueToken(dependencies);
@@ -181,8 +374,17 @@ export const createLoginApplication: LoginApplicationFactory = (
         );
         if (binding === "mismatch" || binding === "locked") return rejected();
       }
+      if (await dependencies.accessPause?.isPaused(identity.personId)) {
+        return { status: 403, body: { error: "access_paused" } };
+      }
       const sessionId = opaqueToken(dependencies);
-      await dependencies.sessions.put({ id: sessionId, personId: identity.personId });
+      const reference = upstream ? upstreamReferenceFrom(claims) : undefined;
+      if (reference) {
+        const now = dependencies.clock.nowEpochSeconds();
+        await sessions.put({ id: sessionId, personId: identity.personId, upstreamReference: reference, lastCheckedAt: now, lastConfirmedAt: now });
+      } else {
+        await sessions.put({ id: sessionId, personId: identity.personId });
+      }
       return {
         status: 302,
         headers: {
@@ -190,7 +392,9 @@ export const createLoginApplication: LoginApplicationFactory = (
           "set-cookie": `__Host-studenthub_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
         },
       };
-    } catch {
+    } catch (error) {
+      // A pause that committed after the check above: the session insert is refused (42501).
+      if ((error as { code?: string }).code === "42501") return { status: 403, body: { error: "access_paused" } };
       return rejected();
     }
   },
@@ -198,7 +402,7 @@ export const createLoginApplication: LoginApplicationFactory = (
   async profile(request) {
     try {
       if (!request.sessionId) return rejected(401);
-      const session = await dependencies.sessions.get(request.sessionId);
+      const session = await sessions.get(request.sessionId);
       if (!session) return rejected(401);
       if (request.personId && request.personId !== session.personId) return rejected(404);
       if (dependencies.authorization.principalFor) {
@@ -215,7 +419,12 @@ export const createLoginApplication: LoginApplicationFactory = (
 
   async logout(sessionId) {
     try {
-      if (sessionId) await dependencies.sessions.delete(sessionId);
+      if (sessionId && upstream) {
+        const reference = (await takeSession(sessions, sessionId))?.upstreamReference;
+        if (reference) endUpstream(reference);
+      } else if (sessionId) {
+        await sessions.delete(sessionId);
+      }
       return {
         status: 204,
         headers: {
@@ -226,4 +435,5 @@ export const createLoginApplication: LoginApplicationFactory = (
       return { status: 503, body: { error: "login_unavailable" } };
     }
   },
-});
+};
+};

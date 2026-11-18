@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import pg from "pg";
 import type { Pool, PoolClient, PoolConfig } from "pg";
 
+/** Expired instances removed per new instance; more than one, so the sweep outpaces creation. */
+const SWEEP_BATCH = 50;
+
 /** Every bearer reference is kept only as this digest (same as login stores). */
 export function universeEmbedDigest(value: string): string {
   if (typeof value !== "string" || value.length === 0) throw new TypeError("reference must be non-empty");
@@ -12,7 +15,7 @@ export interface UniverseEmbedBindingView {
   readonly personId: string;
   readonly generation: number;
   /** Present only while the lease is unexpired by database time. */
-  readonly lease?: { readonly hostSubjectDigest: string; readonly expiresAt: Date };
+  readonly lease?: { readonly hostSubjectDigest: string; readonly expiresAt: Date; readonly remainingSeconds: number };
   /** external_identities.locked_at is set for any identity of this person. */
   readonly locked: boolean;
 }
@@ -77,11 +80,27 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
   }
 
   async ensureInstance(browserBinding: string, newRef: string, ttlSeconds: number): Promise<string> {
+    // An instance that expires between the sweep and the final lookup is neither live
+    // nor deleted in that transaction; one fresh attempt deletes and replaces it.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const id = await this.#ensureInstanceOnce(browserBinding, newRef, ttlSeconds);
+      if (id) return id;
+    }
+    throw new Error("embed instance unavailable");
+  }
+
+  #ensureInstanceOnce(browserBinding: string, newRef: string, ttlSeconds: number): Promise<string | undefined> {
     const browser = universeEmbedDigest(browserBinding);
     return this.#tx(async (client) => {
       // An expired instance is replaced; its handoffs, binding and lease go with it.
       await client.query(
         "DELETE FROM universe_embed_instances WHERE browser_binding_digest = $1 AND expires_at <= clock_timestamp()", [browser]);
+      // Bounded sweep of other browsers' expired instances (refs, handoffs, bindings and
+      // challenges cascade), so cookieless visits cannot grow the tables without limit.
+      await client.query(
+        `DELETE FROM universe_embed_instances WHERE id IN (
+           SELECT id FROM universe_embed_instances WHERE expires_at <= statement_timestamp()
+           LIMIT $1 FOR UPDATE SKIP LOCKED)`, [SWEEP_BATCH]);
       await client.query(
         `INSERT INTO universe_embed_instances (browser_binding_digest, expires_at)
          VALUES ($1, clock_timestamp() + ($2 * interval '1 second'))
@@ -91,7 +110,7 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
         "SELECT id FROM universe_embed_instances WHERE browser_binding_digest = $1 AND expires_at > clock_timestamp() FOR UPDATE",
         [browser]);
       const id = rows[0]?.id;
-      if (!id) throw new Error("embed instance unavailable");
+      if (!id) return undefined;
       await client.query(
         "INSERT INTO universe_embed_instance_refs (ref_digest, instance_id) VALUES ($1, $2)",
         [universeEmbedDigest(newRef), id]);
@@ -186,27 +205,40 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
   }
 
   async readBinding(instanceId: string, browserBinding: string, sessionId: string): Promise<UniverseEmbedBindingView | undefined> {
-    const { rows } = await this.#pool.query<{
-      person_id: string; generation: number; lease_host_subject_digest: string | null;
-      lease_expires_at: Date | null; lease_live: boolean; locked: boolean;
-    }>(
-      `SELECT b.person_id, b.generation, b.lease_host_subject_digest, b.lease_expires_at,
-              (b.lease_expires_at IS NOT NULL AND b.lease_expires_at > clock_timestamp()) AS lease_live,
-              EXISTS (SELECT 1 FROM external_identities e
-                       WHERE e.person_id = b.person_id AND e.locked_at IS NOT NULL) AS locked
-         FROM universe_embed_bindings b
-         JOIN universe_embed_instances i ON i.id = b.instance_id AND i.expires_at > clock_timestamp()
-        WHERE b.instance_id = $1 AND b.browser_binding_digest = $2 AND b.session_digest = $3`,
-      [instanceId, universeEmbedDigest(browserBinding), universeEmbedDigest(sessionId)]);
-    const row = rows[0];
-    if (!row) return undefined;
-    return {
-      personId: row.person_id,
-      generation: row.generation,
-      locked: row.locked,
-      ...(row.lease_live && row.lease_host_subject_digest && row.lease_expires_at
-        ? { lease: { hostSubjectDigest: row.lease_host_subject_digest, expiresAt: row.lease_expires_at } } : {}),
-    };
+    const session = universeEmbedDigest(sessionId);
+    return this.#tx(async (client) => {
+      // The live session is share-locked first, so a logout or revocation either removed it
+      // before this read (nothing is authorized) or waits until the read is done. The binding
+      // and lease are read in a second statement, evaluated after any wait for that lock.
+      const live = await client.query(
+        "SELECT 1 FROM login_sessions WHERE id = $1 AND expires_at > clock_timestamp() FOR SHARE", [session]);
+      if (live.rowCount !== 1) return undefined;
+      const { rows } = await client.query<{
+        person_id: string; generation: number; lease_host_subject_digest: string | null;
+        lease_expires_at: Date | null; lease_live: boolean; remaining: number | null; locked: boolean;
+      }>(
+        `SELECT b.person_id, b.generation, b.lease_host_subject_digest, b.lease_expires_at,
+                (b.lease_expires_at IS NOT NULL AND b.lease_expires_at > clock_timestamp()) AS lease_live,
+                extract(epoch FROM b.lease_expires_at - clock_timestamp())::float8 AS remaining,
+                EXISTS (SELECT 1 FROM external_identities e
+                         WHERE e.person_id = b.person_id AND e.locked_at IS NOT NULL) AS locked
+           FROM universe_embed_bindings b
+           JOIN universe_embed_instances i ON i.id = b.instance_id AND i.expires_at > clock_timestamp()
+           JOIN login_sessions s ON s.id = b.session_digest AND s.person_id = b.person_id
+                                AND s.expires_at > clock_timestamp()
+          WHERE b.instance_id = $1 AND b.browser_binding_digest = $2 AND b.session_digest = $3`,
+        [instanceId, universeEmbedDigest(browserBinding), session]);
+      const row = rows[0];
+      if (!row) return undefined;
+      return {
+        personId: row.person_id,
+        generation: row.generation,
+        locked: row.locked,
+        ...(row.lease_live && row.lease_host_subject_digest && row.lease_expires_at
+          ? { lease: { hostSubjectDigest: row.lease_host_subject_digest, expiresAt: row.lease_expires_at,
+              remainingSeconds: Number(row.remaining) } } : {}),
+      };
+    });
   }
 
   async invalidateBinding(instanceId: string, generation?: number): Promise<void> {

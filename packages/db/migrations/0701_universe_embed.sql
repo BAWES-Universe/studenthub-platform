@@ -11,6 +11,8 @@ CREATE TABLE universe_embed_instances (
 );
 -- One instance per browser binding: a second concurrent create finds this one.
 CREATE UNIQUE INDEX universe_embed_instances_browser_idx ON universe_embed_instances(browser_binding_digest);
+-- The expired-instance sweep in ensureInstance reads by expiry.
+CREATE INDEX universe_embed_instances_expiry_idx ON universe_embed_instances(expires_at);
 
 -- An instance may be named by more than one embed cookie (two concurrent first
 -- loads each get a cookie), but every cookie names exactly one instance.
@@ -38,6 +40,9 @@ CREATE UNIQUE INDEX universe_embed_handoffs_state_idx ON universe_embed_handoffs
 CREATE UNIQUE INDEX universe_embed_handoffs_current_idx ON universe_embed_handoffs(instance_id)
   WHERE status IN ('pending', 'completed');
 CREATE INDEX universe_embed_handoffs_expiry_idx ON universe_embed_handoffs(expires_at);
+-- Every handoff of an instance (the partial unique index above covers only the current one),
+-- for the ON DELETE CASCADE when an instance is swept.
+CREATE INDEX universe_embed_handoffs_instance_idx ON universe_embed_handoffs(instance_id);
 
 -- Binding generations come from one sequence, so a value is never reused, not
 -- even by a later binding of the same instance: a verification or refusal that

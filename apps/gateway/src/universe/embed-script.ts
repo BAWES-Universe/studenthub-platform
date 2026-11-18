@@ -66,6 +66,11 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
   var pendingTimer = null;
   // Monotonic deadline (performance.now) after which rendered profile data must be gone.
   var leaseDeadline = 0;
+  // A sign-in started in the other tab; kept apart from the visible state, which a
+  // visibility change resets, so the waiting message and its quick poll come back.
+  var signingIn = false;
+  // Status replies can overlap (the 3 s poll during sign-in): only the newest one counts.
+  var statusSeq = 0;
 
   function clearProfile() {
     while (profileEl.firstChild) profileEl.removeChild(profileEl.firstChild);
@@ -74,7 +79,9 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
   function show(state) {
     statusEl.textContent = text[state] || text.error;
     body.setAttribute("data-state", state);
-    connect.hidden = state !== "signed_out";
+    // While waiting, the sign-in stays offered: a closed sign-in tab can be retried
+    // (a new start supersedes the old handoff).
+    connect.hidden = !(state === "signed_out" || state === "waiting");
     signout.hidden = !(state === "different_account" || state === "start_again");
     link.hidden = state !== "not_linked";
     full.hidden = state !== "open_in_universe";
@@ -161,6 +168,9 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
       hosts.forEach(function (origin) {
         window.parent.postMessage({ type: "studenthub.embed.identity-request", v: 1, challenge: reply.challenge }, origin);
       });
+      // Two status replies can each start a challenge in one generation: the older
+      // challenge's timer must not clear the newer pending one.
+      if (pendingTimer) clearTimeout(pendingTimer);
       pendingTimer = setTimeout(function () {
         if (pending && pending.generation === g) { pending = null; clearProfile(); show("needs_universe"); }
       }, 5000);
@@ -201,10 +211,12 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
 
   function revalidate() {
     var g = generation;
+    var s = ++statusSeq;
     call("GET", "/universe/embed/status").then(function (reply) {
-      if (g !== generation) return;
-      // Sign-in still in progress in the other tab: keep the waiting message.
-      if (reply.state === "signed_out" && body.getAttribute("data-state") === "waiting") return;
+      if (g !== generation || s !== statusSeq) return;
+      // Sign-in still in progress in the other tab: keep (or restore) the waiting message.
+      if (reply.state === "signed_out" && signingIn) { show("waiting"); return; }
+      signingIn = false;
       if (reply.state === "ready") {
         if (!leaseLive()) { expireLease(g); return; }
         if (profileEl.hidden) loadProfile(g);
@@ -214,12 +226,13 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
       clearProfile();
       if (reply.state === "needs_universe") { show("needs_universe"); verify(g); return; }
       show(reply.state);
-    }).catch(function () { fail(g); });
+    }).catch(function () { if (s === statusSeq) fail(g); });
   }
 
-  connect.addEventListener("submit", function () { show("waiting"); });
+  connect.addEventListener("submit", function () { signingIn = true; show("waiting"); });
   signout.addEventListener("click", function () {
     hideAll();
+    signingIn = false;
     var g = generation;
     call("POST", "/logout", {}).then(function () { if (g === generation) show("signed_out"); }).catch(function () { fail(g); });
   });
@@ -236,7 +249,7 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
   }, 60000);
   // While waiting for the sign-in tab, notice the completed handoff promptly.
   setInterval(function () {
-    if (document.visibilityState === "visible" && body.getAttribute("data-state") === "waiting") revalidate();
+    if (document.visibilityState === "visible" && signingIn) revalidate();
   }, 3000);
   show("loading");
   // A frame that loads in a background tab waits for the visible transition.

@@ -89,7 +89,8 @@ async function runE2Cases({browser,run,screenshot,sourceRevision},names) {
           assert.deepEqual(await fixture.recoveryCounts(),{sessions:0,handoffs:{pending:1}});
           stage='cancel-return';
           await canceledPopup.close();await page.bringToFront();
-          await frame.locator('body[data-state="signed_out"]').waitFor();
+          // The user-visible contract is retry availability, not a particular
+          // internal state: #528 intentionally keeps waiting with Sign in visible.
           assert.equal(await frame.locator('#profile').innerText(),'','Canceled attempt leaves no profile');
           stage='retry-control';
           await frame.locator('#connect button').waitFor({state:'visible'});

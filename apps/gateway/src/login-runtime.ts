@@ -7,19 +7,24 @@ import type {
   TestJsonWebKey,
   TokenRequest,
   TokenResponse,
+  UpstreamActivity,
+  UpstreamEndResult,
+  UpstreamSessions,
 } from "@studenthub/login-contract";
 import {
   UnconfiguredApprovedProfileAdapter,
   type ApprovedProfileAdapter,
 } from "@studenthub/profile";
 
-import { createLoginApplication } from "./login-application.js";
+import { confirmingSessions, createLoginApplication, upstreamCheckSeconds, upstreamLogger } from "./login-application.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 import { wireAccess } from "./wiring/access.js";
+import { wireAccessLane } from "./wiring/access-lane.js";
 import { wireProfile } from "./wiring/profile.js";
 import { wireOrganizations } from "./wiring/organizations.js";
 import { wirePayContracts } from "./wiring/pay-contracts.js";
 import { wireOps } from "./wiring/ops.js";
+import { wireRecruit } from "./wiring/recruit.js";
 import {PostgresNotificationsStore} from "@studenthub/db/notifications";
 import {NotificationsService} from "../../../packages/notifications/src/notifications.js";
 import {createNotificationsHttp} from "./notifications-http.js";
@@ -152,6 +157,94 @@ export class RefreshingJwksResolver implements JwksResolver {
   }
 }
 
+interface DiscoveryDocument {
+  readonly issuer?: unknown;
+  readonly end_session_endpoint?: unknown;
+}
+
+/**
+ * SHU-457: the issuer's own session behind the UpstreamSessions port, built
+ * from the issuer's discovery document. No token is stored and nothing secret
+ * goes in a URL: sign-out POSTs the client identifier and the session
+ * reference to the end-session endpoint as a form body.
+ *
+ * Liveness: OIDC discovery offers no per-session query that works without a
+ * stored token. Introspection needs an access token (we keep none) and
+ * back-channel logout needs a receiving endpoint (not built here), so
+ * isActive answers unknown and the bound fails the session closed 2*T after
+ * sign-in.
+ */
+export class DiscoveryUpstreamSessions implements UpstreamSessions {
+  readonly #issuer: string;
+  readonly #clientId: string;
+  readonly #requestTimeoutMs: number;
+  readonly #fetch: typeof fetch;
+  #endpoint: Promise<string | undefined> | undefined;
+
+  constructor(issuer: string, clientId: string, requestTimeoutMs = 3_000, fetchImplementation: typeof fetch = fetch) {
+    this.#issuer = issuer;
+    this.#clientId = clientId;
+    this.#requestTimeoutMs = requestTimeoutMs;
+    this.#fetch = fetchImplementation;
+  }
+
+  #endSessionEndpoint(): Promise<string | undefined> {
+    this.#endpoint ??= (async () => {
+      const response = await this.#fetch(`${this.#issuer.replace(/\/$/, "")}/.well-known/openid-configuration`, {
+        redirect: "error", signal: AbortSignal.timeout(this.#requestTimeoutMs),
+      });
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error("OIDC discovery failed");
+      }
+      const document = await response.json() as DiscoveryDocument;
+      if (document.issuer !== this.#issuer) throw new Error("OIDC discovery issuer mismatch");
+      const endpoint = document.end_session_endpoint;
+      if (typeof endpoint !== "string") return undefined;
+      const url = new URL(endpoint);
+      if (url.protocol !== "https:" || url.username || url.password) return undefined;
+      return endpoint;
+    })().catch((error: unknown) => { this.#endpoint = undefined; throw error; });
+    return this.#endpoint;
+  }
+
+  async end(reference: string): Promise<UpstreamEndResult> {
+    try {
+      const endpoint = await this.#endSessionEndpoint();
+      if (!endpoint) return "unreachable";
+      const response = await this.#fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: this.#clientId, sid: reference }),
+        redirect: "manual",
+        signal: AbortSignal.timeout(this.#requestTimeoutMs),
+      });
+      await response.body?.cancel().catch(() => undefined);
+      return response.status < 400 ? "ended" : "unreachable";
+    } catch {
+      return "unreachable";
+    }
+  }
+
+  async isActive(_reference: string): Promise<UpstreamActivity> {
+    return "unknown";
+  }
+}
+
+/** LOGIN_UPSTREAM_SESSIONS=on turns the port on; LOGIN_UPSTREAM_CHECK_SECONDS is T (default 900, 60 to 3600). */
+export function upstreamSessionsFromEnv(env: NodeJS.ProcessEnv, issuer: string, clientId: string):
+  { readonly port: UpstreamSessions; readonly checkSeconds: number } | undefined {
+  const mode = env.LOGIN_UPSTREAM_SESSIONS;
+  if (mode === undefined || mode === "off") {
+    if (env.LOGIN_UPSTREAM_CHECK_SECONDS !== undefined) throw new Error("LOGIN_UPSTREAM_CHECK_SECONDS needs LOGIN_UPSTREAM_SESSIONS=on");
+    return undefined;
+  }
+  if (mode !== "on") throw new Error("LOGIN_UPSTREAM_SESSIONS must be on or off");
+  const raw = env.LOGIN_UPSTREAM_CHECK_SECONDS;
+  if (raw !== undefined && !/^[0-9]{1,5}$/.test(raw)) throw new Error("LOGIN_UPSTREAM_CHECK_SECONDS must be an integer from 60 to 3600");
+  return { port: new DiscoveryUpstreamSessions(issuer, clientId), checkSeconds: upstreamCheckSeconds(raw === undefined ? undefined : Number(raw)) };
+}
+
 export interface RuntimeLogin {
   readonly application: BrowserLoginApplication;
   close(): Promise<void>;
@@ -206,12 +299,22 @@ export function createRuntimeLoginFromEnv(
   const organizationArea = wireOrganizations(settings, access.services);
   const payContractArea = wirePayContracts(settings, access.services);
   const ops = wireOps(settings, access.services, organizationArea.services);
+  const recruitArea = wireRecruit(settings, access.services);
+  const accessLane = wireAccessLane(settings, access.services, env);
+  // SHU-457: every reader of the login store's sessions gets the bound T check.
+  const upstream = upstreamSessionsFromEnv(env, issuer, value("OIDC_CLIENT_ID"));
+  if (upstream) {
+    const log = upstreamLogger();
+    access.services.loginStore.checkSessionsWith((plain) => confirmingSessions(plain, {
+      upstream: upstream.port, clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) }, boundSeconds: upstream.checkSeconds, log,
+    }));
+  }
   const application = createLoginApplication({
     oidc: new HttpOidcTransport(issuer, authorizationUrl, tokenUrl),
     clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) },
     entropy: { bytes: (length) => randomBytes(length) },
     states: access.services.loginStore.states,
-    sessions: profile.services.sessions,
+    sessions: upstream ? access.services.loginStore.sessions : profile.services.sessions,
     identities: access.services.loginStore.identities,
     authorization: {
       async principalFor(personId) {
@@ -227,6 +330,8 @@ export function createRuntimeLoginFromEnv(
       },
     },
     jwks: new RefreshingJwksResolver(issuer, jwksUrl),
+    ...(upstream ? { upstreamSessions: upstream.port } : {}),
+    accessPause: { isPaused: async (personId) => (await accessLane.services.pauses.paused([personId])).has(personId) },
   }, {
     issuer,
     clientId: value("OIDC_CLIENT_ID"),
@@ -235,6 +340,7 @@ export function createRuntimeLoginFromEnv(
     allowedReturnUrls,
     clockSkewSeconds: 60,
     subjectPolicy: (subject) => UNIVERSE_SUBJECT_POLICY.humanSubjectPattern.test(subject),
+    ...(upstream ? { upstreamCheckSeconds: upstream.checkSeconds } : {}),
   });
   const notificationStore=PostgresNotificationsStore.connect({connectionString:value("DATABASE_URL")});
   const notifications=createNotificationsHttp(application,new NotificationsService(notificationStore,notificationStore,access.services.authzStore));
@@ -244,6 +350,8 @@ export function createRuntimeLoginFromEnv(
       ...ops.services,
       ...profile.services.application,
       ...payContractArea.services,
+      ...recruitArea.services,
+      ...accessLane.services.application,
       web: {
         origin: new URL(callbackUrl).origin,
         returnTo: allowedReturnUrls.includes(new URL("/profile", callbackUrl).href)
@@ -256,7 +364,7 @@ export function createRuntimeLoginFromEnv(
   return {
     application: runtimeApplication,
     async close() {
-      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(),notificationStore.close()]);
+      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(), accessLane.close(), recruitArea.close(),notificationStore.close()]);
     },
   };
 }
