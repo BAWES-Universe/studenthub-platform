@@ -168,6 +168,28 @@ test("A1_GUARDS a token that expires while the confirm waits for its locks is re
   assert.deepEqual(await events(target), []);
 });
 
+test("A1_GUARDS a token that expires while the confirm waits on an organization row lock is refused", async () => {
+  const acme = await organization("Acme");
+  const admin = await person("Admin", [{ orgId: root, role: "admin", scope: "subtree" }]);
+  const target = await person();
+  const request = change({ targetPrincipalId: target, orgId: acme });
+  const holder = await pool.connect();
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT id FROM organizations WHERE id = $1 FOR UPDATE", [acme]);
+    const expiresAt = Date.now() + 300;
+    const pending = store.apply({ callerId: admin, request, tokenId: "9".repeat(64), expectedBefore: null,
+      decide: (snapshot) => decideGrantChange(admin, request, snapshot, [root]), expiresAt });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await holder.query("ROLLBACK");
+    assert.deepEqual(await pending, { kind: "refused", reason: "token_expired" });
+  } finally {
+    holder.release();
+  }
+  assert.deepEqual(await authz.listGrantsForPrincipal(target), []);
+  assert.deepEqual(await events(target), []);
+});
+
 test("A1_GUARDS two staff removing each other's company roles at the same time both succeed without a deadlock", async () => {
   const [acme, zenith] = [await organization("Acme"), await organization("Zenith")];
   const one = await person("One", [{ orgId: root, role: "staff", scope: "subtree" }, { orgId: acme, role: "finance" }]);

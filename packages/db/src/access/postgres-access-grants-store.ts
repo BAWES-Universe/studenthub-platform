@@ -106,16 +106,18 @@ export class PostgresAccessGrantsStore {
       for (const principal of [...new Set([request.targetPrincipalId, callerId])].sort()) {
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [principal, PRINCIPAL_LOCK_KEY]);
       }
-      if (input.expiresAt !== undefined && (input.now ?? Date.now)() >= input.expiresAt) {
-        await client.query("ROLLBACK");
-        return { kind: "refused", reason: "token_expired" };
-      }
       const used = await client.query("SELECT 1 FROM access_grant_events WHERE token_id = $1", [input.tokenId]);
       if (used.rowCount) {
         await client.query("ROLLBACK");
         return { kind: "refused", reason: "token_already_used" };
       }
       const snapshot = await this.#snapshot(client, callerId, request, true);
+      // Checked after every lock, advisory and row, is held: the snapshot's row
+      // locks can wait past the deadline too.
+      if (input.expiresAt !== undefined && (input.now ?? Date.now)() >= input.expiresAt) {
+        await client.query("ROLLBACK");
+        return { kind: "refused", reason: "token_expired" };
+      }
       if (snapshot.current !== input.expectedBefore) {
         await client.query("ROLLBACK");
         return { kind: "refused", reason: "state_changed" };
