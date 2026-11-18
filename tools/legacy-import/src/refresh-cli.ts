@@ -1,6 +1,8 @@
 /**
  * Entry point for the staging cron job. Exit 0 only when the mirror was refreshed and
- * counted; the report file is written either way. Prints one line: the code, the table
+ * counted. Every run that ends writes a fresh report, whatever the reason (bad config,
+ * another run holding the lock, a crash), and a run marks the report `running` before it
+ * touches the mirror, so `ok: true` always describes the mirror as it is now. Prints one line: the code, the table
  * count, the row total and the duration. Never prints rows, hosts or credentials.
  */
 import { spawn } from "node:child_process";
@@ -8,7 +10,17 @@ import { closeSync, mkdirSync, openSync, realpathSync, renameSync, statSync, unl
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadConfig, RefreshRefused, runRefresh, type DatabaseUrl, type MysqlPort, type RefreshReport } from "./refresh.js";
+import {
+  failureReport,
+  loadConfig,
+  RefreshRefused,
+  reportPathFrom,
+  runRefresh,
+  type DatabaseUrl,
+  type MysqlPort,
+  type RefreshConfig,
+  type RefreshReport,
+} from "./refresh.js";
 
 const SAFE_TABLE = /^[A-Za-z0-9_]+$/;
 
@@ -119,27 +131,55 @@ export function takeLock(lockPath: string, now: number): number {
   }
 }
 
-async function main(): Promise<number> {
-  let config;
+export interface CliDeps {
+  readonly env: NodeJS.ProcessEnv;
+  readonly mysql: MysqlPort;
+  readonly now: () => Date;
+  readonly log: (line: string) => void;
+  readonly error: (line: string) => void;
+}
+
+/** Best effort: a report that cannot be written must not hide the run's own exit code. */
+function tryWriteReport(reportPath: string, report: RefreshReport): void {
   try {
-    config = loadConfig(process.env);
+    writeReport(reportPath, report);
+  } catch {
+    // The exit code and the one-line output still say what happened.
+  }
+}
+
+/** One run. Exit codes: 0 ok, 1 refresh failed, 2 configuration invalid, 3 locked. */
+export async function runCli(deps: CliDeps): Promise<number> {
+  const reportPath = reportPathFrom(deps.env);
+  let config: RefreshConfig;
+  try {
+    config = loadConfig(deps.env);
   } catch (error) {
-    console.error(`legacy-refresh: ${error instanceof RefreshRefused ? error.code : "config.invalid"}`);
+    const code = error instanceof RefreshRefused ? error.code : "config.invalid";
+    tryWriteReport(reportPath, failureReport(code, deps.now()));
+    deps.error(`legacy-refresh: ${code}`);
     return 2;
   }
-  mkdirSync(path.dirname(config.lockPath), { recursive: true });
   let lock: number;
   try {
-    lock = takeLock(config.lockPath, Date.now());
+    mkdirSync(path.dirname(config.lockPath), { recursive: true });
+    lock = takeLock(config.lockPath, deps.now().getTime());
   } catch {
-    console.error("legacy-refresh: locked (another run in progress)");
+    // Another run is copying right now, so the mirror is not safe to read either.
+    tryWriteReport(config.reportPath, failureReport("locked", deps.now()));
+    deps.error("legacy-refresh: locked (another run in progress)");
     return 3;
   }
   try {
-    const report = await runRefresh(config, mysqlClient);
+    writeReport(config.reportPath, failureReport("running", deps.now()));
+    const report = await runRefresh(config, deps.mysql, deps.now);
     writeReport(config.reportPath, report);
-    console.log(summary(report));
+    deps.log(summary(report));
     return report.ok ? 0 : 1;
+  } catch {
+    tryWriteReport(config.reportPath, failureReport("failed.unexpected", deps.now()));
+    deps.error("legacy-refresh: failed.unexpected");
+    return 1;
   } finally {
     closeSync(lock);
     unlinkSync(config.lockPath);
@@ -148,5 +188,11 @@ async function main(): Promise<number> {
 
 const entry = process.argv[1];
 if (entry && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(path.resolve(entry))) {
-  main().then((code) => (process.exitCode = code));
+  runCli({
+    env: process.env,
+    mysql: mysqlClient,
+    now: () => new Date(),
+    log: (line) => console.log(line),
+    error: (line) => console.error(line),
+  }).then((code) => (process.exitCode = code));
 }

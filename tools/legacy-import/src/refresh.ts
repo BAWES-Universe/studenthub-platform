@@ -3,7 +3,8 @@
  *
  * Copies the legacy MySQL database into a staging-only `legacy_mirror` database, then
  * counts rows. Conditions it enforces rather than trusts:
- *  - read-only against legacy: the source account must hold no write privilege;
+ *  - read-only against legacy: the source account may hold only USAGE, SELECT and
+ *    SHOW VIEW; any other privilege refuses the run;
  *  - the target is a database named `legacy_mirror` on a host other than the source;
  *  - bearer-token tables are never copied;
  *  - nothing private leaves staging: the report carries table names, row counts and
@@ -11,7 +12,10 @@
  *    credential can reach a log;
  *  - credentials reach mysql/mysqldump through MYSQL_PWD in the child environment,
  *    never through argv, and never appear in the report;
- *  - one run at a time (exclusive lock file).
+ *  - one run at a time (exclusive lock file);
+ *  - every run that ends, however it ends, leaves a fresh last-run.json, and a run in
+ *    progress marks it `running`, so a consumer checking `ok` never reads a stale or
+ *    half-copied mirror.
  *
  * The scheduler (cron on the staging host, installed by a Hermes card) runs
  * `node dist/tools/legacy-import/src/refresh-cli.js` with the environment below.
@@ -22,31 +26,13 @@ export const MIRROR_DATABASE = "legacy_mirror";
 /** Tables holding live bearer tokens; a mirror never needs them. */
 export const EXCLUDED_TABLE_PATTERNS: readonly RegExp[] = [/_token$/, /^queue$/, /^session$/];
 
-/** Privileges that make an account able to change legacy. Any one refuses the run. */
-const WRITE_PRIVILEGES = [
-  "ALL PRIVILEGES",
-  "INSERT",
-  "UPDATE",
-  "DELETE",
-  "CREATE",
-  "DROP",
-  "ALTER",
-  "INDEX",
-  "REFERENCES",
-  "TRIGGER",
-  "EXECUTE",
-  "CREATE ROUTINE",
-  "ALTER ROUTINE",
-  "CREATE VIEW",
-  "EVENT",
-  "FILE",
-  "SUPER",
-  "GRANT OPTION",
-  "CREATE USER",
-  "RELOAD",
-  "SHUTDOWN",
-  "PROCESS",
-];
+/**
+ * The only privileges the source account may hold. Anything else, including a privilege
+ * this list has never heard of, refuses the run: an allowlist, so a new or unusual
+ * write-capable privilege (CREATE TEMPORARY TABLES, CREATE TABLESPACE, a dynamic
+ * privilege, PROXY) cannot slip through.
+ */
+export const READ_ONLY_PRIVILEGES: readonly string[] = ["USAGE", "SELECT", "SHOW VIEW"];
 
 export interface DatabaseUrl {
   readonly host: string;
@@ -90,6 +76,13 @@ export function parseDatabaseUrl(value: string | undefined, name: string): Datab
   };
 }
 
+export const DEFAULT_REPORT_PATH = "/var/lib/legacy-refresh/last-run.json";
+
+/** Where the report goes; readable even when the rest of the configuration is not. */
+export function reportPathFrom(env: NodeJS.ProcessEnv): string {
+  return env.LEGACY_REFRESH_REPORT || DEFAULT_REPORT_PATH;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): RefreshConfig {
   const source = parseDatabaseUrl(env.LEGACY_REFRESH_SOURCE_URL, "source");
   const target = parseDatabaseUrl(env.LEGACY_REFRESH_TARGET_URL, "target");
@@ -98,33 +91,46 @@ export function loadConfig(env: NodeJS.ProcessEnv): RefreshConfig {
   return {
     source,
     target,
-    reportPath: env.LEGACY_REFRESH_REPORT ?? "/var/lib/legacy-refresh/last-run.json",
+    reportPath: reportPathFrom(env),
     lockPath: env.LEGACY_REFRESH_LOCK ?? "/var/lib/legacy-refresh/run.lock",
   };
 }
 
 /**
- * Returns the write privileges found in `SHOW GRANTS FOR CURRENT_USER()` output.
- * `GRANT USAGE` and `GRANT SELECT, SHOW VIEW, LOCK TABLES` are fine; anything else
- * listed above is not.
+ * Returns every privilege in `SHOW GRANTS FOR CURRENT_USER()` output that is not in
+ * READ_ONLY_PRIVILEGES, plus GRANT OPTION, role grants it cannot read, and NO GRANTS
+ * when nothing was listed. An empty result is the only one that lets a run continue.
+ * REVOKE lines (partial revokes) only take privileges away, so they are skipped.
  */
 export function writePrivileges(grants: readonly string[]): string[] {
   const found = new Set<string>();
+  let read = 0;
   for (const grant of grants) {
-    const upper = grant.toUpperCase();
-    if (/WITH GRANT OPTION/.test(upper)) found.add("GRANT OPTION");
+    const upper = grant.trim().toUpperCase();
+    if (upper.length === 0 || upper.startsWith("REVOKE ")) continue;
+    read += 1;
+    if (/WITH\s+GRANT\s+OPTION/.test(upper)) found.add("GRANT OPTION");
     const head = /^GRANT\s+(.+?)\s+ON\s+/.exec(upper);
     if (!head) {
       // Role grants ("GRANT `role` TO ...") can carry anything; refuse what we can't read.
-      if (/^GRANT\s+/.test(upper)) found.add("UNREADABLE GRANT");
+      found.add("UNREADABLE GRANT");
       continue;
     }
-    const privileges = head[1]!.split(",").map((p) => p.trim().replace(/\s*\(.*\)$/, ""));
+    const privileges = head[1]!
+      .split(",")
+      .map((p) => p.trim().replace(/\s*\(.*\)$/, "").replace(/\s+/g, " "));
     for (const privilege of privileges) {
-      if (WRITE_PRIVILEGES.includes(privilege)) found.add(privilege);
+      if (!READ_ONLY_PRIVILEGES.includes(privilege)) found.add(privilege || "UNREADABLE GRANT");
     }
   }
+  if (read === 0) found.add("NO GRANTS");
   return [...found].sort();
+}
+
+/** A report for a run that ended before or outside `runRefresh` (config, lock, crash). */
+export function failureReport(code: string, at: Date): RefreshReport {
+  const iso = at.toISOString();
+  return { ok: false, code, startedAt: iso, finishedAt: iso, durationMs: 0, excluded: [], tables: {}, totalRows: 0 };
 }
 
 export function isExcluded(table: string): boolean {

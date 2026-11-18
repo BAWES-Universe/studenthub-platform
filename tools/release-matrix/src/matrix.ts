@@ -92,6 +92,29 @@ export const RELEASE_STEPS: Readonly<Record<string, string>> = {
   "SWITCHES": "Lane switches turned on at cutover as legacy stops writing each domain: WORK_LANE_ENABLED=true (with SAFE_WRITE_SIGNING_KEY) when legacy stops writing hours, after the work ports are wired in login-runtime (access managedStores and comms notices)",
 };
 
+/**
+ * What a closed gate must cite. Evidence names an exact head or a run:
+ *  - `PR #512 at 1a2b3c4` (a pull request at a commit, 7 to 40 hex characters);
+ *  - `run https://github.com/<owner>/<repo>/actions/runs/<id>` (a CI or workflow run);
+ *  - `PR #504 comment 6954521676` (a run report posted as a pull request comment).
+ * A waiver names where the decision is recorded:
+ *  - `contracts/decisions-<date>.md` (the decision record), or
+ *  - `PR #393 comment 6951406632` (a decision agreed on the desk).
+ * A string that only looks long enough is not evidence.
+ */
+const PR_AT_HEAD = /\bPR #\d+ at [0-9a-f]{7,40}\b/;
+const RUN_URL = /\brun https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/\d+\b/;
+const PR_COMMENT = /\bPR #\d+ comment \d+\b/;
+const DECISION_RECORD = /\bcontracts\/decisions-[\w-]+\.md\b/;
+
+export function citesEvidence(text: string): boolean {
+  return PR_AT_HEAD.test(text) || RUN_URL.test(text) || PR_COMMENT.test(text);
+}
+
+export function citesDecision(text: string): boolean {
+  return DECISION_RECORD.test(text) || PR_COMMENT.test(text);
+}
+
 export const mobileKey = (endpoint: Pick<MobileEndpoint, "method" | "path">): string =>
   `${endpoint.method} ${endpoint.path}`;
 
@@ -111,12 +134,16 @@ function checkGates(section: string, id: string, row: ScreenRow, required: reado
   for (const [gate, value] of Object.entries(row.gates ?? {})) {
     const where = `${section} ${id} gate ${gate}`;
     if (value.state === "done") {
-      if (typeof value.evidence !== "string" || value.evidence.trim().length < 8) {
+      if (typeof value.evidence !== "string" || value.evidence.trim().length === 0) {
         issues.push({ rule: "matrix.gate.doneWithoutEvidence", detail: `${where} is done without evidence` });
+      } else if (!citesEvidence(value.evidence)) {
+        issues.push({ rule: "matrix.gate.evidenceUnsourced", detail: `${where} evidence names no PR at a head, run or run report` });
       }
     } else if (value.state === "waived") {
-      if (typeof value.decision !== "string" || value.decision.trim().length < 8) {
+      if (typeof value.decision !== "string" || value.decision.trim().length === 0) {
         issues.push({ rule: "matrix.gate.waivedWithoutDecision", detail: `${where} is waived without a recorded decision` });
+      } else if (!citesDecision(value.decision)) {
+        issues.push({ rule: "matrix.gate.decisionUnsourced", detail: `${where} waiver names no decision record or desk comment` });
       }
     } else if (value.state !== "open") {
       issues.push({ rule: "matrix.gate.badState", detail: `${where} has state '${(value as { state: string }).state}'` });

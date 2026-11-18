@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { STALE_LOCK_MS, summary, takeLock } from "../src/refresh-cli.js";
+import { runCli, STALE_LOCK_MS, summary, takeLock } from "../src/refresh-cli.js";
 import {
   isExcluded,
   loadConfig,
@@ -16,7 +16,7 @@ import {
 const SOURCE = "mysql://reader:s3cret%21@legacy-replica.internal:3306/payroll";
 const TARGET = "mysql://mirror:m1rror@staging-db.internal:3306/legacy_mirror";
 const env = { LEGACY_REFRESH_SOURCE_URL: SOURCE, LEGACY_REFRESH_TARGET_URL: TARGET };
-const READ_ONLY = ["GRANT USAGE ON *.* TO `reader`@`%`", "GRANT SELECT, SHOW VIEW, LOCK TABLES ON `payroll`.* TO `reader`@`%`"];
+const READ_ONLY = ["GRANT USAGE ON *.* TO `reader`@`%`", "GRANT SELECT, SHOW VIEW ON `payroll`.* TO `reader`@`%`"];
 
 function fakeMysql(overrides: Partial<MysqlPort> = {}, log: string[] = []): MysqlPort {
   const legacy: Record<string, number> = { candidate: 3, company: 2, candidate_token: 9, staff_token: 1, transfer: 4 };
@@ -73,6 +73,19 @@ test("read-only grants pass; any write privilege, grant option or unreadable rol
   assert.deepEqual(writePrivileges(["GRANT SELECT ON `payroll`.* TO `r`@`%` WITH GRANT OPTION"]), ["GRANT OPTION"]);
   assert.deepEqual(writePrivileges(["GRANT UPDATE (`name`) ON `payroll`.`candidate` TO `r`@`%`"]), ["UPDATE"]);
   assert.deepEqual(writePrivileges(["GRANT `app_writer`@`%` TO `r`@`%`"]), ["UNREADABLE GRANT"]);
+});
+
+test("the read-only check is an allowlist: unlisted, unknown or missing privileges refuse", () => {
+  const on = (privileges: string) => [`GRANT ${privileges} ON \`payroll\`.* TO \`r\`@\`%\``];
+  assert.deepEqual(writePrivileges(on("SELECT, CREATE TEMPORARY TABLES")), ["CREATE TEMPORARY TABLES"]);
+  assert.deepEqual(writePrivileges(["GRANT CREATE TABLESPACE ON *.* TO `r`@`%`"]), ["CREATE TABLESPACE"]);
+  assert.deepEqual(writePrivileges(["GRANT BACKUP_ADMIN,SYSTEM_VARIABLES_ADMIN ON *.* TO `r`@`%`"]), ["BACKUP_ADMIN", "SYSTEM_VARIABLES_ADMIN"]);
+  assert.deepEqual(writePrivileges(on("SELECT, LOCK TABLES")), ["LOCK TABLES"]);
+  assert.deepEqual(writePrivileges(on("SOME FUTURE PRIVILEGE")), ["SOME FUTURE PRIVILEGE"]);
+  assert.deepEqual(writePrivileges(["GRANT PROXY ON ``@`` TO `r`@`%`"]), ["PROXY"]);
+  assert.deepEqual(writePrivileges(on("SELECT (`id`), SHOW  VIEW")), []);
+  assert.deepEqual(writePrivileges([...READ_ONLY, "REVOKE SELECT ON `payroll`.`staff` FROM `r`@`%`"]), []);
+  assert.deepEqual(writePrivileges([]), ["NO GRANTS"]);
 });
 
 test("token tables are never copied", () => {
@@ -140,6 +153,70 @@ test("a fresh lock blocks a second run; a lock left by a crash for six hours is 
     closeSync(takeLock(lock, Date.now()));
     writeFileSync(lock, "");
     assert.throws(() => takeLock(lock, Date.now()));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("every way a run ends leaves a fresh report, so a stale ok is never read", async () => {
+  const { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const dir = mkdtempSync(path.join(tmpdir(), "refresh-cli-"));
+  const reportPath = path.join(dir, "last-run.json");
+  const lockPath = path.join(dir, "run.lock");
+  const report = () => JSON.parse(readFileSync(reportPath, "utf8")) as { ok: boolean; code: string; tables: object };
+  const staleOk = () => writeFileSync(reportPath, JSON.stringify({ ok: true, code: "ok", tables: { candidate: 3 } }));
+  const lines: string[] = [];
+  const deps = (over: Partial<Parameters<typeof runCli>[0]> = {}): Parameters<typeof runCli>[0] => ({
+    env: { ...env, LEGACY_REFRESH_REPORT: reportPath, LEGACY_REFRESH_LOCK: lockPath },
+    mysql: fakeMysql(),
+    now: ticking(),
+    log: (line) => lines.push(line),
+    error: (line) => lines.push(line),
+    ...over,
+  });
+  try {
+    staleOk();
+    assert.equal(await runCli(deps({ env: { LEGACY_REFRESH_REPORT: reportPath } })), 2);
+    assert.deepEqual([report().ok, report().code], [false, "config.source.missing"]);
+
+    staleOk();
+    writeFileSync(lockPath, "");
+    assert.equal(await runCli(deps()), 3);
+    assert.deepEqual([report().ok, report().code], [false, "locked"]);
+    rmSync(lockPath);
+
+    let seenDuringCopy = "";
+    const watching = fakeMysql({
+      async copy() {
+        seenDuringCopy = report().code;
+      },
+      async counts(_db, tables) {
+        return Object.fromEntries(tables.map((t) => [t, 1]));
+      },
+    });
+    staleOk();
+    assert.equal(await runCli(deps({ mysql: watching })), 0);
+    assert.equal(seenDuringCopy, "running");
+    assert.deepEqual([report().ok, report().code], [true, "ok"]);
+    assert.equal(existsSync(lockPath), false);
+
+    staleOk();
+    assert.equal(await runCli(deps({ mysql: fakeMysql({ grants: async () => ["GRANT SELECT, CREATE TEMPORARY TABLES ON *.* TO `r`@`%`"] }) })), 1);
+    assert.deepEqual([report().ok, report().code], [false, "source.notReadOnly"]);
+
+    staleOk();
+    let calls = 0;
+    const crashingClock = () => {
+      calls += 1;
+      if (calls === 3) throw new Error("clock");
+      return new Date();
+    };
+    assert.equal(await runCli(deps({ now: crashingClock })), 1);
+    assert.equal(report().ok, false);
+    assert.equal(existsSync(lockPath), false);
+    for (const line of lines) assert.equal(/s3cret|m1rror|legacy-replica|staging-db/.test(line), false, line);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { checkContract, idsIn, parseContract } from "../src/contract.js";
 import { CONTRACT_PATH, loadContract, loadInventory, loadMatrix, repoRoot } from "../src/files.js";
-import { blockers, checkInventory, checkMatrix, mobileKey, type Matrix, type MobileInventory } from "../src/matrix.js";
+import { blockers, checkInventory, checkMatrix, citesDecision, citesEvidence, mobileKey, type Matrix, type MobileInventory } from "../src/matrix.js";
 import { laneForOwner, seedMatrix } from "../src/seed.js";
 import { isEntryPoint, renderReport } from "../src/cli.js";
 
@@ -113,6 +113,21 @@ test("a missing row, an unknown row, or a closed gate without evidence fails the
     "matrix.gate.waivedWithoutDecision",
   ]);
 
+  const unsourced = clone(base);
+  (unsourced.screens["C-11"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "not-real" };
+  (unsourced.screens["C-12"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "merged and verified on staging last week" };
+  (unsourced.imports["M-1"]!.gates as Record<string, unknown>).dryRun = { state: "waived", decision: "Khalid said it is fine" };
+  assert.deepEqual(rules(checkMatrix(unsourced, contract, inventory)), ["matrix.gate.decisionUnsourced", "matrix.gate.evidenceUnsourced"]);
+
+  const sourced = clone(base);
+  (sourced.screens["C-11"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "PR #512 at 1a2b3c4d" };
+  (sourced.screens["C-12"]!.gates as Record<string, unknown>).built = {
+    state: "done",
+    evidence: "journey walked; run https://github.com/BAWES-Universe/studenthub-platform/actions/runs/44245285345",
+  };
+  (sourced.imports["M-1"]!.gates as Record<string, unknown>).dryRun = { state: "waived", decision: "contracts/decisions-2026-10-27.md, Added 2026-11-17" };
+  assert.deepEqual(rules(checkMatrix(sourced, contract, inventory)), []);
+
   const gateless = clone(base);
   delete (gateless.screens["C-11"]!.gates as Record<string, unknown>).verified;
   assert.deepEqual(rules(checkMatrix(gateless, contract, inventory)), ["matrix.gate.missing"]);
@@ -120,6 +135,16 @@ test("a missing row, an unknown row, or a closed gate without evidence fails the
   const lane = clone(base);
   (lane.screens["C-11"] as { lane: string }).lane = "nobody";
   assert.deepEqual(rules(checkMatrix(lane, contract, inventory)), ["matrix.lane.unknown"]);
+});
+
+test("evidence must name a PR at a head, a run or a run report; a waiver must name its decision", () => {
+  for (const good of ["PR #512 at 1a2b3c4", "PR #504 comment 6954521676", "run https://github.com/o/r/actions/runs/1"]) assert.equal(citesEvidence(good), true, good);
+  for (const bad of ["not-real", "PR #512", "PR #512 at main", "PR #512 at 1a2b3c", "https://example.com/actions/runs/1", "run 12345678"]) {
+    assert.equal(citesEvidence(bad), false, bad);
+  }
+  assert.equal(citesDecision("contracts/decisions-2026-10-27.md"), true);
+  assert.equal(citesDecision("PR #393 comment 6951406632"), true);
+  assert.equal(citesDecision("agreed on a call"), false);
 });
 
 test("blockers count every open gate and every open mobile disposition; evidence closes a gate", () => {
