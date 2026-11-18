@@ -16,7 +16,7 @@ import { BAD, NOT_FOUND, UNAUTHORIZED, decodeSegment, errorPage, html, readBody,
 export interface RecruitJobsStore {
   create(principalId: string, input: JobFields): Promise<{ kind: "saved"; jobId: string } | { kind: "not_found" } | { kind: "area_invalid" }>;
   update(principalId: string, jobId: string, input: JobFields): Promise<{ kind: "saved"; jobId: string } | { kind: "not_found" } | { kind: "area_invalid" }>;
-  board(personId: string, query: { q: string | null; applied: boolean; page: number }): Promise<{ jobs: readonly (JobRow & { area_id: string | null })[]; total: number }>;
+  board(personId: string, query: { q: string | null; applied: boolean; page: number }): Promise<{ jobs: readonly (JobRow & { area_id: string | null })[]; total: number } | null>;
   get(principalId: string, jobId: string): Promise<{ job: JobRow & { area_id: string | null; applications: number }; staff: boolean } | null>;
   apply(personId: string, jobId: string, note: string | null): Promise<{ kind: "applied"; applicationId: string } | { kind: "not_found" } | { kind: "job_closed" } | { kind: "duplicate"; applicationId: string }>;
   staffList(principalId: string, filter: { status: JobStatus | null; requestId: string | null }): Promise<readonly (JobRow & { area_id: string | null; applications: number })[] | null>;
@@ -49,6 +49,7 @@ export function createRecruitJobs(p: { sessions: Pick<SessionStore, "get">; stor
       const query = parseJobQuery(raw);
       if (!query) return BAD;
       const r = await p.store.board(id, query);
+      if (!r) return NOT_FOUND;
       return { status: 200, body: { jobs: r.jobs.map(jobView), total: r.total, page: query.page, pageSize: JOB_PAGE_SIZE, q: query.q, applied: query.applied } };
     },
     async job(s, jobId) {

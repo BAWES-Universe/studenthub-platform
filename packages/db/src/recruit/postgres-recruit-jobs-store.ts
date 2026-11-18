@@ -15,6 +15,8 @@ export interface RecruitJobsStoreOptions {
   readonly connectionString?: string;
   readonly pool?: pg.Pool;
   readonly staffDecision: (rows: readonly Grant[]) => boolean;
+  /** Who may browse the board and apply: the candidate surface (`candidate:self`). */
+  readonly candidateDecision: (rows: readonly Grant[]) => boolean;
   readonly acceptsApplications: (status: JobStatus) => boolean;
   readonly transitionAllowed: (from: ApplicationStatus, to: ApplicationStatus) => boolean;
   readonly outbox: (to: ApplicationStatus, applicationId: string, personId: string) => { readonly kind: string; readonly recipient: string; readonly dedupeKey: string } | null;
@@ -55,8 +57,12 @@ export class PostgresRecruitJobsStore {
   }
   async close() { if (this.#owns) await this.#pool.end(); }
 
+  async #grants(c: pg.Pool | pg.PoolClient, principalId: string, lock = false): Promise<Grant[]> {
+    return (await c.query<Grant>(`SELECT org_id, role, scope FROM grants WHERE principal_id = $1::text${lock ? " FOR SHARE" : ""}`, [principalId])).rows;
+  }
+
   async #staff(c: pg.Pool | pg.PoolClient, principalId: string, lock = false): Promise<boolean> {
-    return this.options.staffDecision((await c.query<Grant>(`SELECT org_id, role, scope FROM grants WHERE principal_id = $1::text${lock ? " FOR SHARE" : ""}`, [principalId])).rows);
+    return this.options.staffDecision(await this.#grants(c, principalId, lock));
   }
 
   async #transaction<T>(work: (c: pg.PoolClient) => Promise<T | { rollback: T }>): Promise<T> {
@@ -118,8 +124,9 @@ export class PostgresRecruitJobsStore {
     });
   }
 
-  /** The board: active jobs the person has not applied to, or (applied) every job they applied to, newest first. */
-  async board(personId: string, query: { q: string | null; applied: boolean; page: number }): Promise<{ jobs: RecruitJobRecord[]; total: number }> {
+  /** The board: active jobs the candidate has not applied to, or (applied) every job they applied to, newest first; null for a non-candidate. */
+  async board(personId: string, query: { q: string | null; applied: boolean; page: number }): Promise<{ jobs: RecruitJobRecord[]; total: number } | null> {
+    if (!this.options.candidateDecision(await this.#grants(this.#pool, personId))) return null;
     const like = query.q ? `%${query.q.replace(/[\\%_]/g, (m) => `\\${m}`)}%` : null;
     const where = `WHERE ${query.applied ? "a.id IS NOT NULL" : "j.status = 'active' AND a.id IS NULL"}
       AND ($2::text IS NULL OR j.position ILIKE $2 OR j.position_ar ILIKE $2 OR j.description ILIKE $2 OR j.description_ar ILIKE $2)`;
@@ -132,20 +139,21 @@ export class PostgresRecruitJobsStore {
     return { jobs: rows.rows, total: Number(total.rows[0]!.n) };
   }
 
-  /** One job: staff see any; others see an active job or one they applied to. */
+  /** One job: staff see any; candidates see an active job or one they applied to; anyone else nothing. */
   async get(principalId: string, jobId: string): Promise<{ job: RecruitJobRecord; staff: boolean } | null> {
-    const [staff, row] = await Promise.all([
-      this.#staff(this.#pool, principalId),
+    const [grants, row] = await Promise.all([
+      this.#grants(this.#pool, principalId),
       this.#pool.query<RecruitJobRecord>(`SELECT ${JOB_COLUMNS}, a.status AS application_status, (SELECT count(*)::int FROM recruit_job_applications x WHERE x.job_id = j.id) AS applications
         FROM ${JOB_FROM} LEFT JOIN recruit_job_applications a ON a.job_id = j.id AND a.person_principal_id = $2::text WHERE j.id = $1::uuid`, [jobId, principalId]),
     ]);
-    const job = row.rows[0];
-    if (!job || !(staff || job.status === "active" || job.application_status)) return null;
+    const job = row.rows[0], staff = this.options.staffDecision(grants);
+    if (!job || !(staff || (this.options.candidateDecision(grants) && (job.status === "active" || job.application_status)))) return null;
     return { job: staff ? job : { ...job, applications: 0 }, staff };
   }
 
   async apply(personId: string, jobId: string, note: string | null): Promise<RecruitApplyResult> {
     return this.#transaction<RecruitApplyResult>(async (c) => {
+      if (!this.options.candidateDecision(await this.#grants(c, personId, true))) return { rollback: { kind: "not_found" } };
       const job = (await c.query<{ status: JobStatus }>("SELECT status FROM recruit_jobs WHERE id = $1::uuid FOR SHARE", [jobId])).rows[0];
       const existing = (await c.query<{ id: string }>("SELECT id FROM recruit_job_applications WHERE job_id = $1::uuid AND person_principal_id = $2::text", [jobId, personId])).rows[0];
       if (!job || (job.status === "draft" && !existing)) return { rollback: { kind: "not_found" } };

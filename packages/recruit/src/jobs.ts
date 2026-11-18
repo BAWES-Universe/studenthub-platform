@@ -24,6 +24,11 @@ export function jobStaffDecision(rows: readonly RecruitGrantRow[], operators: re
   return rows.some((row) => (row.role === "staff" || row.role === "admin") && row.scope === "subtree" && operators.includes(row.org_id));
 }
 
+/** The candidate surface (navigation contract C-06/C-07, `candidate:self`): a principal holding a candidate grant browses and applies; employer and staff accounts do not. */
+export function jobCandidateDecision(rows: readonly RecruitGrantRow[]): boolean {
+  return rows.some((row) => row.role === "candidate");
+}
+
 /** Only an active job takes applications. */
 export function jobAcceptsApplications(status: JobStatus): boolean {
   return status === "active";

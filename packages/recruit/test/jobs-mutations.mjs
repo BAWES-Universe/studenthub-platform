@@ -8,6 +8,7 @@ const source = new URL("../../../dist/packages/recruit/src/jobs.js", import.meta
 const original = await readFile(source, "utf8");
 const suite = fileURLToPath(new URL("../../../dist/packages/recruit/test/jobs.test.js", import.meta.url));
 const mutations = [
+  ["anyone-applies", "REC7_RULES", 'return rows.some((row) => row.role === "candidate");', "return true;"],
   ["recruiter-manages", "REC7_RULES", '(row.role === "staff" || row.role === "admin")', '(row.role === "staff" || row.role === "admin" || row.role === "recruiter")'],
   ["closed-applies", "REC7_RULES", 'return status === "active";', 'return status !== "draft";'],
   ["unreject", "REC7_RULES", '|| (from === "shortlisted" && to === "rejected")', '|| (from !== "interested")'],

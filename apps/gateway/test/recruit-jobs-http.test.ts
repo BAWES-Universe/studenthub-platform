@@ -13,9 +13,9 @@ const row = { id: JOB, request_id: REQ, org_name: "Sultan <Co>", store_name: "Av
 const store: RecruitJobsStore = {
   create: async (p, f) => { calls.push(`create:${p}:${f.position}:${f.skills.join("|")}`); return p === "staff" ? { kind: "saved", jobId: JOB } : { kind: "not_found" }; },
   update: async (p, id, f) => { calls.push(`update:${p}:${id}:${f.status}`); return f.areaId ? { kind: "area_invalid" } : { kind: "saved", jobId: id }; },
-  board: async (p, q) => { calls.push(`board:${p}:${q.q}:${q.applied}:${q.page}`); return { jobs: [row], total: 30 }; },
+  board: async (p, q) => { calls.push(`board:${p}:${q.q}:${q.applied}:${q.page}`); return p === "me" ? { jobs: [row], total: 30 } : null; },
   get: async (p, id) => id !== JOB ? null : { job: row, staff: p === "staff" },
-  apply: async (_p, id, note) => { calls.push(`apply:${id}:${note}`); return id !== JOB ? { kind: "not_found" } : note === "again" ? { kind: "duplicate", applicationId: APP } : note === "late" ? { kind: "job_closed" } : { kind: "applied", applicationId: APP }; },
+  apply: async (p, id, note) => { calls.push(`apply:${id}:${note}`); return id !== JOB || p !== "me" ? { kind: "not_found" } : note === "again" ? { kind: "duplicate", applicationId: APP } : note === "late" ? { kind: "job_closed" } : { kind: "applied", applicationId: APP }; },
   staffList: async (p) => p === "staff" ? [row] : null,
   applications: async (p) => p === "staff" ? [{ id: APP, person_principal_id: "p1", person_name: "Noor <b>", status: "interested", note: "Monday <ok>", created_at: "2026-11-17T10:00:00.000Z", decided_at: null }] : null,
   decide: async (p, id, to) => p !== "staff" || id !== APP ? { kind: "not_found" } : to === "shortlisted" ? { kind: "decided", status: to } : { kind: "refused", status: "rejected" },
@@ -57,6 +57,8 @@ test("REC7_HTTP people browse and apply once; staff publish and decide; refusals
   assert.deepEqual((await call(`/recruit/staff/applications/${APP}/shortlist`, post({}, STAFF))).json, { applicationId: APP, status: "shortlisted" });
   assert.deepEqual((await call(`/recruit/staff/applications/${APP}/reject`, post({}, STAFF))).json, { error: "application_decided", status: "rejected" });
   assert.equal((await call(`/recruit/staff/applications/${APP}/shortlist`, post({}))).status, 404);
+  assert.equal((await call("/recruit/jobs", { session: STAFF })).status, 404, "the board is the candidate surface; a staff or employer account is not a candidate");
+  assert.equal((await call(`/recruit/jobs/${JOB}/apply`, post({}, STAFF))).status, 404, "nor does a non-candidate apply");
   assert.equal((await call("/recruit/jobs", { session: "x" })).status, 401);
   assert.equal((await call(`/recruit/jobs/${JOB}/apply`, { ...post({}), headers: { origin: "https://evil.example" } })).status, 403);
   assert.equal((await call("/recruit/jobsx")).handled, false);

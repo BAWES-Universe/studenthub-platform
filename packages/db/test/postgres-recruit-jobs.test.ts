@@ -6,7 +6,7 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitJobsStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
 import {
-  applicationOutbox, applicationTransitionAllowed, jobAcceptsApplications, jobStaffDecision, recruitStaffDecision, requestCreateDecision, requestReadDecision, requestTransitionAllowed, requestTransitionDecision, type JobFields,
+  applicationOutbox, applicationTransitionAllowed, jobAcceptsApplications, jobCandidateDecision, jobStaffDecision, recruitStaffDecision, requestCreateDecision, requestReadDecision, requestTransitionAllowed, requestTransitionDecision, type JobFields,
 } from "../../recruit/src/index.js";
 
 const URL = process.env.DATABASE_URL ?? "";
@@ -26,7 +26,7 @@ before(async () => {
     pool, createDecision: (r, o, a) => requestCreateDecision(r, o, a, OPS), readDecision: (r, o, a) => requestReadDecision(r, o, a, OPS),
     transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed,
   });
-  jobs = new PostgresRecruitJobsStore({ pool, staffDecision: (r) => jobStaffDecision(r, OPS), acceptsApplications: jobAcceptsApplications, transitionAllowed: applicationTransitionAllowed, outbox: applicationOutbox, pageSize: 2 });
+  jobs = new PostgresRecruitJobsStore({ pool, staffDecision: (r) => jobStaffDecision(r, OPS), candidateDecision: jobCandidateDecision, acceptsApplications: jobAcceptsApplications, transitionAllowed: applicationTransitionAllowed, outbox: applicationOutbox, pageSize: 2 });
 });
 after(async () => pool.end());
 
@@ -36,6 +36,7 @@ async function person(grants: { orgId: string; role: string; scope: "self" | "su
   if (grants.length) await authz.grantMany(id, grants);
   return id;
 }
+const candidate = (displayName?: string) => person([{ orgId: OPS_ORG, role: "candidate", scope: "self" }], displayName);
 async function catalogue(type: "area" | "country", name: string) {
   const id = randomUUID();
   await pool.query("INSERT INTO catalogue_items(id, catalogue_type, name, normalized_name, code, status, created_by_ref, updated_by_ref, created_at, updated_at) VALUES($1, $2, $3, $3, NULL, 'active', $4, $4, now(), now())", [id, type, `${name} ${id.slice(0, 8)}`, REF]);
@@ -75,7 +76,7 @@ test("REC7_PUBLISH staff publish and edit jobs; nobody else does; areas must be 
 });
 
 test("REC7_APPLY a person applies once to an active job; drafts are invisible; a closed job refuses; the board pages and searches", async () => {
-  const s = await setup(), noor = await person([], "Noor"), tag = `apply${randomUUID().slice(0, 8)}`, mk = (o: Partial<JobFields> = {}) => job(s.requestId, { position: `Cashier ${tag}`, ...o });
+  const s = await setup(), noor = await candidate("Noor"), tag = `apply${randomUUID().slice(0, 8)}`, mk = (o: Partial<JobFields> = {}) => job(s.requestId, { position: `Cashier ${tag}`, ...o });
   const active = ((await jobs.create(s.staff, mk())) as { jobId: string }).jobId;
   const draft = ((await jobs.create(s.staff, mk({ status: "draft" }))) as { jobId: string }).jobId;
   const closed = ((await jobs.create(s.staff, mk({ status: "closed" }))) as { jobId: string }).jobId;
@@ -88,23 +89,35 @@ test("REC7_APPLY a person applies once to an active job; drafts are invisible; a
   assert.equal(applied.kind, "applied");
   const appId = (applied as { applicationId: string }).applicationId;
   assert.deepEqual(await jobs.apply(noor, active, "again"), { kind: "duplicate", applicationId: appId });
-  const board = await jobs.board(noor, { q: tag, applied: false, page: 1 });
+  const board = (await jobs.board(noor, { q: tag, applied: false, page: 1 }))!;
   assert.deepEqual([board.total, board.jobs.map((j) => j.id)], [1, [other]], "applied, draft and closed jobs leave the board");
-  assert.deepEqual((await jobs.board(noor, { q: `Packer ${tag}`, applied: false, page: 1 })).jobs.map((j) => j.id), [other]);
-  assert.equal((await jobs.board(noor, { q: "%", applied: false, page: 1 })).total, 0, "wildcards are literal");
-  const mine = await jobs.board(noor, { q: null, applied: true, page: 1 });
+  assert.deepEqual((await jobs.board(noor, { q: `Packer ${tag}`, applied: false, page: 1 }))!.jobs.map((j) => j.id), [other]);
+  assert.equal((await jobs.board(noor, { q: "%", applied: false, page: 1 }))!.total, 0, "wildcards are literal");
+  const mine = (await jobs.board(noor, { q: null, applied: true, page: 1 }))!;
   assert.deepEqual(mine.jobs.map((j) => [j.id, j.application_status]), [[active, "interested"]]);
   await jobs.update(s.staff, active, mk({ status: "closed" }));
   assert.equal((await jobs.get(noor, active))!.job.status, "closed", "an applicant still sees the job they applied to");
-  const other2 = await person();
+  const other2 = await candidate();
   for (let i = 0; i < 3; i++) await jobs.create(s.staff, job(s.requestId, { position: `Page ${tag} ${i}` }));
-  const page1 = await jobs.board(other2, { q: `Page ${tag}`, applied: false, page: 1 }), page2 = await jobs.board(other2, { q: `Page ${tag}`, applied: false, page: 2 });
+  const page1 = (await jobs.board(other2, { q: `Page ${tag}`, applied: false, page: 1 }))!, page2 = (await jobs.board(other2, { q: `Page ${tag}`, applied: false, page: 2 }))!;
   assert.deepEqual([page1.total, page1.jobs.length, page2.jobs.length], [3, 2, 1]);
   await assert.rejects(pool.query("UPDATE recruit_job_applications SET note = 'changed' WHERE id = $1", [appId]), /keeps/);
 });
 
+test("REC7_CANDIDATE only candidates browse and apply (candidate:self); employer, staff and grantless accounts get nothing", async () => {
+  const s = await setup(), nobody = await person();
+  const id = ((await jobs.create(s.staff, job(s.requestId))) as { jobId: string }).jobId;
+  for (const who of [s.owner, s.staff, s.recruiter, nobody]) {
+    assert.equal(await jobs.board(who, { q: null, applied: false, page: 1 }), null, who);
+    assert.deepEqual(await jobs.apply(who, id, null), { kind: "not_found" }, who);
+  }
+  for (const who of [s.owner, s.recruiter, nobody]) assert.equal(await jobs.get(who, id), null, who);
+  assert.equal((await jobs.get(s.staff, id))!.staff, true, "staff still manage the job");
+  assert.equal((await pool.query("SELECT 1 FROM recruit_job_applications WHERE job_id = $1", [id])).rowCount, 0);
+});
+
 test("REC7_DECIDE staff shortlist or reject once; the person hears; nobody else decides", async () => {
-  const s = await setup(), noor = await person([], "Noor");
+  const s = await setup(), noor = await candidate("Noor");
   const id = ((await jobs.create(s.staff, job(s.requestId))) as { jobId: string }).jobId;
   const app = ((await jobs.apply(noor, id, null)) as { applicationId: string }).applicationId;
   assert.deepEqual(await jobs.decide(s.recruiter, app, "shortlisted"), { kind: "not_found" });

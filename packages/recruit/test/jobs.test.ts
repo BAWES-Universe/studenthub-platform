@@ -14,6 +14,9 @@ test("REC7_RULES only operator staff manage jobs; only an active job takes appli
   assert.equal(m.jobStaffDecision([{ org_id: "root", role: "recruiter", scope: "subtree" }], ops), false, "legacy jobs were a staff tool");
   assert.equal(m.jobStaffDecision([{ org_id: "root", role: "staff", scope: "self" }], ops), false);
   assert.equal(m.jobStaffDecision([{ org_id: "acme", role: "staff", scope: "subtree" }], ops), false);
+  assert.equal(m.jobCandidateDecision([{ org_id: "acme", role: "candidate", scope: "self" }]), true, "the candidate surface is candidate:self");
+  assert.equal(m.jobCandidateDecision([{ org_id: "acme", role: "org-owner", scope: "self" }, { org_id: "root", role: "staff", scope: "subtree" }]), false, "employer and staff accounts are not candidates");
+  assert.equal(m.jobCandidateDecision([]), false);
   assert.deepEqual(m.JOB_STATUSES.filter(m.jobAcceptsApplications), ["active"]);
   const all: A[] = ["interested", "shortlisted", "rejected"];
   assert.deepEqual(all.flatMap((a) => all.filter((b) => m.applicationTransitionAllowed(a, b)).map((b) => `${a}>${b}`)), ["interested>shortlisted", "interested>rejected", "shortlisted>rejected"]);
