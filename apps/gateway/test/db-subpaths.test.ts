@@ -22,7 +22,7 @@ async function moduleFor(specifier: string): Promise<Record<string, unknown>> {
 
 test("PREP_EXPORTS explicit database area exports resolve with their assigned values", async () => {
   const manifest = JSON.parse(await readFile(resolve("packages/db/package.json"), "utf8")) as { exports: Record<string, Record<string, string>> };
-  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions", "./billing", "./work"].sort());
+  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions", "./billing", "./universe", "./work"].sort());
   assert.equal(JSON.stringify(manifest.exports).includes("*"), false);
   for (const area of areas) {
     assert.deepEqual(manifest.exports[`./${area}`], { types: `./dist/${area}/index.d.ts`, import: `./dist/${area}/index.js` });
@@ -40,6 +40,12 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
   assert.deepEqual(manifest.exports["./work"], { types: "./dist/work/index.d.ts", import: "./dist/work/index.js" });
   const work = await moduleFor("@studenthub/db/work");
   assert.deepEqual(Object.keys(work).sort(), ["PostgresWorkAppealStore", "PostgresWorkDecisionStore", "PostgresWorkHoursViewStore", "PostgresWorkImportStore", "PostgresWorkPayableSource", "PostgresWorkPlacementStore", "PostgresWorkSessionStore", "workImportDigest", "workSessionFromRow"]);
+  // Universe embed is subpath-only too (E2): the root golden stays unchanged.
+  assert.deepEqual(manifest.exports["./universe"], {
+    types: "./dist/universe/index.d.ts", import: "./dist/universe/index.js",
+  });
+  const universe = await moduleFor("@studenthub/db/universe");
+  assert.deepEqual(Object.keys(universe).sort(), ["PostgresUniverseEmbedStore", "universeEmbedDigest"]);
   // Billing is subpath-only too (invoices lane, migrations 0590 to 0599).
   assert.deepEqual(manifest.exports["./billing"], {
     types: "./dist/billing/index.d.ts", import: "./dist/billing/index.js",

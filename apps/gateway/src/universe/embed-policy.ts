@@ -1,5 +1,6 @@
 import type { ServerResponse } from "node:http";
 import { isIP } from "node:net";
+import type { UniverseEmbedRuntime } from "./embed-service.js";
 
 const validatedConfig = Symbol("validated universe embed configuration");
 const validatedPolicy = Symbol("validated universe response policy");
@@ -17,6 +18,8 @@ export interface UniverseEmbedConfig {
   readonly enabled: boolean;
   readonly ancestors: readonly string[];
   readonly callbackUrl?: string;
+  /** E2: present only when the complete embed runtime is wired (wiring/universe.ts). */
+  readonly runtime?: UniverseEmbedRuntime;
 }
 
 const BASE_CSP = "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'";
@@ -115,17 +118,24 @@ export function createUniverseEmbedConfigFromEnv(
   });
 }
 
-/** No string/header input can construct a frameable policy without validation. */
-export function universeEmbedPolicy(config: UniverseEmbedConfig): EmbedResponsePolicy {
+/**
+ * No string/header input can construct a frameable policy without validation.
+ * E2: the sign-in form posts to this origin and is redirected (302) to the
+ * identity provider; browsers check form-action on that redirect too, so the
+ * exact authorization endpoint origin may be added (validated like any origin).
+ */
+export function universeEmbedPolicy(config: UniverseEmbedConfig, formActionOrigin?: string): EmbedResponsePolicy {
   if (!config[validatedConfig] || !config.enabled || config.ancestors.length === 0) return fail();
+  const csp = formActionOrigin === undefined ? BASE_CSP
+    : BASE_CSP.replace("form-action 'self'", `form-action 'self' ${origin(formActionOrigin).origin}`);
   return Object.freeze({ [validatedPolicy]: true as const, headers: Object.freeze({ ...commonHeaders,
-    "content-security-policy": `${BASE_CSP}; frame-ancestors ${config.ancestors.join(" ")}; script-src 'self'; connect-src 'self'`,
+    "content-security-policy": `${csp}; frame-ancestors ${config.ancestors.join(" ")}; script-src 'self'; connect-src 'self'`,
   }) });
 }
 
 export function writeEmbedResponse(response: ServerResponse, status: number, body: string,
   contentType: string, policy: EmbedResponsePolicy = APP_POLICY,
-  headers: Readonly<Record<string, string>> = {}): void {
+  headers: Readonly<Record<string, string | readonly string[]>> = {}): void {
   const additional = Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
   // A caller cannot add XFO to the embed display, nor remove it from app policy.
   delete additional["x-frame-options"];
