@@ -43,11 +43,14 @@ class MemoryPlacements implements PlacementStore {
     }
     return out;
   }
-  async listRequests(filter: { orgIds?: readonly string[]; includeSubtree?: boolean; status?: string } = {}) {
+  requestFilters: { storeIds?: readonly string[] }[] = [];
+  async listRequests(filter: { orgIds?: readonly string[]; includeSubtree?: boolean; storeIds?: readonly string[]; status?: string } = {}) {
+    this.requestFilters.push(filter);
     const out = [];
     for (const r of this.requests) {
       const up = filter.includeSubtree === true ? (await this.organizationAncestors(r.orgId)) ?? [] : [];
-      if ((!filter.orgIds || filter.orgIds.includes(r.orgId) || up.some((o) => filter.orgIds!.includes(o))) && (!filter.status || r.status === filter.status)) out.push(r);
+      if ((!filter.orgIds || filter.orgIds.includes(r.orgId) || up.some((o) => filter.orgIds!.includes(o))) && (!filter.status || r.status === filter.status)
+        && (!filter.storeIds || filter.storeIds.includes(r.storeId))) out.push(r);
     }
     return out;
   }
@@ -281,8 +284,12 @@ test("W1_REQUEST_LIST staff, the company and the store's manager list requests; 
   assert.equal((await svc.requestsFor("owner", "company"))?.length, 2);
   assert.equal((await svc.requestsFor("staff", "company", { status: "pending" }))?.length, 2);
   assert.equal((await svc.requestsFor("staff", "company", { status: "accepted" }))?.length, 0);
+  // The store scope is part of the query (before its limit), never applied to an already-limited list.
+  store.requestFilters.length = 0;
   assert.deepEqual((await svc.requestsFor("manager", "company"))?.map((r) => r.storeId), [STORE]);
   assert.deepEqual((await svc.requestsFor("owner", "company", { storeId: STORE.toUpperCase() }))?.map((r) => r.storeId), [STORE]);
+  assert.deepEqual((await svc.requestsFor("manager", "company", { storeId: "5c6d7e8f-0000-4000-8000-000000000001" })), []);
+  assert.deepEqual(store.requestFilters.map((f) => f.storeIds), [[STORE], [STORE]]);
   assert.equal(await svc.requestsFor("manager", "rival"), undefined);
   assert.equal(await svc.requestsFor("rivalOwner", "company"), undefined);
   assert.equal(await svc.requestsFor("groupSelfOwner", "group").then((l) => l?.length), 0, "a self-scoped owner of the group sees none of the sub-company's requests");

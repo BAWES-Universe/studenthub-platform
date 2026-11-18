@@ -123,6 +123,25 @@ test("W1_PG a company request is accepted by staff into a placement atomically",
   assert.equal((await placement.mine(w.person)).length, 1);
 });
 
+test("W1_PG a store's requests are listed even behind 500 newer requests at another store", async () => {
+  const w = await world();
+  const busy = randomUUID();
+  await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Busy',$3,$3)", [busy, w.company, "a".repeat(64)]);
+  const now = { value: new Date("2026-11-18T06:00:00Z") };
+  const placement = new PlacementService({ store: placements, grants: authz, newId: () => randomUUID(), now: () => now.value,
+    managedStores: async (actor) => actor === w.person ? [{ orgId: w.company, storeId: w.store }] : [] });
+  const req = await placement.request(w.owner, { personId: w.person, storeId: w.store });
+  assert.equal(req.kind, "requested");
+  await pool.query(`INSERT INTO work_assignment_requests(id, person_principal_id, org_id, store_id, status, requested_by, requested_at, decided_by, decided_at)
+    SELECT gen_random_uuid(), $1, $2, $3, 'cancelled', $4, clock_timestamp() + make_interval(secs => g), $4, clock_timestamp() + make_interval(secs => g)
+    FROM generate_series(1, 501) g`, [w.person, w.company, busy, w.owner]);
+  assert.equal((await placement.requestsFor(w.owner, w.company))?.length, 500, "the company list is still capped");
+  assert.deepEqual((await placement.requestsFor(w.owner, w.company, { storeId: w.store }))?.map((r) => r.storeId), [w.store]);
+  // A store manager (here the person also manages the store) sees their store's request, not an empty list.
+  assert.deepEqual((await placement.requestsFor(w.person, w.company))?.map((r) => r.storeId), [w.store]);
+  await assert.rejects(placements.listRequests({ storeIds: ["nope"] }), RangeError);
+});
+
 test("W1_PG accepting a request that overlaps leaves the request pending and writes nothing", async () => {
   const w = await world();
   const now = { value: new Date("2026-11-18T06:00:00Z") };

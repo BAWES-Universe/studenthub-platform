@@ -236,13 +236,16 @@ export class PostgresWorkPlacementStore {
     return Object.freeze(rows.map(assignmentFromRow));
   }
 
-  async listRequests(filter: { orgIds?: readonly string[]; includeSubtree?: boolean; status?: WorkAssignmentRequestRecord["status"] }): Promise<readonly WorkAssignmentRequestRecord[]> {
+  /** Newest first, at most 500. `storeIds` narrows before the limit, so a store's requests are never hidden behind other stores'. */
+  async listRequests(filter: { orgIds?: readonly string[]; includeSubtree?: boolean; storeIds?: readonly string[]; status?: WorkAssignmentRequestRecord["status"] }): Promise<readonly WorkAssignmentRequestRecord[]> {
+    if (filter.storeIds?.some((s) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s))) throw new RangeError("store ids must be uuids");
     const { rows } = await this.#db.pool.query<RequestRow>(`WITH RECURSIVE tree(id) AS (
        SELECT id FROM organizations WHERE $1::text[] IS NOT NULL AND id = ANY($1::text[])
        UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id WHERE $3::boolean)
      SELECT ${REQUEST_COLUMNS} FROM work_assignment_requests
      WHERE ($1::text[] IS NULL OR org_id IN (SELECT id FROM tree)) AND ($2::text IS NULL OR status = $2)
-     ORDER BY requested_at DESC, id LIMIT 500`, [filter.orgIds ?? null, filter.status ?? null, filter.includeSubtree === true]);
+       AND ($4::uuid[] IS NULL OR store_id = ANY($4::uuid[]))
+     ORDER BY requested_at DESC, id LIMIT 500`, [filter.orgIds ?? null, filter.status ?? null, filter.includeSubtree === true, filter.storeIds ?? null]);
     return Object.freeze(rows.map(requestFromRow));
   }
 

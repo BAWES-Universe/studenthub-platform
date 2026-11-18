@@ -111,7 +111,8 @@ export interface PlacementStore {
   assignmentForRecruitCard(recruitCardId: string): Promise<Assignment | undefined>;
   request(id: string): Promise<AssignmentRequest | undefined>;
   listAssignments(filter: { readonly personId?: string; readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly storeId?: string }): Promise<readonly Assignment[]>;
-  listRequests(filter: { readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly status?: AssignmentRequestStatus }): Promise<readonly AssignmentRequest[]>;
+  /** Newest first, at most 500; `storeIds` narrows to those stores before the limit. */
+  listRequests(filter: { readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly storeIds?: readonly string[]; readonly status?: AssignmentRequestStatus }): Promise<readonly AssignmentRequest[]>;
   transaction<T>(work: (tx: PlacementTransaction) => Promise<T>): Promise<T>;
 }
 
@@ -412,13 +413,16 @@ export class PlacementService {
     const ancestors = await this.#store.organizationAncestors(orgId);
     if (ancestors === undefined) return undefined;
     const reach = orgReach(await this.#grants.listGrantsForPrincipal(actorId), [...STAFF_ROLES, ...COMPANY_ROLES], orgId, ancestors);
-    let stores: ReadonlySet<string> | null = null;
+    // The store scope goes into the query, before its limit: filtering afterwards
+    // could hide a manager's requests behind 500 newer ones at other stores.
+    let storeIds: readonly string[] | undefined = storeId === undefined ? undefined : [storeId];
     if (reach === "none") {
-      stores = new Set((await this.#managed(actorId)).filter((m) => m.orgId === orgId).map((m) => m.storeId));
-      if (stores.size === 0) return undefined;
+      const managed = [...new Set((await this.#managed(actorId)).filter((m) => m.orgId === orgId).map((m) => m.storeId.toLowerCase()))];
+      if (managed.length === 0) return undefined;
+      storeIds = storeId === undefined ? managed : managed.filter((s) => s === storeId);
+      if (storeIds.length === 0) return [];
     }
-    const list = await this.#store.listRequests({ orgIds: [orgId], includeSubtree: reach === "subtree", ...(options.status ? { status: options.status } : {}) });
-    return list.filter((r) => (stores === null || (r.orgId === orgId && stores.has(r.storeId))) && (storeId === undefined || r.storeId === storeId));
+    return this.#store.listRequests({ orgIds: [orgId], includeSubtree: reach === "subtree", ...(storeIds ? { storeIds } : {}), ...(options.status ? { status: options.status } : {}) });
   }
 
   async #place(tx: PlacementTransaction, actorId: string, input: PlacementInput, store: StoreFacts, origin: Origin): Promise<PlaceOutcome> {
