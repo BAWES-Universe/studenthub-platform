@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { universeEmbedNames, runUniverseEmbed } from './universe-embed.mjs';
+import { universeEmbedE2Names, runUniverseEmbedE2 } from './universe-embed-e2.mjs';
 
 const root = process.cwd();
 const output = path.resolve(process.env.BROWSER_ACCEPTANCE_ARTIFACTS || process.env.BROWSER_ARTIFACT_DIR || 'artifacts/browser-acceptance');
@@ -33,7 +34,7 @@ const names = [
 const bfcacheScenarios=['cancel','revoked-session','intervening-language'];
 const bfcacheNames=['en','ar'].flatMap(language=>bfcacheScenarios.map(scenario=>`bfcache-language-${scenario}-${language}`));
 const evidence = { schemaVersion:1, syntheticOnly:true, candidateSha:null, playwrightVersion:null,
-  chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:[...names,...bfcacheNames,...universeEmbedNames].map(name=>({name,status:'NOT_RUN'})),
+  chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:[...names,...bfcacheNames,...universeEmbedNames,...universeEmbedE2Names].map(name=>({name,status:'NOT_RUN'})),
   policy:'Synthetic data only. No cookies, hidden tokens, credentials, HTML dumps, traces or HAR recorded. TLS verification enabled.' };
 let browser, fixture, bfcacheBrowser;
 const contexts = new Set();
@@ -571,7 +572,7 @@ try {
   const expected=browserManifest.browsers.find(item=>item.name==='chromium');
   evidence.expectedChromiumVersion=expected.browserVersion; evidence.chromiumRevision=expected.revision;
   setupStage='launch-pinned-chromium';
-  browser=await chromium.launch({headless:true,channel:'chromium'});
+  browser=await chromium.launch({headless:true,channel:'chromium',args:['--host-resolver-rules=MAP *.browser.test 127.0.0.1, EXCLUDE localhost','--no-proxy-server']});
   evidence.chromiumVersion=browser.version();
   assert.equal(evidence.chromiumVersion,expected.browserVersion,'Installed Chromium must match pinned Playwright manifest');
   for (const language of ['en','ar']) for (const width of [320,390,1280]) {
@@ -1348,6 +1349,7 @@ try {
     });
   }
   await runUniverseEmbed({browser,run,screenshot,sourceRevision:evidence.candidateSha});
+  await runUniverseEmbedE2({browser,run,screenshot,sourceRevision:evidence.candidateSha});
 } catch {
   evidence.blockedStage=setupStage;
   evidence.blocker='Browser/fixture setup could not complete. Remaining cases are NOT_RUN; no acceptance claim is made. Verify trusted TLS, PostgreSQL, built runtime and installed Chromium.';
