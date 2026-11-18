@@ -5,6 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { universeEmbedNames, runUniverseEmbed } from './universe-embed.mjs';
+import { universeEmbedE2Names, runUniverseEmbedE2 } from './universe-embed-e2.mjs';
+import { withE2Browser } from './e2-browser-process.mjs';
+import { safeE2Failure } from './e2-safe-progress.mjs';
 
 const root = process.cwd();
 const output = path.resolve(process.env.BROWSER_ACCEPTANCE_ARTIFACTS || process.env.BROWSER_ARTIFACT_DIR || 'artifacts/browser-acceptance');
@@ -33,7 +36,7 @@ const names = [
 const bfcacheScenarios=['cancel','revoked-session','intervening-language'];
 const bfcacheNames=['en','ar'].flatMap(language=>bfcacheScenarios.map(scenario=>`bfcache-language-${scenario}-${language}`));
 const evidence = { schemaVersion:1, syntheticOnly:true, candidateSha:null, playwrightVersion:null,
-  chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:[...names,...bfcacheNames,...universeEmbedNames].map(name=>({name,status:'NOT_RUN'})),
+  chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:[...names,...bfcacheNames,...universeEmbedNames,...universeEmbedE2Names].map(name=>({name,status:'NOT_RUN'})),
   policy:'Synthetic data only. No cookies, hidden tokens, credentials, HTML dumps, traces or HAR recorded. TLS verification enabled.' };
 let browser, fixture, bfcacheBrowser;
 const contexts = new Set();
@@ -511,6 +514,7 @@ async function run(name, action) {
   try { const result=await action(); Object.assign(record,{status:'PASS',...result}); }
   catch(error) {
     // Playwright error messages often contain full DOM/control values and URLs. Do not persist them.
+    const e2Failure=safeE2Failure(error);if(e2Failure)record.e2Failure=e2Failure;
     record.status='FAIL'; record.reason=error?.name==='AssertionError' ? String(error.message).split('\n')[0].replace(/https?:\/\/\S+|[A-Za-z0-9_=-]{40,}/g,'[redacted]').slice(0,180) : 'Browser/fixture operation failed. Reproduce locally without uploading raw diagnostics.';
     process.exitCode=1;
   } finally {
@@ -1348,6 +1352,12 @@ try {
     });
   }
   await runUniverseEmbed({browser,run,screenshot,sourceRevision:evidence.candidateSha});
+  setupStage='launch-isolated-e2-browser';
+  await withE2Browser({chromium,expectedVersion:expected.browserVersion},async e2Browser=>{
+    evidence.e2ChromiumVersion=e2Browser.version();
+    setupStage='execute-isolated-e2-matrix';
+    await runUniverseEmbedE2({browser:e2Browser,run,screenshot,sourceRevision:evidence.candidateSha});
+  });
 } catch {
   evidence.blockedStage=setupStage;
   evidence.blocker='Browser/fixture setup could not complete. Remaining cases are NOT_RUN; no acceptance claim is made. Verify trusted TLS, PostgreSQL, built runtime and installed Chromium.';
