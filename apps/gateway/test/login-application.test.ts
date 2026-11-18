@@ -5,6 +5,7 @@ import { createSyntheticLoginRig, FakeUpstreamSessions, runLoginConformance, run
 import type { AuthorizationStore, UpstreamSessionEvent } from "@studenthub/login-contract";
 
 import { createLoginApplication, upstreamCheckSeconds } from "../src/login-application.js";
+import { checkedLiveSessionPerson } from "../src/wiring/profile.js";
 import {
   createRuntimeLoginFromEnv,
   DiscoveryUpstreamSessions,
@@ -308,4 +309,26 @@ test("SHU457_ADAPTER the discovery adapter ends the session at the end-session e
   }
   const down = new DiscoveryUpstreamSessions(ISSUER, "studenthub-client", 3_000, (async () => { throw new Error("offline"); }) as typeof fetch);
   assert.equal(await down.end(SID), "unreachable");
+});
+
+test("SHU457_BOUND with the upstream check on, the browser-edit and legacy-link session read goes through the checked store first", async () => {
+  const live = new Map([["live", "person-1"], ["ended", "person-1"], ["other", "person-2"]]);
+  const reads: string[] = [];
+  let current = "";
+  // The pool is keyed by a hash of the token; the fake answers for the session just read.
+  const pool = { query: async () => { reads.push("pool"); const person_id = live.get(current); return { rows: person_id ? [{ person_id }] : [] }; } };
+  // The checked store refuses "ended" (an upstream answer), and maps "other" to a different person.
+  const sessions = { [Symbol.for("studenthub.login.upstream-confirming")]: true, get: async (id: string) => { reads.push("checked"); current = id; return id === "ended" ? undefined : { id, personId: id === "other" ? "person-1" : live.get(id)! }; } };
+  assert.equal(await checkedLiveSessionPerson(sessions, pool as never, "live"), "person-1");
+  assert.deepEqual(reads, ["checked", "pool"], "the checked read comes first");
+  reads.length = 0;
+  assert.equal(await checkedLiveSessionPerson(sessions, pool as never, "ended"), undefined, "a session the check ended is refused");
+  assert.deepEqual(reads, ["checked"], "and the browser pool is not asked");
+  assert.equal(await checkedLiveSessionPerson(sessions, pool as never, "other"), undefined, "the two reads must agree on the person");
+  // With the upstream check off, the browser pool is read alone, as before (no housekeeping).
+  reads.length = 0;
+  current = "live";
+  const plain = { get: async () => { reads.push("checked"); return undefined; } };
+  assert.equal(await checkedLiveSessionPerson(plain, pool as never, "live"), "person-1");
+  assert.deepEqual(reads, ["pool"]);
 });
