@@ -12,7 +12,7 @@ Lane in the full-migration plan agreed on the desk (PR #393, 2026-11-17): verifi
 
 ## What "done" means for this lane
 
-1. **Release matrix** (this PR). `tools/release-matrix/matrix.json` has one row for each of the 77 target screens and 7 exclusions in the SHU-235 contract, each of the 120 mobile endpoints, the seven import domains and the release steps. A gate closes only with evidence the check can parse (PR at an exact head, a run, or a run report comment); a waiver cites its decision record. `cli.js check` runs in CI through the test suite; `cli.js release` must pass for the 17 Dec candidate. The test also enforces SHU-235 section 7: deleting or duplicating any of the 382 legacy ordinals fails.
+1. **Release matrix** (this PR). `tools/release-matrix/matrix.json` has one row for each of the 77 target screens and 7 exclusions in the SHU-235 contract, each of the 120 mobile endpoints, the seven import domains and the release steps. A gate closes only with evidence the check can parse (PR at an exact head, a run, or a run report comment); a waiver cites its decision record. `cli.js check` runs in CI through the test suite; `cli.js release candidate` must pass for the 17 Dec candidate; `release cutover` (adds K-6, K-7, PAY-SHADOW, SWITCHES) on 1 Jan; `release retired` (adds K-8) when legacy is switched off. The test also enforces SHU-235 section 7: deleting or duplicating any of the 382 legacy ordinals fails.
 2. **Importer.** Order: M-4 catalogues and organizations with id maps, M-1 people, M-3 link report, M-2 documents, M-5 work, recruit and finance history, M-7 incremental, then M-6 full rehearsal. Each step is idempotent, writes a reconciliation report with legacy ids only, is tested on synthetic fixtures shaped like legacy, and closes its `built` and `dryRun` gates. `rehearsal` and `reconciled` close on the staging copy.
 3. **Mobile exit.** Inventory done (below). The compatibility layer serves every `serve` route with the legacy shape in the 17 Dec candidate; `retire` routes answer with the legacy error shape; the legacy API is retired on 1 Jan, tested against traffic captured from a store build.
 4. **Rollback.** K-5 rehearses final sync, single-writer cutover and rollback on staging before 17 Dec.
@@ -23,8 +23,8 @@ Lane in the full-migration plan agreed on the desk (PR #393, 2026-11-17): verifi
 |---|---|
 | 1 Dec | matrix live with lanes recording evidence; daily refresh running; importer dry runs for M-4 and M-1; first importer rehearsal on staging; mobile inventory confirmed against a store build |
 | 10 Dec | every import domain built and dry-run; compatibility layer for all `serve` routes on main |
-| 17 Dec | matrix `release` passes: every gate closed with evidence or a recorded waiver; rollback rehearsed |
-| 31 Dec to 1 Jan | final sync (M-7), K-6 go/no-go with Khalid, K-7 switch |
+| 17 Dec | `release candidate` passes: every candidate gate closed with evidence or a recorded waiver; rollback rehearsed |
+| 31 Dec to 1 Jan | final sync (M-7), K-6 go/no-go with Khalid, K-7 switch; `release cutover` passes |
 
 ## Daily read-only legacy refresh on staging
 
@@ -38,9 +38,13 @@ Job: `tools/legacy-import/src/refresh-cli.ts` (`node dist/tools/legacy-import/sr
 - passes passwords only through each child's `MYSQL_PWD`, discards mysql's stderr, and reports a fixed code per step, so no value, host or credential reaches a log;
 - writes `last-run.json` with table names, row counts, the row total and timings only, and prints one line in the same terms; every run that ends rewrites it (bad config, lock held and crashes included), and it says `running` while a copy is in progress;
 - runs one at a time under a kernel `flock` on the lock file, held by the run and every mysql child it starts and released by the kernel when the last exits, so there is no stale lock and no takeover;
-- refuses when source and target are the same server under different names (`@@server_uuid`), so staging and legacy must both be MySQL.
+- refuses when source and target are the same server under different names (`@@server_uuid`), so staging and legacy must both be MySQL;
+- reads `SHOW GRANTS` for the session and `@@mandatory_roles`, so a mandatory role cannot add a write privilege unseen;
+- dumps with `--set-gtid-purged=OFF` (where mysqldump supports it), so no RELOAD is needed and no replication state reaches the mirror;
+- bounds every wait: each mysql session has `lock_wait_timeout=600`, the whole run has a deadline (`LEGACY_REFRESH_TIMEOUT_MS`, default four hours) after which every child is killed and reaped, and a failing side of the copy stops the other;
+- refuses a report path equal to the lock path.
 
-Configuration (root-only env file on the staging host): `LEGACY_REFRESH_SOURCE_URL` (read-only legacy account), `LEGACY_REFRESH_TARGET_URL` (mirror account, `legacy_mirror` database), optional `LEGACY_REFRESH_REPORT` and `LEGACY_REFRESH_LOCK`. Consumers read the mirror only after checking `last-run.json` says `ok`. The matrix row `REFRESH` closes with the first scheduled run's time and counts.
+Configuration (root-only env file on the staging host): `LEGACY_REFRESH_SOURCE_URL` (read-only legacy account), `LEGACY_REFRESH_TARGET_URL` (mirror account, `legacy_mirror` database), optional `LEGACY_REFRESH_REPORT` and `LEGACY_REFRESH_LOCK`. Consumers read the mirror only after checking `last-run.json` says `ok`. The matrix row `REFRESH` closes with the first timer-triggered run's time and counts (the 2026-11-17 install run was manual, so it stays open until then).
 
 ## Mobile inventory
 

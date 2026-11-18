@@ -1,14 +1,17 @@
 /**
  * Builds the matrix rows from the screen contract and the mobile inventory. Existing
- * gate states are kept, so re-seeding after the contract gains a row never reopens
- * evidence that was already recorded; rows that left the source are dropped and the
- * check reports nothing for them, so removals show up in review as a data diff.
+ * gate states are kept while the row's subject (a screen's route, an endpoint's target
+ * and disposition) is unchanged; when the subject changes, the old evidence no longer
+ * applies and the row's gates reopen. Rows that left the source are dropped, so removals
+ * show up in review as a data diff.
  */
 import type { ParsedContract } from "./contract.js";
 import {
+  GATES,
   IMPORT_DOMAINS,
   RELEASE_STEPS,
   mobileKey,
+  mobileSubject,
   type Gates,
   type Matrix,
   type MobileInventory,
@@ -50,13 +53,7 @@ export function laneForOwner(owner: string): string {
   return "cutover";
 }
 
-export const GATES: Matrix["gates"] = {
-  screen: ["built", "verified"],
-  exclusion: ["decision"],
-  mobile: ["built", "verified"],
-  import: ["built", "dryRun", "rehearsal", "reconciled"],
-  release: ["done"],
-};
+export { GATES };
 
 function gates(names: readonly string[], previous?: Gates): Gates {
   const out: Record<string, Gates[string]> = {};
@@ -64,8 +61,11 @@ function gates(names: readonly string[], previous?: Gates): Gates {
   return out;
 }
 
-function row(lane: string, names: readonly string[], previous?: ScreenRow): ScreenRow {
-  return { lane: previous?.lane ?? lane, gates: gates(names, previous?.gates) };
+/** With a subject, evidence carries over only when it was recorded for the same subject. */
+function row(lane: string, names: readonly string[], previous?: ScreenRow, subject?: string): ScreenRow {
+  if (subject === undefined) return { lane: previous?.lane ?? lane, gates: gates(names, previous?.gates) };
+  const same = previous?.subject === subject;
+  return { lane: previous?.lane ?? lane, subject, gates: gates(names, same ? previous?.gates : undefined) };
 }
 
 const RELEASE_LANE: Readonly<Record<string, string>> = {
@@ -80,15 +80,15 @@ export function seedMatrix(contract: ParsedContract, inventory: MobileInventory,
   const exclusions: Record<string, ScreenRow> = {};
   for (const target of contract.targets.values()) {
     if (target.kind === "screen") {
-      screens[target.id] = row(laneForOwner(target.owner), GATES.screen, previous?.screens[target.id]);
+      screens[target.id] = row(laneForOwner(target.owner), GATES.screen, previous?.screens[target.id], target.route);
     } else {
-      exclusions[target.id] = row("cutover", GATES.exclusion, previous?.exclusions[target.id]);
+      exclusions[target.id] = row("cutover", GATES.exclusion, previous?.exclusions[target.id], target.route);
     }
   }
   const mobile: Record<string, ScreenRow> = {};
   for (const endpoint of inventory.endpoints) {
     const key = mobileKey(endpoint);
-    mobile[key] = row("cutover", GATES.mobile, previous?.mobile[key]);
+    mobile[key] = row("cutover", GATES.mobile, previous?.mobile[key], mobileSubject(endpoint));
   }
   const imports: Record<string, ScreenRow & { title: string }> = {};
   for (const [id, title] of Object.entries(IMPORT_DOMAINS)) {

@@ -283,10 +283,17 @@ test("two CLI runs at once: one refreshes, the other exits locked and copies not
       log: () => undefined,
       error: () => undefined,
     };
-    const first = runCli(deps);
-    while (copies.length === 0) await new Promise((r) => setTimeout(r, 10));
-    assert.equal(await runCli(deps), 3);
-    release();
+    let copyStarted!: () => void;
+    const started = new Promise<"copying">((r) => (copyStarted = () => r("copying")));
+    const watched = { ...slow, copy: async (...args: Parameters<MysqlPort["copy"]>) => (copyStarted(), slow.copy(...args)) };
+    const first = runCli({ ...deps, mysql: () => watched });
+    try {
+      // The first run must reach its copy; finishing before that is a failure, not a hang.
+      assert.equal(await Promise.race([started, first.then((code) => `exited ${code}`)]), "copying");
+      assert.equal(await runCli(deps), 3);
+    } finally {
+      release();
+    }
     assert.equal(await first, 0);
     assert.equal(copies.length, 1);
   } finally {
@@ -309,4 +316,35 @@ test("a missing flock binary fails closed once, with no double close and no cras
   const again = await acquireLock(path.join(mkdtempSync(path.join(tmpdir(), "refresh-relock-")), "run.lock"));
   assert.equal(again.held, true);
   if (again.held) closeSync(again.fd);
+});
+
+test("a report path that is the lock path is refused before anything is written", () => {
+  const same = { ...env, LEGACY_REFRESH_REPORT: "/var/lib/x/run.lock", LEGACY_REFRESH_LOCK: "/var/lib/x/../x/run.lock" };
+  assert.throws(() => loadConfig(same), /config.reportIsLock/);
+  assert.throws(() => loadConfig({ ...env, LEGACY_REFRESH_TIMEOUT_MS: "soon" }), /config.timeout.invalid/);
+  assert.equal(loadConfig(env).timeoutMs, 4 * 60 * 60 * 1000);
+});
+
+test("a run past its deadline aborts its children, reports failed.timeout and frees the lock", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "refresh-deadline-"));
+  try {
+    const deps = {
+      env: { ...env, LEGACY_REFRESH_REPORT: path.join(dir, "last-run.json"), LEGACY_REFRESH_LOCK: path.join(dir, "run.lock"), LEGACY_REFRESH_TIMEOUT_MS: "50" },
+      mysql: (_fd: number, signal: AbortSignal) =>
+        fakeMysql({
+          copy: () => new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("killed")))),
+        }),
+      now: () => new Date(),
+      log: () => undefined,
+      error: () => undefined,
+    };
+    assert.equal(await runCli(deps), 1);
+    const report = JSON.parse(readFileSync(path.join(dir, "last-run.json"), "utf8")) as { ok: boolean; code: string };
+    assert.deepEqual([report.ok, report.code], [false, "failed.timeout"]);
+    const next = await acquireLock(path.join(dir, "run.lock"));
+    assert.equal(next.held, true);
+    if (next.held) closeSync(next.fd);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

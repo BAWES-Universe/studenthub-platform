@@ -22,6 +22,8 @@
  * `node dist/tools/legacy-import/src/refresh-cli.js` with the environment below.
  */
 
+import path from "node:path";
+
 export const MIRROR_DATABASE = "legacy_mirror";
 
 /**
@@ -51,6 +53,8 @@ export interface RefreshConfig {
   readonly target: DatabaseUrl;
   readonly reportPath: string;
   readonly lockPath: string;
+  /** The whole run's deadline; LEGACY_REFRESH_TIMEOUT_MS, default four hours. */
+  readonly timeoutMs: number;
 }
 
 export class RefreshRefused extends Error {
@@ -80,6 +84,8 @@ export function parseDatabaseUrl(value: string | undefined, name: string): Datab
   };
 }
 
+export const DEFAULT_TIMEOUT_MS = 4 * 60 * 60 * 1000;
+
 export const DEFAULT_REPORT_PATH = "/var/lib/legacy-refresh/last-run.json";
 
 /** Where the report goes; readable even when the rest of the configuration is not. */
@@ -92,12 +98,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): RefreshConfig {
   const target = parseDatabaseUrl(env.LEGACY_REFRESH_TARGET_URL, "target");
   if (target.database !== MIRROR_DATABASE) throw new RefreshRefused("config.target.notMirror");
   if (target.host === source.host && target.port === source.port) throw new RefreshRefused("config.target.isSource");
-  return {
-    source,
-    target,
-    reportPath: reportPathFrom(env),
-    lockPath: env.LEGACY_REFRESH_LOCK || "/var/lib/legacy-refresh/run.lock",
-  };
+  const reportPath = reportPathFrom(env);
+  const lockPath = env.LEGACY_REFRESH_LOCK || "/var/lib/legacy-refresh/run.lock";
+  // The report is replaced by rename; if it were the lock file, a rename would swap the
+  // locked inode for a fresh one and let a second run in.
+  if (path.resolve(reportPath) === path.resolve(lockPath)) throw new RefreshRefused("config.reportIsLock");
+  const timeoutMs = env.LEGACY_REFRESH_TIMEOUT_MS ? Number(env.LEGACY_REFRESH_TIMEOUT_MS) : DEFAULT_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new RefreshRefused("config.timeout.invalid");
+  return { source, target, reportPath, lockPath, timeoutMs };
 }
 
 /**

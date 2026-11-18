@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { checkContract, idsIn, parseContract } from "../src/contract.js";
 import { CONTRACT_PATH, loadContract, loadInventory, loadMatrix, repoRoot } from "../src/files.js";
-import { blockers, checkInventory, checkMatrix, citesDecision, citesEvidence, mobileKey, type Matrix, type MobileInventory } from "../src/matrix.js";
+import { blockers, checkInventory, checkMatrix, citesDecision, citesEvidence, GATES, mobileKey, type Matrix, type MobileInventory } from "../src/matrix.js";
 import { laneForOwner, seedMatrix } from "../src/seed.js";
 import { isEntryPoint, renderReport } from "../src/cli.js";
 
@@ -62,8 +62,8 @@ test("the mobile inventory names a known target, a source line and a reason for 
   assert.equal(inventory.source.revision, "de3ac8c");
   assert.equal(inventory.endpoints.length, 120);
   assert.deepEqual(checkInventory(inventory, contract), []);
-  const signIn = inventory.endpoints.find((e) => mobileKey(e) === "GET /auth/login");
-  assert.equal(signIn?.disposition, "open");
+  // The pinned snapshot has the sign-in route; its disposition is a live decision.
+  assert.ok(inventory.endpoints.some((e) => mobileKey(e) === "GET /auth/login"));
 });
 
 test("an inventory that serves an exclusion, retires a screen, or drops its reason fails", () => {
@@ -148,17 +148,75 @@ test("evidence must name a PR at a head, a run or a run report; a waiver must na
 });
 
 test("blockers count every open gate and every open mobile disposition; evidence closes a gate", () => {
-  const inventory = loadInventory(root);
   const base = loadMatrix(root);
-  const before = blockers(base, inventory);
-  const openDispositions = inventory.endpoints.filter((e) => e.disposition === "open").length;
-  assert.ok(openDispositions > 0);
-  assert.equal(before.filter((b) => b.gate === "disposition").length, openDispositions);
+  // A fixture inventory with one open and one decided endpoint, independent of live decisions.
+  const real = loadInventory(root);
+  const [a, b] = real.endpoints;
+  const fixture: MobileInventory = { source: real.source, endpoints: [{ ...a!, disposition: "open", note: "pending" }, { ...b!, disposition: "serve" }] };
+  const before = blockers(base, fixture);
+  assert.equal(before.filter((x) => x.gate === "disposition").length, 1);
+  const decided: MobileInventory = { ...fixture, endpoints: fixture.endpoints.map((e) => ({ ...e, disposition: "serve" as const })) };
+  assert.equal(blockers(base, decided).filter((x) => x.gate === "disposition").length, 0);
 
   const closed = clone(base);
   (closed.screens["C-11"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "PR #999 at abc12345" };
-  assert.equal(blockers(closed, inventory).length, before.length - 1);
+  assert.equal(blockers(closed, fixture).length, before.length - 1);
   assert.match(renderReport(before, 10), /\| cutover \| .*mobile/);
+});
+
+test("the candidate checkpoint leaves cutover and retirement steps to their own checkpoints", () => {
+  const base = loadMatrix(root);
+  const inventory = loadInventory(root);
+  const ids = (phase: "candidate" | "cutover" | "retired") =>
+    new Set(blockers(base, inventory, phase).filter((x) => x.section === "release").map((x) => x.id));
+  const candidate = ids("candidate");
+  for (const later of ["K-6", "K-7", "K-8", "PAY-SHADOW", "SWITCHES"]) assert.equal(candidate.has(later), false, later);
+  for (const now of ["K-4", "K-5", "PAY-REPLAY", "REFRESH"]) assert.equal(candidate.has(now), true, now);
+  assert.equal(ids("cutover").has("K-7"), true);
+  assert.equal(ids("cutover").has("K-8"), false);
+  assert.equal(ids("retired").has("K-8"), true);
+  assert.ok(blockers(base, inventory).length >= blockers(base, inventory, "candidate").length);
+});
+
+test("evidence recorded for an old route or disposition does not carry over, and check refuses stale rows", () => {
+  const contract = loadContract(root);
+  const inventory = loadInventory(root);
+  const base = loadMatrix(root);
+  const closedScreen = clone(base);
+  (closedScreen.screens["U-04"]!.gates as Record<string, unknown>).verified = { state: "done", evidence: "PR #9 at abcdef1" };
+  (closedScreen.screens["U-04"] as { subject: string }).subject = "/old-route";
+  assert.deepEqual(rules(checkMatrix(closedScreen, contract, inventory)), ["matrix.row.stale"]);
+  assert.deepEqual(seedMatrix(contract, inventory, closedScreen).screens["U-04"]!.gates.verified, { state: "open" });
+
+  const retired = inventory.endpoints.find((e) => e.disposition === "retire")!;
+  const key = mobileKey(retired);
+  const closedMobile = clone(base);
+  (closedMobile.mobile[key]!.gates as Record<string, unknown>).verified = { state: "done", evidence: "PR #9 at abcdef1" };
+  const served = { ...inventory, endpoints: inventory.endpoints.map((e) => (mobileKey(e) === key ? { ...e, disposition: "open" as const } : e)) };
+  assert.deepEqual(rules(checkMatrix(closedMobile, contract, served)), ["matrix.row.stale"]);
+  assert.deepEqual(seedMatrix(contract, served, closedMobile).mobile[key]!.gates.verified, { state: "open" });
+  assert.deepEqual(seedMatrix(contract, inventory, closedMobile).mobile[key]!.gates.verified, { state: "done", evidence: "PR #9 at abcdef1" });
+});
+
+test("the gate registry is canonical: dropping a required gate everywhere still fails", () => {
+  const contract = loadContract(root);
+  const inventory = loadInventory(root);
+  const edited = clone(loadMatrix(root)) as Matrix & { gates: { screen: string[] } };
+  edited.gates.screen = ["built"];
+  for (const row of Object.values(edited.screens)) delete (row.gates as Record<string, unknown>).verified;
+  assert.deepEqual(rules(checkMatrix(edited, contract, inventory)), ["matrix.gate.missing", "matrix.gates.notCanonical"]);
+  assert.deepEqual(loadMatrix(root).gates, GATES);
+});
+
+test("a target id defined twice in the contract is reported with both lines", () => {
+  const lines = markdown.split("\n");
+  const at = lines.findIndex((line) => line.trim().startsWith("| `U-04`"));
+  assert.ok(at > 0);
+  const doubled = [...lines.slice(0, at + 1), lines[at]!.replace(/\| `U-04` \|([^|]*)\|/, "| `U-04` | /elsewhere |"), ...lines.slice(at + 1)].join("\n");
+  const issues = checkContract(parseContract(doubled));
+  assert.deepEqual(rules(issues), ["contract.target.duplicate"]);
+  assert.match(issues[0]!.detail, new RegExp(`line ${at + 1} and again on line ${at + 2}`));
+  assert.equal(parseContract(doubled).targets.get("U-04")!.route, parseContract(markdown).targets.get("U-04")!.route);
 });
 
 test("seeding keeps recorded evidence and adds rows the contract gains", () => {

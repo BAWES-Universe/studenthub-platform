@@ -22,6 +22,12 @@ export interface LaneRow {
 
 export interface ScreenRow {
   readonly lane: string;
+  /**
+   * What the row's evidence was recorded against: the route for a screen or exclusion,
+   * `<target> <disposition>` for a mobile endpoint. When the source changes it, the row's
+   * evidence no longer applies: `seed` reopens the gates and `check` refuses the old row.
+   */
+  readonly subject?: string;
   readonly gates: Gates;
 }
 
@@ -57,11 +63,44 @@ export interface Matrix {
   readonly release: Readonly<Record<string, ScreenRow & { readonly title: string }>>;
 }
 
+/**
+ * Which checkpoint a release step belongs to. `release` checks one checkpoint and every
+ * one before it: `candidate` (17 Dec), `cutover` (31 Dec to 1 Jan), `retired` (legacy
+ * switched off after retention sign-off). Every other row is a candidate gate.
+ */
+export const PHASES = ["candidate", "cutover", "retired"] as const;
+export type Phase = (typeof PHASES)[number];
+
+export const RELEASE_PHASE: Readonly<Record<string, Phase>> = {
+  "K-6": "cutover",
+  "K-7": "cutover",
+  "PAY-SHADOW": "cutover",
+  SWITCHES: "cutover",
+  "K-8": "retired",
+};
+
+export function phaseOf(section: string, id: string): Phase {
+  return section === "release" ? (RELEASE_PHASE[id] ?? "candidate") : "candidate";
+}
+
+/** The canonical gate registry; `matrix.json` must carry exactly this. */
+export const GATES: Matrix["gates"] = {
+  screen: ["built", "verified"],
+  exclusion: ["decision"],
+  mobile: ["built", "verified"],
+  import: ["built", "dryRun", "rehearsal", "reconciled"],
+  release: ["done"],
+};
+
+export const mobileSubject = (endpoint: Pick<MobileEndpoint, "target" | "disposition">): string =>
+  `${endpoint.target} ${endpoint.disposition}`;
+
 export interface Blocker {
   readonly section: string;
   readonly id: string;
   readonly lane: string;
   readonly gate: string;
+  readonly phase: Phase;
 }
 
 /** Import domains from contracts/ops-migration-cutover.md (data migration). */
@@ -181,6 +220,14 @@ export function checkInventory(inventory: MobileInventory, contract: ParsedContr
   return issues;
 }
 
+/** `<section> <id>` -> the subject its evidence must have been recorded against. */
+export function expectedSubjects(contract: ParsedContract, inventory: MobileInventory): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const target of contract.targets.values()) out.set(`${target.kind} ${target.id}`, target.route);
+  for (const endpoint of inventory.endpoints) out.set(`mobile ${mobileKey(endpoint)}`, mobileSubject(endpoint));
+  return out;
+}
+
 export function checkMatrix(matrix: Matrix, contract: ParsedContract, inventory: MobileInventory): ContractIssue[] {
   const issues: ContractIssue[] = [];
   const screens = [...contract.targets.values()].filter((t) => t.kind === "screen").map((t) => t.id);
@@ -192,21 +239,38 @@ export function checkMatrix(matrix: Matrix, contract: ParsedContract, inventory:
   issues.push(...sameKeys("matrix.imports", "import domain", Object.keys(matrix.imports), Object.keys(IMPORT_DOMAINS)));
   issues.push(...sameKeys("matrix.release", "release step", Object.keys(matrix.release), Object.keys(RELEASE_STEPS)));
 
+  if (JSON.stringify(matrix.gates) !== JSON.stringify(GATES)) {
+    issues.push({ rule: "matrix.gates.notCanonical", detail: "matrix.json gates differ from the registry in matrix.ts" });
+  }
   const sections: [string, Readonly<Record<string, ScreenRow>>, readonly string[]][] = [
-    ["screen", matrix.screens, matrix.gates.screen],
-    ["exclusion", matrix.exclusions, matrix.gates.exclusion],
-    ["mobile", matrix.mobile, matrix.gates.mobile],
-    ["import", matrix.imports, matrix.gates.import],
-    ["release", matrix.release, matrix.gates.release],
+    ["screen", matrix.screens, GATES.screen],
+    ["exclusion", matrix.exclusions, GATES.exclusion],
+    ["mobile", matrix.mobile, GATES.mobile],
+    ["import", matrix.imports, GATES.import],
+    ["release", matrix.release, GATES.release],
   ];
   for (const [section, rows, required] of sections) {
     for (const [id, row] of Object.entries(rows)) issues.push(...checkGates(section, id, row, required, matrix.lanes));
   }
+
+  const subjects = expectedSubjects(contract, inventory);
+  for (const [section, rows] of sections) {
+    for (const [id, row] of Object.entries(rows)) {
+      const want = subjects.get(`${section} ${id}`);
+      if (want !== undefined && row.subject !== want) {
+        issues.push({ rule: "matrix.row.stale", detail: `${section} ${id} was recorded for '${row.subject ?? ""}' but the source now says '${want}'` });
+      }
+    }
+  }
   return issues;
 }
 
-/** Everything that stands between the matrix and a verified release candidate. */
-export function blockers(matrix: Matrix, inventory: MobileInventory): Blocker[] {
+/**
+ * Everything still open up to and including `phase` (default: every checkpoint). The
+ * 17 Dec candidate is `blockers(matrix, inventory, "candidate")`.
+ */
+export function blockers(matrix: Matrix, inventory: MobileInventory, phase: Phase = "retired"): Blocker[] {
+  const upTo = PHASES.indexOf(phase);
   const list: Blocker[] = [];
   const sections: [string, Readonly<Record<string, ScreenRow>>][] = [
     ["screen", matrix.screens],
@@ -218,14 +282,15 @@ export function blockers(matrix: Matrix, inventory: MobileInventory): Blocker[] 
   for (const [section, rows] of sections) {
     for (const [id, row] of Object.entries(rows)) {
       for (const [gate, value] of Object.entries(row.gates)) {
-        if (value.state === "open") list.push({ section, id, lane: row.lane, gate });
+        const at = phaseOf(section, id);
+        if (value.state === "open" && PHASES.indexOf(at) <= upTo) list.push({ section, id, lane: row.lane, gate, phase: at });
       }
     }
   }
   for (const endpoint of inventory.endpoints) {
     if (endpoint.disposition === "open") {
       const key = mobileKey(endpoint);
-      list.push({ section: "mobile", id: key, lane: matrix.mobile[key]?.lane ?? "cutover", gate: "disposition" });
+      list.push({ section: "mobile", id: key, lane: matrix.mobile[key]?.lane ?? "cutover", gate: "disposition", phase: "candidate" });
     }
   }
   return list;

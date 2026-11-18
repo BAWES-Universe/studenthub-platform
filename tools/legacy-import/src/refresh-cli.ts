@@ -37,8 +37,16 @@ function assertSafe(tables: readonly string[]): void {
   for (const table of tables) if (!SAFE_TABLE.test(table)) throw new RefreshRefused("source.unsafeTableName");
 }
 
+/** Seconds a statement may wait on a metadata lock before it fails (MySQL default: a year). */
+export const LOCK_WAIT_TIMEOUT_S = 600;
+
 function connectionArgs(db: DatabaseUrl): string[] {
   return [`--host=${db.host}`, `--port=${db.port}`, `--user=${db.user}`];
+}
+
+/** mysql sessions also get a bounded metadata-lock wait. mysqldump takes no init command. */
+function mysqlArgs(db: DatabaseUrl): string[] {
+  return [...connectionArgs(db), `--init-command=SET SESSION lock_wait_timeout=${LOCK_WAIT_TIMEOUT_S}`];
 }
 
 /** The password goes through the child's environment only; stderr is discarded. */
@@ -56,12 +64,29 @@ function stdio(streams: Stdio, lockFd: number | undefined): (Stdio[number] | num
  * The mysql client tools behind MysqlPort. With `lockFd`, every child inherits the run's
  * lock descriptor, so an orphaned mysqldump or load keeps the lock until it exits.
  */
-export function createMysqlClient(lockFd?: number): MysqlPort {
+export function createMysqlClient(lockFd?: number, signal?: AbortSignal): MysqlPort {
+  // An aborted run (deadline passed) kills every child; each promise still waits for close.
+  const killable = { signal, killSignal: "SIGKILL" as const };
+  let gtidOption: Promise<string[]> | undefined;
+  /** `--set-gtid-purged=OFF` where this mysqldump knows it (MySQL); MariaDB's does not. */
+  function gtidArgs(): Promise<string[]> {
+    gtidOption ??= new Promise((resolve) => {
+      const probe = spawn("mysqldump", ["--help"], { stdio: ["ignore", "pipe", "ignore"] });
+      let help = "";
+      probe.stdout!.setEncoding("utf8");
+      probe.stdout!.on("data", (chunk: string) => (help += chunk));
+      probe.on("error", () => resolve([]));
+      probe.on("close", () => resolve(help.includes("--set-gtid-purged") ? ["--set-gtid-purged=OFF"] : []));
+    });
+    return gtidOption;
+  }
+
   function query(db: DatabaseUrl, sql: string): Promise<string[][]> {
     return new Promise((resolve, reject) => {
-      const child = spawn("mysql", [...connectionArgs(db), "--batch", "--skip-column-names", "--raw", `--database=${db.database}`, "-e", sql], {
+      const child = spawn("mysql", [...mysqlArgs(db), "--batch", "--skip-column-names", "--raw", `--database=${db.database}`, "-e", sql], {
         env: childEnv(db),
         stdio: stdio(["ignore", "pipe", "ignore"], lockFd),
+        ...killable,
       });
       let out = "";
       child.stdout!.setEncoding("utf8");
@@ -82,39 +107,65 @@ export function createMysqlClient(lockFd?: number): MysqlPort {
       return id;
     },
     async grants(db) {
-      return (await query(db, "SHOW GRANTS FOR CURRENT_USER()")).map((row) => row[0] ?? "");
+      // Plain SHOW GRANTS covers the session, roles included; mandatory roles are added
+      // as a role grant line so the allowlist refuses them like any other role.
+      const lines = (await query(db, "SHOW GRANTS")).map((row) => row[0] ?? "");
+      const [mandatory] = await query(db, "SELECT @@GLOBAL.mandatory_roles");
+      const roles = (mandatory?.[0] ?? "").trim();
+      if (roles.length > 0 && roles.toUpperCase() !== "NULL") lines.push(`GRANT ${roles} TO CURRENT_USER`);
+      return lines;
     },
     async tables(db) {
       const rows = await query(db, "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'");
       return rows.map((row) => row[0]!);
     },
-    copy(source, target, tables) {
+    async copy(source, target, tables) {
       assertSafe(tables);
+      const gtid = await gtidArgs();
       return new Promise((resolve, reject) => {
         const dump = spawn(
           "mysqldump",
-          [...connectionArgs(source), "--single-transaction", "--quick", "--skip-lock-tables", "--no-tablespaces", "--skip-triggers", "--skip-routines", "--skip-events", source.database, ...tables],
-          { env: childEnv(source), stdio: stdio(["ignore", "pipe", "ignore"], lockFd) },
+          [
+            ...connectionArgs(source),
+            "--single-transaction",
+            "--quick",
+            "--skip-lock-tables",
+            "--no-tablespaces",
+            "--skip-triggers",
+            "--skip-routines",
+            "--skip-events",
+            ...gtid,
+            source.database,
+            ...tables,
+          ],
+          { env: childEnv(source), stdio: stdio(["ignore", "pipe", "ignore"], lockFd), ...killable },
         );
-        const load = spawn("mysql", [...connectionArgs(target), `--database=${target.database}`], {
+        const load = spawn("mysql", [...mysqlArgs(target), `--database=${target.database}`], {
           env: childEnv(target),
           stdio: stdio(["pipe", "ignore", "ignore"], lockFd),
+          ...killable,
         });
-        // A load that dies mid-stream must fail the copy, not crash the run with EPIPE.
-        load.stdin!.on("error", () => undefined);
-        dump.stdout!.on("error", () => undefined);
-        dump.stdout!.pipe(load.stdin!);
-        let pending = 2;
+        // If either side fails, stop the other (a dump blocked on a full pipe would never
+        // exit) and settle only once both have closed, so no child outlives the copy.
         let failed = false;
-        const done = (code: number | null) => {
-          if (code !== 0) failed = true;
-          pending -= 1;
-          if (pending === 0) (failed ? reject(new Error("copy.exit")) : resolve());
+        let open = 2;
+        const fail = () => {
+          if (failed) return;
+          failed = true;
+          for (const child of [dump, load]) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
         };
-        dump.on("error", () => reject(new Error("mysqldump.spawn")));
-        load.on("error", () => reject(new Error("mysql.spawn")));
-        dump.on("close", done);
-        load.on("close", done);
+        const closed = (code: number | null) => {
+          if (code !== 0) fail();
+          open -= 1;
+          if (open === 0) (failed ? reject(new Error("copy.exit")) : resolve());
+        };
+        load.stdin!.on("error", fail);
+        dump.stdout!.on("error", fail);
+        dump.stdout!.pipe(load.stdin!);
+        dump.on("error", fail);
+        load.on("error", fail);
+        dump.on("close", closed);
+        load.on("close", closed);
       });
     },
     async dropTablesNotIn(target, keep) {
@@ -192,7 +243,7 @@ export function acquireLock(lockPath: string): Promise<LockResult> {
 export interface CliDeps {
   readonly env: NodeJS.ProcessEnv;
   /** Builds the MySQL port; children it starts must inherit `lockFd`. */
-  readonly mysql: (lockFd: number) => MysqlPort;
+  readonly mysql: (lockFd: number, signal: AbortSignal) => MysqlPort;
   readonly now: () => Date;
   readonly log: (line: string) => void;
   readonly error: (line: string) => void;
@@ -228,7 +279,17 @@ export async function runCli(deps: CliDeps): Promise<number> {
   }
   try {
     writeReport(config.reportPath, failureReport("running", deps.now()));
-    const report = await runRefresh(config, deps.mysql(lock.fd), deps.now);
+    // A deadline long enough for a normal copy; past it every child is killed and reaped
+    // (each step waits for its children to close) before the lock is released.
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), config.timeoutMs);
+    let report: RefreshReport;
+    try {
+      report = await runRefresh(config, deps.mysql(lock.fd, deadline.signal), deps.now);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (deadline.signal.aborted && !report.ok) report = { ...report, code: "failed.timeout" };
     writeReport(config.reportPath, report);
     deps.log(summary(report));
     return report.ok ? 0 : 1;
@@ -244,6 +305,8 @@ export async function runCli(deps: CliDeps): Promise<number> {
 
 const entry = process.argv[1];
 if (entry && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(path.resolve(entry))) {
+  // Until the run settles, the exit code says failure: a run that never settles cannot exit 0.
+  process.exitCode = 1;
   runCli({
     env: process.env,
     mysql: createMysqlClient,

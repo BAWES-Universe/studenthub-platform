@@ -78,6 +78,7 @@
   "screens": {
     "U-01": {
       "lane": "shell",
+      "subject": "`/app` \u2014 context home",
       "gates": {
         "built": {
           "state": "open"
@@ -89,6 +90,7 @@
     },
     "U-02": {
       "lane": "access",
+      "subject": "`/sign-in`, `/auth/callback` \u2014 Universe sign-in",
       "gates": {
         "built": {
           "state": "open"
@@ -100,6 +102,7 @@
     },
     "U-03": {
       "lane": "access",
+      "subject": "`/account` \u2014 account and local session security",
       "gates": {
         "built": {
           "state": "open"
@@ -111,6 +114,7 @@
     },
     "U-04": {
       "lane": "comms",
+      "subject": "`/notifications` \u2014 event feed",
       "gates": {
         "built": {
           "state": "open"
@@ -122,6 +126,7 @@
     },
     "U-05": {
       "lane": "comms",
+      "subject": "`/messages`, `/messages/:id` \u2014 conversations",
       "gates": {
         "built": {
           "state": "open"
@@ -133,6 +138,7 @@
     },
     "U-06": {
       "lane": "comms",
+      "subject": "`/support`, `/support/:id` \u2014 tickets",
       "gates": {
         "built": {
           "state": "open"
@@ -144,6 +150,7 @@
     },
     "U-07": {
       "lane": "shell",
+      "subject": "`/error/:kind`, wildcard \u2014 accessible failure states",
       "gates": {
         "built": {
           "state": "open"
@@ -155,6 +162,7 @@
     },
     "U-08": {
       "lane": "access",
+      "subject": "context chooser in app shell",
       "gates": {
         "built": {
           "state": "open"
@@ -166,6 +174,7 @@
     },
     "C-01": {
       "lane": "people",
+      "subject": "`/profile` \u2014 own profile projection/completion",
       "gates": {
         "built": {
           "state": "open"
@@ -177,6 +186,7 @@
     },
     "C-02": {
       "lane": "people",
+      "subject": "`/profile/edit` \u2014 safe self edits",
       "gates": {
         "built": {
           "state": "open"
@@ -188,6 +198,7 @@
     },
     "C-03": {
       "lane": "people",
+      "subject": "`/profile/history` \u2014 education, experience, skills, links",
       "gates": {
         "built": {
           "state": "open"
@@ -199,6 +210,7 @@
     },
     "C-04": {
       "lane": "people",
+      "subject": "`/profile/documents` \u2014 private files",
       "gates": {
         "built": {
           "state": "open"
@@ -210,6 +222,7 @@
     },
     "C-05": {
       "lane": "people",
+      "subject": "`/profile/civil-id` \u2014 civil verification state",
       "gates": {
         "built": {
           "state": "open"
@@ -221,6 +234,7 @@
     },
     "C-06": {
       "lane": "recruit",
+      "subject": "`/discover`, `/discover/:jobId` \u2014 job board",
       "gates": {
         "built": {
           "state": "open"
@@ -232,6 +246,7 @@
     },
     "C-07": {
       "lane": "recruit",
+      "subject": "`/applications`, `/applications/:id` \u2014 applications/request detail",
       "gates": {
         "built": {
           "state": "open"
@@ -243,6 +258,7 @@
     },
     "C-08": {
       "lane": "recruit",
+      "subject": "`/invitations`, `/invitations/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -254,6 +270,7 @@
     },
     "C-09": {
       "lane": "recruit",
+      "subject": "`/interviews`, `/interviews/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -265,6 +282,7 @@
     },
     "C-10": {
       "lane": "work",
+      "subject": "`/work/assignment`, `/work/assignment/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -276,6 +294,7 @@
     },
     "C-11": {
       "lane": "work",
+      "subject": "`/work/track` \u2014 clock/manual session",
       "gates": {
         "built": {
           "state": "open"
@@ -287,6 +306,7 @@
     },
     "C-12": {
       "lane": "work",
+      "subject": "`/work/history`, `/work/history/:date`",
       "gates": {
         "built": {
           "state": "open"
@@ -298,6 +318,7 @@
     },
     "C-13": {
       "lane": "work",
+      "subject": "`/work/appeals`, `/work/appeals/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -309,6 +330,7 @@
     },
     "C-14": {
       "lane": "pay",
+      "subject": "`/pay`, `/pay/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -320,6 +342,7 @@
     },
     "C-15": {
       "lane": "people",
+      "subject": "`/profile/bank`",
       "gates": {
         "built": {
           "state": "open"
@@ -331,6 +354,7 @@
     },
     "C-16": {
       "lane": "people",
+      "subject": "`/profile/certificates`, `/profile/certificates/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -342,6 +366,7 @@
     },
     "O-01": {
       "lane": "organizations",
+      "subject": "`/organization/onboarding` \u2014 registration/review status",
       "gates": {
         "built": {
           "state": "open"
@@ -353,6 +378,7 @@
     },
     "O-02": {
       "lane": "organizations",
+      "subject": "`/organization/:orgId` \u2014 overview/read model",
       "gates": {
         "built": {
           "state": "open"
@@ -364,6 +390,7 @@
     },
     "O-03": {
       "lane": "organizations",
+      "subject": "`/organization/:orgId/edit`",
       "gates": {
         "built": {
           "state": "open"
@@ -375,6 +402,7 @@
     },
     "O-04": {
       "lane": "organizations",
+      "subject": "`/organization/:orgId/team` \u2014 members/invitations",
       "gates": {
         "built": {
           "state": "open"
@@ -386,6 +414,7 @@
     },
     "O-05": {
       "lane": "organizations",
+      "subject": "`/organization/:orgId/stores`, `/stores/:storeId`",
       "gates": {
         "built": {
           "state": "open"
@@ -397,6 +426,7 @@
     },
     "O-06": {
       "lane": "organizations",
+      "subject": "`/organization/:orgId/notes`",
       "gates": {
         "built": {
           "state": "open"
@@ -408,6 +438,7 @@
     },
     "O-07": {
       "lane": "people",
+      "subject": "`/organization/:orgId/candidates`, `/candidates/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -419,6 +450,7 @@
     },
     "O-08": {
       "lane": "recruit",
+      "subject": "`/organization/:orgId/requests`, `/requests/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -430,6 +462,7 @@
     },
     "O-09": {
       "lane": "recruit",
+      "subject": "`/requests/:id/matches` \u2014 suggestions/invitations",
       "gates": {
         "built": {
           "state": "open"
@@ -441,6 +474,7 @@
     },
     "O-10": {
       "lane": "recruit",
+      "subject": "`/organization/:orgId/interviews`",
       "gates": {
         "built": {
           "state": "open"
@@ -452,6 +486,7 @@
     },
     "O-11": {
       "lane": "work",
+      "subject": "`/organization/:orgId/work` \u2014 work logs/decisions",
       "gates": {
         "built": {
           "state": "open"
@@ -463,6 +498,7 @@
     },
     "O-12": {
       "lane": "pay",
+      "subject": "`/organization/:orgId/contracts`",
       "gates": {
         "built": {
           "state": "open"
@@ -474,6 +510,7 @@
     },
     "O-13": {
       "lane": "pay",
+      "subject": "`/organization/:orgId/transfers`, `/transfers/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -485,6 +522,7 @@
     },
     "O-14": {
       "lane": "pay",
+      "subject": "`/organization/:orgId/statements`",
       "gates": {
         "built": {
           "state": "open"
@@ -496,6 +534,7 @@
     },
     "M-01": {
       "lane": "access",
+      "subject": "`/store/:storeId/overview`",
       "gates": {
         "built": {
           "state": "open"
@@ -507,6 +546,7 @@
     },
     "M-02": {
       "lane": "people",
+      "subject": "`/store/:storeId/candidates`, `/store/:storeId/candidates/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -518,6 +558,7 @@
     },
     "M-03": {
       "lane": "work",
+      "subject": "`/store/:storeId/time-approvals`, `/:sessionId`",
       "gates": {
         "built": {
           "state": "open"
@@ -529,6 +570,7 @@
     },
     "M-04": {
       "lane": "work",
+      "subject": "`/store/:storeId/assignment-changes`",
       "gates": {
         "built": {
           "state": "open"
@@ -540,6 +582,7 @@
     },
     "M-05": {
       "lane": "people",
+      "subject": "`/store/:storeId/candidates/:id/documents`",
       "gates": {
         "built": {
           "state": "open"
@@ -551,6 +594,7 @@
     },
     "A-01": {
       "lane": "people",
+      "subject": "`/people/candidates`, `/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -562,6 +606,7 @@
     },
     "A-02": {
       "lane": "people",
+      "subject": "`/people/candidates/:id/lifecycle`",
       "gates": {
         "built": {
           "state": "open"
@@ -573,6 +618,7 @@
     },
     "A-03": {
       "lane": "people",
+      "subject": "`/people/candidate-documents/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -584,6 +630,7 @@
     },
     "A-04": {
       "lane": "people",
+      "subject": "`/people/id-cards`",
       "gates": {
         "built": {
           "state": "open"
@@ -595,6 +642,7 @@
     },
     "A-05": {
       "lane": "organizations",
+      "subject": "`/organizations`",
       "gates": {
         "built": {
           "state": "open"
@@ -606,6 +654,7 @@
     },
     "A-06": {
       "lane": "organizations",
+      "subject": "`/organizations/:orgId/admin`",
       "gates": {
         "built": {
           "state": "open"
@@ -617,6 +666,7 @@
     },
     "A-07": {
       "lane": "organizations",
+      "subject": "`/reference-data/:catalogue`",
       "gates": {
         "built": {
           "state": "open"
@@ -628,6 +678,7 @@
     },
     "A-08": {
       "lane": "recruit",
+      "subject": "`/recruiting/requests`, `/recruiting/requests/:id`, `/stories/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -639,6 +690,7 @@
     },
     "A-09": {
       "lane": "recruit",
+      "subject": "`/recruiting/search`",
       "gates": {
         "built": {
           "state": "open"
@@ -650,6 +702,7 @@
     },
     "A-10": {
       "lane": "recruit",
+      "subject": "`/recruiting/matches`, `/recruiting/jobs`",
       "gates": {
         "built": {
           "state": "open"
@@ -661,6 +714,7 @@
     },
     "A-11": {
       "lane": "recruit",
+      "subject": "`/recruiting/interviews`, `/evaluations`",
       "gates": {
         "built": {
           "state": "open"
@@ -672,6 +726,7 @@
     },
     "A-12": {
       "lane": "work",
+      "subject": "`/work/assignments`, `/work/logs`",
       "gates": {
         "built": {
           "state": "open"
@@ -683,6 +738,7 @@
     },
     "A-13": {
       "lane": "work",
+      "subject": "`/work/appeals`, `/work/corrections`",
       "gates": {
         "built": {
           "state": "open"
@@ -694,6 +750,7 @@
     },
     "A-14": {
       "lane": "work",
+      "subject": "`/me/work` \u2014 standup, leave, expense, session",
       "gates": {
         "built": {
           "state": "open"
@@ -705,6 +762,7 @@
     },
     "A-15": {
       "lane": "access",
+      "subject": "`/access/accounts`",
       "gates": {
         "built": {
           "state": "open"
@@ -716,6 +774,7 @@
     },
     "A-16": {
       "lane": "access",
+      "subject": "`/access/act-as`",
       "gates": {
         "built": {
           "state": "open"
@@ -727,6 +786,7 @@
     },
     "A-17": {
       "lane": "pay",
+      "subject": "`/finance/contracts`",
       "gates": {
         "built": {
           "state": "open"
@@ -738,6 +798,7 @@
     },
     "A-18": {
       "lane": "pay",
+      "subject": "`/finance/transfers`, `/:id`",
       "gates": {
         "built": {
           "state": "open"
@@ -749,6 +810,7 @@
     },
     "A-19": {
       "lane": "pay",
+      "subject": "`/finance/bank-files`",
       "gates": {
         "built": {
           "state": "open"
@@ -760,6 +822,7 @@
     },
     "A-20": {
       "lane": "pay",
+      "subject": "`/finance/settled`",
       "gates": {
         "built": {
           "state": "open"
@@ -771,6 +834,7 @@
     },
     "A-21": {
       "lane": "comms",
+      "subject": "`/service` \u2014 conversations, tickets, voicemail records",
       "gates": {
         "built": {
           "state": "open"
@@ -782,6 +846,7 @@
     },
     "A-22": {
       "lane": "comms",
+      "subject": "`/communications/campaigns`",
       "gates": {
         "built": {
           "state": "open"
@@ -793,6 +858,7 @@
     },
     "A-23": {
       "lane": "comms",
+      "subject": "`/communications/webhooks`",
       "gates": {
         "built": {
           "state": "open"
@@ -804,6 +870,7 @@
     },
     "A-24": {
       "lane": "reports",
+      "subject": "`/reports/operations`",
       "gates": {
         "built": {
           "state": "open"
@@ -815,6 +882,7 @@
     },
     "A-25": {
       "lane": "reports",
+      "subject": "`/reports/statistics`",
       "gates": {
         "built": {
           "state": "open"
@@ -826,6 +894,7 @@
     },
     "A-26": {
       "lane": "reports",
+      "subject": "`/reports/exports`",
       "gates": {
         "built": {
           "state": "open"
@@ -837,6 +906,7 @@
     },
     "A-27": {
       "lane": "platform",
+      "subject": "`/platform/integrations`",
       "gates": {
         "built": {
           "state": "open"
@@ -848,6 +918,7 @@
     },
     "A-28": {
       "lane": "platform",
+      "subject": "`/platform/operations`",
       "gates": {
         "built": {
           "state": "open"
@@ -859,6 +930,7 @@
     },
     "A-29": {
       "lane": "platform",
+      "subject": "`/platform/events`",
       "gates": {
         "built": {
           "state": "open"
@@ -870,6 +942,7 @@
     },
     "A-30": {
       "lane": "recruit",
+      "subject": "`/candidate-evaluations`",
       "gates": {
         "built": {
           "state": "open"
@@ -881,6 +954,7 @@
     },
     "A-31": {
       "lane": "reports",
+      "subject": "`/reports/revenue`",
       "gates": {
         "built": {
           "state": "open"
@@ -892,6 +966,7 @@
     },
     "G-01": {
       "lane": "access",
+      "subject": "`/access/grants/catalogue` \u2014 roles, capabilities, scopes, versions",
       "gates": {
         "built": {
           "state": "open"
@@ -903,6 +978,7 @@
     },
     "G-02": {
       "lane": "access",
+      "subject": "`/access/grants/assign` \u2014 principal/org/store search, effective preview, assign/revoke",
       "gates": {
         "built": {
           "state": "open"
@@ -914,6 +990,7 @@
     },
     "G-03": {
       "lane": "access",
+      "subject": "`/access/grants/audit` \u2014 effective grants, provenance, history, next-request result",
       "gates": {
         "built": {
           "state": "open"
@@ -927,6 +1004,7 @@
   "exclusions": {
     "EX-01": {
       "lane": "cutover",
+      "subject": "Candidate perks/discounts plus admin discount/category CRUD",
       "gates": {
         "decision": {
           "state": "open"
@@ -935,6 +1013,7 @@
     },
     "EX-02": {
       "lane": "cutover",
+      "subject": "Wallet",
       "gates": {
         "decision": {
           "state": "open"
@@ -943,6 +1022,7 @@
     },
     "EX-03": {
       "lane": "cutover",
+      "subject": "Inspector identity CRUD / separate status-app persona",
       "gates": {
         "decision": {
           "state": "open"
@@ -951,6 +1031,7 @@
     },
     "EX-04": {
       "lane": "cutover",
+      "subject": "Cache flush over HTTP on admin dashboard",
       "gates": {
         "decision": {
           "state": "open"
@@ -959,6 +1040,7 @@
     },
     "EX-05": {
       "lane": "cutover",
+      "subject": "Direct legacy password, OTP, Google, Apple, Auth0, and auth-key login mechanisms",
       "gates": {
         "decision": {
           "state": "open"
@@ -967,6 +1049,7 @@
     },
     "EX-06": {
       "lane": "cutover",
+      "subject": "MOCI civil-ID scraper",
       "gates": {
         "decision": {
           "state": "open"
@@ -975,6 +1058,7 @@
     },
     "EX-07": {
       "lane": "cutover",
+      "subject": "Plugn external menu link",
       "gates": {
         "decision": {
           "state": "open"
@@ -985,6 +1069,7 @@
   "mobile": {
     "GET /account/area-by-location": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -996,6 +1081,7 @@
     },
     "POST /account/change-password": {
       "lane": "cutover",
+      "subject": "U-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1007,6 +1093,7 @@
     },
     "POST /account/current-status": {
       "lane": "cutover",
+      "subject": "C-11 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1018,6 +1105,7 @@
     },
     "DELETE /account/discard-session": {
       "lane": "cutover",
+      "subject": "C-11 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1029,6 +1117,7 @@
     },
     "GET /account/job-search-status": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1040,6 +1129,7 @@
     },
     "POST /account/job-search-status": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1051,6 +1141,7 @@
     },
     "POST /account/language-pref": {
       "lane": "cutover",
+      "subject": "U-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1062,6 +1153,7 @@
     },
     "GET /account/profile": {
       "lane": "cutover",
+      "subject": "C-01 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1073,6 +1165,7 @@
     },
     "POST /account/profile-photo": {
       "lane": "cutover",
+      "subject": "C-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1084,6 +1177,7 @@
     },
     "DELETE /account/remove-candidate-profile": {
       "lane": "cutover",
+      "subject": "U-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1095,6 +1189,7 @@
     },
     "DELETE /account/remove-civil-photo-back": {
       "lane": "cutover",
+      "subject": "C-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1106,6 +1201,7 @@
     },
     "DELETE /account/remove-civil-photo-front": {
       "lane": "cutover",
+      "subject": "C-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1117,6 +1213,7 @@
     },
     "DELETE /account/remove-photo": {
       "lane": "cutover",
+      "subject": "C-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1128,6 +1225,7 @@
     },
     "DELETE /account/remove-video": {
       "lane": "cutover",
+      "subject": "C-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1139,6 +1237,7 @@
     },
     "GET /account/salary": {
       "lane": "cutover",
+      "subject": "C-14 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1150,6 +1249,7 @@
     },
     "POST /account/start-time": {
       "lane": "cutover",
+      "subject": "C-11 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1161,6 +1261,7 @@
     },
     "POST /account/stop-time": {
       "lane": "cutover",
+      "subject": "C-11 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1172,6 +1273,7 @@
     },
     "POST /account/update-bank-detail": {
       "lane": "cutover",
+      "subject": "C-15 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1183,6 +1285,7 @@
     },
     "POST /account/update-birth-date": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1194,6 +1297,7 @@
     },
     "POST /account/update-civil-expiry-date": {
       "lane": "cutover",
+      "subject": "C-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1205,6 +1309,7 @@
     },
     "POST /account/update-civil-id": {
       "lane": "cutover",
+      "subject": "C-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1216,6 +1321,7 @@
     },
     "POST /account/update-civil-id-expiry-date": {
       "lane": "cutover",
+      "subject": "C-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1227,6 +1333,7 @@
     },
     "POST /account/update-civil-photo-back": {
       "lane": "cutover",
+      "subject": "C-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1238,6 +1345,7 @@
     },
     "POST /account/update-civil-photo-front": {
       "lane": "cutover",
+      "subject": "C-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1249,6 +1357,7 @@
     },
     "POST /account/update-driving-license": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1260,6 +1369,7 @@
     },
     "POST /account/update-email": {
       "lane": "cutover",
+      "subject": "U-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1271,6 +1381,7 @@
     },
     "POST /account/update-experiences": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1282,6 +1393,7 @@
     },
     "POST /account/update-gender": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1293,6 +1405,7 @@
     },
     "POST /account/update-intro": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1304,6 +1417,7 @@
     },
     "POST /account/update-kuwaiti-national": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1315,6 +1429,7 @@
     },
     "POST /account/update-location": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1326,6 +1441,7 @@
     },
     "POST /account/update-name": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1337,6 +1453,7 @@
     },
     "POST /account/update-name-ar": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1348,6 +1465,7 @@
     },
     "POST /account/update-nationality": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1359,6 +1477,7 @@
     },
     "POST /account/update-objective": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1370,6 +1489,7 @@
     },
     "POST /account/update-phone": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1381,6 +1501,7 @@
     },
     "POST /account/update-preferred-time": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1392,6 +1513,7 @@
     },
     "POST /account/update-profile-url": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1403,6 +1525,7 @@
     },
     "POST /account/update-resume": {
       "lane": "cutover",
+      "subject": "C-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1414,6 +1537,7 @@
     },
     "POST /account/update-skills": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1425,6 +1549,7 @@
     },
     "POST /account/update-university": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1436,6 +1561,7 @@
     },
     "POST /account/validate-password": {
       "lane": "cutover",
+      "subject": "U-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1447,6 +1573,7 @@
     },
     "POST /account/video": {
       "lane": "cutover",
+      "subject": "C-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1458,6 +1585,7 @@
     },
     "GET /account/video-status": {
       "lane": "cutover",
+      "subject": "C-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1469,6 +1597,7 @@
     },
     "GET /account/work-history": {
       "lane": "cutover",
+      "subject": "C-12 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1480,6 +1609,7 @@
     },
     "POST /auth/email-check": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1491,6 +1621,7 @@
     },
     "POST /auth/is-email-verified": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1502,6 +1633,7 @@
     },
     "GET /auth/locate": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1513,6 +1645,7 @@
     },
     "GET /auth/login": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1524,6 +1657,7 @@
     },
     "POST /auth/login-auth0": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1535,6 +1669,7 @@
     },
     "POST /auth/login-by-apple": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1546,6 +1681,7 @@
     },
     "POST /auth/login-by-google": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1557,6 +1693,7 @@
     },
     "POST /auth/login-by-key": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1568,6 +1705,7 @@
     },
     "POST /auth/name-by-civil-id": {
       "lane": "cutover",
+      "subject": "EX-06 retire",
       "gates": {
         "built": {
           "state": "open"
@@ -1579,6 +1717,7 @@
     },
     "POST /auth/register": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1590,6 +1729,7 @@
     },
     "POST /auth/request-reset-password": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1601,6 +1741,7 @@
     },
     "POST /auth/resend-verification-email": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1612,6 +1753,7 @@
     },
     "POST /auth/sms-reset-password": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1623,6 +1765,7 @@
     },
     "POST /auth/update-email": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1634,6 +1777,7 @@
     },
     "PATCH /auth/update-password": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1645,6 +1789,7 @@
     },
     "POST /auth/verify-email": {
       "lane": "cutover",
+      "subject": "U-02 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1656,6 +1801,7 @@
     },
     "GET /aws/config": {
       "lane": "cutover",
+      "subject": "C-04 open",
       "gates": {
         "built": {
           "state": "open"
@@ -1667,6 +1813,7 @@
     },
     "GET /balance/payable-list": {
       "lane": "cutover",
+      "subject": "EX-02 retire",
       "gates": {
         "built": {
           "state": "open"
@@ -1678,6 +1825,7 @@
     },
     "PATCH /campaigns/click/{id}": {
       "lane": "cutover",
+      "subject": "A-29 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1689,6 +1837,7 @@
     },
     "GET /candidate-educations": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1700,6 +1849,7 @@
     },
     "POST /candidate-educations": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1711,6 +1861,7 @@
     },
     "GET /candidate-educations/degree-groups": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1722,6 +1873,7 @@
     },
     "GET /candidate-educations/degrees": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1733,6 +1885,7 @@
     },
     "GET /candidate-educations/majors": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1744,6 +1897,7 @@
     },
     "POST /candidate-educations/save": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1755,6 +1909,7 @@
     },
     "DELETE /candidate-educations/{id}": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1766,6 +1921,7 @@
     },
     "GET /candidate-educations/{id}": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1777,6 +1933,7 @@
     },
     "PATCH /candidate-educations/{id}": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1788,6 +1945,7 @@
     },
     "GET /candidate-notifications": {
       "lane": "cutover",
+      "subject": "U-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1799,6 +1957,7 @@
     },
     "PATCH /candidate-notifications/mark-read-all": {
       "lane": "cutover",
+      "subject": "U-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1810,6 +1969,7 @@
     },
     "PATCH /candidate-notifications/mark-read/{id}": {
       "lane": "cutover",
+      "subject": "U-04 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1821,6 +1981,7 @@
     },
     "POST /candidate-working-hours": {
       "lane": "cutover",
+      "subject": "C-11 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1832,6 +1993,7 @@
     },
     "GET /candidate-working-hours/date": {
       "lane": "cutover",
+      "subject": "C-12 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1843,6 +2005,7 @@
     },
     "GET /candidate-working-hours/date-detail/{date}": {
       "lane": "cutover",
+      "subject": "C-12 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1854,6 +2017,7 @@
     },
     "GET /candidate-working-hours/date/{date}": {
       "lane": "cutover",
+      "subject": "C-12 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1865,6 +2029,7 @@
     },
     "GET /candidate-working-hours/hour": {
       "lane": "cutover",
+      "subject": "C-12 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1876,6 +2041,7 @@
     },
     "GET /candidate-working-hours/stats": {
       "lane": "cutover",
+      "subject": "C-12 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1887,6 +2053,7 @@
     },
     "GET /candidate-working-hours/working-dates": {
       "lane": "cutover",
+      "subject": "C-12 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1898,6 +2065,7 @@
     },
     "GET /candidates/appreciation-certificate/{id}": {
       "lane": "cutover",
+      "subject": "C-16 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1909,6 +2077,7 @@
     },
     "GET /candidates/work-history": {
       "lane": "cutover",
+      "subject": "C-12 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1920,6 +2089,7 @@
     },
     "GET /candidates/work-history/{id}": {
       "lane": "cutover",
+      "subject": "C-10 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1931,6 +2101,7 @@
     },
     "GET /candidates/working-dates": {
       "lane": "cutover",
+      "subject": "C-12 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1942,6 +2113,7 @@
     },
     "GET /chats": {
       "lane": "cutover",
+      "subject": "U-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1953,6 +2125,7 @@
     },
     "PATCH /chats/mark-read/{id}": {
       "lane": "cutover",
+      "subject": "U-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1964,6 +2137,7 @@
     },
     "GET /chats/messages/{id}": {
       "lane": "cutover",
+      "subject": "U-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1975,6 +2149,7 @@
     },
     "GET /chats/new-messages/{id}": {
       "lane": "cutover",
+      "subject": "U-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1986,6 +2161,7 @@
     },
     "POST /chats/send-message": {
       "lane": "cutover",
+      "subject": "U-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -1997,6 +2173,7 @@
     },
     "POST /chats/start-chat": {
       "lane": "cutover",
+      "subject": "U-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2008,6 +2185,7 @@
     },
     "GET /chats/unread-count": {
       "lane": "cutover",
+      "subject": "U-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2019,6 +2197,7 @@
     },
     "GET /chats/{id}": {
       "lane": "cutover",
+      "subject": "U-05 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2030,6 +2209,7 @@
     },
     "GET /countries": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2041,6 +2221,7 @@
     },
     "GET /discount-categories": {
       "lane": "cutover",
+      "subject": "EX-01 retire",
       "gates": {
         "built": {
           "state": "open"
@@ -2052,6 +2233,7 @@
     },
     "GET /discount-categories/{id}": {
       "lane": "cutover",
+      "subject": "EX-01 retire",
       "gates": {
         "built": {
           "state": "open"
@@ -2063,6 +2245,7 @@
     },
     "GET /discounts": {
       "lane": "cutover",
+      "subject": "EX-01 retire",
       "gates": {
         "built": {
           "state": "open"
@@ -2074,6 +2257,7 @@
     },
     "GET /discounts/{id}": {
       "lane": "cutover",
+      "subject": "EX-01 retire",
       "gates": {
         "built": {
           "state": "open"
@@ -2085,6 +2269,7 @@
     },
     "GET /google-map/place-detail/{id}": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2096,6 +2281,7 @@
     },
     "GET /google-map/place-predictions": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2107,6 +2293,7 @@
     },
     "GET /invitations": {
       "lane": "cutover",
+      "subject": "C-08 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2118,6 +2305,7 @@
     },
     "PATCH /invitations/accept/{id}": {
       "lane": "cutover",
+      "subject": "C-08 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2129,6 +2317,7 @@
     },
     "GET /invitations/log-viewed": {
       "lane": "cutover",
+      "subject": "C-08 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2140,6 +2329,7 @@
     },
     "PATCH /invitations/reject/{id}": {
       "lane": "cutover",
+      "subject": "C-08 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2151,6 +2341,7 @@
     },
     "GET /invitations/{id}": {
       "lane": "cutover",
+      "subject": "C-08 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2162,6 +2353,7 @@
     },
     "GET /requests": {
       "lane": "cutover",
+      "subject": "C-06 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2173,6 +2365,7 @@
     },
     "GET /requests/applications": {
       "lane": "cutover",
+      "subject": "C-07 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2184,6 +2377,7 @@
     },
     "POST /requests/apply/{id}": {
       "lane": "cutover",
+      "subject": "C-07 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2195,6 +2389,7 @@
     },
     "GET /requests/interview-requests": {
       "lane": "cutover",
+      "subject": "C-09 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2206,6 +2401,7 @@
     },
     "GET /requests/{id}": {
       "lane": "cutover",
+      "subject": "C-06 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2217,6 +2413,7 @@
     },
     "GET /statistics": {
       "lane": "cutover",
+      "subject": "C-14 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2228,6 +2425,7 @@
     },
     "GET /tickets": {
       "lane": "cutover",
+      "subject": "U-06 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2239,6 +2437,7 @@
     },
     "POST /tickets": {
       "lane": "cutover",
+      "subject": "U-06 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2250,6 +2449,7 @@
     },
     "PATCH /tickets/comment/{id}": {
       "lane": "cutover",
+      "subject": "U-06 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2261,6 +2461,7 @@
     },
     "GET /tickets/comments/{id}": {
       "lane": "cutover",
+      "subject": "U-06 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2272,6 +2473,7 @@
     },
     "GET /tickets/{id}": {
       "lane": "cutover",
+      "subject": "U-06 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2283,6 +2485,7 @@
     },
     "GET /universities": {
       "lane": "cutover",
+      "subject": "C-02 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2294,6 +2497,7 @@
     },
     "POST /universities": {
       "lane": "cutover",
+      "subject": "C-03 serve",
       "gates": {
         "built": {
           "state": "open"
@@ -2537,8 +2741,8 @@
       "lane": "cutover",
       "gates": {
         "done": {
-          "state": "done",
-          "evidence": "Installed from 6bc7e62 by Hermes; first run ok 2026-11-17 16:35:09Z-16:40:47Z, 123 tables, 865823 rows; daily timer 00:30 UTC. Report: PR #504 comment 6954521676"
+          "state": "open",
+          "note": "Installed and first manual run ok 2026-11-17 (PR #504 comment 6954521676). Closes with the first timer-triggered run's time and counts."
         }
       }
     },

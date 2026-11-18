@@ -1,7 +1,9 @@
 /**
  * node dist/tools/release-matrix/src/cli.js check     structural check (every PR)
  * node dist/tools/release-matrix/src/cli.js report    markdown summary of open gates
- * node dist/tools/release-matrix/src/cli.js release   fails while anything is open
+ * node dist/tools/release-matrix/src/cli.js release [candidate|cutover|retired]
+ *                                                   fails while a gate due by that checkpoint
+ *                                                   is open (default candidate, the 17 Dec test)
  * node dist/tools/release-matrix/src/cli.js seed      rewrite matrix.json from sources
  */
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
@@ -10,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { checkContract } from "./contract.js";
 import { MATRIX_PATH, loadContract, loadInventory, loadMatrix, repoRoot } from "./files.js";
-import { blockers, checkInventory, checkMatrix, type Blocker } from "./matrix.js";
+import { blockers, checkInventory, checkMatrix, PHASES, type Blocker, type Phase } from "./matrix.js";
 import { seedMatrix } from "./seed.js";
 
 export function renderReport(open: readonly Blocker[], totalRows: number): string {
@@ -33,7 +35,7 @@ export function renderReport(open: readonly Blocker[], totalRows: number): strin
   return `${lines.join("\n")}\n`;
 }
 
-function main(command: string | undefined): number {
+function main(command: string | undefined, phaseArg?: string): number {
   const root = repoRoot();
   const contract = loadContract(root);
   const inventory = loadInventory(root);
@@ -49,11 +51,19 @@ function main(command: string | undefined): number {
   for (const issue of issues) console.error(`${issue.rule}: ${issue.detail}`);
   if (issues.length > 0) return 1;
 
-  const open = blockers(matrix, inventory);
+  const phase = (phaseArg ?? "candidate") as Phase;
+  if (command === "release" && !PHASES.includes(phase)) {
+    console.error(`usage: cli.js release [${PHASES.join("|")}]`);
+    return 2;
+  }
+  const open = blockers(matrix, inventory, command === "release" ? phase : "retired");
   const rows = [matrix.screens, matrix.exclusions, matrix.mobile, matrix.imports, matrix.release]
     .reduce((sum, section) => sum + Object.keys(section).length, 0);
   if (command === "report" || command === "release") process.stdout.write(renderReport(open, rows));
-  if (command === "release") return open.length === 0 ? 0 : 1;
+  if (command === "release") {
+    console.log(`release-matrix: ${open.length} gates open for the ${phase} checkpoint`);
+    return open.length === 0 ? 0 : 1;
+  }
   if (command === "check") {
     console.log(`release-matrix: ${rows} rows consistent with the contract and the mobile inventory; ${open.length} gates open`);
     return 0;
@@ -75,4 +85,4 @@ export function isEntryPoint(moduleUrl: string, argv1: string | undefined): bool
   }
 }
 
-if (isEntryPoint(import.meta.url, process.argv[1])) process.exitCode = main(process.argv[2]);
+if (isEntryPoint(import.meta.url, process.argv[1])) process.exitCode = main(process.argv[2], process.argv[3]);

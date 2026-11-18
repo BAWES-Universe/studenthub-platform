@@ -36,6 +36,8 @@ export interface ParsedContract {
   readonly ledger: readonly LedgerRow[];
   /** Totals the contract itself declares for each appendix, e.g. MOB 66. */
   readonly declaredTotals: Readonly<Record<string, number>>;
+  /** Target or exclusion ids defined more than once, with both source lines. */
+  readonly duplicateTargets?: readonly { readonly id: string; readonly first: number; readonly again: number }[];
 }
 
 const ID_IN_TICKS = /`((?:EX|[UCOMAG])-\d{2})(?:\.\.(\d{2}))?`/g;
@@ -77,6 +79,15 @@ export function parseContract(markdown: string): ParsedContract {
   const lines = markdown.split("\n");
   const targets = new Map<string, TargetScreen>();
   const ledger: LedgerRow[] = [];
+  const definedAt = new Map<string, number>();
+  const duplicates: { id: string; first: number; again: number }[] = [];
+  // A second definition of the same id is reported, never allowed to replace the first.
+  const define = (id: string, target: TargetScreen, line: number) => {
+    const first = definedAt.get(id);
+    if (first !== undefined) return void duplicates.push({ id, first, again: line });
+    definedAt.set(id, line);
+    targets.set(id, target);
+  };
 
   lines.forEach((line, index) => {
     const row = cells(line);
@@ -86,13 +97,13 @@ export function parseContract(markdown: string): ParsedContract {
     if (section === "3") {
       const id = /^`([UCOMAG]-\d{2})`$/.exec(row[0]!);
       if (!id) return;
-      targets.set(id[1]!, { id: id[1]!, kind: "screen", route: row[1]!, owner: row[5] ?? "" });
+      define(id[1]!, { id: id[1]!, kind: "screen", route: row[1]!, owner: row[5] ?? "" }, index + 1);
       return;
     }
     if (section === "5") {
       const id = /^`(EX-\d{2})`$/.exec(row[0]!);
       if (!id) return;
-      targets.set(id[1]!, { id: id[1]!, kind: "exclusion", route: row[1]!, owner: "SHU-213" });
+      define(id[1]!, { id: id[1]!, kind: "exclusion", route: row[1]!, owner: "SHU-213" }, index + 1);
       return;
     }
     if (section === "6") {
@@ -117,7 +128,7 @@ export function parseContract(markdown: string): ParsedContract {
     }
   }
 
-  return { targets, ledger, declaredTotals };
+  return { targets, ledger, declaredTotals, duplicateTargets: duplicates };
 }
 
 /** Ids named in free text such as "`C-01..02`" or "C-06..07"; used for data files too. */
@@ -132,6 +143,9 @@ export function idsIn(text: string): string[] {
  */
 export function checkContract(contract: ParsedContract): ContractIssue[] {
   const issues: ContractIssue[] = [];
+  for (const dup of contract.duplicateTargets ?? []) {
+    issues.push({ rule: "contract.target.duplicate", detail: `${dup.id} is defined on line ${dup.first} and again on line ${dup.again}` });
+  }
   const apps = Object.keys(contract.declaredTotals);
   if (apps.length === 0) {
     issues.push({ rule: "contract.partition.undeclared", detail: "section 6 does not declare its partition totals" });
