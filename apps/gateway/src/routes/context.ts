@@ -22,6 +22,7 @@ import type { CivilIdReviewHttpService } from "../civil-id-review-http.js";
 import type { AreaHttp } from "../area-http.js";
 import type { StaffMessagesHttpService } from "../comms/staff-messages-http.js";
 import type { PeopleDirectoryPage } from "../people-directory.js";
+import type { AccessPorts } from "../access/admin-access.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
@@ -41,6 +42,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly organizationDeletion?: OrganizationDeletion;
   readonly organizationCreation?: OrganizationCreation;
   readonly legacyLink?: LegacyLinkService;
+  readonly access?: AccessPorts;
   readonly staffMessages?: StaffMessagesHttpService;
 };
 
