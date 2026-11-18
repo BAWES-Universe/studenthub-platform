@@ -26,6 +26,8 @@ export interface RecruitInvitationsStoreOptions {
   readonly transitionAllowed: (from: Status, to: Status, actor: "person" | "staff") => boolean;
   readonly acceptCardEffect: (stage: Stage | null) => "insert_contacted" | "move_contacted" | "keep" | "refuse";
   readonly requestStatusAfter: (status: RequestStatus, event: { kind: "card_added" }) => RequestStatus | null;
+  /** Who can be invited: a principal holding a candidate grant (candidate:self). */
+  readonly candidateDecision: (rows: readonly Grant[]) => boolean;
   readonly outbox: (to: Status, person: string, recruiter: string | null, inviter: string) => { kind: OutboxKind; recipient: string } | null;
 }
 export type RecruitInviteResult = { kind: "invited"; invitationId: string } | { kind: "not_found" } | { kind: "request_not_open" } | { kind: "duplicate"; invitationId: string };
@@ -88,6 +90,7 @@ export class PostgresRecruitInvitationsStore {
       if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead)) return { rollback: { kind: "not_found" } };
       if (!this.options.acceptsCards(request.status)) return { rollback: { kind: "request_not_open" } };
       if (!(await c.query("SELECT 1 FROM principals WHERE id = $1::text FOR SHARE", [personId])).rowCount) return { rollback: { kind: "not_found" } };
+      if (!this.options.candidateDecision(await this.#grants(c, personId, true))) return { rollback: { kind: "not_found" } };
       const id = randomUUID();
       const inserted = await c.query("INSERT INTO recruit_invitations(id, request_id, person_principal_id, invited_by_principal_id) VALUES($1::uuid, $2::uuid, $3::text, $4::text) ON CONFLICT (request_id, person_principal_id) DO NOTHING", [id, requestId, personId, principalId]);
       if (inserted.rowCount !== 1) {

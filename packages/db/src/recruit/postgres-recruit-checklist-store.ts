@@ -95,11 +95,11 @@ export class PostgresRecruitChecklistStore {
   }
 
   /** A request's notes (oldest first) and the checklist items any note has ticked, in three queries; null when refused or unknown. */
-  async requestNotes(principalId: string, requestId: string): Promise<{ title: string; notes: RecruitNoteRecord[]; items: RecruitChecklistItemRecord[]; doneItemIds: string[] } | null> {
+  async requestNotes(principalId: string, requestId: string): Promise<{ title: string; notes: RecruitNoteRecord[]; items: RecruitChecklistItemRecord[]; doneItemIds: string[]; cards: { id: string; person_name: string | null }[] } | null> {
     if (!this.options.notesDecision(await this.#grants(principalId))) return null;
     const request = (await this.#pool.query<{ position_title: string }>("SELECT position_title FROM recruit_requests WHERE id = $1::uuid", [requestId])).rows[0];
     if (!request) return null;
-    const [notes, items] = await Promise.all([
+    const [notes, items, cards] = await Promise.all([
       this.#pool.query<RecruitNoteRecord>(
         `SELECT n.id, n.card_id, COALESCE(cpp.display_name, cp.display_name, cf.name) AS person_name, n.checklist_item_id, i.name_en AS checklist_name,
            n.note_type, n.note_text, COALESCE(app.display_name, ap.display_name) AS author_name, n.created_at, n.updated_at
@@ -109,8 +109,13 @@ export class PostgresRecruitChecklistStore {
          LEFT JOIN principals ap ON ap.id = n.author_principal_id LEFT JOIN person_profiles app ON app.principal_id = n.author_principal_id
          WHERE n.request_id = $1::uuid AND n.removed_at IS NULL ORDER BY n.created_at, n.id`, [requestId]),
       this.#pool.query<RecruitChecklistItemRecord>("SELECT id, name_en, name_ar, required, sort_order FROM recruit_checklist_items WHERE status = 'active' ORDER BY sort_order, id"),
+      // The people on this request's pipeline, so a note can be about one of them.
+      this.#pool.query<{ id: string; person_name: string | null }>(
+        `SELECT c.id, COALESCE(pp.display_name, p.display_name, f.name) AS person_name FROM recruit_pipeline_cards c
+         LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id
+         WHERE c.request_id = $1::uuid ORDER BY c.created_at, c.id`, [requestId]),
     ]);
     const done = [...new Set(notes.rows.map((n) => n.checklist_item_id).filter((id): id is string => id !== null))];
-    return { title: request.position_title, notes: notes.rows, items: items.rows, doneItemIds: done };
+    return { title: request.position_title, notes: notes.rows, items: items.rows, doneItemIds: done, cards: cards.rows };
   }
 }

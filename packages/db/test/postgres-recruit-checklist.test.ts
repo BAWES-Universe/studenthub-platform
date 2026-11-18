@@ -6,7 +6,7 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitChecklistStore, PostgresRecruitPipelineStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
 import {
-  checklistAdminDecision, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitNotesDecision, recruitStaffDecision,
+jobCandidateDecision,   checklistAdminDecision, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitNotesDecision, recruitStaffDecision,
   requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision,
 } from "../../recruit/src/index.js";
 
@@ -27,7 +27,7 @@ before(async () => {
     transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed,
   });
   pipeline = new PostgresRecruitPipelineStore({
-    pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS),
+    pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
     authority: pipelineAuthority, transitionAllowed: pipelineTransitionAllowed, acceptsCards: requestAcceptsCards, requestStatusAfter: requestStatusAfterPipeline,
     placement: { placeFromRecruit: async () => ({ kind: "refused", code: "work_unavailable" }) }, operatorOrgIds: OPS,
   });
@@ -38,7 +38,8 @@ after(async () => pool.end());
 async function person(grants: { orgId: string; role: string; scope: "self" | "subtree" }[] = [], displayName?: string) {
   const id = `rec2b-person-${randomUUID()}`;
   await authz.registerPrincipal(createPrincipal({ id, pbuuids: [], email: `${id}@example.invalid`, ...(displayName ? { displayName } : {}) }));
-  if (grants.length) await authz.grantMany(id, grants);
+  // A person with no other grant is a candidate (candidate:self): only candidates are suggested or invited.
+  await authz.grantMany(id, grants.length ? grants : [{ orgId: OPS_ORG, role: "candidate", scope: "self" }]);
   return id;
 }
 async function setup() {
@@ -99,6 +100,7 @@ test("REC2B_NOTES staff and recruiters note a request, tick a step and name a pe
   assert.equal(view.title, "Cashier");
   assert.deepEqual(view.notes.map((n) => [n.note_type, n.author_name, n.person_name, n.checklist_name?.startsWith("Brief") ?? null]), [["phone_call", "Sara Staff", null, null], ["internal_note", "Rami Recruiter", "Noor Candidate", true]]);
   assert.deepEqual(view.doneItemIds, [step]);
+  assert.deepEqual(view.cards, [{ id: cardId, person_name: "Noor Candidate" }], "the page offers only this request's people for a note");
   assert.equal(view.items.some((i) => i.id === gone), false);
   assert.equal(await checklist.requestNotes(s.owner, s.requestId), null);
   assert.equal(await checklist.requestNotes(s.staff, randomUUID()), null);

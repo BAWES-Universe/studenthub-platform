@@ -5,7 +5,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createRecruitChecklist, handleRecruitChecklist, type RecruitChecklistStore } from "../src/recruit/checklist-http.js";
 
 const ORIGIN = "https://studenthub.example.invalid", SESSION = "e".repeat(43);
-const REQ = "223e4567-e89b-42d3-a456-426614174000", ITEM = "523e4567-e89b-42d3-a456-426614174000", NOTE = "623e4567-e89b-42d3-a456-426614174000";
+const CARD = "723e4567-e89b-42d3-a456-426614174000", REQ = "223e4567-e89b-42d3-a456-426614174000", ITEM = "523e4567-e89b-42d3-a456-426614174000", NOTE = "623e4567-e89b-42d3-a456-426614174000";
 const calls: string[] = [];
 const items = [{ id: ITEM, name_en: "Brief <store>", name_ar: "إحاطة", required: true, sort_order: 1 }, { id: "b", name_en: "Optional", name_ar: null, required: false, sort_order: 2 }];
 const store: RecruitChecklistStore = {
@@ -17,7 +17,7 @@ const store: RecruitChecklistStore = {
   editNote: async (_p, id, type, text) => { calls.push(`edit:${id}:${type}:${text}`); return { kind: id === NOTE ? "updated" : "not_found" }; },
   removeNote: async (_p, id) => { calls.push(`unnote:${id}`); return { kind: id === NOTE ? "removed" : "not_found" }; },
   requestNotes: async (_p, r) => r !== REQ ? null : {
-    title: "Cashier <x>", items, doneItemIds: [ITEM],
+    title: "Cashier <x>", items, doneItemIds: [ITEM], cards: [{ id: CARD, person_name: "Huda <h>" }, { id: "c2", person_name: null }],
     notes: [{ id: NOTE, card_id: null, person_name: "Noor <b>", checklist_item_id: ITEM, checklist_name: "Brief <store>", note_type: "phone_call", note_text: "Line one\n<script>", author_name: "Sara", created_at: "2026-11-17T10:00:00.000Z", updated_at: "2026-11-17T11:00:00.000Z" }],
   },
 };
@@ -74,6 +74,10 @@ test("REC2B_HTTP_PAGE pages escape names and notes; forms drop blank fields and 
   const added = await call(`/recruit/staff/requests/${REQ}/notes`, form("type=meeting&text=Met+them&checklistItemId=&cardId="));
   assert.deepEqual([added.status, added.headers.location], [303, `/recruit/staff/requests/${REQ}/notes`]);
   assert.deepEqual(calls, [`note:${REQ}:${JSON.stringify({ type: "meeting", text: "Met them", checklistItemId: null, cardId: null })}`]);
+  for (const text of ['<label for="cardId">Person</label>', `<option value="${CARD}">Huda &lt;h&gt;</option>`, "Unnamed person", "The whole request"]) assert.ok(page.body.includes(text), `the person selector offers the request's people: ${text}`);
+  calls.length = 0;
+  const aboutOne = await call(`/recruit/staff/requests/${REQ}/notes`, form(`type=phone_call&text=Called&checklistItemId=&cardId=${CARD}`));
+  assert.deepEqual([aboutOne.status, calls], [303, [`note:${REQ}:${JSON.stringify({ type: "phone_call", text: "Called", checklistItemId: null, cardId: CARD })}`]], "a note about one person keeps its card");
   const removed = await call(`/recruit/staff/notes/${NOTE}/remove`, form(`requestId=${REQ}`));
   assert.deepEqual([removed.status, removed.headers.location], [303, `/recruit/staff/requests/${REQ}/notes`]);
   const created = await call("/recruit/admin/checklist/create", form("nameEn=Call&nameAr=&required=on&sortOrder=4"));

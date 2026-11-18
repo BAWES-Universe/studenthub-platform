@@ -22,13 +22,13 @@ export interface RecruitChecklistStore {
   editNote(principalId: string, noteId: string, type: NoteType, text: string): Promise<{ kind: "created"; noteId: string } | { kind: "updated" | "removed" | "not_found" | "item_not_found" | "card_not_found" }>;
   removeNote(principalId: string, noteId: string): Promise<{ kind: "created"; noteId: string } | { kind: "updated" | "removed" | "not_found" | "item_not_found" | "card_not_found" }>;
   requestNotes(principalId: string, requestId: string): Promise<{
-    title: string; items: readonly ChecklistItemRow[]; doneItemIds: readonly string[];
+    title: string; items: readonly ChecklistItemRow[]; doneItemIds: readonly string[]; cards: readonly { id: string; person_name: string | null }[];
     notes: readonly { id: string; card_id: string | null; person_name: string | null; checklist_item_id: string | null; checklist_name: string | null; note_type: NoteType; note_text: string; author_name: string | null; created_at: string | Date; updated_at: string | Date }[];
   } | null>;
 }
 
 export interface NoteView { readonly noteId: string; readonly type: NoteType; readonly text: string; readonly cardId: string | null; readonly personName: string | null; readonly checklistItemId: string | null; readonly checklistName: string | null; readonly author: string | null; readonly createdAt: string; readonly edited: boolean }
-export interface RequestNotesBody { readonly requestId: string; readonly title: string; readonly checklist: readonly ChecklistProgress[]; readonly requiredRemaining: number; readonly notes: readonly NoteView[] }
+export interface RequestNotesBody { readonly requestId: string; readonly title: string; readonly checklist: readonly ChecklistProgress[]; readonly requiredRemaining: number; readonly notes: readonly NoteView[]; readonly cards: readonly { readonly cardId: string; readonly name: string | null }[] }
 export interface ChecklistItemView { readonly itemId: string; readonly nameEn: string; readonly nameAr: string | null; readonly required: boolean; readonly sortOrder: number }
 
 export interface RecruitChecklist {
@@ -87,6 +87,7 @@ export function createRecruitChecklist(p: { sessions: Pick<SessionStore, "get">;
       const progress = checklistProgress(r.items, new Set(r.doneItemIds));
       return { status: 200, body: {
         requestId: requestId.toLowerCase(), title: r.title, checklist: progress.steps, requiredRemaining: progress.requiredRemaining,
+        cards: r.cards.map((c) => ({ cardId: c.id, name: c.person_name })),
         notes: r.notes.map((n) => ({ noteId: n.id, type: n.note_type, text: n.note_text, cardId: n.card_id, personName: n.person_name, checklistItemId: n.checklist_item_id, checklistName: n.checklist_name, author: n.author_name, createdAt: iso(n.created_at), edited: iso(n.updated_at) !== iso(n.created_at) })),
       } };
     },
@@ -124,7 +125,8 @@ export function renderChecklistAdmin(items: readonly ChecklistItemView[]): strin
   return `<main id="main" class="profile-main"><h1>Request checklist<span class="accent">.</span></h1>${rows ? `<ol>${rows}</ol>` : "<p>No steps yet.</p>"}<h2>Add a step</h2><form method="post" action="/recruit/admin/checklist/create">${fields()} <button class="button primary" type="submit">Add</button></form></main>`;
 }
 
-export function renderRequestNotes(body: RequestNotesBody, cards: readonly { cardId: string; name: string | null }[] = []): string {
+export function renderRequestNotes(body: RequestNotesBody): string {
+  const cards = body.cards;
   const steps = body.checklist.map((s) => `<li>${s.done ? "✓" : "○"} ${html(s.nameEn)}${s.nameAr ? ` <span dir="rtl" lang="ar">${html(s.nameAr)}</span>` : ""}${s.required ? " (required)" : ""}</li>`).join("");
   const notes = body.notes.map((n) => `<li><p><strong>${html(TYPE_LABEL[n.type])}</strong>${n.checklistName ? ` · ${html(n.checklistName)}` : ""}${n.personName ? ` · ${html(n.personName)}` : ""} · <time datetime="${html(n.createdAt)}">${html(when(n.createdAt))}</time>${n.author ? ` by ${html(n.author)}` : ""}${n.edited ? " (edited)" : ""}</p><p style="white-space:pre-wrap">${html(n.text)}</p><form method="post" action="/recruit/staff/notes/${html(n.noteId)}/remove"><input type="hidden" name="requestId" value="${html(body.requestId)}"><button class="button" type="submit">Remove</button></form></li>`).join("");
   const select = (name: string, options: readonly [string, string][], blank: string) => `<select id="${name}" name="${name}"><option value="">${html(blank)}</option>${options.map(([v, l]) => `<option value="${html(v)}">${html(l)}</option>`).join("")}</select>`;

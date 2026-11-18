@@ -33,6 +33,8 @@ export interface RecruitPipelineStoreOptions {
   readonly assignDecision: (rows: readonly Grant[]) => boolean;
   readonly leadDecision: (rows: readonly Grant[]) => boolean;
   readonly recruiterEligible: (rows: readonly Grant[]) => boolean;
+  /** Who can be suggested to a request: a principal holding a candidate grant (candidate:self). */
+  readonly candidateDecision: (rows: readonly Grant[]) => boolean;
   readonly authority: (principalId: string, assignedRecruiterId: string | null, isLead: boolean) => boolean;
   readonly transitionAllowed: (from: Stage, to: Stage) => boolean;
   readonly acceptsCards: (status: RequestStatus) => boolean;
@@ -135,9 +137,9 @@ export class PostgresRecruitPipelineStore {
       if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead)) return { rollback: { kind: "not_found" } };
       if (!this.options.acceptsCards(request.status)) return { rollback: { kind: "request_not_open" } };
       const exists = subject.column === "person_principal_id"
-        ? await c.query("SELECT 1 FROM principals WHERE id = $1::text FOR SHARE", [subject.id])
-        : await c.query("SELECT 1 FROM recruit_fulltimers WHERE id = $1::uuid AND archived_at IS NULL FOR SHARE", [subject.id]);
-      if (!exists.rowCount) return { rollback: { kind: "not_found" } };
+        ? (await c.query("SELECT 1 FROM principals WHERE id = $1::text FOR SHARE", [subject.id])).rowCount === 1 && this.options.candidateDecision(await this.#grants(c, subject.id, true))
+        : (await c.query("SELECT 1 FROM recruit_fulltimers WHERE id = $1::uuid AND archived_at IS NULL FOR SHARE", [subject.id])).rowCount === 1;
+      if (!exists) return { rollback: { kind: "not_found" } };
       const cardId = randomUUID();
       const inserted = subject.column === "person_principal_id"
         ? await c.query("INSERT INTO recruit_pipeline_cards(id, request_id, person_principal_id, stage) VALUES($1::uuid, $2::uuid, $3::text, 'suggested') ON CONFLICT (request_id, person_principal_id) DO NOTHING", [cardId, requestId, subject.id])

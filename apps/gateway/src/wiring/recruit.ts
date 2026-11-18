@@ -46,6 +46,7 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
     assignDecision: (rows) => pipelineAssignDecision(rows, operators),
     leadDecision: (rows) => pipelineLeadDecision(rows, operators),
     recruiterEligible: (rows) => pipelineRecruiterEligible(rows, operators),
+    candidateDecision: jobCandidateDecision,
     authority: pipelineAuthority,
     transitionAllowed: pipelineTransitionAllowed,
     acceptsCards: requestAcceptsCards,
@@ -64,6 +65,7 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
     transitionAllowed: invitationTransitionAllowed,
     acceptCardEffect,
     requestStatusAfter: requestStatusAfterPipeline,
+    candidateDecision: jobCandidateDecision,
     outbox: invitationOutbox,
   });
   const interviews = new PostgresRecruitInterviewsStore({

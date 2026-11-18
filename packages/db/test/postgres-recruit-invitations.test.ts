@@ -6,7 +6,7 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitInvitationsStore, PostgresRecruitPipelineStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
 import {
-  acceptCardEffect, invitationOutbox, invitationTransitionAllowed, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed,
+jobCandidateDecision,   acceptCardEffect, invitationOutbox, invitationTransitionAllowed, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed,
   recruitNotesDecision, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision,
 } from "../../recruit/src/index.js";
 
@@ -27,13 +27,13 @@ before(async () => {
     transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed,
   });
   pipeline = new PostgresRecruitPipelineStore({
-    pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS),
+    pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
     authority: pipelineAuthority, transitionAllowed: pipelineTransitionAllowed, acceptsCards: requestAcceptsCards, requestStatusAfter: requestStatusAfterPipeline,
     placement: { placeFromRecruit: async () => ({ kind: "refused", code: "work_unavailable" }) }, operatorOrgIds: OPS,
   });
   invitations = new PostgresRecruitInvitationsStore({
     pool, leadDecision: (r) => pipelineLeadDecision(r, OPS), staffDecision: (r) => recruitNotesDecision(r, OPS), authority: pipelineAuthority, acceptsCards: requestAcceptsCards,
-    transitionAllowed: invitationTransitionAllowed, acceptCardEffect, requestStatusAfter: requestStatusAfterPipeline, outbox: invitationOutbox,
+    transitionAllowed: invitationTransitionAllowed, acceptCardEffect, requestStatusAfter: requestStatusAfterPipeline, candidateDecision: jobCandidateDecision, outbox: invitationOutbox,
   });
 });
 after(async () => pool.end());
@@ -41,7 +41,8 @@ after(async () => pool.end());
 async function person(grants: { orgId: string; role: string; scope: "self" | "subtree" }[] = [], displayName?: string) {
   const id = `rec4-person-${randomUUID()}`;
   await authz.registerPrincipal(createPrincipal({ id, pbuuids: [], email: `${id}@example.invalid`, ...(displayName ? { displayName } : {}) }));
-  if (grants.length) await authz.grantMany(id, grants);
+  // A person with no other grant is a candidate (candidate:self): only candidates are suggested or invited.
+  await authz.grantMany(id, grants.length ? grants : [{ orgId: OPS_ORG, role: "candidate", scope: "self" }]);
   return id;
 }
 async function setup() {
@@ -65,6 +66,7 @@ test("REC4_INVITE the assigned recruiter invites once per person; others are ref
   assert.deepEqual(await invitations.invite(s.other, s.requestId, noor), { kind: "not_found" }, "only the assigned recruiter or a lead");
   assert.deepEqual(await invitations.invite(s.owner, s.requestId, noor), { kind: "not_found" });
   assert.deepEqual(await invitations.invite(s.recruiter, s.requestId, "nobody"), { kind: "not_found" });
+  for (const account of [s.owner, s.staff]) assert.deepEqual(await invitations.invite(s.recruiter, s.requestId, account), { kind: "not_found" }, "only candidates are invited; employer and staff accounts are not");
   const sent = await invitations.invite(s.recruiter, s.requestId, noor);
   assert.equal(sent.kind, "invited");
   const id = (sent as { invitationId: string }).invitationId;

@@ -6,7 +6,7 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitPipelineStore, PostgresRecruitRequestsStore, runMigrations, type RecruitPlacementRequest, type RecruitPlacementResult } from "@studenthub/db";
 import {
-  pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision,
+jobCandidateDecision,   pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision,
   requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision, type PipelineStage,
 } from "../../recruit/src/index.js";
 
@@ -29,7 +29,7 @@ before(async () => {
     transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed,
   });
   pipeline = new PostgresRecruitPipelineStore({
-    pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS),
+    pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
     authority: pipelineAuthority, transitionAllowed: pipelineTransitionAllowed, acceptsCards: requestAcceptsCards, requestStatusAfter: requestStatusAfterPipeline,
     placement: { placeFromRecruit: async (_actor, r) => { placements.push(r); return placementAnswer(r); } }, operatorOrgIds: OPS,
   });
@@ -39,7 +39,8 @@ after(async () => pool.end());
 async function person(grants: { orgId: string; role: string; scope: "self" | "subtree" }[] = [], displayName?: string) {
   const id = `rec2-person-${randomUUID()}`;
   await authz.registerPrincipal(createPrincipal({ id, pbuuids: [], email: `${id}@example.invalid`, ...(displayName ? { displayName } : {}) }));
-  if (grants.length) await authz.grantMany(id, grants);
+  // A person with no other grant is a candidate (candidate:self): only candidates are suggested or invited.
+  await authz.grantMany(id, grants.length ? grants : [{ orgId: OPS_ORG, role: "candidate", scope: "self" }]);
   return id;
 }
 async function setup(headcount = 2, period: { periodStart: string; periodEnd: string } | null = null) {
@@ -96,6 +97,7 @@ test("REC2_CARD one card per person per request, only on open or filling request
   await add(s.recruiter, s.requestId);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM recruit_request_events WHERE request_id = $1 AND to_status = 'filling'", [s.requestId])).rows[0].n, 1, "a second card leaves filling alone");
   assert.deepEqual(await pipeline.addCard(s.recruiter, s.requestId, "rec2-nobody"), { kind: "not_found" });
+  for (const account of [s.owner, s.staff]) assert.deepEqual(await pipeline.addCard(s.recruiter, s.requestId, account), { kind: "not_found" }, "only candidates are suggested; employer and staff accounts are not");
   await requests.transition(s.owner, s.requestId, "closed", "fulfilled");
   assert.deepEqual(await pipeline.addCard(s.recruiter, s.requestId, await person()), { kind: "request_not_open" });
   await assert.rejects(pool.query("INSERT INTO recruit_pipeline_cards(id, request_id, person_principal_id, stage) VALUES($1, $2, $3, 'hired')", [randomUUID(), s.requestId, who]), /check/i);
