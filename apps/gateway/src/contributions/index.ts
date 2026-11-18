@@ -2,6 +2,7 @@ import type { ProfileCopyKey, ProfileLanguage } from "../ui/profile-copy.js";
 import type { BrowserLoginApplication } from "../web-ui.js";
 import { ORGANIZATIONS_CONTRIBUTION } from "./organizations.js";
 import { PROFILE_CONTRIBUTION } from "./profile.js";
+import { RECRUIT_CONTRIBUTION } from "./recruit.js";
 import { ACCESS_CONTRIBUTION } from "./access.js";
 
 export interface NavEntry {
@@ -35,4 +36,4 @@ export function mergeContributions(inputs: readonly Contributions[]): Contributi
   return { navigation, profileRows };
 }
 
-export const CONTRIBUTIONS = mergeContributions([PROFILE_CONTRIBUTION, ORGANIZATIONS_CONTRIBUTION, ACCESS_CONTRIBUTION]);
+export const CONTRIBUTIONS = mergeContributions([PROFILE_CONTRIBUTION, ORGANIZATIONS_CONTRIBUTION, ACCESS_CONTRIBUTION, RECRUIT_CONTRIBUTION]);
