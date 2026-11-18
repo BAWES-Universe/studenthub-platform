@@ -97,9 +97,8 @@ export class PostgresRecruitRequestsStore {
   }
 
   async #allowed(c: Client, principalId: string, orgId: string, decisions: readonly Decision[], lock = false): Promise<boolean[]> {
-    // A write holds the organization tree lock (shared: writes don't serialize each other) before it reads ancestry,
-    // so a reparent that would change who has authority waits until the write commits, as Access's grant store does.
-    if (lock) await c.query("SELECT pg_advisory_xact_lock_shared(hashtext('studenthub:organizations:tree'))");
+    // A write already holds the organization tree lock (taken first in #transaction), so the ancestry read below
+    // cannot go stale before it commits, as in Access's grant store.
     // A missing or deleted organization answers exactly as a refused one.
     if (!await organizationLive(c, orgId, lock)) return decisions.map(() => false);
     const [grants, ancestors] = await Promise.all([this.#grants(c, principalId, lock), this.#ancestors(c, orgId)]);
@@ -111,6 +110,10 @@ export class PostgresRecruitRequestsStore {
     let broken = false;
     try {
       await c.query("BEGIN");
+      // Every write here takes the organization tree lock (shared) first, before any row lock: a reparent or an Access
+      // grant change (which hold it exclusively, then lock rows) waits for the write, and the lock order is the same
+      // everywhere, so a write that authorises through ancestry never waits on the tree while holding a request row.
+      await c.query("SELECT pg_advisory_xact_lock_shared(hashtext('studenthub:organizations:tree'))");
       const result = await work(c);
       if (typeof result === "object" && result !== null && "rollback" in result) {
         await c.query("ROLLBACK");

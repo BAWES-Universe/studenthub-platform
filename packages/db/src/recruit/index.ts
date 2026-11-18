@@ -14,3 +14,5 @@ export type { RecruitApplyResult, RecruitDecideResult, RecruitJobApplicationReco
 export { PostgresRecruitPeopleSearchStore } from "./postgres-recruit-people-search-store.js";
 export type { RecruitPeopleSearchFacetRow, RecruitPeopleSearchOptions, RecruitPeopleSearchQuery, RecruitPeopleSearchRow } from "./postgres-recruit-people-search-store.js";
 export type { RecruitChecklistItemInput, RecruitChecklistItemRecord, RecruitChecklistStoreOptions, RecruitNoteInput, RecruitNoteRecord, RecruitNoteWriteResult } from "./postgres-recruit-checklist-store.js";
+export { PostgresRecruitRequestApplicationsStore } from "./postgres-recruit-request-applications-store.js";
+export type { RecruitOpenRequestQuery, RecruitOpenRequestRecord, RecruitRequestApplicationDecideResult, RecruitRequestApplicationRecord, RecruitRequestApplicationsStoreOptions, RecruitRequestApplyResult } from "./postgres-recruit-request-applications-store.js";
