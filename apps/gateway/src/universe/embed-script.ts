@@ -168,6 +168,9 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
       hosts.forEach(function (origin) {
         window.parent.postMessage({ type: "studenthub.embed.identity-request", v: 1, challenge: reply.challenge }, origin);
       });
+      // Two status replies can each start a challenge in one generation: the older
+      // challenge's timer must not clear the newer pending one.
+      if (pendingTimer) clearTimeout(pendingTimer);
       pendingTimer = setTimeout(function () {
         if (pending && pending.generation === g) { pending = null; clearProfile(); show("needs_universe"); }
       }, 5000);

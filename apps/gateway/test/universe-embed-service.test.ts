@@ -532,8 +532,16 @@ test('E2 a store failure while completing sign-in answers 503 and leaves no sess
   const request = h.rig.provider.authorizationRequests.at(-1)!;
   const sessionsBefore = h.rig.sessions.records.size;
   h.store.completeHandoff = async () => { throw new Error('database down'); };
-  const callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
+  const logged: string[] = [];
+  const original = console.error;
+  console.error = (line: unknown) => { logged.push(String(line)); };
+  let callback;
+  try {
+    callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
+  } finally { console.error = original; }
   assert.equal(callback.status, 503);
+  // The outage is logged by route and error class only: no state, code, cookie or message text.
+  assert.deepEqual(logged.map(line => JSON.parse(line)), [{ event: 'universe_embed_unavailable', route: 'GET /login/callback', error: 'Error' }]);
   assert.equal(callback.headers['set-cookie'], undefined);
   assert.equal(h.rig.sessions.records.size, sessionsBefore, 'the new session was removed');
 });
@@ -950,6 +958,27 @@ test('E2 script: an older status reply landing after a newer one changes nothing
   rig.routes.set('GET /universe/embed/profile', async () => ({ state: 'populated', fields: [{ key: 'displayName', value: 'Synthetic', source: 'imported_snapshot' }] }));
   await rig.attest();
   assert.equal(rig.shown(), true, 'the host reply for the newer challenge is still accepted');
+});
+
+test('E2 script: an older challenge\'s timer never clears a newer pending challenge', async () => {
+  const rig = scriptRig();
+  const releases: Array<(value: unknown) => void> = [];
+  let n = 0;
+  rig.routes.set('GET /universe/embed/status', async () => ({ state: 'needs_universe' }));
+  rig.routes.set('POST /universe/embed/challenge', () => new Promise(resolve => { releases.push(resolve); }));
+  rig.routes.set('POST /universe/embed/identity', async () => ({ state: 'ready', leaseSeconds: 100, renewAfterSeconds: 40 }));
+  rig.routes.set('GET /universe/embed/profile', async () => ({ state: 'populated', fields: [{ key: 'displayName', value: 'Synthetic', source: 'imported_snapshot' }] }));
+  await rig.start();
+  await rig.advance(60_000); // the 60 s re-check starts a second challenge in the same generation
+  assert.equal(releases.length, 2);
+  releases[0]!({ challenge: `c${++n}` });
+  await rig.settle();
+  await rig.advance(2_000);
+  releases[1]!({ challenge: `c${++n}` });
+  await rig.settle();
+  await rig.advance(3_500); // past the first challenge's 5 s timer, within the second's
+  await rig.attest();
+  assert.equal(rig.shown(), true, 'the host reply for the newer challenge is accepted');
 });
 
 test('E2 script: while waiting, sign-in can be started again', async () => {
