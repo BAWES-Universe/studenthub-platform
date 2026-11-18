@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@studenthub/login-contract";
 import {
   GRANT_TOKEN_KEYS,
+  mediaType,
   REASON_MAX,
   grantCatalogue,
   mayOpenAccessAdmin,
@@ -103,7 +104,7 @@ export function sessionCookie(header: string | undefined): string | undefined {
 }
 
 export async function readForm(req: IncomingMessage): Promise<Record<string, string> | undefined> {
-  if (!req.headers["content-type"]?.startsWith("application/x-www-form-urlencoded") ||
+  if (mediaType(req.headers["content-type"]) !== "application/x-www-form-urlencoded" ||
     Number(req.headers["content-length"]) > BODY_LIMIT) {
     req.resume();
     return undefined;

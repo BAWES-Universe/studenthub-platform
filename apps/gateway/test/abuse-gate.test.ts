@@ -89,6 +89,9 @@ test("A8_LIMITS a person past the write limit gets a 429 page with Retry-After, 
   assert.equal((await post("s")).status, 404, "another person is not limited");
   const upload = await http("/definitely-unknown", { method: "POST", headers: { ...cookieFor("p"), accept: "application/json", "content-type": "multipart/form-data; boundary=x" }, body: "--x--" });
   assert.equal(upload.status, 404, "uploads have their own count, even while writes are limited");
+  const pdf = await http("/definitely-unknown", { method: "POST", headers: { ...cookieFor("p"), accept: "application/json", "content-type": " Application/PDF; charset=binary" }, body: "%PDF" });
+  assert.equal(pdf.status, 404, "a parameterized PDF counts as an upload, not a write");
+  assert.equal(w.counts.get(`person-1|upload|${1_800_000_000 - (1_800_000_000 % PERSON_LIMITS.upload.windowSeconds)}`), 2);
   w.tick(600);
   assert.equal((await post("p")).status, 404, "the next window starts afresh");
 });
@@ -163,4 +166,13 @@ test("A8_BLOCKS a hung block-list read is bounded and released, so later request
   started = Date.now();
   assert.equal((await http("/")).status, 200);
   assert.ok(Date.now() - started < 500, "a failed read is not retried at once");
+});
+
+test("A8_BLOCKS a form is read by its media type, whatever the parameters or case", async (t) => {
+  const w = world();
+  const http = await serve(t, w.ports);
+  const response = await http("/admin/ip-blocks", { method: "POST", body: new URLSearchParams({ action: "block", cidr: "198.51.100.0/24", reason: "Credential stuffing" }).toString(),
+    headers: { ...cookieFor("a"), origin: ORIGIN, "content-type": " Application/X-WWW-Form-Urlencoded ; charset=UTF-8" } });
+  assert.equal(response.status, 303);
+  assert.deepEqual(w.changes, ["block:198.51.100.0/24:admin-1"]);
 });

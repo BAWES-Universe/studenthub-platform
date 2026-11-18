@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  PERSON_LIMITS, blockListOf, cidrText, clientAddress, decideLimit, limitKind, listed, mayManageBlocks, normalizeAddress,
+  PERSON_LIMITS, blockListOf, cidrText, clientAddress, decideLimit, limitKind, listed, mayManageBlocks, mediaType, normalizeAddress,
   parseBlockChange, parseCidr, parseTrustedProxies, windowStart,
 } from "../src/index.js";
 
@@ -78,4 +78,16 @@ test("A8_BLOCKS an IPv6 rule never matches an IPv4 address, nor an IPv4 rule an 
   assert.equal(listed(v4, "::1"), false);
   assert.equal(listed(v4, "203.0.113.9"), true);
   assert.equal(listed(v4, "not an address"), false);
+});
+
+test("A8_LIMITS uploads are recognized by media type whatever the parameters, spacing or case", () => {
+  for (const type of ["application/pdf; charset=binary", " Application/PDF ", "APPLICATION/OCTET-STREAM", "  application/octet-stream;x=1",
+    "Multipart/Form-Data; boundary=x", "IMAGE/PNG", " image/webp ; q=1", ["application/pdf"]] as const) {
+    assert.equal(limitKind("POST", type), "upload", String(type));
+  }
+  for (const type of ["application/pdfx", "application/x-www-form-urlencoded; charset=utf-8", "text/plain", "", "imagex/png", "application/json"]) {
+    assert.equal(limitKind("POST", type), "write", type);
+  }
+  assert.equal(mediaType(" Application/X-WWW-Form-Urlencoded ; charset=UTF-8"), "application/x-www-form-urlencoded");
+  assert.equal(mediaType(undefined), "");
 });

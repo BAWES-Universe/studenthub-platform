@@ -27,12 +27,22 @@ export const PERSON_LIMITS: Readonly<Record<LimitKind, Limit>> = Object.freeze({
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+const UPLOAD_TYPES = new Set(["multipart/form-data", "application/octet-stream", "application/pdf"]);
+
+/**
+ * The media type of a Content-Type header, without parameters, trimmed and
+ * lower-cased: " Application/PDF ; charset=binary" is "application/pdf".
+ */
+export function mediaType(contentType: string | readonly string[] | undefined): string {
+  const value = Array.isArray(contentType) ? contentType[0] ?? "" : (contentType as string | undefined) ?? "";
+  return value.split(";", 1)[0]!.trim().toLowerCase();
+}
+
 /** Which limit a request counts against, or undefined for a read. */
-export function limitKind(method: string | undefined, contentType: string | undefined): LimitKind | undefined {
+export function limitKind(method: string | undefined, contentType: string | readonly string[] | undefined): LimitKind | undefined {
   if (!method || !WRITE_METHODS.has(method.toUpperCase())) return undefined;
-  const type = (contentType ?? "").toLowerCase();
-  return type.startsWith("multipart/form-data") || type.startsWith("application/octet-stream") || type.startsWith("image/") || type === "application/pdf"
-    ? "upload" : "write";
+  const type = mediaType(contentType);
+  return UPLOAD_TYPES.has(type) || type.startsWith("image/") ? "upload" : "write";
 }
 
 /** The start of the fixed window `now` falls in, in epoch seconds. */
