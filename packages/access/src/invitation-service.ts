@@ -77,6 +77,8 @@ export interface InvitationStore {
   }): Promise<{ readonly kind: "revoked" } | Refused<R | "not_found">>;
   accept(input: {
     readonly tokenHash: string; readonly principalId: string; readonly now: Date; readonly reason: string; readonly storeReason?: string;
+    /** Read again once the store holds its locks; `now` is only the starting value. */
+    readonly clock?: () => Date;
     readonly decide: (snapshot: AcceptSnapshot) => { readonly kind: "accept" } | { readonly kind: "invalid" } | { readonly kind: "wrong_address" };
   }): Promise<{ readonly kind: "accepted" | "already_held"; readonly orgId: string; readonly role: string; readonly scope: GrantScope; readonly storeId?: string } | { readonly kind: "invalid" } | { readonly kind: "wrong_address" }>;
   removeMember<R extends string>(input: {
@@ -160,9 +162,10 @@ export function createCompanyTeamService(options: {
       });
       if (result.kind === "refused") return result;
       const link = new URL(`/invitations/${token}`, origin).href;
-      const context = await store.context(callerId, orgId);
+      // The invitation is saved: whatever happens to the mail, the owner gets the link.
       let mailed = false;
       try {
+        const context = await store.context(callerId, orgId);
         mailed = await mailer.send({ to: email, organizationName: context.organization?.name ?? "", role: input.role, link, expiresAt: result.expiresAt });
       } catch {
         mailed = false;
@@ -199,7 +202,7 @@ export function createCompanyTeamService(options: {
     async accept(token, principalId) {
       if (!isInvitationTokenShape(token)) return { kind: "invalid" };
       const outcome = await store.accept({
-        tokenHash: hashInvitationToken(token), principalId, now: now(), reason: INVITATION_ACCEPTED_REASON, storeReason: STORE_ACCESS_GRANTED_REASON, decide: decideAccept,
+        tokenHash: hashInvitationToken(token), principalId, now: now(), clock: now, reason: INVITATION_ACCEPTED_REASON, storeReason: STORE_ACCESS_GRANTED_REASON, decide: decideAccept,
       });
       return outcome.kind === "accepted" || outcome.kind === "already_held"
         ? { kind: outcome.kind, orgId: outcome.orgId, role: outcome.role, ...(outcome.storeId ? { storeId: outcome.storeId } : {}) } : outcome;

@@ -88,7 +88,12 @@ export async function handleStaffView(
       page(400, "Nothing was started.", "Give a reason of 3 to 500 characters.");
       return true;
     }
-    if (!allowed) {
+    // Read again after the form: a pause or a removed grant during the read counts.
+    const stillCaller = (await ports.sessions.get(session!))?.personId === caller;
+    const grantsNow = stillCaller ? await ports.reads.callerGrants(caller) : [];
+    const allowedNow = stillCaller && mayOpenAccessAdmin(grantsNow, ports.operatorOrgIds)
+      && mayViewAs(caller, targetId, grantsNow, await ports.views.grantsOf(targetId), ports.operatorOrgIds);
+    if (!allowed || !allowedNow) {
       page(403, "Nothing was started.", caller === targetId ? "You can’t view your own account as staff." : "Only an administrator can view the account of someone who works for StudentHub.");
       return true;
     }
@@ -104,13 +109,17 @@ export async function handleStaffView(
       ? `<form method="post" action="${e(here)}"><input type="hidden" name="targetPrincipalId" value="${e(targetId)}"><label for="view-reason">Why do you need to see this account? (kept with the view)</label><textarea id="view-reason" name="reason" minlength="3" maxlength="${REASON_MAX}" required></textarea><button class="button primary" type="submit">View as ${e(name)} for 15 minutes</button></form>`
       : "";
     page(200, `View ${name}’s account`, allowed
-      ? `You’ll see ${name}’s profile as they see it, read-only, for 15 minutes. ${name} will see that StudentHub staff viewed their account on today’s date. Nothing can be changed from the view.`
+      ? `You’ll see ${name}’s profile as they see it, read-only, for 15 minutes. ${name} will see that StudentHub staff opened a view of their account on today’s date. Nothing can be changed from the view.`
       : caller === targetId ? "You can’t view your own account as staff." : "Only an administrator can view the account of someone who works for StudentHub.", form);
     return true;
   }
   const document = ports.render ? await ports.render(targetId).catch(() => undefined) : undefined;
   if (!document) {
     page(503, "This profile couldn’t be loaded.", "Try again in a moment. The view stays open until it ends.");
+    return true;
+  }
+  if (!viewOpen(open, (ports.now ?? (() => new Date()))())) {
+    page(200, "This view has ended.", "Views last 15 minutes. Start a new one from this person’s access page if you still need it.");
     return true;
   }
   const banner = `<section class="notice context-notice" role="status"><strong>Viewing as ${e(name)}, read-only, until ${e(timeText(open.expiresAt))}.</strong> <a class="text-link" href="${e(back)}">End and go back</a></section>`;

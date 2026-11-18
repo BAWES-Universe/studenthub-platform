@@ -98,11 +98,21 @@ export class PostgresAccessRegistrationsStore {
   }
 
   async queue() {
-    const [pending, decided] = await Promise.all([
-      this.#pool.query<Row>(`SELECT ${COLUMNS} FROM ${FROM} WHERE r.status = 'pending' ORDER BY r.submitted_at, r.id LIMIT 100`),
-      this.#pool.query<Row>(`SELECT ${COLUMNS} FROM ${FROM} WHERE r.status <> 'pending' ORDER BY r.reviewed_at DESC, r.id LIMIT 25`),
-    ]);
-    return { pending: pending.rows.map(registration), decided: decided.rows.map(registration) };
+    // Both sections from one snapshot, so a registration decided between the reads is never in both.
+    const client = await this.#pool.connect();
+    let broken = false;
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const pending = await client.query<Row>(`SELECT ${COLUMNS} FROM ${FROM} WHERE r.status = 'pending' ORDER BY r.submitted_at, r.id LIMIT 100`);
+      const decided = await client.query<Row>(`SELECT ${COLUMNS} FROM ${FROM} WHERE r.status <> 'pending' ORDER BY r.reviewed_at DESC, r.id LIMIT 25`);
+      await client.query("COMMIT");
+      return { pending: pending.rows.map(registration), decided: decided.rows.map(registration) };
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch { broken = true; }
+      throw error;
+    } finally {
+      client.release(broken);
+    }
   }
 
   /**

@@ -322,7 +322,7 @@ export async function handleAccess(
   if (isOwn) {
     if (req.method !== "GET") return false;
     const [own, viewed] = await Promise.all([ports.reads.ownGrants(caller), ports.views ? ports.views.viewedOn(caller) : Promise.resolve([])]);
-    write(200, "Your access", renderOwnAccess(own, viewed.length ? `<section><h2>Staff views</h2><ul>${viewed.map((date) => `<li>StudentHub staff viewed your account on ${escapeHtml(date.slice(0, 10))}</li>`).join("")}</ul></section>` : ""));
+    write(200, "Your access", renderOwnAccess(own, viewed.length ? `<section><h2>Staff views</h2><ul>${viewed.map((date) => `<li>StudentHub staff opened a view of your account on ${escapeHtml(date.slice(0, 10))}</li>`).join("")}</ul></section>` : ""));
     return true;
   }
 

@@ -131,3 +131,20 @@ test("A2_SERVICE invite shows the link once, hands it to the mailer, and stores 
   assert.equal(await service.invitation("short"), null);
   assert.deepEqual(await service.accept("short", "p"), { kind: "invalid" });
 });
+
+test("A2_SERVICE a saved invitation still returns its link when the mail lookup fails", async () => {
+  const store = {
+    async context() { throw new Error("database went away"); },
+    async invite(input: Parameters<InvitationStore["invite"]>[0]) {
+      return { kind: "invited" as const, id: "11111111-1111-4111-8111-111111111111", expiresAt: new Date(input.now.getTime() + input.ttlMs).toISOString() };
+    },
+  } as unknown as InvitationStore;
+  const mailer = recordingInvitationMailer();
+  const service = createCompanyTeamService({ store, mailer, now: () => NOW, entropy: () => Buffer.alloc(32, 3) });
+  const result = await service.invite("owner-1", ACME, { email: "sara@example.com", role: "recruiter", scope: "self" }, "https://hub.example");
+  assert.equal(result.kind, "invited");
+  if (result.kind !== "invited") return;
+  assert.equal(result.link, `https://hub.example/invitations/${Buffer.alloc(32, 3).toString("base64url")}`);
+  assert.equal(result.mailed, false);
+  assert.deepEqual(mailer.sent, []);
+});

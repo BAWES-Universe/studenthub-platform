@@ -194,3 +194,27 @@ test("A2_TEAM_PAGE owners write, operator staff and admin read, anyone else gets
   assert.equal(await service().team(recruiter, acme), null);
   assert.equal(await service().team(owner, `a2-org-${randomUUID()}`), null);
 });
+
+test("A2_REPLAY a link that expires while acceptance waits on the company lock is refused", async () => {
+  const acme = await company();
+  const owner = await person(address(), [{ orgId: acme, role: "org-owner" }]);
+  const email = address();
+  const invitee = await person(email);
+  const token = await invite(owner, acme, email);
+  const saved = clock;
+  const holder = await pool.connect();
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5960))", [`access:org:${acme}`]);
+    const pending = service().accept(token, invitee);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    clock = new Date(saved.getTime() + 7 * 24 * 3600 * 1000);
+    await holder.query("COMMIT");
+    assert.deepEqual(await pending, { kind: "invalid" });
+  } finally {
+    clock = saved;
+    holder.release();
+  }
+  assert.deepEqual(await grantsOn(invitee, acme), []);
+  assert.deepEqual(await service().accept(token, invitee), { kind: "accepted", orgId: acme, role: "recruiter" }, "still live once the clock is back");
+});

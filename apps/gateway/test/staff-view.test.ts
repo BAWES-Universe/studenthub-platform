@@ -77,7 +77,7 @@ test("A9_VIEW staff start a 15 minute read-only view with a reason, and see the 
   w.tick(900_000);
   assert.match(await (await http("/admin/access/people/person-1/view", { headers: cookie("s") })).text(), /View as Dana Candidate for 15 minutes/, "the view ends after 15 minutes");
   const own = await (await http("/profile/access", { headers: cookie("p") })).text();
-  assert.match(own, /StudentHub staff viewed your account on 2026-11-17/);
+  assert.match(own, /StudentHub staff opened a view of your account on 2026-11-17/);
   assert.doesNotMatch(own, /Sam Staff|Support ticket/, "the person sees the date, not who or why");
 });
 
@@ -105,4 +105,22 @@ test("A9_VIEW the read-only document keeps text and drops every control", () => 
   assert.match(out, /<body><section>banner<\/section>/);
   assert.match(out, /<span>Edit<\/span>/);
   assert.doesNotMatch(out, /<form|<script|<a |<input|<button/);
+});
+
+test("A9_RULES a grant removed while the form is read starts nothing; a view that ends during the render shows nothing", async (t) => {
+  const w = world();
+  const http = await serve(t, { staffView: w.staffView, access: w.access, web: { origin: ORIGIN } });
+  const callerGrants = w.staffView.reads.callerGrants;
+  let calls = 0;
+  (w.staffView.reads as { callerGrants: typeof callerGrants }).callerGrants = async (id) => (id === "staff-1" && ++calls > 1 ? [] : callerGrants(id));
+  assert.equal((await start(http, "s")).status, 403);
+  assert.deepEqual(w.views, [], "nothing recorded");
+  (w.staffView.reads as { callerGrants: typeof callerGrants }).callerGrants = callerGrants;
+
+  assert.equal((await start(http, "s")).status, 303);
+  w.tick(899_000);
+  (w.staffView as { render: StaffViewPorts["render"] }).render = async () => { w.tick(2_000); return PROFILE; };
+  const html = await (await http("/admin/access/people/person-1/view", { headers: cookie("s") })).text();
+  assert.match(html, /This view has ended\./);
+  assert.doesNotMatch(html, /Phone ending 1234/);
 });

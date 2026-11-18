@@ -222,7 +222,7 @@ export async function handleCompanyTeam(
       if (outcome.kind === "invalid") write(404, "Invitation", simplePage("Invitation", INVITATION_DEAD_TEXT));
       else if (outcome.kind === "wrong_address") {
         write(403, "Invitation", simplePage("Invitation", `${INVITATION_WRONG_ADDRESS_TEXT}. Sign in with Universe under the address the invitation was sent to.`));
-      } else return redirect(res, "/profile/access");
+      } else return redirect(res, "storeId" in outcome && outcome.storeId ? "/workspace/my-stores" : "/profile/access");
       return true;
     } catch {
       if (!res.headersSent) write(503, "Invitation", simplePage("Invitation", REFUSAL_TEXT.unavailable));

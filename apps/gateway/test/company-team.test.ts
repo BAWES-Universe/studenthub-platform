@@ -242,3 +242,12 @@ test("A2_REMOVE the confirm step names the person; the last owner stays", async 
   assert.match(await last.text(), /last owner/);
   assert.equal(grants.some((grant) => grant.principalId === "owner-1"), true);
 });
+
+test("A4_ACCEPT a store-manager acceptance goes to My stores, where the store is", async (t) => {
+  const { ports } = world();
+  const team = { ...ports.team, accept: async () => ({ kind: "accepted" as const, orgId: "acme", role: "store-manager", storeId: "00000000-0000-4000-8000-000000000001" }) };
+  const http = await serve(t, { ...ports, team });
+  const accepted = await http.post(`/invitations/${"k".repeat(43)}/accept`, "invitee-1");
+  assert.equal(accepted.status, 303);
+  assert.equal(accepted.headers.get("location"), "/workspace/my-stores");
+});

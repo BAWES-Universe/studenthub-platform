@@ -166,12 +166,6 @@ export class PostgresAccessInvitationsStore {
   }): Promise<{ readonly kind: "invited"; readonly id: string; readonly expiresAt: string } | Refused<R>> {
     return this.#transaction(async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [`access:org:${input.orgId}`, ORG_LOCK_KEY]);
-      // An expired pending invitation for the same key gives way to the new one.
-      await client.query(
-        `UPDATE company_invitations SET revoked_at = $5, revoked_by = $6
-         WHERE org_id = $1 AND role = $2 AND invited_email_normalized = $3 AND store_id IS NOT DISTINCT FROM $7::uuid
-           AND used_at IS NULL AND revoked_at IS NULL AND expires_at <= $4`,
-        [input.orgId, input.role, input.email, input.now, input.now, input.callerId, input.storeId ?? null]);
       const callerGrants = await this.#grantsOf(client, input.callerId, true);
       const orgLive = await organizationLive(client, input.orgId, true);
       const ancestors = orgLive ? (await ancestorsOf(client, [input.orgId])).get(input.orgId) ?? [] : [];
@@ -182,6 +176,12 @@ export class PostgresAccessInvitationsStore {
       const store = await this.#store(client, input.storeId);
       const decision = input.decide({ callerGrants, orgLive, orgAncestors: ancestors, pendingCount: pending.rows[0]?.n ?? 0, duplicatePending: pending.rows[0]?.duplicate === true, store });
       if (decision.kind === "refused") return decision;
+      // Once the caller is allowed, an expired pending invitation for the same key gives way to the new one.
+      await client.query(
+        `UPDATE company_invitations SET revoked_at = $5, revoked_by = $6
+         WHERE org_id = $1 AND role = $2 AND invited_email_normalized = $3 AND store_id IS NOT DISTINCT FROM $7::uuid
+           AND used_at IS NULL AND revoked_at IS NULL AND expires_at <= $4`,
+        [input.orgId, input.role, input.email, input.now, input.now, input.callerId, input.storeId ?? null]);
       const id = randomUUID();
       const expiresAt = new Date(input.now.getTime() + input.ttlMs);
       await client.query(
@@ -218,6 +218,8 @@ export class PostgresAccessInvitationsStore {
    */
   async accept(input: {
     readonly tokenHash: string; readonly principalId: string; readonly now: Date; readonly reason: string;
+    /** Read again once the locks are held, so a link that expired while this waited is refused. */
+    readonly clock?: () => Date;
     readonly decide: (snapshot: {
       invitation: null | { orgId: string; role: string; scope: Scope; email: string; invitedBy: string; expiresAt: Date; usedAt: Date | null; revokedAt: Date | null; storeId: string | null };
       now: Date; orgLive: boolean; orgAncestors: readonly string[]; principalEmail: string | null; inviterGrants: readonly Held[]; store: StoreState;
@@ -241,15 +243,16 @@ export class PostgresAccessInvitationsStore {
       if (!principal.rowCount) return { kind: "invalid" };
       const inviterGrants = await this.#grantsOf(client, row.invited_by, true);
       const store = await this.#store(client, row.store_id);
+      const at = input.clock ? input.clock() : input.now;
       const decision = input.decide({
         invitation: { orgId: row.org_id, role: row.role, scope: row.scope, email: row.invited_email_normalized, invitedBy: row.invited_by, expiresAt: row.expires_at, usedAt: row.used_at, revokedAt: row.revoked_at, storeId: row.store_id },
-        now: input.now, orgLive, orgAncestors: ancestors, principalEmail: principal.rows[0]!.email, inviterGrants, store,
+        now: at, orgLive, orgAncestors: ancestors, principalEmail: principal.rows[0]!.email, inviterGrants, store,
       });
       if (decision.kind !== "accept") return decision;
       const used = await client.query(
         `UPDATE company_invitations SET used_at = $2, used_by = $3
          WHERE id = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2 RETURNING id`,
-        [head.id, input.now, input.principalId]);
+        [head.id, at, input.principalId]);
       if (!used.rowCount) return { kind: "invalid" };
       if (row.store_id) {
         // A4: the store grant is its own row, never a row of grants.
@@ -257,7 +260,7 @@ export class PostgresAccessInvitationsStore {
         if (held.rowCount) return { kind: "already_held", orgId: row.org_id, role: row.role, scope: row.scope, storeId: row.store_id };
         await client.query(
           `INSERT INTO store_manager_access (id, org_id, store_id, principal_id, granted_by, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-          [randomUUID(), row.org_id, row.store_id, input.principalId, row.invited_by, input.now]);
+          [randomUUID(), row.org_id, row.store_id, input.principalId, row.invited_by, at]);
         await client.query(
           `INSERT INTO access_grant_events (target_principal_id, org_id, role, scope, action, actor_principal_id, reason, store_id)
            VALUES ($1, $2, 'store-manager', 'store', 'grant', $3, $4, $5)`,
