@@ -1,0 +1,188 @@
+import { BlockList, isIP } from "node:net";
+import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
+import type { HeldGrant } from "./grant-catalogue.js";
+import { REASON_MAX, REASON_MIN } from "./grant-change.js";
+
+/**
+ * Access lane A8: per-person limits on writes and uploads, shared across the
+ * person's sessions, and an admin-managed block list of network addresses.
+ *
+ * The client address is the socket's peer. Forwarding headers are read only
+ * when that peer is one of the configured trusted proxies, and then from the
+ * right: the first address that is not itself a trusted proxy is the client.
+ */
+
+export type LimitKind = "write" | "upload";
+
+export interface Limit {
+  readonly max: number;
+  readonly windowSeconds: number;
+}
+
+/** Generous for a person, tight for a script: 120 writes per 10 minutes, 30 uploads per hour. */
+export const PERSON_LIMITS: Readonly<Record<LimitKind, Limit>> = Object.freeze({
+  write: Object.freeze({ max: 120, windowSeconds: 600 }),
+  upload: Object.freeze({ max: 30, windowSeconds: 3600 }),
+});
+
+const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/** Which limit a request counts against, or undefined for a read. */
+export function limitKind(method: string | undefined, contentType: string | undefined): LimitKind | undefined {
+  if (!method || !WRITE_METHODS.has(method.toUpperCase())) return undefined;
+  const type = (contentType ?? "").toLowerCase();
+  return type.startsWith("multipart/form-data") || type.startsWith("application/octet-stream") || type.startsWith("image/") || type === "application/pdf"
+    ? "upload" : "write";
+}
+
+/** The start of the fixed window `now` falls in, in epoch seconds. */
+export function windowStart(nowEpochSeconds: number, limit: Limit): number {
+  return nowEpochSeconds - (nowEpochSeconds % limit.windowSeconds);
+}
+
+export type LimitDecision = { readonly kind: "allow" } | { readonly kind: "limited"; readonly retryAfterSeconds: number };
+
+export function decideLimit(count: number, nowEpochSeconds: number, limit: Limit): LimitDecision {
+  if (count <= limit.max) return { kind: "allow" };
+  return { kind: "limited", retryAfterSeconds: Math.max(1, windowStart(nowEpochSeconds, limit) + limit.windowSeconds - nowEpochSeconds) };
+}
+
+// --- Addresses -----------------------------------------------------------------
+
+export interface Cidr {
+  readonly address: string;
+  readonly prefix: number;
+  readonly family: "ipv4" | "ipv6";
+}
+
+/** Strips the IPv4-mapped IPv6 form so one address has one spelling. */
+export function normalizeAddress(raw: string): string | undefined {
+  const value = raw.trim();
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(value);
+  const address = mapped ? mapped[1]! : value;
+  return isIP(address) ? address.toLowerCase() : undefined;
+}
+
+/** "203.0.113.7", "203.0.113.0/24" or "2001:db8::/32"; host bits must be zero. */
+export function parseCidr(raw: string): Cidr | undefined {
+  const [addressPart, prefixPart, extra] = raw.trim().split("/");
+  if (extra !== undefined || addressPart === undefined) return undefined;
+  const address = normalizeAddress(addressPart);
+  if (!address) return undefined;
+  const family = isIP(address) === 4 ? "ipv4" : "ipv6";
+  const width = family === "ipv4" ? 32 : 128;
+  if (prefixPart !== undefined && !/^\d{1,3}$/.test(prefixPart)) return undefined;
+  const prefix = prefixPart === undefined ? width : Number(prefixPart);
+  if (prefix < (family === "ipv4" ? 8 : 16) || prefix > width) return undefined;
+  // Host bits must be zero, so one network has one spelling.
+  if (!sameNetwork(address, prefix, family)) return undefined;
+  return Object.freeze({ address, prefix, family });
+}
+
+function sameNetwork(address: string, prefix: number, family: "ipv4" | "ipv6"): boolean {
+  const bits = family === "ipv4" ? ipv4Bits(address) : ipv6Bits(address);
+  return bits !== undefined && bits.slice(prefix).every((bit) => bit === 0);
+}
+
+function ipv4Bits(address: string): number[] | undefined {
+  const parts = address.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return undefined;
+  return parts.flatMap((part) => [...part.toString(2).padStart(8, "0")].map(Number));
+}
+
+function ipv6Bits(address: string): number[] | undefined {
+  const [head, tail] = address.split("::");
+  const groups = (part: string | undefined) => (part ? part.split(":") : []);
+  const left = groups(head), right = groups(tail);
+  if (address.includes(".")) return undefined;
+  const missing = 8 - left.length - right.length;
+  if (tail === undefined ? left.length !== 8 : missing < 1) return undefined;
+  const all = [...left, ...Array(tail === undefined ? 0 : missing).fill("0"), ...right];
+  if (all.some((group) => !/^[0-9a-f]{1,4}$/i.test(group))) return undefined;
+  return all.flatMap((group) => [...parseInt(group, 16).toString(2).padStart(16, "0")].map(Number));
+}
+
+export function cidrText(cidr: Cidr): string {
+  return `${cidr.address}/${cidr.prefix}`;
+}
+
+export function blockListOf(cidrs: readonly Cidr[]): BlockList {
+  const list = new BlockList();
+  for (const cidr of cidrs) list.addSubnet(cidr.address, cidr.prefix, cidr.family);
+  return list;
+}
+
+export function listed(list: BlockList, address: string): boolean {
+  return list.check(address, isIP(address) === 4 ? "ipv4" : "ipv6");
+}
+
+/** The client address: the socket peer, or, behind a trusted proxy, the rightmost untrusted forwarded address. */
+export function clientAddress(remoteAddress: string | undefined, forwardedFor: string | string[] | undefined, trustedProxies: BlockList): string | undefined {
+  const peer = remoteAddress ? normalizeAddress(remoteAddress) : undefined;
+  if (!peer || !listed(trustedProxies, peer)) return peer;
+  const header = Array.isArray(forwardedFor) ? forwardedFor.join(",") : forwardedFor ?? "";
+  const hops = header.split(",").map((hop) => hop.trim()).filter((hop) => hop.length > 0);
+  for (let index = hops.length - 1; index >= 0; index -= 1) {
+    const hop = normalizeAddress(hops[index]!);
+    if (!hop) return peer; // A malformed hop ends the trusted chain: never guess past it.
+    if (!listed(trustedProxies, hop)) return hop;
+  }
+  return peer;
+}
+
+/** GATEWAY_TRUSTED_PROXIES: comma-separated addresses or CIDRs; anything malformed refuses to start. */
+export function parseTrustedProxies(raw: string | undefined): readonly Cidr[] {
+  if (raw === undefined || raw.trim() === "") return [];
+  return raw.split(",").map((item) => {
+    const cidr = parseCidr(item);
+    if (!cidr) throw new Error("GATEWAY_TRUSTED_PROXIES must list addresses or CIDRs");
+    return cidr;
+  });
+}
+
+// --- Block list changes ----------------------------------------------------------
+
+export interface BlockChangeRequest {
+  readonly action: "block" | "unblock";
+  readonly cidr: Cidr;
+  readonly reason: string;
+}
+
+export function parseBlockChange(raw: Readonly<Record<string, unknown>>): BlockChangeRequest | undefined {
+  const { action, cidr, reason } = raw;
+  if (action !== "block" && action !== "unblock") return undefined;
+  if (typeof cidr !== "string" || typeof reason !== "string") return undefined;
+  const parsed = parseCidr(cidr);
+  if (!parsed) return undefined;
+  const trimmed = reason.trim().replace(/\r\n?/g, "\n");
+  const length = [...trimmed].length;
+  if (length < REASON_MIN || length > REASON_MAX) return undefined;
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(trimmed)) return undefined;
+  return Object.freeze({ action, cidr: parsed, reason: trimmed });
+}
+
+/** Only an operator administrator manages the block list. */
+export function mayManageBlocks(callerGrants: readonly HeldGrant[], operatorOrgIds: readonly string[] = DEFAULT_OPERATOR_ORG_IDS): boolean {
+  return callerGrants.some((grant) => operatorOrgIds.includes(grant.orgId) && grant.role === "admin");
+}
+
+export interface IpBlockRow {
+  readonly id: string;
+  readonly cidr: string;
+  readonly reason: string;
+  readonly createdAt: string;
+  readonly createdBy: { readonly principalId: string; readonly displayName: string | null };
+}
+
+export type BlockChangeOutcome =
+  | { readonly kind: "blocked" | "unblocked" }
+  | { readonly kind: "refused"; readonly reason: "already_blocked" | "not_blocked" | "own_address" };
+
+/** The Postgres side of A8. */
+export interface AbuseStore {
+  /** Counts one request against the person's window and answers the count including it. */
+  hit(principalId: string, kind: LimitKind, windowStartEpochSeconds: number): Promise<number>;
+  /** The live block list. */
+  blocks(): Promise<readonly IpBlockRow[]>;
+  changeBlock(callerId: string, request: BlockChangeRequest): Promise<BlockChangeOutcome>;
+}

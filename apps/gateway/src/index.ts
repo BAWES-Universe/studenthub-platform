@@ -32,7 +32,7 @@ import { renderAdminJobs, type AdminJobsPage } from "./admin-jobs.js";
 import {renderAdminOutbox,type AdminOutboxPage}from"./admin-outbox.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
 import {
-  type BrowserLoginApplication, profileDocument, renderError, renderLanding,
+  type BrowserLoginApplication, profileDocument, renderError, renderLanding, renderSignedOut, renderAccessPaused,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,renderNotifications,
 } from "./web-ui.js";
 import {addNotificationBell} from "./web-ui.js";
@@ -188,6 +188,10 @@ export function createGatewayServer(
     if (await runRoutes(ROUTES, ctx)) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
       writeHtml(response, 200, renderLanding(login));
+      return;
+    }
+    if (request.method === "GET" && request.url && requestPath(request.url) === "/signed-out") {
+      writeHtml(response, 200, renderSignedOut(login));
       return;
     }
     if (request.method === "GET" && request.url === "/assets/studenthub.css") {
@@ -348,6 +352,7 @@ export function createGatewayServer(
         fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
       }
+      if (html && result.body?.error === "access_paused") { writeHtml(response, 403, renderAccessPaused()); return; }
       if (html && result.status >= 400) { writeHtml(response, result.status, renderError(result.status, login)); return; }
       writeBrowserResponseSafely(response, result);
       return;
@@ -440,7 +445,7 @@ export function createGatewayServer(
       }
       if (html) {
         if (result.status === 204) {
-          response.writeHead(303, { ...result.headers, location: "/", "cache-control": "no-store", vary: "Accept" });
+          response.writeHead(303, { ...result.headers, location: "/signed-out", "cache-control": "no-store", vary: "Accept" });
           response.end();
         } else {
           writeHtml(response, result.status, renderError(result.status, login));
