@@ -9,6 +9,7 @@ import {
   type GrantsPort, type ManagedStoresPort,
 } from "../../../../packages/work/src/index.js";
 import { PostgresAccessStoreManagersStore } from "@studenthub/db/access";
+import { recordWorkSessionDecision, retractWorkSessionDecision } from "@studenthub/db/comms";
 import type { WorkHttpServices } from "../work/http.js";
 import type { wireAccess } from "./access.js";
 import type { Wired, WiringSettings } from "./context.js";
@@ -31,7 +32,7 @@ export interface WorkWiringPorts {
   readonly enabled?: boolean;
   /** Store managers; defaults to the access lane's `PostgresAccessStoreManagersStore` (A4). */
   readonly managedStores?: ManagedStoresPort;
-  /** Decision notices to the person (comms lane); not wired until that lane lands, so the switch can't be turned on yet. */
+  /** Decision notices to the person; defaults to the comms lane's feed producers (`@studenthub/db/comms`). */
   readonly notices?: WorkDecisionHooks;
 }
 
@@ -39,15 +40,15 @@ export interface WorkWiringPorts {
  * Work and hours (W-1 to W-7). Needs both the cutover switch and the safe-write
  * signing key; otherwise nothing is built and /api/work and the /work screens
  * answer 503, so legacy stays the only writer of hours until cutover. Store
- * managers come from the access lane (A4); turning the switch on also needs the
- * comms lane's notice hooks, which are not wired yet, so it stops startup until then.
+ * managers come from the access lane (A4) and decision notices from the comms lane's
+ * feed producers, each on the work pool unless a port is given.
  */
 export function wireWork(settings: WiringSettings, access: Access, ports: WorkWiringPorts = {}): Wired<{ readonly work?: WorkHttpServices }> {
   if (ports.enabled !== true || !settings.safeWriteKey) return { services: {}, async close() {} };
-  // Without these ports store managers could not act and people would get no
-  // decision notices, so turning the lane on before they are wired stops startup.
-  if (typeof ports.notices?.onDecided !== "function" || typeof ports.notices.onUndone !== "function") {
-    throw new Error("WORK_LANE_ENABLED=true needs the comms lane's decision notice hooks (onDecided and onUndone), which are not wired yet; keep the switch off until they are");
+  // A notice port must both record and withdraw, or the feed would keep decisions that no longer stand.
+  const notices: WorkDecisionHooks = ports.notices ?? { onDecided: recordWorkSessionDecision, onUndone: retractWorkSessionDecision };
+  if (typeof notices.onDecided !== "function" || typeof notices.onUndone !== "function") {
+    throw new Error("WORK_LANE_ENABLED=true needs decision notice hooks with both onDecided and onUndone");
   }
   const pool = new pg.Pool({ connectionString: settings.databaseUrl });
   const grants: GrantsPort = access.authzStore;
@@ -55,7 +56,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
   const managed: ManagedStoresPort = ports.managedStores ?? new PostgresAccessStoreManagersStore({ pool });
   const placementStore = new PostgresWorkPlacementStore(pool);
   const sessionStore = new PostgresWorkSessionStore(pool);
-  const decisionStore = new PostgresWorkDecisionStore(pool, ports.notices ?? {});
+  const decisionStore = new PostgresWorkDecisionStore(pool, notices);
   const viewStore = new PostgresWorkHoursViewStore(pool);
   const appealStore = new PostgresWorkAppealStore(pool);
   const scope = new WorkScope(grants, managed, (orgId) => viewStore.organizationAncestors(orgId));

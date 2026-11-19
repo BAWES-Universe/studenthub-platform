@@ -88,10 +88,9 @@ deployment that already signs other writes still leaves legacy as the only write
 hours. The cutover owner turns it on when legacy stops writing hours. Any value other
 than `true` or `false` stops startup. `wireWork` reads store managers from the access
 lane (A4, `PostgresAccessStoreManagersStore.managedStores`) on the work pool. Decision notices
-come from the comms lane's hooks, which are not on main yet, so **the switch cannot be
-turned on yet**: `WORK_LANE_ENABLED=true` stops startup with "needs the comms lane's
-decision notice hooks" until a follow-up wires them. Until then the lane stays off and
-legacy stays the writer of hours.
+go to the person's feed through the comms lane's `recordWorkSessionDecision` and
+`retractWorkSessionDecision` (`@studenthub/db/comms`), on the decision's own client. A
+notice port given in place of them must have both, or startup stops.
 
 | Who | Routes |
 |---|---|
@@ -165,5 +164,4 @@ The person comes from the session cookie, and posts need the same origin and a f
 - A "Work" entry in the main navigation. This goes through the shared `apps/gateway/src/contributions` seam and copy keys, as its own small change.
 - Arabic copy for the work screens.
 - A reply box for the person on an appeal: the contract lists `appeals.self.comment`, but W-6 lets only staff post updates, as legacy did. This is to be confirmed with the legacy rules before it is added.
-- Wiring the comms lane's notice hooks once it lands; until then `WORK_LANE_ENABLED=true` stops startup.
 - The importer run itself (cutover lane, M-5).

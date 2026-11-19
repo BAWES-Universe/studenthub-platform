@@ -4,6 +4,7 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
+import { recordWorkSessionDecision, retractWorkSessionDecision } from "@studenthub/db/comms";
 import { PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkImportStore, PostgresWorkPayableSource, PostgresWorkPlacementStore, PostgresWorkSessionStore } from "@studenthub/db/work";
 import { AppealService, DecisionService, mapLegacyFeedback, mapLegacyWorkingHour, HoursViews, PlacementService, SessionService, WorkScope, type PayableWorkSource } from "../../work/src/index.js";
 
@@ -337,6 +338,22 @@ test("W4_PG notification hooks run on the decision's own transaction; a hook fai
   assert.equal(out.kind, "decided");
   await svc.undo(w.owner, a);
   assert.deepEqual(seen, ["decided:approved:approved:true", "decided:approved:approved:true", `undone:${out.kind === "decided" ? out.decisions[0]!.id : ""}`]);
+});
+
+test("W4_PG the comms feed producers: a decision shows in the person's feed, a re-decision replaces it, an undo removes it", async () => {
+  const w = await world();
+  const now = { value: new Date("2026-11-19T06:00:00Z") };
+  const [a] = await workedDay(w, now);
+  const store = new PostgresWorkDecisionStore(pool, { onDecided: recordWorkSessionDecision, onUndone: retractWorkSessionDecision });
+  let n = 0;
+  const svc = new DecisionService({ store, grants: authz, newId: () => randomUUID() + (n++, ""), now: () => now.value });
+  const feed = async () => (await pool.query("SELECT kind, subject_reference FROM notifications WHERE recipient_principal_id = $1 AND kind LIKE 'work.%' ORDER BY id", [w.person])).rows;
+  assert.equal((await svc.decideSessions(w.owner, [a], { decision: "approve" })).kind, "decided");
+  assert.deepEqual(await feed(), [{ kind: "work.session_approved", subject_reference: `work_session:${a}` }]);
+  assert.equal((await svc.decideSessions(w.owner, [a], { decision: "reject", reason: "late" })).kind, "decided");
+  assert.deepEqual(await feed(), [{ kind: "work.session_rejected", subject_reference: `work_session:${a}` }], "the earlier approval is withdrawn");
+  assert.equal((await svc.undo(w.owner, a)).kind, "decided");
+  assert.deepEqual(await feed(), []);
 });
 
 test("W5_PG views: the person sees no rating or private note; another company sees nothing; totals split; paging stable", async () => {
