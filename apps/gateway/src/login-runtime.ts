@@ -23,6 +23,7 @@ import { wireAccessLane } from "./wiring/access-lane.js";
 import { wireProfile } from "./wiring/profile.js";
 import { wireOrganizations } from "./wiring/organizations.js";
 import { wirePayContracts } from "./wiring/pay-contracts.js";
+import { wireWork, workLaneEnabled } from "./wiring/work.js";
 import { wireOps } from "./wiring/ops.js";
 import { wireRecruit } from "./wiring/recruit.js";
 import {PostgresNotificationsStore} from "@studenthub/db/notifications";
@@ -299,6 +300,7 @@ export function createRuntimeLoginFromEnv(
   const profile = wireProfile(settings, access.services, approvedProfiles);
   const organizationArea = wireOrganizations(settings, access.services);
   const payContractArea = wirePayContracts(settings, access.services);
+  const workArea = wireWork(settings, access.services, { enabled: workLaneEnabled(env.WORK_LANE_ENABLED) });
   const ops = wireOps(settings, access.services, organizationArea.services);
   const recruitArea = wireRecruit(settings, access.services);
   const accessLane = wireAccessLane(settings, access.services, env);
@@ -354,6 +356,7 @@ export function createRuntimeLoginFromEnv(
       ...payContractArea.services,
       ...recruitArea.services,
       ...accessLane.services.application,
+      ...workArea.services,
       web: {
         origin: new URL(callbackUrl).origin,
         returnTo: allowedReturnUrls.includes(new URL("/profile", callbackUrl).href)
@@ -367,7 +370,7 @@ export function createRuntimeLoginFromEnv(
   return {
     application: runtimeApplication,
     async close() {
-      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(), accessLane.close(), recruitArea.close(),notificationStore.close(),staffMessages.close()]);
+      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(), accessLane.close(), recruitArea.close(), workArea.close(),notificationStore.close(),staffMessages.close()]);
     },
   };
 }
