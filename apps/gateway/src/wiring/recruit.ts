@@ -50,6 +50,7 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
     // A store manager sees the people of requests for the stores they manage (A4); paused people are hidden from employers (A6).
     managedStores: (principalId) => storeManagers.managedStores(principalId),
     paused,
+    pipelineAuthority: (principalId, assignee, rows) => pipelineAuthority(principalId, assignee, pipelineLeadDecision(rows, operators), pipelineRecruiterEligible(rows, operators)),
   });
   const pipeline = new PostgresRecruitPipelineStore({
     pool,

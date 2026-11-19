@@ -25,7 +25,7 @@ before(async () => {
   stores = new PostgresOrganizationStoresStore({ pool, writeDecision: organizationStoreWriteDecision, readDecision: organizationStoreReadDecision });
   requests = new PostgresRecruitRequestsStore({
     pool, createDecision: (r, o, a) => requestCreateDecision(r, o, a, OPS), readDecision: (r, o, a) => requestReadDecision(r, o, a, OPS),
-    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: (id) => new PostgresAccessStoreManagersStore({ pool }).managedStores(id), paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids),
+    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: (id) => new PostgresAccessStoreManagersStore({ pool }).managedStores(id), paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids), pipelineAuthority: (p, a, r) => pipelineAuthority(p, a, pipelineLeadDecision(r, OPS), pipelineRecruiterEligible(r, OPS)),
   });
   pipeline = new PostgresRecruitPipelineStore({
     pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
@@ -130,6 +130,11 @@ test("REC5_PAUSED a paused person is hidden from the company and store managers,
   assert.equal((await requests.person(s.staff, s.requestId, noor))!.staff, true, "operator staff still do");
   assert.deepEqual((await requests.get(s.owner, s.requestId))!.people.map((p) => p.person_principal_id), [sara], "the company's request page lists only people who are not paused");
   assert.deepEqual(new Set((await requests.get(s.staff, s.requestId))!.people.map((p) => p.person_principal_id)), new Set([noor, sara]));
+  assert.deepEqual(new Set((await requests.get(s.recruiter, s.requestId))!.people.map((p) => p.person_principal_id)), new Set([noor, sara]), "the assigned recruiter (pipeline authority, no staff grant) still lists them");
+  assert.equal((await requests.person(s.recruiter, s.requestId, noor))!.person.name, "Noor Sabah", "and still opens their profile");
+  const other = await requests.get(s.other, s.requestId);
+  if (other) assert.deepEqual(other.people.map((p) => p.person_principal_id), [sara], "an operator recruiter who is not assigned is not the pipeline authority");
+  assert.equal(await requests.person(s.other, s.requestId, noor), null);
   assert.equal((await change("resume")).kind, "resumed");
   assert.equal((await requests.person(s.owner, s.requestId, noor))!.person.name, "Noor Sabah");
 });
