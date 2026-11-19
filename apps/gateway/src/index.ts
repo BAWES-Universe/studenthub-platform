@@ -276,7 +276,9 @@ export function createGatewayServer(
       const filters=kind.filters(new URL(request.url,"http://gateway.invalid").searchParams);
       if(!filters){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
       const result=await login.exports.request(cookieValue(request.headers.cookie,"__Host-studenthub_session"),kind.id,filters);
-      if(html){const content=result.status===200?`<main><h1>Export ready.</h1><p>${result.body.rowCount} ${kind.noun} exported.</p><a class="button primary" href="${result.body.downloadUrl}">Download CSV</a></main>`:result.status===409?`<main><h1>Export refused.</h1><p>This export exceeds the 10,000 row limit. Narrow the filters and try again.</p></main>`:`<main><h1>Export not found.</h1></main>`;writeHtml(response,result.status,pageDocument("Export",content),{},true);return;}
+      // A refused or unknown export answers exactly like an unknown kind, so the response never tells whether a kind exists.
+      if(result.status===404){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
+      if(html){const content=result.status===200?`<main><h1>Export ready.</h1><p>${result.body.rowCount} ${kind.noun} exported.</p><a class="button primary" href="${result.body.downloadUrl}">Download CSV</a></main>`:`<main><h1>Export refused.</h1><p>This export exceeds the 10,000 row limit. Narrow the filters and try again.</p></main>`;writeHtml(response,result.status,pageDocument("Export",content),{},true);return;}
       writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store"}});return;
     }
 

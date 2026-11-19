@@ -54,6 +54,21 @@ test("REPORTS_CATALOGUE_HTTP anyone else, a signed-out visitor and a cross-site 
   const { base, store } = await serve(t);
   assert.equal((await fetch(`${base}/workspace/lists`, { headers: { cookie: cookie(OTHER) } })).status, 404);
   assert.equal((await fetch(`${base}/workspace/lists`)).status, 404);
+  // Every method gets the same not found from anyone who is not staff, so the page's existence is not revealed.
+  for (const session of [OTHER, ""]) for (const method of ["POST", "DELETE", "PUT"]) {
+    const other = await fetch(`${base}/workspace/lists`, { method, headers: { cookie: cookie(session), origin: ORIGIN } });
+    assert.equal(other.status, 404, `${method} ${session ? "non-staff" : "signed out"}`);
+    assert.deepEqual(await other.json(), { error: "not_found" });
+  }
+  assert.equal((await fetch(`${base}/workspace/lists`, { method: "POST", headers: { cookie: cookie(STAFF), origin: ORIGIN } })).status, 405, "staff learn the method is wrong");
+  // A refused export of a real kind answers exactly like an unknown kind, in HTML and JSON alike.
+  for (const accept of ["text/html", "application/json"]) {
+    const real = await post(base, "/exports/catalogue-country", OTHER, { accept }), unknown = await post(base, "/exports/no-such-kind", OTHER, { accept });
+    assert.equal(real.status, 404); assert.equal(unknown.status, 404);
+    assert.equal(real.headers.get("content-type"), unknown.headers.get("content-type"), accept);
+    assert.equal(await real.text(), await unknown.text(), accept);
+  }
+  for (const method of ["GET", "DELETE", "PUT"]) assert.equal((await fetch(`${base}/exports/catalogue-country`, { method, headers: { cookie: cookie(OTHER) } })).status, 404, method);
   const refused = await post(base, "/exports/catalogue-country", OTHER);
   assert.equal(refused.status, 404);
   assert.equal([...store.rows.values()].every(r => r.outcome === "refused_authorization"), true);

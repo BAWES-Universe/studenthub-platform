@@ -15,7 +15,8 @@ const cookie = (v: string | undefined) => v?.split(";").map(x => x.trim()).find(
 export async function handleListExports(req: IncomingMessage, res: ServerResponse, isStaff: ((session: string) => Promise<boolean>) | undefined): Promise<boolean> {
   if (new URL(req.url ?? "/", "http://gateway.invalid").pathname !== LISTS_PATH) return false;
   req.resume();
-  if (req.method !== "GET") { res.writeHead(405, { allow: "GET" }); res.end(); return true; }
+  // Authorization comes before anything else, so every caller who is not staff gets the same
+  // not found whatever the method, and the route's existence is not revealed.
   const session = cookie(req.headers.cookie);
   let staff = false; try { staff = Boolean(session && isStaff && await isStaff(session)); } catch { /* treated as not staff */ }
   if (!staff) {
@@ -23,6 +24,7 @@ export async function handleListExports(req: IncomingMessage, res: ServerRespons
     else { res.writeHead(404, { "content-type": "application/json", "cache-control": "no-store", vary: "Accept", "x-content-type-options": "nosniff" }); res.end(JSON.stringify({ error: "not_found" })); }
     return true;
   }
+  if (req.method !== "GET") { res.writeHead(405, { allow: "GET" }); res.end(); return true; }
   const button = (kind: string, label: string) => `<form method="post" action="/exports/${kind}"><button class="button" type="submit">${label}</button></form>`;
   writeHtml(res, 200, pageDocument("Lists", `<main><h1>Lists</h1><p>Each export has every active entry with how many people chose it. The download link works for 15 minutes.</p><h2>Countries</h2><p>Counted by nationality.</p>${button(CATALOGUE_LIST_KINDS.country, "Export countries")}<h2>Universities</h2>${button(CATALOGUE_LIST_KINDS.university, "Export universities")}</main>`), { "cache-control": "no-store" });
   return true;

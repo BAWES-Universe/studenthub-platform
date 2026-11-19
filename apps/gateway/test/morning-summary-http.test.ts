@@ -25,7 +25,7 @@ async function rig(t: TestContext, wired = true) {
   const get = (session = "s-staff", accept = "application/json") => fetch(base + path, { headers: { cookie: `__Host-studenthub_session=${session}`, accept } });
   const post = (fields: Record<string, string>, session = "s-staff", headers: Record<string, string> = {}) => fetch(base + path, { method: "POST", redirect: "manual",
     headers: { cookie: `__Host-studenthub_session=${session}`, origin: ORIGIN, "content-type": "application/x-www-form-urlencoded", accept: "application/json", ...headers }, body: new URLSearchParams(fields).toString() });
-  return { get, post, subscribed, reads };
+  return { get, post, subscribed, reads, base };
 }
 
 test("REPORTS_MORNING_SUMMARY_HTTP staff see every counter, with not available for a missing source, and the email switch", async (t) => {
@@ -70,6 +70,12 @@ test("REPORTS_MORNING_SUMMARY_HTTP non-staff, signed-out callers and an unwired 
     assert.equal(res.status, 404, session);
     assert.deepEqual(await res.json(), { status: "not_found" });
     assert.equal((await x.post({ email: "on" }, session)).status, 404);
+    assert.equal((await x.post({ email: "on" }, session, { origin: "https://evil.example" })).status, 404, "a bad origin is checked only after authorization");
+    for (const method of ["DELETE", "PUT", "PATCH"]) {
+      const other = await fetch(x.base + "/workspace/morning-summary", { method, headers: { cookie: `__Host-studenthub_session=${session}`, accept: "application/json" } });
+      assert.equal(other.status, 404, `${method} ${session}`);
+      assert.deepEqual(await other.json(), { status: "not_found" });
+    }
   }
   assert.deepEqual(x.reads, []);
   assert.equal(x.subscribed.size, 0);
