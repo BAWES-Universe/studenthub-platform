@@ -2784,6 +2784,16 @@
           "state": "open"
         }
       }
+    },
+    "STAFF-HOURS-FALLBACK": {
+      "title": "Staff time export: a session left without an end shows the staff record's hours per day, as legacy did; the work lane's hoursPerDay port is wired to the staff record, not left blank",
+      "lane": "work",
+      "subject": "requirement r1",
+      "gates": {
+        "done": {
+          "state": "open"
+        }
+      }
     }
   }
 }

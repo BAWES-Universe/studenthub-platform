@@ -130,6 +130,7 @@ export const RELEASE_STEPS: Readonly<Record<string, string>> = {
   "MOBILE-COMPAT": "Installed store builds proven against the platform's mobile API on staging",
   "MOBILE-RETIRE": "Legacy mobile API retired at cutover, installed store builds still working",
   "REFRESH": "Daily read-only legacy refresh on staging",
+  "STAFF-HOURS-FALLBACK": "Staff time export: a session left without an end shows the staff record's hours per day, as legacy did; the work lane's hoursPerDay port is wired to the staff record, not left blank",
   "SWITCHES": "Lane switches turned on at cutover as legacy stops writing each domain: WORK_LANE_ENABLED=true (with SAFE_WRITE_SIGNING_KEY) when legacy stops writing hours, after the work ports are wired in login-runtime (access managedStores and comms notices)",
 };
 

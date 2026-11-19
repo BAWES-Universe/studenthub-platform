@@ -87,14 +87,34 @@ function unsupportedReason(line: string): string | undefined {
   if (/<(?:[A-Za-z/!?])/.test(outsideCode)) return "inline HTML";
   // Entities and backslash escapes render as other characters than the parser reads.
   if (/&#?[A-Za-z0-9]+;/.test(outsideCode)) return "HTML entity";
+  // GFM splits table cells before it reads escapes, so `\|` in a row (even in code) is its own case.
+  if (line.startsWith("|") && line.includes("\\|")) return "escaped pipe in a table row";
   if (outsideCode.includes("\\")) return "backslash escape";
   // A link's destination and title are not shown in a table cell, so ids there would be unseen.
   if (line.startsWith("|") && /[[\]]/.test(outsideCode)) return "link or image in a table row";
   return undefined;
 }
 
+/**
+ * Refusals that start a new block. GFM ends a table at one of these, so the table context
+ * is dropped with them; any other refused line inside a table is still one of its rows.
+ */
+const ENDS_TABLE = new Set(["code fence", "HTML block", "block quote", "setext underline or thematic break"]);
+
 export function parseContract(markdown: string): ParsedContract {
   const lines = markdown.split("\n");
+  const lineAt = (index: number): string => (lines[index] ?? "").replace(/\r$/, "");
+  /** The width of the table whose header row is at `index`, or 0 when no table opens there. */
+  const tableOpenedAt = (index: number): number => {
+    const header = cells(lineAt(index));
+    const previous = index === 0 ? "" : lineAt(index - 1);
+    const delimiter = cells(lineAt(index + 1));
+    const opens =
+      (/^[ \t]*$/.test(previous) || /^#{1,6}(?:[ \t]|$)/.test(previous)) &&
+      delimiter.length === header.length &&
+      delimiter.every((cell) => /^:?-+:?$/.test(cell));
+    return opens ? header.length : 0;
+  };
   const targets = new Map<string, TargetScreen>();
   const ledger: LedgerRow[] = [];
   const definedAt = new Map<string, number>();
@@ -123,6 +143,10 @@ export function parseContract(markdown: string): ParsedContract {
   // definitions, links or images in a table row, a pipe row outside a table, and text
   // inside a table that GFM would turn into a row. In paragraph text a link's destination
   // and title are dropped before the partition totals are read, since neither is shown.
+  // A refusal never loses table context: a refused header row still opens its table, and a
+  // refused body row is still a row, so the rows around it are read as GFM shows them. Only
+  // a refused line that starts a new block (fence, HTML, block quote, thematic break) ends
+  // the table, as it does in GFM.
   const unsupported: { line: number; reason: string }[] = [];
   const refuse = (index: number, reason: string) => void unsupported.push({ line: index + 1, reason });
   const accepted: string[] = [];
@@ -138,7 +162,17 @@ export function parseContract(markdown: string): ParsedContract {
     const reason = unsupportedReason(line);
     if (reason) {
       refuse(index, reason);
-      tableWidth = 0;
+      if (tableWidth > 0) {
+        // A refused body row is still a row: the rows after it stay in the table.
+        if (ENDS_TABLE.has(reason)) tableWidth = 0;
+      } else {
+        // A refused header row still opens its table, so its body rows are read, not refused.
+        const width = tableOpenedAt(index);
+        if (width > 0) {
+          tableWidth = width;
+          index += 1;
+        }
+      }
       continue;
     }
     if (/^#{1,6}(?:[ \t]|$)/.test(line)) {
@@ -157,19 +191,9 @@ export function parseContract(markdown: string): ParsedContract {
       accepted.push(line.replace(/\]\([^)]*\)/g, "]"));
       continue;
     }
-    if (line.includes("\\|")) {
-      refuse(index, "escaped pipe in a table row");
-      continue;
-    }
     const row = cells(line);
     if (tableWidth === 0) {
-      const previous = index === 0 ? "" : lines[index - 1]!.replace(/\r$/, "");
-      const delimiter = cells(lines[index + 1]?.replace(/\r$/, "") ?? "");
-      const opensTable =
-        (/^[ \t]*$/.test(previous) || /^#{1,6}(?:[ \t]|$)/.test(previous)) &&
-        delimiter.length === row.length &&
-        delimiter.every((cell) => /^:?-+:?$/.test(cell));
-      if (!opensTable) {
+      if (tableOpenedAt(index) === 0) {
         refuse(index, "pipe row outside a table");
         continue;
       }

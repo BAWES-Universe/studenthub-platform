@@ -77,6 +77,7 @@ const RELEASE_LANE: Readonly<Record<string, string>> = {
   "X-5": "platform",
   "PAY-REPLAY": "pay",
   "PAY-SHADOW": "pay",
+  "STAFF-HOURS-FALLBACK": "work",
 };
 
 export function seedMatrix(contract: ParsedContract, inventory: MobileInventory, previous?: Matrix): Matrix {

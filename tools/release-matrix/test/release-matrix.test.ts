@@ -345,9 +345,31 @@ test("a table row the parser cannot read the way GFM renders it is refused, and 
   ];
   for (const [replacement, reason] of variants) {
     const issues = checkContract(parseContract(markdown.replace(row, replacement)));
-    assert.deepEqual(rules(issues), ["contract.markdown.unsupported", "contract.partition.gap"], replacement);
-    assert.ok(issues.some((issue) => issue.detail.endsWith(`: ${reason}`)), replacement);
+    // Exactly one refusal and one gap: the rows after the refused one stay in the table.
+    assert.deepEqual(
+      issues.map((issue) => `${issue.rule}: ${issue.detail.replace(/^line \d+: /, "")}`),
+      [`contract.markdown.unsupported: ${reason}`, "contract.partition.gap: MOB-B021 is not mapped"],
+      replacement,
+    );
   }
+  // An escaped pipe outside code is still classified as one.
+  const bare = checkContract(parseContract(markdown.replace(row, "| MOB-B021 | act\\|ivity | `U-04` |\n")));
+  assert.match(bare[0]!.detail, /escaped pipe in a table row$/);
+  assert.equal(bare.length, 2);
+
+  // A refused header row still opens its table, so its body rows are not refused too.
+  const header = "| Source rows | Legacy screen group | Target/disposition |\n|---|---|---|\n| MOB-";
+  assert.ok(markdown.includes(header));
+  const refusedHeader = checkContract(parseContract(markdown.replace(header, header.replace("Legacy screen", "Legacy &amp; screen"))));
+  assert.deepEqual(refusedHeader.map((issue) => issue.rule), ["contract.markdown.unsupported"]);
+  assert.match(refusedHeader[0]!.detail, /HTML entity$/);
+
+  // A refused line that starts a new block ends the table, as in GFM: the rows after it
+  // are not table rows, so each is refused and the ordinals they held become gaps.
+  const quoted = checkContract(parseContract(markdown.replace(row, "> MOB-B021 activity\n")));
+  const ended = quoted.filter((issue) => issue.rule === "contract.markdown.unsupported");
+  assert.match(ended[0]!.detail, /block quote$/);
+  assert.ok(ended.slice(1).length > 0 && ended.slice(1).every((issue) => issue.detail.endsWith("pipe row outside a table")));
   // Text straight after a table row would render as another row, so it is refused.
   const trailing = checkContract(parseContract(markdown.replace(row, `${row}trailing text\n`)));
   assert.deepEqual(rules(trailing), ["contract.markdown.unsupported"]);
