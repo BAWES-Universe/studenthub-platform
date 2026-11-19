@@ -1,0 +1,1122 @@
+{
+  "source": {
+    "repository": "BAWES-Universe/studenthub-candidate",
+    "revision": "de3ac8c",
+    "apiBase": "https://student.api.studenthub.co/v1 (src/environments/environment.prod.mobile.ts:12)",
+    "nativeBuilds": "android versionName 1.4 (versionCode 5), ios MARKETING_VERSION 1.0.1 (build 2), as declared in the repository",
+    "established": "Calls read from source at this revision: every this._authhttp/_http get, post, patch, delete and pdfget under src/app, excluding specs and the HTTP wrapper itself. Which build users have installed is not established; capture traffic from a store build before the compatibility layer is called done."
+  },
+  "dispositions": {
+    "serve": "the platform answers this route with the legacy shape from 1 Jan",
+    "retire": "no target; the route answers 410 with the legacy error shape",
+    "open": "needs a lane decision before the 17 Dec candidate"
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/account/area-by-location",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:181"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/change-password",
+      "target": "U-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:125"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/current-status",
+      "target": "C-11",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:413"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/account/discard-session",
+      "target": "C-11",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:401"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/account/job-search-status",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:50"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/job-search-status",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:59"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/language-pref",
+      "target": "U-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:143"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/account/profile",
+      "target": "C-01",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:26",
+        "src/app/providers/logged-in/account.service.ts:42"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/profile-photo",
+      "target": "C-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:313"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/account/remove-candidate-profile",
+      "target": "U-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:421"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/account/remove-civil-photo-back",
+      "target": "C-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:93"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/account/remove-civil-photo-front",
+      "target": "C-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:85"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/account/remove-photo",
+      "target": "C-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:101"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/account/remove-video",
+      "target": "C-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:304"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/account/salary",
+      "target": "C-14",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:110",
+        "src/app/providers/logged-in/transfer.service.ts:18"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/start-time",
+      "target": "C-11",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:405"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/stop-time",
+      "target": "C-11",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:409"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-bank-detail",
+      "target": "C-15",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:385"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-birth-date",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:324"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-civil-expiry-date",
+      "target": "C-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:357"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-civil-id",
+      "target": "C-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:241"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-civil-id-expiry-date",
+      "target": "C-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:254"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-civil-photo-back",
+      "target": "C-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:335"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-civil-photo-front",
+      "target": "C-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:346"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-driving-license",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:368"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-email",
+      "target": "U-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:134"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-experiences",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:68"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-gender",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:208"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-intro",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:186"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-kuwaiti-national",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:379"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-location",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:277"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-name",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:219"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-name-ar",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:230"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-nationality",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:154"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-objective",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:197"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-phone",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:389"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-preferred-time",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:393"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-profile-url",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:397"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-resume",
+      "target": "C-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:266"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-skills",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:77"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/update-university",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:165"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/validate-password",
+      "target": "U-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:429"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/account/video",
+      "target": "C-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:294"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/account/video-status",
+      "target": "C-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:285"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/account/work-history",
+      "target": "C-12",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/account.service.ts:34"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/auth/email-check",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:652"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/is-email-verified",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:584"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "GET",
+      "path": "/auth/locate",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:137"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "GET",
+      "path": "/auth/login",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:637"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login-auth0",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:330"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login-by-apple",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:1033"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login-by-google",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:933"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login-by-key",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:272"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/name-by-civil-id",
+      "target": "EX-06",
+      "disposition": "retire",
+      "sources": [
+        "src/app/providers/auth.service.ts:551"
+      ],
+      "note": "Points at a hard-coded http://localhost base URL in the source, so the shipped build cannot reach it; legacy has no such action (drafts K-2 E4)."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/register",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:676"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/request-reset-password",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:705"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/resend-verification-email",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:599"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/sms-reset-password",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:690"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/update-email",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:613"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "PATCH",
+      "path": "/auth/update-password",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:517"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "POST",
+      "path": "/auth/verify-email",
+      "target": "U-02",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/auth.service.ts:570"
+      ],
+      "note": "Legacy credential mechanism (EX-05). Old builds have no version gate, so retiring it breaks sign-in on installed apps; see lane plan \"mobile sign-in after 1 Jan\"."
+    },
+    {
+      "method": "GET",
+      "path": "/aws/config",
+      "target": "C-04",
+      "disposition": "open",
+      "sources": [
+        "src/app/providers/logged-in/aws.service.ts:72"
+      ],
+      "note": "Hands the app cloud upload credentials, which the platform never does (X1/S4). Old builds upload through it; needs an upload adapter or an app update."
+    },
+    {
+      "method": "GET",
+      "path": "/balance/payable-list",
+      "target": "EX-02",
+      "disposition": "retire",
+      "sources": [
+        "src/app/providers/logged-in/balance.service.ts:21"
+      ],
+      "note": "Wallet integration marked discard."
+    },
+    {
+      "method": "PATCH",
+      "path": "/campaigns/click/{id}",
+      "target": "A-29",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/campaign.service.ts:17"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-educations",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-education.service.ts:24"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/candidate-educations",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-education.service.ts:85"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-educations/degree-groups",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-education.service.ts:54"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-educations/degrees",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-education.service.ts:44"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-educations/majors",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-education.service.ts:34"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/candidate-educations/save",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-education.service.ts:73"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/candidate-educations/{id}",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-education.service.ts:103"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-educations/{id}",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-education.service.ts:63"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/candidate-educations/{id}",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-education.service.ts:94"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-notifications",
+      "target": "U-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-notification.service.ts:24"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/candidate-notifications/mark-read-all",
+      "target": "U-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-notification.service.ts:34"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/candidate-notifications/mark-read/{id}",
+      "target": "U-04",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-notification.service.ts:29"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/candidate-working-hours",
+      "target": "C-11",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-working-hour.service.ts:42"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-working-hours/date",
+      "target": "C-12",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-working-hour.service.ts:22"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-working-hours/date-detail/{date}",
+      "target": "C-12",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-working-hour.service.ts:51"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-working-hours/date/{date}",
+      "target": "C-12",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-working-hour.service.ts:60"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-working-hours/hour",
+      "target": "C-12",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-working-hour.service.ts:78"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-working-hours/stats",
+      "target": "C-12",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-working-hour.service.ts:69"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidate-working-hours/working-dates",
+      "target": "C-12",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate-working-hour.service.ts:32",
+        "src/app/providers/logged-in/candidate-working-hour.service.ts:89"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidates/appreciation-certificate/{id}",
+      "target": "C-16",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate.service.ts:51"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidates/work-history",
+      "target": "C-12",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate.service.ts:42"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidates/work-history/{id}",
+      "target": "C-10",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate.service.ts:23"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/candidates/working-dates",
+      "target": "C-12",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/candidate.service.ts:33"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/chats",
+      "target": "U-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/chat.service.ts:35"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/chats/mark-read/{id}",
+      "target": "U-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/chat.service.ts:88"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/chats/messages/{id}",
+      "target": "U-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/chat.service.ts:45"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/chats/new-messages/{id}",
+      "target": "U-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/chat.service.ts:55"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/chats/send-message",
+      "target": "U-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/chat.service.ts:80"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/chats/start-chat",
+      "target": "U-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/chat.service.ts:74"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/chats/unread-count",
+      "target": "U-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/chat.service.ts:60"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/chats/{id}",
+      "target": "U-05",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/chat.service.ts:65"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/countries",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/country.service.ts:29"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/discount-categories",
+      "target": "EX-01",
+      "disposition": "retire",
+      "sources": [
+        "src/app/providers/logged-in/discount-category.service.ts:24"
+      ],
+      "note": "Perks/discounts, pending SHU-213."
+    },
+    {
+      "method": "GET",
+      "path": "/discount-categories/{id}",
+      "target": "EX-01",
+      "disposition": "retire",
+      "sources": [
+        "src/app/providers/logged-in/discount-category.service.ts:33"
+      ],
+      "note": "Perks/discounts, pending SHU-213."
+    },
+    {
+      "method": "GET",
+      "path": "/discounts",
+      "target": "EX-01",
+      "disposition": "retire",
+      "sources": [
+        "src/app/providers/logged-in/discount.service.ts:24"
+      ],
+      "note": "Perks/discounts, pending SHU-213."
+    },
+    {
+      "method": "GET",
+      "path": "/discounts/{id}",
+      "target": "EX-01",
+      "disposition": "retire",
+      "sources": [
+        "src/app/providers/logged-in/discount.service.ts:33"
+      ],
+      "note": "Perks/discounts, pending SHU-213."
+    },
+    {
+      "method": "GET",
+      "path": "/google-map/place-detail/{id}",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/google-map.service.ts:36"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/google-map/place-predictions",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/google-map.service.ts:25"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/invitations",
+      "target": "C-08",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/invitation.service.ts:21",
+        "src/app/providers/logged-in/invitation.service.ts:30"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/invitations/accept/{id}",
+      "target": "C-08",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/invitation.service.ts:61"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/invitations/log-viewed",
+      "target": "C-08",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/invitation.service.ts:48"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/invitations/reject/{id}",
+      "target": "C-08",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/invitation.service.ts:74"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/invitations/{id}",
+      "target": "C-08",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/invitation.service.ts:39"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/requests",
+      "target": "C-06",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/request.service.ts:21"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/requests/applications",
+      "target": "C-07",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/request.service.ts:32"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/requests/apply/{id}",
+      "target": "C-07",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/request.service.ts:52"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/requests/interview-requests",
+      "target": "C-09",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/request.service.ts:42"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/requests/{id}",
+      "target": "C-06",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/request.service.ts:62"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/statistics",
+      "target": "C-14",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/statistic.service.ts:22"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/tickets",
+      "target": "U-06",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/ticket.service.ts:28"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/tickets",
+      "target": "U-06",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/ticket.service.ts:59"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/tickets/comment/{id}",
+      "target": "U-06",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/ticket.service.ts:73"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/tickets/comments/{id}",
+      "target": "U-06",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/ticket.service.ts:38"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/tickets/{id}",
+      "target": "U-06",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/logged-in/ticket.service.ts:48"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/universities",
+      "target": "C-02",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/university.service.ts:31"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/universities",
+      "target": "C-03",
+      "disposition": "serve",
+      "sources": [
+        "src/app/providers/university.service.ts:45"
+      ]
+    }
+  ]
+}
