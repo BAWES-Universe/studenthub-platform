@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import {
-  PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkPlacementStore, PostgresWorkSessionStore,
+  PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkPlacementStore, PostgresWorkSessionStore, PostgresWorkStaffTimeStore,
   type WorkDecisionHooks,
 } from "@studenthub/db/work";
 import {
-  AppealService, DecisionService, HoursViews, PlacementService, SessionService, WorkScope,
+  AppealService, DecisionService, HoursViews, PlacementService, SessionService, StaffTimeService, WorkScope,
   type GrantsPort, type ManagedStoresPort,
 } from "../../../../packages/work/src/index.js";
 import { PostgresAccessPausesStore, PostgresAccessStoreManagersStore } from "@studenthub/db/access";
@@ -65,6 +65,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
   const decisionStore = new PostgresWorkDecisionStore(pool, notices);
   const viewStore = new PostgresWorkHoursViewStore(pool);
   const appealStore = new PostgresWorkAppealStore(pool);
+  const staffTimeStore = new PostgresWorkStaffTimeStore(pool);
   const scope = new WorkScope(grants, managed, (orgId) => viewStore.organizationAncestors(orgId));
   const newId = () => randomUUID();
   const work: WorkHttpServices = {
@@ -78,6 +79,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
     storeInfo: (id) => viewStore.storeInfo(id),
     personNames: (ids) => viewStore.personNames(ids),
     storesOf: (orgId) => viewStore.storesOf(orgId),
+    staffTime: new StaffTimeService({ store: staffTimeStore, grants, newId }),
   };
   return {
     services: { work },
