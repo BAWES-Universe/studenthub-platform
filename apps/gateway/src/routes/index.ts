@@ -43,6 +43,8 @@ const staffMessagesRoute: GatewayRoute = { name: "staff-messages", handle: (ctx)
     return result.status === 200 && typeof result.body?.personId === "string" ? result.body.personId : undefined; }) };
 const areaRoute: GatewayRoute = { name: "area", handle: (ctx) => handleArea(ctx.request, ctx.response, ctx.login?.area) };
 
+import { workRoute } from "./work.js";
+
 export const ROUTES: readonly GatewayRoute[] = [
   abuseGateRoute,
   catalogueRoute,
@@ -92,6 +94,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   recruitJobsRoute,
   recruitFulltimersRoute,
   recruitRequestApplicationsRoute,
+  workRoute,
   staffMessagesRoute,
 ];
 
