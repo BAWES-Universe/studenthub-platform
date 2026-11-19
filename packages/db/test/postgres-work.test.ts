@@ -379,10 +379,26 @@ function appealService(now: { value: Date }) {
 test("W6_PG appeals: own session only, staff answer, the appellant marks read, rows are append-only", async () => {
   const w = await world();
   const now = { value: new Date("2026-11-19T06:00:00Z") };
-  const [a] = await workedDay(w, now);
+  const [a, b] = await workedDay(w, now);
   const appeals = appealService(now);
+  // Only rejected hours are appealed; the database refuses the rest too.
+  assert.deepEqual(await appeals.raise(w.person, a, "I stayed until 9"), { kind: "refused", code: "session_not_rejected" });
+  const appealRow = (session: string, legacy: string | null = null) => pool.query("INSERT INTO work_appeals(id, session_id, person_principal_id, org_id, store_id, reason, legacy_ref) VALUES($1,$2,$3,$4,$5,'x',$6)",
+    [randomUUID(), session, w.person, w.company, w.store, legacy]);
+  await assert.rejects(appealRow(b!), /ended, rejected hours/);
+  await services(now).decision.decideSessions(w.owner, [a!], { decision: "reject", reason: "left at 8" });
   const raised = await appeals.raise(w.person, a, "I stayed until 9");
   assert.equal(raised.kind, "raised");
+  // One open appeal per session, in the service and in the database.
+  assert.deepEqual(await appeals.raise(w.person, a, "again"), { kind: "refused", code: "appeal_open" });
+  await assert.rejects(appealRow(a!), /already have an open appeal/);
+  // An imported legacy appeal keeps the state legacy left it in.
+  await appealRow(b!, `legacy:appeal:${randomUUID()}`);
+  // A session still running can't be appealed.
+  const started = await services(now).session.start(w.person, HERE);
+  const openId = started.kind === "started" ? started.session.id : "";
+  assert.deepEqual(await appeals.raise(w.person, openId, "running"), { kind: "refused", code: "session_open" });
+  await assert.rejects(appealRow(openId), /ended, rejected hours/);
   const appealId = raised.kind === "raised" ? raised.appeal.id : "";
   assert.deepEqual(await appeals.raise(w.owner, a, "not mine"), { kind: "refused", code: "session_not_found" });
   await assert.rejects(pool.query("INSERT INTO work_appeals(id, session_id, person_principal_id, org_id, store_id, reason) VALUES($1,$2,$3,$4,$5,'x')",
@@ -409,8 +425,8 @@ test("W6_PG a staff correction replaces the original in totals and in pay input;
   const now = { value: new Date("2026-11-19T06:00:00Z") };
   const { decision } = services(now);
   const [a, b, c] = await workedDay(w, now);
+  await decision.decideSessions(w.owner, [a!, c!], { decision: "reject", reason: "no show" });
   await decision.decideDays(w.owner, [{ personId: w.person, storeId: w.store, workDate: "2026-11-18" }], { decision: "approve" });
-  await decision.decideSessions(w.owner, [c!], { decision: "reject", reason: "no show" });
   const appeals = appealService(now);
   const raised = await appeals.raise(w.person, a, "I stayed until 9");
   const appealId = raised.kind === "raised" ? raised.appeal.id : "";

@@ -61,6 +61,8 @@ export interface AppealTransaction {
   lockSession(id: string): Promise<WorkSession | undefined>;
   /** Whether a live correction replaces the session. */
   isReplaced(sessionId: string): Promise<boolean>;
+  /** Whether the session has an appeal that is not resolved yet. */
+  hasOpenAppeal(sessionId: string): Promise<boolean>;
   assignment(id: string): Promise<Assignment | undefined>;
   /** Raises a SessionConflict("overlap") when the entry overlaps a session in force. */
   insertSession(session: NewSession): Promise<WorkSession>;
@@ -86,7 +88,7 @@ export interface AppealStore {
 }
 
 export type AppealRefusal = "invalid_input" | "forbidden" | "session_not_found" | "appeal_not_found" | "update_not_found" | "session_open"
-  | "session_replaced" | "end_before_start" | "in_future" | "outside_assignment" | "overlaps_session";
+  | "session_replaced" | "session_not_rejected" | "appeal_open" | "end_before_start" | "in_future" | "outside_assignment" | "overlaps_session";
 export type Refused = { readonly kind: "refused"; readonly code: AppealRefusal };
 
 export interface AppealServiceOptions {
@@ -113,13 +115,22 @@ export class AppealService {
     this.#now = options.now ?? (() => new Date());
   }
 
-  /** The person appeals one of their own sessions. */
+  /**
+   * The person appeals one of their own rejected sessions (legacy shows "Appeal
+   * these hours" on rejected sessions only). The session must be ended, in
+   * force (not deleted, not replaced by a correction) and rejected, and have no
+   * appeal still open; the session row is locked, so two raises cannot race.
+   */
   async raise(personId: string, sessionId: unknown, reason: unknown): Promise<{ readonly kind: "raised"; readonly appeal: WorkAppeal } | Refused> {
     const why = text(reason, 2000);
     if (!isUuid(sessionId) || !why) return { kind: "refused", code: "invalid_input" };
     return this.#store.transaction(async (tx) => {
       const s = await tx.lockSession(sessionId.toLowerCase());
       if (!s || s.personId !== personId || s.deletedAt !== null) return { kind: "refused", code: "session_not_found" };
+      if (s.endedAt === null) return { kind: "refused", code: "session_open" };
+      if (await tx.isReplaced(s.id)) return { kind: "refused", code: "session_replaced" };
+      if (s.status !== "rejected") return { kind: "refused", code: "session_not_rejected" };
+      if (await tx.hasOpenAppeal(s.id)) return { kind: "refused", code: "appeal_open" };
       const appeal = await tx.insertAppeal({ id: this.#newId(), sessionId: s.id, personId, orgId: s.orgId, storeId: s.storeId, reason: why, status: "submitted" });
       await tx.event(appealEvent("appeal.raised", appeal, personId, { sessionId: s.id }));
       return { kind: "raised", appeal };

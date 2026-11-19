@@ -46,6 +46,7 @@ class Memory implements AppealStore {
     const tx: AppealTransaction = {
       lockSession: async (id) => this.sessions.find((s) => s.id === id),
       isReplaced: async (id) => this.sessions.some((c) => c.correctsSessionId === id && c.deletedAt === null),
+      hasOpenAppeal: async (id) => this.appeals.some((a) => a.sessionId === id && a.status !== "resolved"),
       assignment: async (id) => id === ASSIGNMENT.id ? ASSIGNMENT : undefined,
       insertSession: async (s) => {
         const start = s.startedAt.getTime(), end = s.endedAt!.getTime();
@@ -96,7 +97,7 @@ function setup() {
 
 test("W6_RAISE a person appeals only their own session (legacy accepted any id)", async () => {
   const { store, svc } = setup();
-  const mine = session(), theirs = session({ personId: "other" });
+  const mine = session({ status: "rejected" }), theirs = session({ personId: "other", status: "rejected" });
   store.sessions.push(mine, theirs);
   assert.deepEqual(await svc.raise("person", theirs.id, "wrong"), { kind: "refused", code: "session_not_found" });
   assert.deepEqual(await svc.raise("person", mine.id, "  "), { kind: "refused", code: "invalid_input" });
@@ -106,9 +107,33 @@ test("W6_RAISE a person appeals only their own session (legacy accepted any id)"
   assert.deepEqual(store.events.map((e) => e.kind), ["appeal.raised"]);
 });
 
+test("W6_RAISE only ended, rejected hours in force are appealed, one open appeal at a time", async () => {
+  const { store, svc } = setup();
+  const open = session({ endedAt: null, durationSeconds: null, status: "pending" });
+  const pending = session({ status: "pending" }), approved = session({ status: "approved" });
+  const deleted = session({ status: "rejected", deletedAt: "2026-11-18T09:00:00.000Z" });
+  const replaced = session({ status: "rejected" });
+  const correction = session({ status: "approved", correctsSessionId: replaced.id, source: "correction" });
+  const rejected = session({ status: "rejected" });
+  store.sessions.push(open, pending, approved, deleted, replaced, correction, rejected);
+  assert.deepEqual(await svc.raise("person", open.id, "still here"), { kind: "refused", code: "session_open" });
+  assert.deepEqual(await svc.raise("person", pending.id, "why"), { kind: "refused", code: "session_not_rejected" });
+  assert.deepEqual(await svc.raise("person", approved.id, "why"), { kind: "refused", code: "session_not_rejected" });
+  assert.deepEqual(await svc.raise("person", deleted.id, "why"), { kind: "refused", code: "session_not_found" });
+  assert.deepEqual(await svc.raise("person", replaced.id, "why"), { kind: "refused", code: "session_replaced" });
+  const first = await svc.raise("person", rejected.id, "I worked these hours");
+  assert.equal(first.kind, "raised");
+  assert.deepEqual(await svc.raise("person", rejected.id, "again"), { kind: "refused", code: "appeal_open" });
+  // Once the appeal is resolved, the person can appeal the same hours again.
+  assert.equal((await svc.setStatus("staff", first.kind === "raised" ? first.appeal.id : "", "resolved")).kind, "updated");
+  assert.equal((await svc.raise("person", rejected.id, "still wrong")).kind, "raised");
+  assert.equal(store.appeals.length, 2);
+  assert.deepEqual(store.events.filter((e) => e.kind === "appeal.raised").length, 2);
+});
+
 test("W6_STAFF only staff over the company answer, set a named status, and read the appeal", async () => {
   const { store, svc } = setup();
-  const s = session();
+  const s = session({ status: "rejected" });
   store.sessions.push(s);
   const raised = await svc.raise("person", s.id, "missing hour");
   const appealId = raised.kind === "raised" ? raised.appeal.id : "";
@@ -180,7 +205,7 @@ test("W6_CORRECT open sessions, overlaps and dates outside the placement are ref
 
 test("W6_ADD staff add missing time for an appeal; it is approved and linked, not a replacement", async () => {
   const { store, svc } = setup();
-  const s = session();
+  const s = session({ status: "rejected" });
   store.sessions.push(s);
   const raised = await svc.raise("person", s.id, "I also worked the evening");
   const appealId = raised.kind === "raised" ? raised.appeal.id : "";

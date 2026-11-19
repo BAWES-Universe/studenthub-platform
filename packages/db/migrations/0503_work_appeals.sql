@@ -3,7 +3,8 @@
 -- Legacy `candidate_working_hour_appeal`, `..._appeal_updates` and staff
 -- CandidateWorkingHourController add-hour, with these fixes:
 -- - a person could appeal any session id, not only their own: the appeal must
---   name a session of the appellant;
+--   name a session of the appellant, and (as the legacy page offered) only
+--   ended, rejected hours in force, with at most one appeal open on them;
 -- - marking an update read had no owner check: only the appellant marks read;
 -- - a staff correction was an extra approved row beside the original, so both
 --   counted: a correction replaces its original in every total (the original is
@@ -39,9 +40,20 @@ BEGIN
   NEW.updated_at := clock_timestamp();
   RETURN NEW;
  END IF;
- SELECT person_principal_id, org_id, store_id INTO s FROM work_sessions WHERE id = NEW.session_id;
+ -- The session row is locked so two appeals on one session cannot race past the open-appeal check.
+ SELECT person_principal_id, org_id, store_id, ended_at, deleted_at, status INTO s FROM work_sessions WHERE id = NEW.session_id FOR UPDATE;
  IF s.person_principal_id <> NEW.person_principal_id OR s.org_id <> NEW.org_id OR s.store_id <> NEW.store_id THEN
   RAISE EXCEPTION 'work appeal must name a session of the appellant' USING ERRCODE = '23514';
+ END IF;
+ -- A new appeal is on ended, rejected hours in force, with no appeal still open on them.
+ -- Imported legacy appeals (legacy_ref set) keep whatever state legacy left them in.
+ IF NEW.legacy_ref IS NULL THEN
+  IF s.ended_at IS NULL OR s.deleted_at IS NOT NULL OR s.status <> 'rejected' OR NOT work_session_in_force(NEW.session_id) THEN
+   RAISE EXCEPTION 'work appeal must name ended, rejected hours that are in force' USING ERRCODE = '23514';
+  END IF;
+  IF EXISTS (SELECT 1 FROM work_appeals a WHERE a.session_id = NEW.session_id AND a.status <> 'resolved') THEN
+   RAISE EXCEPTION 'work appeal: these hours already have an open appeal' USING ERRCODE = '23514';
+  END IF;
  END IF;
  RETURN NEW;
 END $$;

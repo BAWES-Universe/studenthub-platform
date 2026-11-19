@@ -40,7 +40,7 @@ company `StoreController` and `StoreAssignmentRequestController`, candidate
 | A person could read note, rating, reason and is_public through `expand` | The person sees outcome, reason, and the note only when public; never the rating | Leak defect |
 | Date range strings went raw into SQL | Dates parsed and bound; at most a year per request | SQL injection |
 | Company list scoped by a request parameter or the person's current store | Scope from the signed-in actor only; sub-companies are included only for a subtree grant (a self-scoped owner or staff sees that company alone) | Scoping defect |
-| A person could appeal any session id | Only their own session | Ownership defect |
+| A person could appeal any session id | Only their own ended, rejected session that is in force (not deleted, not replaced by a correction), with one open appeal at a time; the service and the database both refuse the rest (imported legacy appeals keep their legacy state) | Ownership and state defect |
 | Mark-read on an appeal update had no owner check | Only the appellant marks their updates read | Ownership defect |
 | Appeal status took any integer | Four named states (submitted, awaiting review, in progress, resolved) | Bad-input defect |
 | Staff add-hour wrote an extra approved row beside the original, so both counted | `correct` replaces the session (original kept, out of every total and out of pay); `addMissing` adds time never logged, linked to the appeal; both staff-only with a reason and an approval decision by that staff member | Double-count defect; D-WK3 |

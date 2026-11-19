@@ -381,7 +381,8 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
       const raised = await services.appeals.raise(person, form.sessionId, form.reason);
       if (raised.kind === "raised") { redirect(res, `/work/appeals/${raised.appeal.id}?done=raised`); return true; }
       const again = UUID.test(form.sessionId ?? "") ? await renderNewAppeal(services, names, person, form.sessionId!.toLowerCase(), date,
-        raised.code === "invalid_input" ? "Tell us what is wrong with these hours." : "These hours can't be appealed.") : undefined;
+        raised.code === "invalid_input" ? "Tell us what is wrong with these hours."
+          : raised.code === "appeal_open" ? "You already have an open appeal on these hours. Follow it in Appeals." : "These hours can't be appealed.") : undefined;
       if (again) write(res, 400, again); else write(res, ...plain(404, "Hours not found", "Open the day in History and choose the hours to appeal."));
       return true;
     }

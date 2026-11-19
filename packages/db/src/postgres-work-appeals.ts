@@ -23,6 +23,7 @@ export interface WorkAppealUpdateRecord {
 export interface WorkAppealTransaction {
   lockSession(id: string): Promise<WorkSessionRecord | undefined>;
   isReplaced(sessionId: string): Promise<boolean>;
+  hasOpenAppeal(sessionId: string): Promise<boolean>;
   assignment(id: string): Promise<WorkAssignmentRecord | undefined>;
   insertSession(s: NewWorkSessionRecord): Promise<WorkSessionRecord>;
   insertDecision(d: WorkDecisionRecord): Promise<void>;
@@ -60,6 +61,10 @@ function appealTransaction(client: PoolClient, hooks: WorkDecisionHooks): WorkAp
       return rows[0] ? workSessionFromRow(rows[0]) : undefined;
     },
     isReplaced: async (id) => !(await sessionInForce(client, id)),
+    async hasOpenAppeal(sessionId) {
+      const { rows } = await client.query<{ open: boolean }>("SELECT EXISTS (SELECT 1 FROM work_appeals WHERE session_id = $1 AND status <> 'resolved') AS open", [sessionId]);
+      return rows[0]?.open === true;
+    },
     async assignment(id) {
       const { rows } = await client.query<AssignmentRow>(`SELECT ${ASSIGNMENT_COLUMNS} FROM work_assignments a WHERE a.id = $1`, [id]);
       return rows[0] ? assignmentFromRow(rows[0]) : undefined;
