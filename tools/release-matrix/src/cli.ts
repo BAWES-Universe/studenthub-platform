@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { checkContract, type ContractIssue, type ParsedContract } from "./contract.js";
-import { MATRIX_PATH, loadContract, loadInventory, loadMatrix, repoRoot } from "./files.js";
+import { MATRIX_PATH, jsonIssues, loadContract, loadInventory, loadMatrix, repoRoot } from "./files.js";
 import { blockers, checkInventory, checkMatrix, PHASES, type Blocker, type Matrix, type MobileInventory, type Phase } from "./matrix.js";
 import { seedMatrix } from "./seed.js";
 
@@ -49,18 +49,21 @@ function main(command: string | undefined, phaseArg?: string): number {
   const root = repoRoot();
   const contract = loadContract(root);
   const inventory = loadInventory(root);
+  // JSON.parse keeps only the last of two equal keys, so a duplicate is refused before
+  // anything reads either file: seed would otherwise drop the other row's evidence.
+  const duplicates = jsonIssues(root);
 
   if (command === "seed") {
     const previous = existsSync(path.join(root, MATRIX_PATH)) ? loadMatrix(root) : undefined;
     const seeded = seedIfValid(contract, inventory, previous);
-    for (const issue of seeded.issues) console.error(`${issue.rule}: ${issue.detail}`);
-    if (!seeded.matrix) return 1;
+    for (const issue of [...duplicates, ...seeded.issues]) console.error(`${issue.rule}: ${issue.detail}`);
+    if (!seeded.matrix || duplicates.length > 0) return 1;
     writeFileSync(path.join(root, MATRIX_PATH), `${JSON.stringify(seeded.matrix, null, 2)}\n`);
     return 0;
   }
 
   const matrix = loadMatrix(root);
-  const issues = [...checkContract(contract), ...checkInventory(inventory, contract), ...checkMatrix(matrix, contract, inventory)];
+  const issues = [...duplicates, ...checkContract(contract), ...checkInventory(inventory, contract), ...checkMatrix(matrix, contract, inventory)];
   for (const issue of issues) console.error(`${issue.rule}: ${issue.detail}`);
   if (issues.length > 0) return 1;
 

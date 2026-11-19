@@ -38,6 +38,8 @@ export interface ParsedContract {
   readonly declaredTotals: Readonly<Record<string, number>>;
   /** Target or exclusion ids defined more than once, with both source lines. */
   readonly duplicateTargets?: readonly { readonly id: string; readonly first: number; readonly again: number }[];
+  /** How many "complete, gap-free partition:" declarations the contract makes; exactly one is valid. */
+  readonly partitionDeclarations?: number;
   /** Appendices whose partition total is declared more than once. */
   readonly duplicateTotals?: readonly string[];
   /** Lines in markdown the parser does not model, so it cannot say what a reader sees there. */
@@ -211,8 +213,11 @@ export function parseContract(markdown: string): ParsedContract {
 
   const declaredTotals: Record<string, number> = {};
   const duplicateTotals: string[] = [];
-  const partition = /complete, gap-free partition:\s*([^.]+)\./.exec(accepted.join("\n"));
-  if (partition) {
+  // Every declaration is read, not just the first: a reader sees all of them, so a second
+  // one (even with the same totals, even wrapped across lines or capitalised) is reported.
+  const declarations = [...accepted.join("\n").matchAll(/complete,\s+gap-free\s+partition:\s*([^.]+)\./gi)];
+  const partitionDeclarations = declarations.length;
+  for (const partition of declarations) {
     for (const match of partition[1]!.matchAll(/([A-Z]+)\s+1[–-](\d+)/g)) {
       // A second total for the same appendix is reported, never allowed to replace the first.
       if (match[1]! in declaredTotals) duplicateTotals.push(match[1]!);
@@ -220,7 +225,7 @@ export function parseContract(markdown: string): ParsedContract {
     }
   }
 
-  return { targets, ledger, declaredTotals, duplicateTargets: duplicates, duplicateTotals, unsupported };
+  return { targets, ledger, declaredTotals, partitionDeclarations, duplicateTargets: duplicates, duplicateTotals, unsupported };
 }
 
 /** Ids named in free text such as "`C-01..02`" or "C-06..07"; used for data files too. */
@@ -237,6 +242,9 @@ export function checkContract(contract: ParsedContract): ContractIssue[] {
   const issues: ContractIssue[] = [];
   for (const { line, reason } of contract.unsupported ?? []) {
     issues.push({ rule: "contract.markdown.unsupported", detail: `line ${line}: ${reason}` });
+  }
+  if ((contract.partitionDeclarations ?? 1) > 1) {
+    issues.push({ rule: "contract.partition.declaredTwice", detail: `the contract declares its partition ${contract.partitionDeclarations} times; it must declare it once` });
   }
   for (const app of contract.duplicateTotals ?? []) {
     issues.push({ rule: "contract.partition.declaredTwice", detail: `section 6 declares the ${app} total more than once` });

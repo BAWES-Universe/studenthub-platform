@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { checkContract, idsIn, parseContract } from "../src/contract.js";
-import { CONTRACT_PATH, loadContract, loadInventory, loadMatrix, repoRoot } from "../src/files.js";
+import { CONTRACT_PATH, duplicateJsonKeys, jsonIssues, loadContract, loadInventory, loadMatrix, repoRoot } from "../src/files.js";
 import { blockers, checkInventory, checkMatrix, citesDecision, citesEvidence, GATES, isSourceLine, mobileKey, type Matrix, type MobileInventory } from "../src/matrix.js";
 import { laneForOwner, seedMatrix } from "../src/seed.js";
 import { isEntryPoint, renderReport, seedIfValid } from "../src/cli.js";
@@ -369,6 +369,36 @@ test("an appendix total declared twice is reported, not silently replaced", () =
   const doubled = markdown.replace(/(complete, gap-free partition:\s*)/, "$1MOB 1-66, ");
   assert.notEqual(doubled, markdown);
   assert.deepEqual(rules(checkContract(parseContract(doubled))), ["contract.partition.declaredTwice"]);
+});
+
+test("every partition declaration is read, so a second one in another paragraph is reported", () => {
+  const second = (text: string) => markdown.replace(/(## 6\.[^\n]*\n)/, `$1\n${text}\n`);
+  for (const text of [
+    "These ranges are a complete, gap-free partition: MOB 1–70.",
+    "These ranges are a complete, gap-free partition: ADM 1–105, MOB 1–66, WEB 1–69, EMP 1–51, STAFF 1–91.",
+    "These ranges are a complete,\ngap-free partition: MOB 1–70.",
+    "These ranges are a Complete, Gap-free Partition: MOB 1–70.",
+    "A total no appendix uses is still a declaration: complete, gap-free partition: none.",
+  ]) {
+    const doubled = second(text);
+    assert.notEqual(doubled, markdown);
+    const found = rules(checkContract(parseContract(doubled)));
+    assert.ok(found.includes("contract.partition.declaredTwice"), `${JSON.stringify(text)} gave ${found.join(", ")}`);
+  }
+  // The real contract declares it exactly once.
+  assert.equal(parseContract(markdown).partitionDeclarations, 1);
+});
+
+test("a key written twice in matrix.json or the inventory is reported, since JSON.parse keeps only the last", () => {
+  assert.deepEqual(duplicateJsonKeys('{"a": 1, "a": 2}'), ["a"]);
+  assert.deepEqual(duplicateJsonKeys('{"screens": {"U-04": {}, "U-05": {}, "U-04": {"x": 1}}}'), ["screens.U-04"]);
+  assert.deepEqual(duplicateJsonKeys('{"endpoints": [{"m": 1, "m": 2}, {"m": 3}]}'), ["endpoints[].m"]);
+  // The same name in sibling objects, as a value, or inside a string is not a duplicate.
+  assert.deepEqual(duplicateJsonKeys('{"a": {"k": 1}, "b": {"k": 1}, "c": "a", "d": ["a", "a"], "e": "x\\"a\\":"}'), []);
+  assert.deepEqual(duplicateJsonKeys('{"a\\"": 1, "a": 2}'), []);
+  assert.deepEqual(duplicateJsonKeys('{"a\\u0062": 1, "ab": 2}'), ["ab"]);
+  // The files as committed have none.
+  assert.deepEqual(jsonIssues(root), []);
 });
 
 test("seed refuses invalid sources, so a mistyped id cannot drop a row and its evidence", () => {

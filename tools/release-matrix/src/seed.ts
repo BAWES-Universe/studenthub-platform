@@ -45,7 +45,10 @@ const SLICE_LANE: Readonly<Record<string, string>> = {
   X: "platform",
 };
 
-/** "S1 / SHU-92" -> people; "SHU-91 app shell" -> shell; "SHU-234" -> recruit. */
+/**
+ * "S1 / SHU-92" -> people; "SHU-91 app shell" -> shell; "SHU-234" -> recruit. The leading
+ * slice owns the row by the contract's owner format; slices named after it are dependencies.
+ */
 export function laneForOwner(owner: string): string {
   const slice = /^([SOIRWFCPX])\d/.exec(owner.trim());
   if (slice) return SLICE_LANE[slice[1]!]!;
