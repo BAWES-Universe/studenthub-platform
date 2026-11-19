@@ -40,6 +40,8 @@ const guards = [
   ["pay_transfers", "pay_transfers_no_truncate"],
   ["pay_transfer_lines", "pay_transfer_lines_no_truncate"],
   ["pay_line_audit", "pay_line_audit_no_truncate"],
+  ["id_cards", "id_cards_no_truncate"],
+  ["id_card_events", "id_card_events_no_truncate"],
   // A principals reset cascades into the work lane's stand-up tables.
   ["work_standup_answers", "work_standup_answers_no_truncate"],
   ["work_standup_questions", "work_standup_questions_no_truncate"],
