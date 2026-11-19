@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   AppealService, SessionConflict, WorkScope, parseAppealCursor,
-  type AppealStore, type AppealTransaction, type AppealUpdate, type Assignment, type DecisionNotice, type WorkAppeal, type WorkDecision,
+  type AppealStore, type AppealTransaction, type AppealUpdate, type Assignment, type WorkAppeal, type WorkDecision,
   type WorkEvent, type WorkGrant, type WorkSession,
 } from "../src/index.js";
 
@@ -38,11 +38,10 @@ class Memory implements AppealStore {
   updates: AppealUpdate[] = [];
   decisions: WorkDecision[] = [];
   events: WorkEvent[] = [];
-  notices: DecisionNotice[] = [];
   async organizationAncestors(orgId: string) { return ANCESTORS[orgId]; }
   inForce(s: WorkSession) { return s.deletedAt === null && !this.sessions.some((c) => c.correctsSessionId === s.id && c.deletedAt === null); }
   async transaction<T>(work: (tx: AppealTransaction) => Promise<T>): Promise<T> {
-    const snap = JSON.stringify([this.sessions, this.appeals, this.updates, this.decisions, this.events, this.notices]);
+    const snap = JSON.stringify([this.sessions, this.appeals, this.updates, this.decisions, this.events]);
     const tx: AppealTransaction = {
       lockSession: async (id) => this.sessions.find((s) => s.id === id),
       isReplaced: async (id) => this.sessions.some((c) => c.correctsSessionId === id && c.deletedAt === null),
@@ -70,10 +69,9 @@ class Memory implements AppealStore {
         return true;
       },
       event: async (e) => { this.events.push(e); },
-      notify: async (x) => { this.notices.push(x); },
     };
     try { return await work(tx); } catch (e) {
-      [this.sessions, this.appeals, this.updates, this.decisions, this.events, this.notices] = JSON.parse(snap);
+      [this.sessions, this.appeals, this.updates, this.decisions, this.events] = JSON.parse(snap);
       throw e;
     }
   }
@@ -188,7 +186,7 @@ test("W6_CORRECT a staff correction replaces the session, approved by staff, wit
   // A correction of the correction replaces the live one.
   assert.equal((await svc.correct("staff", out.session.id, { ...input, endedAt: "2026-11-18T08:30:00Z" })).kind, "entered");
   assert.deepEqual(store.events.filter((e) => e.kind === "session.corrected").length, 2);
-  assert.deepEqual(store.notices.map((x) => x.kind), ["decided", "decided"]);
+  // D-WK3: no new notifications. The appeal transaction has no notify at all, so neither entry path can send one.
 });
 
 test("W6_CORRECT open sessions, overlaps and dates outside the placement are refused", async () => {

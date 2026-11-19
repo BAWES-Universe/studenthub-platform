@@ -16,7 +16,7 @@
 // hours). A correction of a correction replaces the live one.
 
 import { cleanText, isUuid, kuwaitDate } from "./common.js";
-import type { DecisionNotice, WorkDecision, WorkScope } from "./decisions.js";
+import type { WorkDecision, WorkScope } from "./decisions.js";
 import type { Assignment, WorkEvent } from "./placement.js";
 import { parseInstant, sessionConflict, sessionEvent, type NewSession, type WorkSession } from "./sessions.js";
 import { parseRange, type HoursRange } from "./views.js";
@@ -77,7 +77,6 @@ export interface AppealTransaction {
   /** Marks an update read when it belongs to an appeal of `personId`; false when it doesn't. */
   markRead(updateId: string, personId: string): Promise<boolean>;
   event(event: WorkEvent): Promise<void>;
-  notify(notice: DecisionNotice): Promise<void>;
 }
 
 export interface AppealStore {
@@ -272,7 +271,7 @@ export class AppealService {
     const approved: WorkSession = Object.freeze({ ...session, status: "approved", decisionId: decision.id });
     await tx.event(sessionEvent(correctsSessionId ? "session.corrected" : "session.added", approved, actorId,
       { decisionId: decision.id, correctsSessionId, appealId, reason: entry.reason }));
-    await tx.notify({ kind: "decided", personId: approved.personId, sessionId: approved.id, decisionId: decision.id, outcome: "approved", workDate });
+    // D-WK3: a staff correction or added entry sends the person no notification; the appeal thread is where they hear back.
     return { kind: "entered", session: approved, decision };
   }
 

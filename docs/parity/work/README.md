@@ -13,9 +13,9 @@ company `StoreController` and `StoreAssignmentRequestController`, candidate
 
 | Decision | Rule here |
 |---|---|
-| D-WK1 clock-in location | Start and Stop require a location. Both pairs are kept (fixes WK-F2, stop overwrote start). No geofence. A manual entry is accepted, pending, and flagged `late_entry` for the approver. |
-| D-WK2 ratings | Kept as legacy (visible to other employers in search). Lands with W-4. |
-| D-WK3 corrections | Staff correct approved hours without re-approval; a reason is required and history is kept. A correction is a new session that replaces the original in every total; the original row stays. A correction after month end reaches pay as a changed session (see the payable seam). No new notifications. |
+| D-WK1 clock-in location | Start and Stop require a location. Both pairs are kept (fixes WK-F2, stop overwrote start) and both are shown to the approver on the review screens. No geofence. A manual entry is accepted, pending, and flagged `late_entry` for the approver. |
+| D-WK2 ratings | Kept as legacy: an employer rates 1 to 5 with a decision (W-4), and ratings stay visible to other employers in search through `PostgresWorkHoursViewStore.employerRatings(personIds)` (count and average of the ratings on decisions that still stand; no note, reason or decider). The person never sees a rating. Search (recruit lane) gates who may call it. |
+| D-WK3 corrections | Staff correct approved hours without re-approval; a reason is required and history is kept. A correction is a new session that replaces the original in every total; the original row stays. A correction after month end reaches pay as a changed session (see the payable seam). No new notifications: a correction or an added entry sends the person nothing (the appeal store has no notice hook); they hear back on their appeal thread. |
 | No regressions | The civil ID check on placement is a warning (`civil_id_missing`, `civil_id_expires_before_start`), not a refusal, because legacy has no such gate. |
 
 ## What changed from legacy, and why
@@ -54,7 +54,8 @@ shapes of `recordWorkSessionDecision` and `retractWorkSessionDecision` from
 `@studenthub/db/comms`. They run on the decision's own client, so a notice commits or
 rolls back with the decision. Each changed session gets one `decided` notice; a
 re-decision or an undo first withdraws the earlier decision's notice. Gateway wiring
-passes the comms functions.
+passes the comms functions. Staff corrections and added entries (W-6) send no notice
+(D-WK3), so `PostgresWorkAppealStore` takes no hooks.
 
 ## Payable seam for the pay lane (W-2)
 

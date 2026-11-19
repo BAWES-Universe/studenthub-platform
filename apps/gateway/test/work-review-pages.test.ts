@@ -17,7 +17,7 @@ function session(over: Record<string, unknown> = {}) {
     source: "timer", status: "pending", flags: [], note: null, correctsSessionId: null, decisionId: null, deletedAt: null, createdBy: "person-1", createdAt: "x", ...over };
 }
 const ROWS = [
-  { session: session(), decision: null },
+  { session: session({ startLocation: { latitude: 29.3759, longitude: 47.9774 }, endLocation: { latitude: 29.37, longitude: 47.98 } }), decision: null },
   { session: session({ id: S2, status: "rejected", source: "manual" }), decision: { outcome: "rejected", reason: "late <again>", note: "private word", notePublic: false, rating: 2, decidedBy: "manager", decidedAt: "2026-11-18T10:00:00.000Z" } },
   { session: session({ id: S3, endedAt: null, durationSeconds: null }), decision: null },
 ];
@@ -102,6 +102,9 @@ test("WORK_REVIEW M-03 is the store's queue: waiting hours by default, scoped to
   assert.deepEqual(calls[0], ["company", "actor", "co", { from: "2026-11-01", to: "2026-11-18" }, { storeId: STORE, status: "pending", after: null }]);
   assert.match(page.html, /Time approvals: Avenues &lt;Mall&gt;/);
   assert.match(page.html, new RegExp(`action="/store/${STORE}/time-approvals/decide"`));
+  // D-WK1: the approver sees both places, start and stop, and a session without them shows none.
+  assert.match(page.html, /Started at <a href="https:\/\/www\.openstreetmap\.org\/\?mlat=29\.37590&amp;mlon=47\.97740#map=17\/29\.37590\/47\.97740" rel="noopener noreferrer" target="_blank">29\.37590, 47\.97740<\/a>, stopped at <a [^>]*>29\.37000, 47\.98000<\/a>/);
+  assert.equal((page.html.match(/Started at/g) ?? []).length, 1);
   const all: unknown[][] = [];
   await request(`/store/${STORE}/time-approvals?status=&store=${OTHER_STORE}`, {}, all);
   assert.deepEqual(all[0]?.[4], { storeId: STORE, after: null }, "the path's store wins over a query store");

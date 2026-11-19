@@ -57,7 +57,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
   const sessionStore = new PostgresWorkSessionStore(pool);
   const decisionStore = new PostgresWorkDecisionStore(pool, ports.notices ?? {});
   const viewStore = new PostgresWorkHoursViewStore(pool);
-  const appealStore = new PostgresWorkAppealStore(pool, ports.notices ?? {});
+  const appealStore = new PostgresWorkAppealStore(pool);
   const scope = new WorkScope(grants, managed, (orgId) => viewStore.organizationAncestors(orgId));
   const newId = () => randomUUID();
   const work: WorkHttpServices = {

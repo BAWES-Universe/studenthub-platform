@@ -4,9 +4,9 @@
 
 import type { Pool as PgPool, PoolClient, PoolConfig } from "pg";
 import {
-  ASSIGNMENT_COLUMNS, SESSION_COLUMNS, PoolOwner, ancestorsOf, assignmentFromRow, insertDecision, insertEvent, insertSession, notifyHooks,
+  ASSIGNMENT_COLUMNS, SESSION_COLUMNS, PoolOwner, ancestorsOf, assignmentFromRow, insertDecision, insertEvent, insertSession,
   sessionInForce, setSessionStatus, workSessionFromRow,
-  type AssignmentRow, type NewWorkSessionRecord, type SessionRow, type WorkAssignmentRecord, type WorkDecisionHooks, type WorkDecisionNotice,
+  type AssignmentRow, type NewWorkSessionRecord, type SessionRow, type WorkAssignmentRecord,
   type WorkDecisionRecord, type WorkEventRecord, type WorkSessionRecord,
 } from "./postgres-work-store.js";
 
@@ -35,7 +35,6 @@ export interface WorkAppealTransaction {
   insertUpdate(u: Omit<WorkAppealUpdateRecord, "createdAt" | "readAt">): Promise<WorkAppealUpdateRecord>;
   markRead(updateId: string, personId: string): Promise<boolean>;
   event(e: WorkEventRecord): Promise<void>;
-  notify(n: WorkDecisionNotice): Promise<void>;
 }
 
 const APPEAL_COLUMNS = "a.id, a.session_id, a.person_principal_id, a.org_id, a.store_id, a.reason, a.status, a.created_at, a.updated_at";
@@ -51,7 +50,7 @@ function updateFromRow(r: UpdateRow): WorkAppealUpdateRecord {
     createdAt: r.created_at.toISOString(), readAt: r.read_at ? r.read_at.toISOString() : null });
 }
 
-function appealTransaction(client: PoolClient, hooks: WorkDecisionHooks): WorkAppealTransaction {
+function appealTransaction(client: PoolClient): WorkAppealTransaction {
   const appealRow = async (sql: string, values: unknown[]) => {
     const { rows } = await client.query<AppealRow>(sql, values);
     return rows[0] ? appealFromRow(rows[0]) : undefined;
@@ -99,20 +98,17 @@ function appealTransaction(client: PoolClient, hooks: WorkDecisionHooks): WorkAp
       return rowCount === 1;
     },
     event: (e) => insertEvent(client, e),
-    notify: (n) => notifyHooks(client, hooks, n),
   };
 }
 
-/** W-6 appeals and staff corrections. Hooks are the same comms producers as decisions. */
+/** W-6 appeals and staff corrections. Corrections and added entries send no notifications (D-WK3). */
 export class PostgresWorkAppealStore {
   readonly #db: PoolOwner;
-  readonly #hooks: WorkDecisionHooks;
-  constructor(poolOrConfig: PgPool | PoolConfig, hooks: WorkDecisionHooks = {}) { this.#db = new PoolOwner(poolOrConfig); this.#hooks = hooks; }
+  constructor(poolOrConfig: PgPool | PoolConfig) { this.#db = new PoolOwner(poolOrConfig); }
   async close(): Promise<void> { await this.#db.close(); }
   organizationAncestors(orgId: string): Promise<readonly string[] | undefined> { return ancestorsOf(this.#db.pool, orgId); }
   transaction<T>(work: (tx: WorkAppealTransaction) => Promise<T>): Promise<T> {
-    const hooks = this.#hooks;
-    return this.#db.transaction((client) => work(appealTransaction(client, hooks)));
+    return this.#db.transaction((client) => work(appealTransaction(client)));
   }
 
   async appeal(id: string): Promise<{ appeal: WorkAppealRecord; session: WorkSessionRecord; updates: readonly WorkAppealUpdateRecord[]; entries: readonly WorkSessionRecord[] } | undefined> {

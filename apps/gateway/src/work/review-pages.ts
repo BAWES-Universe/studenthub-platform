@@ -129,6 +129,17 @@ function decisionText(d: EmployerDecisionView | null, by: ReadonlyMap<string, st
   return parts.join("");
 }
 
+/** D-WK1: the approver sees where the person clocked in and out (no geofence; the places are shown, not judged). */
+function placeText(label: string, at: { readonly latitude: number; readonly longitude: number } | null): string {
+  if (!at) return "";
+  const lat = at.latitude.toFixed(5), lon = at.longitude.toFixed(5);
+  return `${label} <a href="https://www.openstreetmap.org/?mlat=${lat}&amp;mlon=${lon}#map=17/${lat}/${lon}" rel="noopener noreferrer" target="_blank">${lat}, ${lon}</a>`;
+}
+function placesText(s: WorkSession): string {
+  const parts = [placeText("Started at", s.startLocation), placeText("stopped at", s.endLocation)].filter(Boolean);
+  return parts.length ? `<p>${parts.join(", ")}</p>` : "";
+}
+
 function reviewRow(s: WorkSession, d: EmployerDecisionView | null, people: ReadonlyMap<string, string>, stores: ReadonlyMap<string, string>, staff: boolean): string {
   const open = s.endedAt === null;
   const time = `${longDate(s.workDate)}, ${clock(s.startedAt)} to ${open ? "now" : `${clock(s.endedAt!)} (${duration(s.durationSeconds ?? 0)})`}`;
@@ -140,7 +151,7 @@ function reviewRow(s: WorkSession, d: EmployerDecisionView | null, people: Reado
   const undo = !open && s.status !== "pending" ? `<button type="submit" name="undo" value="${s.id}">Undo this decision</button>` : "";
   // Staff correct closed hours (D-WK3); the correction replaces this entry in every total.
   const correct = staff && !open ? `<p><a href="/work/corrections/new?session=${s.id}&amp;date=${s.workDate}">Correct these hours</a></p>` : "";
-  return `<li class="p-card" id="s-${s.id}"><h3>${box} ${esc(who)}</h3><p>${esc(time)} · ${esc(stores.get(s.storeId) ?? "Store")}</p><p><strong>${esc(status)}</strong>${marks.length ? ` · ${esc(marks.join(", "))}` : ""}</p>${s.note ? `<p>Their note: ${esc(s.note)}</p>` : ""}${decisionText(d, people)}${undo}${correct}</li>`;
+  return `<li class="p-card" id="s-${s.id}"><h3>${box} ${esc(who)}</h3><p>${esc(time)} · ${esc(stores.get(s.storeId) ?? "Store")}</p><p><strong>${esc(status)}</strong>${marks.length ? ` · ${esc(marks.join(", "))}` : ""}</p>${placesText(s)}${s.note ? `<p>Their note: ${esc(s.note)}</p>` : ""}${decisionText(d, people)}${undo}${correct}</li>`;
 }
 
 /** O-11 and M-03; `undefined` when the actor may not see this company or store. */

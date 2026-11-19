@@ -384,6 +384,13 @@ test("W5_PG views: the person sees no rating or private note; another company se
   const rest = await viewStore.listSessions({ personId: w.person, range, limit: 2, after: { workDate: first[1]!.workDate, id: first[1]!.id } });
   assert.deepEqual([...first, ...rest].map((s) => s.id).sort(), [a, b, (await viewStore.listSessions({ personId: w.person, range, limit: 10 })).map((s) => s.id).find((id) => id !== a && id !== b)].sort());
   assert.equal(rest.length, 1);
+  // D-WK2: ratings that still stand are visible to other employers' search, without the note.
+  assert.deepEqual([...await viewStore.employerRatings([w.person, w.owner])], [[w.person, { count: 1, average: 4 }]]);
+  assert.equal((await viewStore.employerRatings([])).size, 0);
+  await decision.decideSessions(w.owner, [b], { decision: "reject", reason: "late", rating: 1 });
+  assert.deepEqual(await viewStore.employerRatings([w.person]), new Map([[w.person, { count: 2, average: 2.5 }]]));
+  await decision.undo(w.owner, b, "rated in error");
+  assert.deepEqual(await viewStore.employerRatings([w.person]), new Map([[w.person, { count: 1, average: 4 }]]), "an undone decision's rating no longer counts");
 });
 
 function appealService(now: { value: Date }) {

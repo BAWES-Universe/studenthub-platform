@@ -573,6 +573,24 @@ export class PostgresWorkHoursViewStore {
     return new Map(rows.filter((r) => r.name).map((r) => [r.id, r.name!]));
   }
 
+  /**
+   * D-WK2 (legacy kept): the employer ratings of each person, for other employers'
+   * search. Counts the rating of every decision that still stands on a session in
+   * force (a re-decided, undone, discarded or replaced session drops its rating);
+   * a day decision rates once. The caller gates who may search; this reveals no
+   * note, reason or decider.
+   */
+  async employerRatings(personIds: readonly string[]): Promise<ReadonlyMap<string, { readonly count: number; readonly average: number }>> {
+    if (personIds.length === 0) return new Map();
+    const { rows } = await this.#db.pool.query<{ person: string; count: number; average: string }>(
+      `SELECT d.person_principal_id AS person, count(*)::int AS count, round(avg(d.rating), 1)::text AS average
+         FROM work_decisions d
+        WHERE d.person_principal_id = ANY($1::text[]) AND d.rating IS NOT NULL
+          AND EXISTS (SELECT 1 FROM work_sessions s WHERE s.decision_id = d.id AND s.deleted_at IS NULL AND work_session_in_force(s.id))
+        GROUP BY d.person_principal_id`, [[...personIds]]);
+    return new Map(rows.map((r) => [r.person, Object.freeze({ count: r.count, average: Number(r.average) })]));
+  }
+
   async listSessions(f: WorkSessionFilter): Promise<readonly WorkSessionRecord[]> {
     const { sql, values } = sessionWhere(f);
     values.push(f.after?.workDate ?? null, f.after?.id ?? null, Math.min(Math.max(f.limit ?? 100, 1), 501));
