@@ -226,6 +226,14 @@ test("every way a run ends leaves a fresh report, so a stale ok is never read", 
     staleOk();
     assert.equal(await runCli(deps({ env: { LEGACY_REFRESH_REPORT: reportPath } })), 2);
     assert.deepEqual([report().ok, report().code], [false, "config.source.missing"]);
+    // A report path that is the refusal record is never written, even when another
+    // configuration error stops loadConfig before its own path checks.
+    const refusedPath = path.join(dir, "last-refused.json");
+    writeFileSync(refusedPath, "owner");
+    assert.equal(await runCli(deps({ env: { LEGACY_REFRESH_REPORT: refusedPath, LEGACY_REFRESH_LOCK: lockPath } })), 2);
+    assert.equal(readFileSync(refusedPath, "utf8"), "owner");
+    assert.equal(lines.at(-1), "legacy-refresh: config.source.missing (report not written)");
+    rmSync(refusedPath);
 
     staleOk();
     const holder = await acquireLock(lockPath);

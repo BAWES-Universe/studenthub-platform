@@ -409,8 +409,13 @@ export async function runCli(deps: CliDeps): Promise<number> {
     const code = error instanceof RefreshRefused ? error.code : "config.invalid";
     // Written only where it cannot replace the lock (writeReport checks) or be the file a
     // contender writes; else stderr only.
-    const writable = code !== "config.reportIsLock" && code !== "config.reportIsRefused" && safeToWrite(reportPathFrom(deps.env), lockPathFrom(deps.env));
-    const written = writable && tryWriteReport(reportPathFrom(deps.env), lockPathFrom(deps.env), failureReport(code, deps.now()));
+    // The path checks are repeated here because loadConfig may have stopped before them.
+    const reportPath = reportPathFrom(deps.env);
+    const writable =
+      code !== "config.reportIsLock" &&
+      path.resolve(refusedPathFrom(reportPath)) !== path.resolve(reportPath) &&
+      safeToWrite(reportPath, lockPathFrom(deps.env));
+    const written = writable && tryWriteReport(reportPath, lockPathFrom(deps.env), failureReport(code, deps.now()));
     deps.error(`legacy-refresh: ${code}${written ? "" : " (report not written)"}`);
     return 2;
   }
