@@ -12,7 +12,8 @@
 --   Asia/Kuwait date, kept on the row;
 -- - nothing stopped a second answer to the same question on the same day: one
 --   answer per staff member, question and day is enforced by a unique index;
--- - answers were plain rows: an answer is never edited or removed.
+-- - answers were plain rows: an answer is never edited or removed, and neither
+--   table can be emptied with TRUNCATE (directly or by a CASCADE from a parent).
 
 CREATE TABLE work_standup_questions (
  id uuid PRIMARY KEY,
@@ -50,3 +51,7 @@ CREATE TRIGGER work_standup_answers_frozen BEFORE UPDATE OR DELETE ON work_stand
 CREATE FUNCTION refuse_work_standup_question_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'stand-up questions are retired, never removed' USING ERRCODE = '23514'; END $$;
 CREATE TRIGGER work_standup_questions_no_delete BEFORE DELETE ON work_standup_questions FOR EACH ROW EXECUTE FUNCTION refuse_work_standup_question_delete();
+CREATE FUNCTION refuse_work_standup_truncate() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'stand-up questions and answers are never removed' USING ERRCODE = '23514'; END $$;
+CREATE TRIGGER work_standup_answers_no_truncate BEFORE TRUNCATE ON work_standup_answers FOR EACH STATEMENT EXECUTE FUNCTION refuse_work_standup_truncate();
+CREATE TRIGGER work_standup_questions_no_truncate BEFORE TRUNCATE ON work_standup_questions FOR EACH STATEMENT EXECUTE FUNCTION refuse_work_standup_truncate();

@@ -92,3 +92,20 @@ test("STANDUP_PG answers page by staff then time; answers are never edited or re
   await assert.rejects(pool.query("INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source) VALUES($1,$2,$3,'Paging?','  ',$4::date,'app')", [randomUUID(), staff, q.id, day]), /check/i);
   await store.retireQuestion(q.id);
 });
+
+test("STANDUP_PG neither table can be emptied by TRUNCATE, directly or by a CASCADE from a parent", async () => {
+  const refused = /stand-up questions and answers are never removed/;
+  for (const statement of ["TRUNCATE work_standup_answers", "TRUNCATE work_standup_questions CASCADE", "TRUNCATE work_standup_answers, work_standup_questions",
+    "TRUNCATE principals CASCADE"]) {
+    const client = await pool.connect();
+    try {
+      // In a transaction that is rolled back, so a statement that wrongly ran wipes nothing.
+      await client.query("BEGIN");
+      await assert.rejects(client.query(statement), refused, statement);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+  }
+  assert.ok(((await pool.query("SELECT count(*)::int AS n FROM work_standup_answers")).rows[0] as { n: number }).n > 0);
+});
