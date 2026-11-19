@@ -29,7 +29,7 @@ class MemoryPlacements implements PlacementStore {
   openSessions = 0;
   async store(id: string) { return this.stores.get(id); }
   async organizationAncestors(orgId: string) { return orgId === "company" ? ["group", "root"] : orgId === "rival" || orgId === "group" ? ["root"] : undefined; }
-  async personExists(id: string) { return id === "person" || id === "other-person"; }
+  async personExists(id: string) { return id === "person" || id === "other-person" || id === "paused-person"; }
   async civilId() { return this.civil; }
   async contracts(personId: string) { return this.contractsByPerson.get(personId) ?? []; }
   async assignment(id: string) { return this.assignments.find((a) => a.id === id); }
@@ -95,8 +95,10 @@ const MANAGED: Record<string, { orgId: string; storeId: string }[]> = { manager:
 function service(store = new MemoryPlacements()) {
   ids = 0;
   return { store, svc: new PlacementService({ store, grants: { listGrantsForPrincipal: async (id) => GRANTS[id] ?? [] }, newId: () => `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`, now: () => NOW,
-    managedStores: async (id) => MANAGED[id] ?? [] }) };
+    managedStores: async (id) => MANAGED[id] ?? [], paused: async (personIds) => new Set(personIds.filter((id) => PAUSED.has(id))) }) };
 }
+/** People whose StudentHub access is paused (access lane A6). */
+const PAUSED = new Set<string>(["paused-person"]);
 
 test("W1_DATES Kuwait date is used for defaults: 21:30Z on the 17th is the 18th", () => {
   assert.equal(kuwaitDate(NOW), "2026-11-18");
@@ -211,6 +213,27 @@ test("W1_REQUEST staff accept places the person in the same transaction; a refus
   assert.equal(store.requests[0]?.status, "accepted");
   assert.deepEqual(await svc.decideRequest("staff", id, "reject"), { kind: "refused", code: "request_not_pending" });
   assert.deepEqual(store.events.map((e) => e.kind), ["assignment_request.created", "assignment.created", "assignment_request.accepted"]);
+});
+
+test("W1_PAUSED a paused person can't be placed by staff, a request's acceptance or the recruit stage; to a company they are not found", async () => {
+  const { store, svc } = service();
+  store.contractsByPerson.set("paused-person", store.contractsByPerson.get("person") ?? []);
+  assert.deepEqual(await svc.place("staff", { personId: "paused-person", storeId: STORE }), { kind: "refused", code: "person_paused" });
+  assert.deepEqual(await svc.placeFromRecruit("staff", { recruitCardId: "11111111-2222-4333-8444-555555555555", requestId: null, personId: "paused-person", storeId: STORE, startDate: null, endDate: null }),
+    { kind: "refused", code: "person_paused" });
+  // The company never learns the person is paused (A6 hides them from employers).
+  assert.deepEqual(await svc.request("owner", { personId: "paused-person", storeId: STORE }), { kind: "refused", code: "person_not_found" });
+  // A request made before the pause can't be accepted while it lasts, and stays pending.
+  PAUSED.delete("paused-person");
+  const req = await svc.request("owner", { personId: "paused-person", storeId: STORE });
+  PAUSED.add("paused-person");
+  const id = req.kind === "requested" ? req.request.id : "";
+  assert.deepEqual(await svc.decideRequest("staff", id, "accept"), { kind: "refused", code: "person_paused" });
+  assert.equal(store.requests[0]?.status, "pending");
+  assert.equal(store.assignments.length, 0);
+  // Resumed, the same request is accepted.
+  PAUSED.delete("paused-person");
+  try { assert.equal((await svc.decideRequest("staff", id, "accept")).kind, "accepted"); } finally { PAUSED.add("paused-person"); }
 });
 
 test("W1_REQUEST staff reject with a reason; the company may cancel its own pending request", async () => {

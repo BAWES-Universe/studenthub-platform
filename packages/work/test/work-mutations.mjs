@@ -14,6 +14,8 @@ const review = "apps/gateway/src/work/review-pages.js", reviewSuite = "apps/gate
 const legacy = "packages/work/src/legacy.js", legacySuite = "packages/work/test/legacy.test.js";
 const mutations = [
   ["staff-only placement", "store.ancestors))\n            return { kind: \"refused\", code: \"forbidden\" };\n        return this.#store.transaction((tx) => this.#place(tx, actorId, input, store, STAFF_ORIGIN));", "store.ancestors))\n            ;\n        return this.#store.transaction((tx) => this.#place(tx, actorId, input, store, STAFF_ORIGIN));", "W1_PLACE", placement, placementSuite],
+  ["paused people aren't placed", "if (await this.#isPaused(input.personId))\n", "if (false)\n", "W1_PAUSED", placement, placementSuite],
+  ["paused people hidden from a company's request", "|| await this.#isPaused(input.personId))", ")", "W1_PAUSED", placement, placementSuite],
   ["civil ID inclusive", "civilId.expiry < startDate", "civilId.expiry <= startDate", "W1_WARN", placement, placementSuite],
   ["ambiguous contract", "if (matches.length > 1)\n", "if (matches.length > 9)\n", "W1_CONTRACT", placement, placementSuite],
   ["open session blocks ending", "ending && (await tx.openSessionCount(current.id)) > 0", "false", "W1_END", placement, placementSuite],

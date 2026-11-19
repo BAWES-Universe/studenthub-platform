@@ -4,6 +4,7 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
+import { PostgresAccessPausesStore } from "@studenthub/db/access";
 import { recordWorkSessionDecision, retractWorkSessionDecision } from "@studenthub/db/comms";
 import { PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkImportStore, PostgresWorkPayableSource, PostgresWorkPlacementStore, PostgresWorkSessionStore } from "@studenthub/db/work";
 import { AppealService, DecisionService, mapLegacyFeedback, mapLegacyWorkingHour, HoursViews, PlacementService, SessionService, WorkScope, type PayableWorkSource } from "../../work/src/index.js";
@@ -122,6 +123,23 @@ test("W1_PG a company request is accepted by staff into a placement atomically",
   // A second accept of a decided request changes nothing.
   assert.deepEqual(await placement.decideRequest(w.staff, id, "accept"), { kind: "refused", code: "request_not_pending" });
   assert.equal((await placement.mine(w.person)).length, 1);
+});
+
+test("W1_PG the access lane's pause store keeps a paused person from being placed; a company is told they aren't found", async () => {
+  const w = await world();
+  await contract(w.person, w.company, w.store);
+  const pauses = new PostgresAccessPausesStore({ pool });
+  const placement = new PlacementService({ store: placements, grants: authz, newId: () => randomUUID(), now: () => new Date("2026-11-18T06:00:00Z"),
+    paused: (ids) => pauses.paused(ids) });
+  const before = await placement.request(w.owner, { personId: w.person, storeId: w.store });
+  assert.equal(before.kind, "requested");
+  await pool.query("INSERT INTO account_pauses(id, principal_id, paused_by, reason, suspended_grants, suspended_stores) VALUES($1, $2, $3, 'left the program', '[]', '[]')", [randomUUID(), w.person, w.staff]);
+  assert.deepEqual(await placement.place(w.staff, { personId: w.person, storeId: w.store }), { kind: "refused", code: "person_paused" });
+  assert.deepEqual(await placement.request(w.owner, { personId: w.person, storeId: w.store, note: "again" }), { kind: "refused", code: "person_not_found" });
+  assert.deepEqual(await placement.decideRequest(w.staff, before.kind === "requested" ? before.request.id : "", "accept"), { kind: "refused", code: "person_paused" });
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM work_assignments WHERE person_principal_id = $1", [w.person])).rows[0].n, 0);
+  await pool.query("UPDATE account_pauses SET resumed_at = clock_timestamp(), resumed_by = $2, resume_reason = 'came back', restored_grants = '{}' WHERE principal_id = $1 AND resumed_at IS NULL", [w.person, w.staff]);
+  assert.equal((await placement.decideRequest(w.staff, before.kind === "requested" ? before.request.id : "", "accept")).kind, "accepted");
 });
 
 test("W1_PG a store's requests are listed even behind 500 newer requests at another store", async () => {
