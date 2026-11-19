@@ -1,3 +1,4 @@
+import { resetPayAwareFixture } from "./helpers/pay-aware-fixture-reset.js";
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
 import pg from "pg";
@@ -14,7 +15,7 @@ before(async () => {
   pool = new pg.Pool({ connectionString: DB_URL });
   await runMigrations(pool);
 });
-beforeEach(async () => { await pool.query("TRUNCATE catalogue_items CASCADE"); });
+beforeEach(async () => { await resetPayAwareFixture(pool, "TRUNCATE catalogue_items CASCADE"); });
 after(async () => { await pool.end(); });
 
 test("PostgreSQL catalogue bank payment details preserve creator and guard bank rows", async () => {

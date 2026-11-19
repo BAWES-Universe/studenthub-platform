@@ -4,6 +4,7 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
+import { PostgresAccessPausesStore } from "@studenthub/db/access";
 import { recordWorkSessionDecision, retractWorkSessionDecision } from "@studenthub/db/comms";
 import { PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkImportStore, PostgresWorkPayableSource, PostgresWorkPlacementStore, PostgresWorkSessionStore } from "@studenthub/db/work";
 import { AppealService, DecisionService, mapLegacyFeedback, mapLegacyWorkingHour, HoursViews, PlacementService, SessionService, WorkScope, type PayableWorkSource } from "../../work/src/index.js";
@@ -122,6 +123,69 @@ test("W1_PG a company request is accepted by staff into a placement atomically",
   // A second accept of a decided request changes nothing.
   assert.deepEqual(await placement.decideRequest(w.staff, id, "accept"), { kind: "refused", code: "request_not_pending" });
   assert.equal((await placement.mine(w.person)).length, 1);
+});
+
+test("W1_PG the access lane's pause store keeps a paused person from being placed; a company is told they aren't found", async () => {
+  const w = await world();
+  await contract(w.person, w.company, w.store);
+  const pauses = new PostgresAccessPausesStore({ pool });
+  const placement = new PlacementService({ store: placements, grants: authz, newId: () => randomUUID(), now: () => new Date("2026-11-18T06:00:00Z"),
+    paused: (ids) => pauses.paused(ids) });
+  const before = await placement.request(w.owner, { personId: w.person, storeId: w.store });
+  assert.equal(before.kind, "requested");
+  await pool.query("INSERT INTO account_pauses(id, principal_id, paused_by, reason, suspended_grants, suspended_stores) VALUES($1, $2, $3, 'left the program', '[]', '[]')", [randomUUID(), w.person, w.staff]);
+  assert.deepEqual(await placement.place(w.staff, { personId: w.person, storeId: w.store }), { kind: "refused", code: "person_paused" });
+  assert.deepEqual(await placement.request(w.owner, { personId: w.person, storeId: w.store, note: "again" }), { kind: "refused", code: "person_not_found" });
+  assert.deepEqual(await placement.decideRequest(w.staff, before.kind === "requested" ? before.request.id : "", "accept"), { kind: "refused", code: "person_paused" });
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM work_assignments WHERE person_principal_id = $1", [w.person])).rows[0].n, 0);
+  await pool.query("UPDATE account_pauses SET resumed_at = clock_timestamp(), resumed_by = $2, resume_reason = 'came back', restored_grants = '{}' WHERE principal_id = $1 AND resumed_at IS NULL", [w.person, w.staff]);
+  assert.equal((await placement.decideRequest(w.staff, before.kind === "requested" ? before.request.id : "", "accept")).kind, "accepted");
+});
+
+/** Whether some session waits on the person's access lock (the per-principal advisory lock), polled for up to five seconds. */
+async function waitsOnAccessLock(personId: string): Promise<boolean> {
+  for (let i = 0; i < 100; i += 1) {
+    const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_locks l, (SELECT hashtextextended($1, 5959) AS k) h
+      WHERE l.locktype = 'advisory' AND NOT l.granted AND l.objsubid = 1 AND l.classid::bigint = ((h.k >> 32) & 4294967295) AND l.objid::bigint = (h.k & 4294967295)`, [personId]);
+    if (rows[0]!.n > 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+test("W1_PG a pause and a placement don't interleave: a pause that commits while the placement waits is seen, and a pause waits for a placement", async () => {
+  const pauses = new PostgresAccessPausesStore({ pool });
+  const placement = new PlacementService({ store: placements, grants: authz, newId: () => randomUUID(), now: () => new Date("2026-11-18T06:00:00Z"),
+    paused: (ids) => pauses.paused(ids) });
+  // A pause in progress holds the person's access lock and has written its row, not yet committed.
+  const w = await world();
+  await contract(w.person, w.company, w.store);
+  const pausing = await pool.connect();
+  try {
+    await pausing.query("BEGIN");
+    await pausing.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [w.person]);
+    await pausing.query("INSERT INTO account_pauses(id, principal_id, paused_by, reason, suspended_grants, suspended_stores) VALUES($1, $2, $3, 'left the program', '[]', '[]')", [randomUUID(), w.person, w.staff]);
+    const placing = placement.place(w.staff, { personId: w.person, storeId: w.store });
+    assert.equal(await waitsOnAccessLock(w.person), true, "the placement waits for the pause");
+    await pausing.query("COMMIT");
+    assert.deepEqual(await placing, { kind: "refused", code: "person_paused" });
+  } finally {
+    pausing.release();
+  }
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM work_assignments WHERE person_principal_id = $1", [w.person])).rows[0].n, 0);
+  // The other way round: the access lane's own pause waits for a placement holding the lock, then pauses.
+  const v = await world();
+  const placing = await pool.connect();
+  try {
+    await placing.query("BEGIN");
+    await placing.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [v.person]);
+    const pause = pauses.apply({ callerId: v.staff, request: { targetPrincipalId: v.person, action: "pause", reason: "left the program" }, decide: () => ({ kind: "apply" }) });
+    assert.equal(await waitsOnAccessLock(v.person), true, "the pause takes the same lock");
+    await placing.query("COMMIT");
+    assert.equal((await pause).kind, "paused");
+  } finally {
+    placing.release();
+  }
 });
 
 test("W1_PG a store's requests are listed even behind 500 newer requests at another store", async () => {
@@ -622,4 +686,35 @@ test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes ar
   assert.equal((await pool.query("SELECT d.legacy_ref FROM work_sessions s JOIN work_decisions d ON d.id = s.decision_id WHERE s.id = $1", [sessionTwo])).rows[0].legacy_ref, reject.legacyRef);
   await assert.rejects(pool.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids)
     VALUES($1,$2,$3,$4,'2026-11-10','day','approved','{}')`, [randomUUID(), w.company, w.store, w.person]), /work_decisions_actor/);
+});
+
+test("W1_PG who worked where: placements overlapping a range, oldest first, keyset-paged; company names", async () => {
+  const w = await world();
+  await contract(w.person, w.company, w.store);
+  const now = { value: new Date("2026-11-18T06:00:00Z") };
+  const { placement } = services(now);
+  const placed = async (startDate: string, endDate?: string) => {
+    const out = await placement.place(w.staff, { personId: w.person, storeId: w.store, startDate, ...(endDate ? { endDate } : {}) });
+    assert.equal(out.kind, "placed");
+    return out.kind === "placed" ? out.assignment.id : "";
+  };
+  // Other tests leave open placements that overlap any later range, so read whole and keep only these three.
+  const early = await placed("2031-01-01", "2031-01-31"), mid = await placed("2031-02-01", "2031-02-28"), open = await placed("2031-03-01");
+  const ids = async (from: string, to: string, after?: { startDate: string; id: string }, limit = 100_000) =>
+    (await placements.assignmentHistory({ from, to, ...(after ? { after } : {}), limit })).filter((a) => [early, mid, open].includes(a.id)).map((a) => a.id);
+  assert.deepEqual(await ids("2031-01-15", "2031-02-01"), [early, mid], "both ends of the range are inclusive");
+  assert.deepEqual(await ids("2031-02-15", "2031-12-31"), [mid, open], "an open end overlaps every later day");
+  assert.deepEqual(await ids("2032-01-01", "2032-12-31"), [open]);
+  assert.deepEqual(await ids("2030-01-01", "2030-12-31"), [], "before every one of them");
+  assert.deepEqual(await ids("2031-01-01", "2031-12-31", { startDate: "2031-01-01", id: early }), [mid, open], "continues after the cursor");
+  const page = await placements.assignmentHistory({ from: "2031-01-01", to: "2031-01-31", limit: 1 });
+  assert.equal(page.length, 1);
+  // The service is for operator staff only: staff of a group or a company owner get nothing.
+  if (!(await pool.query("SELECT 1 FROM organizations WHERE id = 'root'")).rowCount) await authz.upsertOrganization(createOrganization({ id: "root", name: "StudentHub" }));
+  const operator = await principal("operator", [{ orgId: "root", role: "staff", scope: "subtree" }]);
+  assert.ok(Array.isArray((await placement.history(operator, { from: "2031-01-01", to: "2031-12-31" }))?.rows));
+  assert.equal(await placement.history(w.staff, { from: "2031-01-01", to: "2031-12-31" }), undefined);
+  assert.equal(await placement.history(w.owner, { from: "2031-01-01", to: "2031-12-31" }), undefined);
+  assert.deepEqual(await viewStore.companyNames([w.company, "work-co-missing"]), new Map([[w.company, w.company]]));
+  assert.deepEqual(await viewStore.companyNames([]), new Map());
 });

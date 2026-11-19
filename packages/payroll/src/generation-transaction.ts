@@ -44,7 +44,7 @@ export interface GenerationTransactionStore {
    */
   transaction<T>(work: (tx: GenerationTransaction) => Promise<T>): Promise<T>;
 }
-function identities(lines: readonly PayLineDraft[]): GenerationIdentity[] {
+function generationIdentities(lines: readonly PayLineDraft[]): GenerationIdentity[] {
   const result:GenerationIdentity[]=[],seen=new Set<string>();
   for(const line of lines){
     const {candidateKey,contractId,period,provenance}=line.calculation;
@@ -54,27 +54,32 @@ function identities(lines: readonly PayLineDraft[]): GenerationIdentity[] {
       ||!Array.isArray(roots)||roots.some(r=>typeof r!=="string"||!r))throw Error("generation_provenance_missing");
     const key=JSON.stringify([line.personId,contractId,p.start,p.end]);
     if(seen.has(key))throw Error("duplicate_generation_identity");seen.add(key);
-    result.push({personId:line.personId,contractId,periodStart:p.start,periodEnd:p.end,candidateKey,lineageRoots:roots as string[]});
+    result.push({personId:line.personId,contractId,periodStart:p.start,periodEnd:p.end,candidateKey,lineageRoots:Object.freeze([...(roots as string[])])});
   }
   return result;
 }
+function copyReceipt(r: GenerationReceipt): GenerationReceipt {
+  return Object.freeze({transferId:r.transferId,batchKey:r.batchKey,revision:r.revision,resultingVersion:r.resultingVersion,lineIds:Object.freeze([...r.lineIds])});
+}
 export async function commitGeneration(store: GenerationTransactionStore, command: GenerationCommand): Promise<{readonly kind:"committed"|"replayed";readonly receipt:GenerationReceipt}> {
-  if(!command.actorId||!command.transferId||!command.batchKey||!command.expectedRevision||!Number.isSafeInteger(command.expectedVersion)||command.expectedVersion<0)throw Error("invalid_generation_command");
+  const {actorId,transferId,expectedVersion,batchKey,expectedRevision}=command;
+  const input={actorId,transferId,expectedVersion,batchKey,expectedRevision};
+  if(![input.actorId,input.transferId,input.batchKey,input.expectedRevision].every(value=>typeof value==="string"&&value.length>0)||!Number.isSafeInteger(input.expectedVersion)||input.expectedVersion<0)throw Error("invalid_generation_command");
   return store.transaction(async tx=>{
-    await tx.authorizeAndLock(command.actorId,command.transferId);
-    const old=await tx.receipt(command.transferId,command.batchKey);
+    await tx.authorizeAndLock(input.actorId,input.transferId);
+    const old=await tx.receipt(input.transferId,input.batchKey);
     if(old){
-      if(old.transferId!==command.transferId||old.batchKey!==command.batchKey||old.revision!==command.expectedRevision)throw Error("generation_retry_conflict");
-      return {kind:"replayed",receipt:old};
+      if(old.transferId!==input.transferId||old.batchKey!==input.batchKey||old.revision!==input.expectedRevision)throw Error("generation_retry_conflict");
+      return {kind:"replayed",receipt:copyReceipt(old)};
     }
-    const fresh=await tx.rebuild(command.transferId,command.batchKey);
-    if(fresh.kind!=="preview-only"||fresh.key!==command.batchKey||fresh.revision!==command.expectedRevision)throw Error("generation_snapshot_changed");
+    const fresh=structuredClone(await tx.rebuild(input.transferId,input.batchKey));
+    if(fresh.kind!=="preview-only"||fresh.key!==input.batchKey||fresh.revision!==input.expectedRevision)throw Error("generation_snapshot_changed");
     // Adjustments use a separate Finance path; never partially commit a mixed plan.
     if(fresh.blocked.length||fresh.adjustmentReviews.length||!fresh.lines.length)throw Error("generation_not_ready");
-    if(!await tx.reserve(command.transferId,identities(fresh.lines)))throw Error("generation_claim_conflict");
-    const resultingVersion=await tx.appendDraft(command.actorId,command.transferId,command.expectedVersion,fresh.lines);
-    const receipt:GenerationReceipt={transferId:command.transferId,batchKey:command.batchKey,revision:fresh.revision,resultingVersion,lineIds:fresh.lines.map(l=>l.id)};
-    await tx.saveReceipt(receipt);
-    return {kind:"committed",receipt};
+    if(!await tx.reserve(input.transferId,generationIdentities(fresh.lines)))throw Error("generation_claim_conflict");
+    const resultingVersion=await tx.appendDraft(input.actorId,input.transferId,input.expectedVersion,fresh.lines);
+    const receipt:GenerationReceipt={transferId:input.transferId,batchKey:input.batchKey,revision:fresh.revision,resultingVersion,lineIds:fresh.lines.map(l=>l.id)};
+    await tx.saveReceipt(copyReceipt(receipt));
+    return {kind:"committed",receipt:copyReceipt(receipt)};
   });
 }

@@ -41,3 +41,17 @@ test("F2_TX changed retry revision is not accepted as success",async()=>{
 test("F2_TX finalized adjustment review cannot be appended as ordinary pay",async()=>{
  const f=new Fixture();f.batch={...f.batch,adjustmentReviews:[{finalized:{rootId:"root",personId:"person",recognizedRevision:"final"},current:{rootId:"root",sessionIds:["root"],inForce:null}}]};await assert.rejects(commitGeneration(f,command),/not_ready/);assert.equal(f.state.lines.length,0);
 });
+test("F2_TX positive command custody retains the original batch and target until receipt",async()=>{
+ let allow!:()=>void;
+ const gate=new Promise<void>(resolve=>{allow=resolve;});
+ const f=new Fixture(), entered=f.transaction.bind(f);
+ f.transaction=async fn=>{await gate;return entered(fn);};
+ const submitted={...command};
+ const running=commitGeneration(f,submitted);
+ submitted.batchKey="a later form edit";submitted.transferId="another transfer";
+ allow();
+ const result=await running;
+ assert.equal(result.receipt.batchKey,command.batchKey);
+ assert.equal(result.receipt.transferId,command.transferId);
+ assert.ok(Object.isFrozen(result.receipt.lineIds));
+});

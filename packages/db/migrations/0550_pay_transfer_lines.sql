@@ -37,6 +37,11 @@ CREATE TABLE pay_line_audit (
 CREATE FUNCTION pay_line_audit_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'pay line audit is append-only' USING ERRCODE='55000'; END $$;
 CREATE TRIGGER pay_line_audit_no_mutation BEFORE UPDATE OR DELETE ON pay_line_audit FOR EACH ROW EXECUTE FUNCTION pay_line_audit_immutable();
+CREATE TRIGGER pay_line_audit_no_truncate BEFORE TRUNCATE ON pay_line_audit FOR EACH STATEMENT EXECUTE FUNCTION pay_line_audit_immutable();
+CREATE FUNCTION pay_transfer_rows_retained() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'pay transfer rows are retained' USING ERRCODE='55000'; END $$;
+CREATE TRIGGER pay_transfer_lines_no_truncate BEFORE TRUNCATE ON pay_transfer_lines FOR EACH STATEMENT EXECUTE FUNCTION pay_transfer_rows_retained();
+CREATE TRIGGER pay_transfers_no_truncate BEFORE TRUNCATE ON pay_transfers FOR EACH STATEMENT EXECUTE FUNCTION pay_transfer_rows_retained();
 CREATE FUNCTION pay_line_draft_only() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE t pay_transfers;
 BEGIN

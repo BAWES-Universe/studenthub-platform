@@ -1,10 +1,11 @@
+import { resetPayAwareFixture } from "./helpers/pay-aware-fixture-reset.js";
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
 import pg from "pg";
 import { PostgresCatalogueStore, runMigrations } from "@studenthub/db";
 import { CatalogueError, ReferenceCatalogue, type CatalogueActor } from "@studenthub/reference-catalogue";
 const DB_URL = process.env.DATABASE_URL ?? ""; const actor: CatalogueActor = { principalRef: "a".repeat(64), orgId: "00000000-0000-4000-8000-000000000001", role: "admin" }; let pool: pg.Pool;
-before(async () => { if (!DB_URL) throw new Error("DATABASE_URL is required for PostgreSQL currency-detail tests"); pool = new pg.Pool({ connectionString: DB_URL }); await runMigrations(pool); }); beforeEach(async () => { await pool.query("TRUNCATE catalogue_items CASCADE"); }); after(async () => { await pool.end(); });
+before(async () => { if (!DB_URL) throw new Error("DATABASE_URL is required for PostgreSQL currency-detail tests"); pool = new pg.Pool({ connectionString: DB_URL }); await runMigrations(pool); }); beforeEach(async () => { await resetPayAwareFixture(pool, "TRUNCATE catalogue_items CASCADE"); }); after(async () => { await pool.end(); });
 const notFound = (value: unknown) => value instanceof CatalogueError && value.code === "catalogue_item_not_found";
 test("SHU344_PG_DETAILS persists, updates, and guards currency details", async () => {
   const store = new PostgresCatalogueStore(pool); let now = "2026-10-15T10:00:00.000Z"; const service = new ReferenceCatalogue(store, () => new Date(now)); const currency = await service.create(actor, "currency", { name: "Kuwaiti Dinar", code: "KWD" });

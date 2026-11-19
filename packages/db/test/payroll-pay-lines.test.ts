@@ -43,3 +43,51 @@ test('F1_PG concurrent same-version edits permit one committed writer',async()=>
  const id=await transfer(); const results=await Promise.allSettled([store.appendLines(actor,id,0,[line()]),store.appendLines(actor,id,0,[line()])]);
  assert.equal(results.filter(x=>x.status==='fulfilled').length,1); assert.equal((await pool.query('SELECT count(*)::int AS n FROM pay_transfer_lines WHERE transfer_id=$1',[id])).rows[0].n,1);
 });
+
+test('F1_PG nested JSON snapshots are private frozen values shared by validation storage and audit',async()=>{
+ const id=await transfer(); const l={...line(),calculation:{source:'synthetic',nested:{hours:2,approved:true,reason:null,refs:['one','two']}}};
+ let validations=0;
+ const checked=new PostgresPayLinesStore(pool,async(_c,a,co)=>a===actor&&co===company,(snapshot)=>{
+   validatePayLine(snapshot); validations++;
+   assert.notEqual(snapshot,l); assert.notEqual(snapshot.calculation,l.calculation);
+   assert.ok(Object.isFrozen(snapshot)); assert.ok(Object.isFrozen(snapshot.calculation));
+   const nested=snapshot.calculation.nested as {refs:readonly string[]};
+   assert.ok(Object.isFrozen(nested)); assert.ok(Object.isFrozen(nested.refs));
+ });
+ await checked.appendLines(actor,id,0,[l]);
+ await checked.editLine(actor,id,1,{...l,note:'updated'});
+ assert.equal(validations,2);
+ const stored=(await pool.query('SELECT calculation,note FROM pay_transfer_lines WHERE id=$1',[l.id])).rows[0];
+ const audit=(await pool.query("SELECT after_value FROM pay_line_audit WHERE line_id=$1 ORDER BY id DESC LIMIT 1",[l.id])).rows[0].after_value;
+ assert.deepEqual(stored.calculation,l.calculation); assert.deepEqual(audit.calculation,stored.calculation); assert.equal(audit.note,stored.note);
+});
+test('F1_PG accepted uppercase UUID retains edit identity and audit continuity',async()=>{
+ const id=await transfer(),l={...line(),storeId:storeId.toUpperCase()};
+ await store.appendLines(actor,id,0,[l]); await store.editLine(actor,id,1,{...l,note:'same store'});
+ const row=(await pool.query('SELECT store_id,note FROM pay_transfer_lines WHERE id=$1',[l.id])).rows[0];
+ assert.equal(row.store_id,storeId); assert.equal(row.note,'same store');
+});
+test('F1_PG transfer policy insert audit agree and audit schema covers mutation events and all three tables retain their rows',async()=>{
+ const seen:string[]=[];const checked=new PostgresPayLinesStore(pool,async(_c,a,co)=>{seen.push(co);return a===actor&&co===company;},validatePayLine);
+ const draft={id:randomUUID(),companyId:company,periodStart:'2026-11-01',periodEnd:'2026-11-30',currencyCode:'KWD'};
+ await checked.create(actor,Object.freeze(draft));
+ assert.deepEqual(seen,[company]); const row=(await pool.query('SELECT company_id FROM pay_transfers WHERE id=$1',[draft.id])).rows[0];
+ const audit=(await pool.query('SELECT after_value FROM pay_line_audit WHERE transfer_id=$1',[draft.id])).rows[0].after_value;
+ assert.equal(row.company_id,company);assert.deepEqual(audit,draft);
+ const triggers=(await pool.query("SELECT pg_get_triggerdef(oid) AS definition FROM pg_trigger WHERE tgrelid='pay_line_audit'::regclass AND NOT tgisinternal")).rows.map(x=>x.definition).join('\n');
+ assert.match(triggers,/BEFORE DELETE OR UPDATE|BEFORE UPDATE OR DELETE/);assert.match(triggers,/BEFORE TRUNCATE/);assert.match(triggers,/FOR EACH STATEMENT EXECUTE FUNCTION pay_line_audit_immutable/);
+});
+
+test('F1_PG every retained payroll table has its enabled before-statement retention guard',async()=>{
+ const guards=[
+  ['pay_transfers','pay_transfers_no_truncate','pay_transfer_rows_retained'],
+  ['pay_transfer_lines','pay_transfer_lines_no_truncate','pay_transfer_rows_retained'],
+  ['pay_line_audit','pay_line_audit_no_truncate','pay_line_audit_immutable'],
+ ] as const;
+ for (const [table,trigger,handler] of guards) {
+  const {rows}=await pool.query(`SELECT tgtype::int AS type,tgenabled AS enabled,p.proname AS handler
+   FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
+   WHERE tgrelid=$1::regclass AND tgname=$2 AND NOT tgisinternal`,[table,trigger]);
+  assert.deepEqual(rows,[{type:34,enabled:'O',handler}]);
+ }
+});

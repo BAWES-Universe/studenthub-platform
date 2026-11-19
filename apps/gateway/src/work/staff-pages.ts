@@ -36,6 +36,7 @@ const REFUSALS: Readonly<Record<string, string>> = {
   store_not_found: "That store doesn't exist.",
   store_removed: "That store has been removed.",
   person_not_found: "We couldn't find that person.",
+  person_paused: "This person's StudentHub access is paused. Resume their access before placing them.",
   overlaps_assignment: "The person is already placed somewhere for part of those dates.",
   ambiguous_contract: "More than one pay contract matches. Choose the contract.",
   contract_not_applicable: "That pay contract doesn't apply to this placement.",
@@ -262,7 +263,7 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
       if (result.kind !== "refused") { redirect(res, `/work/assignments?org=${encodeURIComponent(org)}&done=${result.kind}`); return true; }
       const html = await renderAssignments(services, actor, org, refusal(result.code ?? "invalid_input"));
       if (!html) { denied(); return true; }
-      write(res, result.code === "forbidden" ? 403 : result.code && /overlaps|ambiguous|open_session|sessions_after_end|not_pending/.test(result.code) ? 409 : 400, html);
+      write(res, result.code === "forbidden" ? 403 : result.code && /overlaps|ambiguous|open_session|sessions_after_end|not_pending|person_paused/.test(result.code) ? 409 : 400, html);
       return true;
     }
 

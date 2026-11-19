@@ -236,6 +236,15 @@ export class PostgresWorkPlacementStore {
     return Object.freeze(rows.map(assignmentFromRow));
   }
 
+  /** Placements overlapping from..to, oldest start first then id, keyset-paged after `after`. */
+  async assignmentHistory(filter: { from: string; to: string; after?: { startDate: string; id: string }; limit: number }): Promise<readonly WorkAssignmentRecord[]> {
+    const { rows } = await this.#db.pool.query<AssignmentRow>(`SELECT ${ASSIGNMENT_COLUMNS} FROM work_assignments a
+     WHERE a.start_date <= $2::date AND (a.end_date IS NULL OR a.end_date >= $1::date)
+       AND ($3::date IS NULL OR (a.start_date, a.id) > ($3::date, $4::uuid))
+     ORDER BY a.start_date, a.id LIMIT $5`, [filter.from, filter.to, filter.after?.startDate ?? null, filter.after?.id ?? null, filter.limit]);
+    return Object.freeze(rows.map(assignmentFromRow));
+  }
+
   /** Newest first, at most 500. `storeIds` narrows before the limit, so a store's requests are never hidden behind other stores'. */
   async listRequests(filter: { orgIds?: readonly string[]; includeSubtree?: boolean; storeIds?: readonly string[]; status?: WorkAssignmentRequestRecord["status"] }): Promise<readonly WorkAssignmentRequestRecord[]> {
     if (filter.storeIds?.some((s) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s))) throw new RangeError("store ids must be uuids");
@@ -263,8 +272,12 @@ export interface WorkPlacementTransaction {
   decideRequest(id: string, status: "accepted" | "rejected" | "cancelled", actorId: string, reason: string | null): Promise<void>;
   openSessionCount(assignmentId: string): Promise<number>;
   sessionsAfter(assignmentId: string, date: IsoDate): Promise<number>;
+  lockPersonPaused(personId: string): Promise<boolean>;
   event(e: WorkEventRecord): Promise<void>;
 }
+
+/** The per-principal advisory lock key PostgresAuthzStore and the access lane's pause and resume take. */
+const PRINCIPAL_LOCK_KEY = 5959;
 
 function placementTransaction(client: PoolClient): WorkPlacementTransaction {
   return {
@@ -307,6 +320,13 @@ function placementTransaction(client: PoolClient): WorkPlacementTransaction {
       const { rows } = await client.query<{ n: number }>(
         "SELECT count(*)::int AS n FROM work_sessions WHERE assignment_id = $1 AND deleted_at IS NULL AND source <> 'import' AND work_date > $2::date", [assignmentId, date]);
       return rows[0]?.n ?? 0;
+    },
+    async lockPersonPaused(personId) {
+      // The pause holds this lock until it commits; read after taking it, on this
+      // transaction's own connection, so a pause that won the lock is seen.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [personId, PRINCIPAL_LOCK_KEY]);
+      const { rowCount } = await client.query("SELECT 1 FROM account_pauses WHERE principal_id = $1 AND resumed_at IS NULL", [personId]);
+      return Boolean(rowCount);
     },
     event: (e) => insertEvent(client, e),
   };
@@ -548,6 +568,13 @@ export class PostgresWorkHoursViewStore {
   async storeNames(storeIds: readonly string[]): Promise<ReadonlyMap<string, string>> {
     if (storeIds.length === 0) return new Map();
     const { rows } = await this.#db.pool.query<{ id: string; name: string }>("SELECT id::text AS id, name FROM organization_stores WHERE id = ANY($1::uuid[])", [[...storeIds]]);
+    return new Map(rows.map((r) => [r.id, r.name]));
+  }
+
+  /** Company names, for the work exports. */
+  async companyNames(orgIds: readonly string[]): Promise<ReadonlyMap<string, string>> {
+    if (orgIds.length === 0) return new Map();
+    const { rows } = await this.#db.pool.query<{ id: string; name: string }>("SELECT id, name FROM organizations WHERE id = ANY($1::text[])", [[...orgIds]]);
     return new Map(rows.map((r) => [r.id, r.name]));
   }
 
