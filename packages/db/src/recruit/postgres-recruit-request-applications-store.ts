@@ -39,6 +39,8 @@ export interface RecruitRequestApplicationsStoreOptions {
   readonly requestStatusAfter: (status: RequestStatus, event: { kind: "card_added" }) => RequestStatus | null;
   readonly outbox: (to: Status, applicationId: string, personId: string, recruiterId: string | null) => { readonly kind: string; readonly recipient: string; readonly dedupeKey: string } | null;
   readonly pageSize: number;
+  /** Which of these people are paused (access lane A6): hidden from the company; staff and the pipeline authority still see them. */
+  readonly paused: (principalIds: readonly string[]) => Promise<ReadonlySet<string>>;
 }
 
 export interface RecruitOpenRequestRecord {
@@ -93,7 +95,7 @@ export class PostgresRecruitRequestApplicationsStore {
     }
   }
 
-  async #access(c: Client, principalId: string, request: { org_id: string; assigned_recruiter_principal_id: string | null }, lock = false): Promise<{ read: boolean; write: boolean }> {
+  async #access(c: Client, principalId: string, request: { org_id: string; assigned_recruiter_principal_id: string | null }, lock = false): Promise<{ read: boolean; write: boolean; internal: boolean }> {
     const grants = await this.#grants(c, principalId, lock);
     let company = false;
     if (await organizationLive(c, request.org_id, lock)) {
@@ -103,7 +105,8 @@ export class PostgresRecruitRequestApplicationsStore {
       company = this.options.companyDecision(grants, request.org_id, ancestors);
     }
     const pipeline = this.options.authority(principalId, request.assigned_recruiter_principal_id, this.options.leadDecision(grants), this.options.recruiterEligible(grants));
-    return { read: company || pipeline || this.options.staffDecision(grants), write: company || pipeline };
+    const staff = this.options.staffDecision(grants);
+    return { read: company || pipeline || staff, write: company || pipeline, internal: pipeline || staff };
   }
 
   async #grants(c: Client, principalId: string, lock = false): Promise<Grant[]> {
@@ -168,20 +171,27 @@ export class PostgresRecruitRequestApplicationsStore {
     // The assignment, the caller's grants and the applications come from one snapshot.
     const c = await this.#pool.connect();
     let broken = false;
+    let result: { applications: RecruitRequestApplicationRecord[]; canDecide: boolean; internal: boolean } | null;
     try {
       await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-      const result = await this.#forRequest(c, principalId, requestId);
+      result = await this.#forRequest(c, principalId, requestId);
       await c.query("COMMIT");
-      return result;
     } catch (error) {
       try { await c.query("ROLLBACK"); } catch { broken = true; }
       throw error;
     } finally {
       c.release(broken);
     }
+    if (!result) return null;
+    // The company does not see paused applicants (access lane A6); staff and the pipeline authority do. Asked only
+    // after the snapshot's client is released, so a page never holds one pool connection while waiting for another.
+    const { applications, canDecide, internal } = result;
+    if (internal) return { applications, canDecide };
+    const hidden = await this.options.paused(applications.map((row) => row.person_principal_id));
+    return { applications: applications.filter((row) => !hidden.has(row.person_principal_id)), canDecide };
   }
 
-  async #forRequest(c: pg.PoolClient, principalId: string, requestId: string): Promise<{ applications: RecruitRequestApplicationRecord[]; canDecide: boolean } | null> {
+  async #forRequest(c: pg.PoolClient, principalId: string, requestId: string): Promise<{ applications: RecruitRequestApplicationRecord[]; canDecide: boolean; internal: boolean } | null> {
     const request = (await c.query<{ org_id: string; assigned_recruiter_principal_id: string | null }>("SELECT org_id, assigned_recruiter_principal_id FROM recruit_requests WHERE id = $1::uuid", [requestId])).rows[0];
     if (!request) return null;
     const access = await this.#access(c, principalId, request);
@@ -191,7 +201,7 @@ export class PostgresRecruitRequestApplicationsStore {
        FROM recruit_request_applications a JOIN principals p ON p.id = a.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = a.person_principal_id
        LEFT JOIN recruit_pipeline_cards c ON c.request_id = a.request_id AND c.person_principal_id = a.person_principal_id
        WHERE a.request_id = $1::uuid ORDER BY a.created_at DESC, a.id`, [requestId])).rows;
-    return { applications: rows, canDecide: access.write };
+    return { applications: rows, canDecide: access.write, internal: access.internal };
   }
 
   async decide(principalId: string, applicationId: string, to: "accepted" | "rejected"): Promise<RecruitRequestApplicationDecideResult> {

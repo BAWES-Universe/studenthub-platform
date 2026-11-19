@@ -30,10 +30,7 @@ export interface EmployerPersonView {
 /** The stores a principal manages, as the access lane's store-manager grants record them. */
 export type ManagedStores = (principalId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
 
-/**
- * The store-manager source until the access lane's store-manager grants (A4) are on main: nobody manages a store,
- * so only company readers and operator staff see a request's people. A4 replaces this in the recruit wiring.
- */
+/** Nobody manages a store: for tests and tools without the access lane's store-manager grants (A4), which production wires. */
 export const NO_STORE_MANAGERS: ManagedStores = async () => [];
 
 export function ageOn(birthDate: string | null, today: string): number | null {
