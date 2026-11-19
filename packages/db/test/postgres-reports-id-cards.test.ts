@@ -52,6 +52,7 @@ test("REPORTS_ID_CARDS_PG staff lists: assigned without a card, expired among th
   assert.deepEqual(await ids("issued", "2027-02-20"), [current], "but the card is still in the full list");
   assert.deepEqual((await store.list("needs", DAY, tag.toUpperCase(), 0, 50)).total, 1, "the name search ignores case");
   assert.deepEqual((await store.list("needs", DAY, `${tag}-nobody`, 0, 50)).total, 0);
+  assert.deepEqual(await store.list("needs", DAY, tag, 50, 50), { total: 1, rows: [] }, "a page past the end still reports how many match");
   void never;
 });
 

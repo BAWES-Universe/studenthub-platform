@@ -50,7 +50,8 @@ export type IdCardWriteResult =
   | { readonly status: "invalid" }
   | { readonly status: "not_found" };
 
-const PERSON = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+// The principal id grammar the access layer accepts (account pause); the store then refuses ids that are not people.
+const PERSON = /^[A-Za-z0-9@._:+-]{1,256}$/;
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** The Asia/Kuwait calendar day of an instant. */

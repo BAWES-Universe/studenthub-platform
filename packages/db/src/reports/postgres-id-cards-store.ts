@@ -54,13 +54,16 @@ export class PostgresIdCardsStore {
       : view === "expired" ? `c.expires_on < $1::date AND ${idCardAssigned("p.id", "$1")}`
       : view === "issued" ? "c.person_principal_id IS NOT NULL" : undefined;
     if (!where) throw new RangeError("invalid view");
-    const result = await this.#pool.query<ListDbRow>(`SELECT p.id AS person_id, ${NAME} AS name, ${EMPLOYEE} AS employee_id, c.card_number::text AS card_number,
-        to_char(c.expires_on, 'YYYY-MM-DD') AS expires_on, placement.company, placement.store, count(*) OVER ()::int AS total
+    // The total is counted apart from the page, in the same statement, so a page past the end still reports how many match.
+    const result = await this.#pool.query<Omit<ListDbRow, "person_id"> & { person_id: string | null }>(`WITH m AS (SELECT p.id AS person_id, ${NAME} AS name, ${EMPLOYEE} AS employee_id, c.card_number::text AS card_number,
+        to_char(c.expires_on, 'YYYY-MM-DD') AS expires_on, placement.company, placement.store
        FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id = p.id LEFT JOIN legacy_account_links l ON l.principal_id = p.id
        LEFT JOIN id_cards c ON c.person_principal_id = p.id ${PLACEMENT("p.id", "$1")}
-      WHERE ${where} AND ($2::text IS NULL OR strpos(lower(coalesce(pp.display_name, '') || ' ' || coalesce(pp.arabic_name, '') || ' ' || coalesce(p.display_name, '')), lower($2::text)) > 0)
-      ORDER BY ${view === "issued" ? "c.expires_on, " : ""}lower(${NAME}) NULLS LAST, p.id OFFSET $3 LIMIT $4`, [today, name, offset, limit]);
-    return { total: result.rows[0]?.total ?? 0, rows: result.rows.map(r => ({ personId: r.person_id, name: r.name, employeeId: r.employee_id,
+      WHERE ${where} AND ($2::text IS NULL OR strpos(lower(coalesce(pp.display_name, '') || ' ' || coalesce(pp.arabic_name, '') || ' ' || coalesce(p.display_name, '')), lower($2::text)) > 0))
+      SELECT page.*, (SELECT count(*)::int FROM m) AS total FROM (SELECT 1) one
+        LEFT JOIN LATERAL (SELECT * FROM m ORDER BY ${view === "issued" ? "expires_on, " : ""}lower(name) NULLS LAST, person_id OFFSET $3 LIMIT $4) page ON true`, [today, name, offset, limit]);
+    const rows = result.rows.filter((r): r is ListDbRow => r.person_id !== null);
+    return { total: result.rows[0]?.total ?? 0, rows: rows.map(r => ({ personId: r.person_id, name: r.name, employeeId: r.employee_id,
       cardNumber: r.card_number === null ? null : Number(r.card_number), expiresOn: r.expires_on, placement: placement(r) })) };
   }
 

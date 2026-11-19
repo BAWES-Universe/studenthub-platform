@@ -52,6 +52,7 @@ test("REPORTS_ID_CARDS a batch is between 1 and the cap, each person once, with 
     ["issue", Array.from({ length: ID_CARD_BATCH_MAX + 1 }, (_, i) => `p${i}`)]] as const)
     assert.deepEqual(await service.write("staff", action as IdCardAction, people), { status: "invalid" }, JSON.stringify([action, people.length]));
   assert.equal(store.writes.length, 0);
+  assert.deepEqual(await service.write("staff", "issue", ["alia@example.com", "sso:p+1"]), { status: "ok", count: 2, expiresOn: "2027-02-20" }, "any principal id the access layer accepts");
   assert.deepEqual(await service.write("staff", "issue", Array.from({ length: ID_CARD_BATCH_MAX }, (_, i) => `p${i}`)), { status: "ok", count: ID_CARD_BATCH_MAX, expiresOn: "2027-02-20" });
 });
 
