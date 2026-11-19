@@ -22,11 +22,16 @@ const COUNTS = `SELECT
   (SELECT count(*)::int FROM person_civil_ids p WHERE p.expiry_date < $1::date AND p.released_at IS NULL
      AND EXISTS (SELECT 1 FROM work_assignments a WHERE a.person_principal_id = p.principal_id AND (a.end_date IS NULL OR a.end_date >= $1::date))) AS "assignedExpiredCivilID"`;
 
-// Who gets the email: subscribed, still StudentHub staff, account not paused.
-const RECIPIENTS = (orgs: string) => `SELECT s.principal_id FROM morning_summary_subscriptions s
-  WHERE EXISTS (SELECT 1 FROM grants g WHERE g.principal_id = s.principal_id AND g.role IN ('staff','admin') AND g.scope = 'subtree' AND g.org_id = ANY(${orgs}::text[]))
-    AND NOT EXISTS (SELECT 1 FROM account_pauses p WHERE p.principal_id = s.principal_id AND p.resumed_at IS NULL)
-  ORDER BY s.principal_id`;
+/**
+ * Who may get the email: subscribed, still StudentHub staff (a staff or admin grant over an
+ * operator organization's subtree), account not paused. Used when the email is queued and
+ * again by the outbox claim on every delivery attempt, so an opt-out, a lost grant or a pause
+ * after queueing stops the send.
+ */
+export const morningSummaryEligible = (principal: string, orgs: string) => `(EXISTS (SELECT 1 FROM morning_summary_subscriptions s WHERE s.principal_id = ${principal})
+    AND EXISTS (SELECT 1 FROM grants g WHERE g.principal_id = ${principal} AND g.role IN ('staff','admin') AND g.scope = 'subtree' AND g.org_id = ANY(${orgs}::text[]))
+    AND NOT EXISTS (SELECT 1 FROM account_pauses p WHERE p.principal_id = ${principal} AND p.resumed_at IS NULL))`;
+const RECIPIENTS = (orgs: string) => `SELECT s.principal_id FROM morning_summary_subscriptions s WHERE ${morningSummaryEligible("s.principal_id", orgs)} ORDER BY s.principal_id`;
 
 export class PostgresMorningSummaryStore {
   readonly #pool: pg.Pool; readonly #owns: boolean; readonly #operatorOrgIds: readonly string[];

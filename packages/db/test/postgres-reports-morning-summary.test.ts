@@ -4,8 +4,9 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
+import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { PostgresMorningSummaryStore } from "@studenthub/db/reports";
-import { validateTemplateParameters } from "../../notifications/src/index.js";
+import { EmailOutboxService, FakeEmailPort, validateTemplateParameters } from "../../notifications/src/index.js";
 import { MorningSummaryService } from "../../reports/src/index.js";
 
 const URL = process.env.DATABASE_URL ?? "";
@@ -156,4 +157,25 @@ test("REPORTS_MORNING_SUMMARY_PG the email goes once a day to subscribed staff w
   await assert.rejects(store.sendDay("not-a-day", at, build), RangeError);
   // Keep the shared database's outbox free of these test emails.
   await pool.query("UPDATE email_outbox SET state='not_sent' WHERE idempotency_key LIKE 'staff.morning_summary:%' AND state='pending' AND recipient_principal_id LIKE 'ms-%'");
+});
+
+test("REPORTS_MORNING_SUMMARY_PG every delivery attempt rechecks the recipient: unsubscribed, no longer staff or paused after queueing is suppressed, never sent", async () => {
+  // Park what other suites left, so this claim only sees this test's rows; the db suite runs one file at a time.
+  await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
+  const grant = [{ orgId: OPS, role: "staff", scope: "subtree" as const }];
+  const [kept, left, demoted, paused] = [await principal("kept", grant), await principal("left", grant), await principal("demoted", grant), await principal("paused2", grant)];
+  const service = new MorningSummaryService(store, { async isStaff() { return true; } });
+  for (const id of [kept, left, demoted, paused]) await service.subscribe(id, true);
+  const day = someDay();
+  await store.sendDay(day, new Date(`${day}T05:00:00Z`), raw => MorningSummaryService.parameters(day, raw));
+  await service.subscribe(left, false);
+  await pool.query("DELETE FROM grants WHERE principal_id=$1", [demoted]);
+  await pool.query("INSERT INTO account_pauses(id,principal_id,paused_by,reason,suspended_grants,suspended_stores) VALUES($1,$2,$3,'Away for now','[]','[]')", [randomUUID(), paused, creator]);
+  const port = new FakeEmailPort(), outbox = new PostgresEmailOutboxStore({ pool, operatorOrgIds: [OPS] });
+  await new EmailOutboxService(outbox, port, true, true).processDue(100, new Date());
+  const states = Object.fromEntries((await pool.query("SELECT recipient_principal_id, state FROM email_outbox WHERE idempotency_key LIKE $1", [`staff.morning_summary:${day}:%`])).rows.map(r => [r.recipient_principal_id, r.state]));
+  assert.deepEqual([kept, left, demoted, paused].map(id => states[id]), ["sent", "suppressed", "suppressed", "suppressed"]);
+  const mine = new Set([kept, left, demoted, paused].map(id => `${id}@example.invalid`)), delivered = port.sent.filter(m => mine.has(m.to));
+  assert.deepEqual(delivered.map(m => m.to), [`${kept}@example.invalid`]);
+  assert.equal(delivered[0]?.subject.startsWith("Morning Report for "), true);
 });

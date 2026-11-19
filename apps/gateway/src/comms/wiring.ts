@@ -14,7 +14,7 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
   // One pool for every store here; none owns it, so close ends it once.
   const pool = new pg.Pool({ connectionString: options.connectionString });
   const store = new PostgresStaffMessagesStore({ pool });
-  const emails = new PostgresEmailOutboxStore({ pool });
+  const emails = new PostgresEmailOutboxStore({ pool, operatorOrgIds: DEFAULT_OPERATOR_ORG_IDS });
   const authority = { async isStaff(principalId: string) { return hasOperatorStaffGrant(await options.authzStore.listGrantsForPrincipal(principalId)); } };
   const service = new StaffMessagesService(store, authority);
   const summary = new MorningSummaryService(new PostgresMorningSummaryStore({ pool, operatorOrgIds: DEFAULT_OPERATOR_ORG_IDS }), authority);
