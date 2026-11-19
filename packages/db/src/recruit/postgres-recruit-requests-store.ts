@@ -62,11 +62,12 @@ export interface RecruitRequestsStoreOptions {
   readonly readDecision: Decision;
   readonly transitionDecision: Decision;
   readonly staffDecision: (rows: readonly Grant[]) => boolean;
-  /**
-   * Stores the principal manages; empty when they manage none. Required, so production wiring names its source:
-   * until the access lane's store-manager grants land, that source is NO_STORE_MANAGERS (nobody manages a store).
-   */
+  /** Stores the principal manages now (the access lane's store-manager grants, A4); empty when they manage none. */
   readonly managedStores: (principalId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
+  /** Which of these people are paused (access lane A6). A paused person is hidden from employers; operator staff and the request's pipeline authority still see them. */
+  readonly paused: (principalIds: readonly string[]) => Promise<ReadonlySet<string>>;
+  /** The request's pipeline authority (its assigned recruiter while still eligible, or a lead), as the pipeline decides it. */
+  readonly pipelineAuthority: (principalId: string, assignedRecruiterId: string | null, rows: readonly Grant[]) => boolean;
   readonly transitionAllowed: (from: Status, to: Status) => boolean;
 }
 
@@ -103,6 +104,11 @@ export class PostgresRecruitRequestsStore {
     if (!await organizationLive(c, orgId, lock)) return decisions.map(() => false);
     const [grants, ancestors] = await Promise.all([this.#grants(c, principalId, lock), this.#ancestors(c, orgId)]);
     return decisions.map((decision) => decision(grants, orgId, ancestors));
+  }
+
+  /** Who still sees paused people on a request: operator staff and the request's pipeline authority. */
+  #seesPaused(principalId: string, assignee: string | null): Decision {
+    return (rows) => this.options.staffDecision(rows) || this.options.pipelineAuthority(principalId, assignee, rows);
   }
 
   async #transaction<T>(work: (c: pg.PoolClient) => Promise<T | { rollback: T }>): Promise<T> {
@@ -191,9 +197,11 @@ export class PostgresRecruitRequestsStore {
 
   /** One request with its activity (oldest first), or null when the caller may not read it. */
   async get(principalId: string, requestId: string): Promise<RecruitRequestDetail | null> {
-    const row = (await this.#pool.query<RecruitRequestRecord>(`SELECT ${COLUMNS} FROM ${FROM} WHERE r.id = $1::uuid`, [requestId])).rows[0];
-    if (!row) return null;
-    const [read, transition] = await this.#allowed(this.#pool, principalId, row.org_id, [this.options.readDecision, this.options.transitionDecision]);
+    const found = (await this.#pool.query<RecruitRequestRecord & { assignee: string | null }>(
+      `SELECT ${COLUMNS}, r.assigned_recruiter_principal_id AS assignee FROM ${FROM} WHERE r.id = $1::uuid`, [requestId])).rows[0];
+    if (!found) return null;
+    const { assignee, ...row } = found;
+    const [read, transition, internal] = await this.#allowed(this.#pool, principalId, row.org_id, [this.options.readDecision, this.options.transitionDecision, this.#seesPaused(principalId, assignee)]);
     if (!read) return null;
     const [events, people] = await Promise.all([
       this.#pool.query<RecruitRequestEventRecord>(
@@ -203,7 +211,9 @@ export class PostgresRecruitRequestsStore {
         "SELECT c.person_principal_id, COALESCE(pp.display_name, p.display_name, f.name) AS person_name, c.stage FROM recruit_pipeline_cards c LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id WHERE c.request_id = $1::uuid AND c.stage <> 'withdrawn' ORDER BY c.created_at, c.id",
         [requestId]),
     ]);
-    return { request: row, events: events.rows, canTransition: Boolean(transition), people: people.rows };
+    // The company does not see paused people on its request; operator staff and the pipeline authority do.
+    const hidden = internal ? new Set<string>() : await this.options.paused(people.rows.flatMap((p) => p.person_principal_id ? [p.person_principal_id] : []));
+    return { request: row, events: events.rows, canTransition: Boolean(transition), people: people.rows.filter((p) => !p.person_principal_id || !hidden.has(p.person_principal_id)) };
   }
 
   /**
@@ -212,12 +222,15 @@ export class PostgresRecruitRequestsStore {
    * or an invitation on it; the caller then decides with the injected rule whether the link still gives sight.
    */
   async person(principalId: string, requestId: string, personId: string): Promise<RecruitRequestPersonDetail | null> {
-    const request = (await this.#pool.query<{ org_id: string; store_id: string }>("SELECT org_id, store_id FROM recruit_requests WHERE id = $1::uuid", [requestId])).rows[0];
+    const request = (await this.#pool.query<{ org_id: string; store_id: string; assignee: string | null }>(
+      "SELECT org_id, store_id, assigned_recruiter_principal_id AS assignee FROM recruit_requests WHERE id = $1::uuid", [requestId])).rows[0];
     if (!request) return null;
-    const [read, staff] = await this.#allowed(this.#pool, principalId, request.org_id, [this.options.readDecision, (rows) => this.options.staffDecision(rows)]);
+    const [read, staff, internal] = await this.#allowed(this.#pool, principalId, request.org_id, [this.options.readDecision, (rows) => this.options.staffDecision(rows), this.#seesPaused(principalId, request.assignee)]);
     // A store manager sees the people of requests for the stores they manage, and no other.
     const manages = !read && !staff && (await this.options.managedStores(principalId)).some((s) => s.orgId === request.org_id && s.storeId === request.store_id);
     if (!read && !staff && !manages) return null;
+    // A paused person's profile is hidden from employers (access lane A6); operator staff and the pipeline authority still see it.
+    if (!internal && (await this.options.paused([personId])).has(personId)) return null;
     const link = (await this.#pool.query<RecruitRequestPersonLink>(
       `SELECT (SELECT stage FROM recruit_pipeline_cards WHERE request_id = $1::uuid AND person_principal_id = $2::text) AS stage,
         (SELECT status FROM recruit_invitations WHERE request_id = $1::uuid AND person_principal_id = $2::text) AS invitation_status`, [requestId, personId])).rows[0]!;
