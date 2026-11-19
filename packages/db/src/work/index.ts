@@ -8,3 +8,5 @@ export type {
   NewWorkSessionRecord, WorkAssignmentRecord, WorkDecisionRecord, WorkDecisionTransaction, WorkSessionFilter, WorkAssignmentRequestRecord, WorkDayTotal, WorkEventRecord, WorkLocation,
   WorkPlacementTransaction, WorkSessionRecord, WorkSessionTransaction,
 } from "../postgres-work-store.js";
+export { PostgresWorkStaffTimeStore } from "../postgres-work-staff-time.js";
+export type { WorkStaffDayRecord, WorkStaffSessionRecord } from "../postgres-work-staff-time.js";
