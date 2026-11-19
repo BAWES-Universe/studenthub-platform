@@ -58,13 +58,14 @@ test("COMMS_EMAIL_VOLUME the day is the Kuwait calendar day", () => {
 });
 
 class MemoryVolume implements EmailVolumeStore {
-  sent = new Map<string, number>(); recorded = new Set<string>(); calls: string[] = [];
+  sent = new Map<string, number>(); recorded = new Map<string, EmailVolumeCrossing>(); alerted = new Set<string>(); calls: string[] = [];
   async recordVolumeCrossings(day: string, threshold: number): Promise<EmailVolumeCrossing[]> {
     this.calls.push(day);
-    const n = this.sent.get(day) ?? 0, out: EmailVolumeCrossing[] = [];
-    for (let level = 1; level <= volumeLevel(n, threshold); level++) if (!this.recorded.has(`${day}:${level}`)) { this.recorded.add(`${day}:${level}`); out.push({ day, level, sentCount: n, threshold }); }
-    return out;
+    const n = this.sent.get(day) ?? 0;
+    for (let level = 1; level <= volumeLevel(n, threshold); level++) if (!this.recorded.has(`${day}:${level}`)) this.recorded.set(`${day}:${level}`, { day, level, sentCount: n, threshold });
+    return [...this.recorded.entries()].filter(([k, c]) => c.day === day && !this.alerted.has(k)).map(([, c]) => c).sort((a, b) => a.level - b.level);
   }
+  async markVolumeAlerted(day: string, level: number) { this.alerted.add(`${day}:${level}`); }
 }
 
 test("COMMS_EMAIL_VOLUME each level alerts once a day and a new day starts again (legacy's date check assigned instead of comparing)", async () => {
@@ -87,8 +88,29 @@ test("COMMS_EMAIL_VOLUME a failed delivery run still checks the volume, then rep
   store.sent.set("2026-11-18", 600);
   await assert.rejects(deliverAndCheckVolume(async () => { throw Error("email delivery failed"); }, store, c => { alerts.push(c); }, () => at), /email delivery failed/);
   assert.equal(alerts.length, 1);
-  const broken: EmailVolumeStore = { async recordVolumeCrossings() { throw Error("count failed"); } };
+  const broken: EmailVolumeStore = { async recordVolumeCrossings() { throw Error("count failed"); }, async markVolumeAlerted() {} };
   await assert.rejects(deliverAndCheckVolume(async () => { throw Error("email delivery failed"); }, broken, () => {}, () => at), /email delivery failed/);
   await assert.rejects(deliverAndCheckVolume(async () => 3, broken, () => {}, () => at), /count failed/);
   assert.equal(await deliverAndCheckVolume(async () => 3, new MemoryVolume(), () => {}, () => at), 3);
+});
+
+test("COMMS_EMAIL_VOLUME a run that crosses Kuwait midnight checks the day its sends are stamped with", async () => {
+  const store = new MemoryVolume(), alerts: EmailVolumeCrossing[] = [];
+  const times = [new Date("2026-11-18T20:59:59Z"), new Date("2026-11-18T21:00:05Z")];
+  store.sent.set("2026-11-18", 501);
+  await deliverAndCheckVolume(async () => 0, store, c => { alerts.push(c); }, () => times.length > 1 ? times.shift()! : times[0]!);
+  assert.deepEqual(alerts.map(a => [a.day, a.level]), [["2026-11-18", 1]]);
+  assert.deepEqual(store.calls, ["2026-11-18", "2026-11-19"]);
+});
+
+test("COMMS_EMAIL_VOLUME a level whose alert fails stays due and is raised by the next run, then never again", async () => {
+  const store = new MemoryVolume(), alerts: number[] = [], at = new Date("2026-11-18T09:00:00Z");
+  store.sent.set("2026-11-18", 1001);
+  let fail = true;
+  await assert.rejects(deliverAndCheckVolume(async () => 0, store, c => { if (fail && c.level === 2) throw Error("alert sink down"); alerts.push(c.level); }, () => at), /alert sink down/);
+  assert.deepEqual(alerts, [1]);
+  fail = false;
+  await deliverAndCheckVolume(async () => 0, store, c => { alerts.push(c.level); }, () => at);
+  await deliverAndCheckVolume(async () => 0, store, c => { alerts.push(c.level); }, () => at);
+  assert.deepEqual(alerts, [1, 2]);
 });

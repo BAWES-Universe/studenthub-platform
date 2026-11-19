@@ -59,12 +59,16 @@ CREATE INDEX email_outbox_recipient_idx ON email_outbox(recipient_principal_id, 
 -- means the day passed n times the threshold, and the row is written once, so each level
 -- alerts once and a new day starts again at level 1. A check that finds the day several levels
 -- up (500 to 1501 between two runs) writes and alerts every level it skipped, lowest first.
+-- A level stays due (alerted_at NULL) until its alert has been raised, so an alert that fails
+-- is raised again by the next check instead of being lost.
 CREATE TABLE email_volume_alerts (
   day date NOT NULL,
   level integer NOT NULL CHECK (level > 0),
   threshold integer NOT NULL CHECK (threshold > 0),
   sent_count integer NOT NULL CHECK (sent_count > threshold * level),
-  alerted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  alerted_at timestamptz,
   PRIMARY KEY (day, level)
 );
+CREATE INDEX email_volume_alerts_due_idx ON email_volume_alerts(day, level) WHERE alerted_at IS NULL;
 CREATE INDEX email_attempts_sent_at_idx ON email_attempts(at) WHERE outcome = 'sent';

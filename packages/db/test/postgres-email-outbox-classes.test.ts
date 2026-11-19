@@ -86,25 +86,26 @@ test("COMMS_EMAIL_VOLUME_PG each level of the Kuwait day is recorded once and th
   const prev = new Date(Date.parse(`${day}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
   await sendAt(3, `${prev}T21:00:00Z`);
   await sendAt(5, `${prev}T20:59:59Z`);
-  assert.deepEqual(await store.recordVolumeCrossings(day, 3, new Date()), [], "3 sends do not pass a threshold of 3");
+  // What the worker does: take the due levels, raise each alert, close it.
+  const check = async (d: string) => { const due = await store.recordVolumeCrossings(d, 3, new Date()); for (const c of due) await store.markVolumeAlerted(c.day, c.level, new Date()); return due; };
+  assert.deepEqual(await check(day), [], "3 sends do not pass a threshold of 3");
   await sendAt(1, `${day}T12:00:00Z`);
-  assert.deepEqual(await store.recordVolumeCrossings(day, 3, new Date()), [{ day, level: 1, sentCount: 4, threshold: 3 }]);
-  assert.deepEqual(await store.recordVolumeCrossings(day, 3, new Date()), [], "level 1 alerts once");
+  assert.deepEqual(await check(day), [{ day, level: 1, sentCount: 4, threshold: 3 }]);
+  assert.deepEqual(await check(day), [], "level 1 alerts once");
   await sendAt(3, `${day}T20:59:59Z`);
-  assert.deepEqual(await store.recordVolumeCrossings(day, 3, new Date()), [{ day, level: 2, sentCount: 7, threshold: 3 }]);
+  assert.deepEqual(await check(day), [{ day, level: 2, sentCount: 7, threshold: 3 }]);
   await sendAt(4, `${day}T21:00:00Z`);
-  assert.deepEqual(await store.recordVolumeCrossings(next, 3, new Date()), [{ day: next, level: 1, sentCount: 4, threshold: 3 }]);
-  // A jump of several levels between two checks records and returns every skipped level once.
+  // A jump of several levels between two checks records every skipped level, and each stays due until its alert is closed.
   await sendAt(6, `${next}T12:00:00Z`);
-  assert.deepEqual(await store.recordVolumeCrossings(next, 3, new Date()), [{ day: next, level: 2, sentCount: 10, threshold: 3 }, { day: next, level: 3, sentCount: 10, threshold: 3 }]);
+  assert.deepEqual(await store.recordVolumeCrossings(next, 3, new Date()), [1, 2, 3].map(level => ({ day: next, level, sentCount: 10, threshold: 3 })));
   assert.deepEqual((await pool.query("SELECT level FROM email_volume_alerts WHERE day=$1::date ORDER BY level", [next])).rows.map(r => r.level), [1, 2, 3]);
-  assert.deepEqual(await store.recordVolumeCrossings(next, 3, new Date()), []);
-  // A first check that is already three levels up records all three.
-  const far = new Date(Date.parse(`${next}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-  await sendAt(10, `${far}T12:00:00Z`);
-  assert.deepEqual((await store.recordVolumeCrossings(far, 3, new Date())).map(c => c.level), [1, 2, 3]);
-  await pool.query("INSERT INTO email_attempts(message_id,class,attempt_number,outcome,failure_code,at) VALUES($1,'account.notice',$2,'failed','provider_timeout',$3)", [id, ++n, `${day}T12:00:00Z`]);
-  assert.deepEqual(await store.recordVolumeCrossings(day, 3, new Date()), [], "failed attempts are not sends");
+  await store.markVolumeAlerted(next, 2, new Date());
+  assert.deepEqual((await store.recordVolumeCrossings(next, 3, new Date())).map(c => c.level), [1, 3], "a level whose alert did not go out stays due");
+  assert.deepEqual((await check(next)).map(c => c.level), [1, 3]);
+  assert.deepEqual(await check(next), [], "closed levels never come back");
+  // Seven sends are level 2; three failed attempts would make it level 3 if they were counted.
+  for (let i = 0; i < 3; i++) await pool.query("INSERT INTO email_attempts(message_id,class,attempt_number,outcome,failure_code,at) VALUES($1,'account.notice',$2,'failed','provider_timeout',$3)", [id, ++n, `${day}T12:00:00Z`]);
+  assert.deepEqual(await check(day), [], "failed attempts are not sends");
   await assert.rejects(store.recordVolumeCrossings("not-a-day", 3, new Date()), RangeError);
   await assert.rejects(store.recordVolumeCrossings(day, 0, new Date()), RangeError);
 });
