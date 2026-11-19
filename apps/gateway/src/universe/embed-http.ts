@@ -33,7 +33,10 @@ export function handleUniverseEmbed(request: IncomingMessage, response: ServerRe
     const runtime = config.runtime;
     void handleEmbedRuntime(request, response, config, runtime, route).then((handled) => {
       if (!handled) writeEmbedResponse(response, 404, '{"error":"not_found"}', "application/json");
-    }, () => {
+    }, (error: unknown) => {
+      // Route and error class only: never the URL (callback code and state), cookies or message text.
+      console.error(JSON.stringify({ event: "universe_embed_unavailable", route,
+        error: error instanceof Error ? error.name : typeof error }));
       if (response.headersSent) { response.destroy(); return; }
       writeEmbedResponse(response, 503, '{"error":"unavailable"}', "application/json");
     });

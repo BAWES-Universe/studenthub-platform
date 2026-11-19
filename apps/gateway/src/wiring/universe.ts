@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createPublicKey } from "node:crypto";
 import { UNIVERSE_SUBJECT_POLICY, USER_EMAIL_SUBJECT_POLICY, type SubjectPolicy } from "@bawes/actor-assertion";
 import { InMemoryIssuerKeyRegistry } from "@studenthub/contracts";
-import { PostgresLoginStore } from "@studenthub/db/access";
+import { PostgresAccessPausesStore, PostgresLoginStore } from "@studenthub/db/access";
 import { PostgresReplayStore } from "@studenthub/db/assertions";
 import { PostgresUniverseEmbedStore } from "@studenthub/db/universe";
 import type { OwnProfileReader } from "@studenthub/profile";
@@ -191,6 +191,9 @@ export async function wireUniverse(
   const loginStore = new PostgresLoginStore({ connectionString: databaseUrl });
   const store = new PostgresUniverseEmbedStore({ connectionString: databaseUrl });
   const replay = new PostgresReplayStore({ connectionString: databaseUrl });
+  // A paused person gets no session here either (A6). Pausing also ends existing
+  // sessions, which ends any embed binding through readBinding's live-session join.
+  const pauses = new PostgresAccessPausesStore({ connectionString: databaseUrl });
   const runtime: UniverseEmbedRuntime = {
     store,
     sessions: loginStore.sessions,
@@ -205,6 +208,7 @@ export async function wireUniverse(
         // The embed login only issues a session; reads go through the embed service.
         authorization: { async roleFor() { return "self"; } },
         jwks: new RefreshingJwksResolver(issuer, env.OIDC_JWKS_URL!),
+        accessPause: { isPaused: async (personId) => (await pauses.paused([personId])).has(personId) },
       },
       config: {
         issuer,
@@ -223,6 +227,6 @@ export async function wireUniverse(
   };
   return {
     config: Object.freeze({ ...config, runtime }),
-    async close() { await Promise.all([loginStore.close(), store.close(), replay.close()]); },
+    async close() { await Promise.all([loginStore.close(), store.close(), replay.close(), pauses.close()]); },
   };
 }

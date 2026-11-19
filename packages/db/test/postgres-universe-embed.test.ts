@@ -153,6 +153,8 @@ test("E2_DB challenges are one-use and generation-bound; the lease ends at min(i
   const g1 = leased!.generation;
   assert.notEqual(g1, g0);
   assert.equal(leased?.lease?.hostSubjectDigest, universeEmbedDigest("subject@example.test"));
+  assert.ok(leased!.lease!.remainingSeconds > 540 && leased!.lease!.remainingSeconds <= 550,
+    "the read reports what is left of the lease by database time");
 
   // Session expiry caps the lease.
   await pool.query("UPDATE login_sessions SET expires_at = clock_timestamp() + interval '120 seconds' WHERE id=$1", [universeEmbedDigest(b.session)]);

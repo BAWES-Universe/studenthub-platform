@@ -39,7 +39,14 @@ export function completingStores(states: LoginStateStore, sessions: SessionStore
       async put(record) {
         if (consumed === undefined || completed) throw new Error("no consumed embed state");
         completed = true;
-        await sessions.put(record);
+        try {
+          await sessions.put(record);
+        } catch (error) {
+          // 42501 is the pause guard refusing the insert (a pause that committed after the
+          // login's check): an authorization answer the login maps to access_paused, not an outage.
+          if ((error as { code?: string }).code !== "42501") failure = error;
+          throw error;
+        }
         let ok = false;
         try {
           ok = await store.completeHandoff(consumed, record.id, record.personId);
