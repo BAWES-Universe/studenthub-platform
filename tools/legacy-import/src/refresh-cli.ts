@@ -1,8 +1,10 @@
 /**
  * Entry point for the staging cron job. Exit 0 only when the mirror was refreshed and
- * counted. Every run that ends writes a fresh report, whatever the reason (bad config,
- * another run holding the lock, a crash), and a run marks the report `running` before it
- * touches the mirror, so `ok: true` always describes the mirror as it is now. Prints one
+ * counted. Every run that holds the lock writes a fresh report however it ends (a refused
+ * copy, a crash, the deadline), and marks the report `running` before it touches the
+ * mirror, so `ok: true` always describes the mirror as it is now. A configuration error
+ * also writes the report (where that cannot touch the lock); a run refused by the lock
+ * writes last-refused.json and leaves the owner's report alone. Prints one
  * line: the code, the table count, the row total and the duration. Never prints rows,
  * hosts or credentials.
  *
@@ -24,6 +26,7 @@ import {
   failureReport,
   loadConfig,
   lockPathFrom,
+  refusedPathFrom,
   RefreshRefused,
   reportPathFrom,
   runRefresh,
@@ -42,9 +45,22 @@ function assertSafe(tables: readonly string[]): void {
 /** Seconds a statement may wait on a metadata lock before it fails (MySQL default: a year). */
 export const LOCK_WAIT_TIMEOUT_S = 600;
 
+/**
+ * TCP always: with `--host=localhost` the clients would otherwise use a Unix socket and
+ * ignore the port, reaching whichever server owns the socket.
+ */
 function connectionArgs(db: DatabaseUrl): string[] {
-  return [`--host=${db.host}`, `--port=${db.port}`, `--user=${db.user}`];
+  return [`--host=${db.host}`, `--port=${db.port}`, `--user=${db.user}`, "--protocol=TCP"];
 }
+
+/** Decodes a HEX() column; table names come back hex-encoded so a tab or newline cannot split them. */
+function fromHex(hex: string): string {
+  if (!/^(?:[0-9A-Fa-f]{2})*$/.test(hex)) throw new RefreshRefused("source.unsafeTableName");
+  return Buffer.from(hex, "hex").toString("utf8");
+}
+
+const LIST_TABLES =
+  "SELECT HEX(table_name), HEX(IFNULL(engine, '')) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'";
 
 /** mysql sessions also get a bounded metadata-lock wait. mysqldump takes no init command. */
 function mysqlArgs(db: DatabaseUrl): string[] {
@@ -160,8 +176,22 @@ export function createMysqlClient(lockFd?: number, signal?: AbortSignal): MysqlP
       return lines;
     },
     async tables(db) {
-      const rows = await query(db, "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'");
-      return rows.map((row) => row[0]!);
+      const names = (await query(db, LIST_TABLES)).map((row) => fromHex(row[0] ?? ""));
+      // Refused here, before exclusion or pruning, so a name the tool cannot quote safely
+      // never reaches a DROP or a dump.
+      assertSafe(names);
+      return names;
+    },
+    async engines(db) {
+      const engines: Record<string, string> = {};
+      for (const row of await query(db, LIST_TABLES)) engines[fromHex(row[0] ?? "")] = fromHex(row[1] ?? "");
+      return engines;
+    },
+    async foldsCase(db) {
+      const [row] = await query(db, "SELECT @@lower_case_table_names");
+      const value = row?.[0];
+      if (value === undefined || !/^[0-9]+$/.test(value)) throw new Error("mysql.lowerCaseTableNames");
+      return value !== "0";
     },
     async copy(source, target, tables) {
       assertSafe(tables);
@@ -211,10 +241,15 @@ export function createMysqlClient(lockFd?: number, signal?: AbortSignal): MysqlP
       });
     },
     async dropTablesNotIn(target, keep) {
-      const keepSet = new Set(keep);
-      const stale = (await client.tables(target)).filter((table) => !keepSet.has(table));
+      // Under lower_case_table_names the copy created `candidate` for a source `Candidate`;
+      // compare as the server does, or the prune would drop the table it just loaded.
+      const fold = await client.foldsCase(target);
+      const key = (table: string) => (fold ? table.toLowerCase() : table);
+      const keepSet = new Set(keep.map(key));
+      const stale = (await client.tables(target)).filter((table) => !keepSet.has(key(table)));
       assertSafe(stale);
-      if (stale.length > 0) await query(target, `DROP TABLE ${stale.map((t) => `\`${t}\``).join(", ")}`);
+      // One session: foreign keys between mirror tables must not stop a stale table going.
+      if (stale.length > 0) await query(target, `SET SESSION foreign_key_checks = 0; DROP TABLE ${stale.map((t) => `\`${t}\``).join(", ")}`);
     },
     async counts(db, tables) {
       assertSafe(tables);
@@ -351,12 +386,17 @@ function safeToWrite(reportPath: string, lockPath: string): boolean {
   }
 }
 
-/** Best effort: a report that cannot be written must not hide the run's own exit code. */
-function tryWriteReport(reportPath: string, lockPath: string, report: RefreshReport): void {
+/**
+ * Best effort: a report that cannot be written must not hide the run's own exit code.
+ * Returns whether it was written, so the output line can say when it was not. The report
+ * is built inside the attempt, so a failure while building it also counts as not written.
+ */
+function tryWriteReport(reportPath: string, lockPath: string, report: () => RefreshReport): boolean {
   try {
-    writeReport(reportPath, lockPath, report);
+    writeReport(reportPath, lockPath, report());
+    return true;
   } catch {
-    // The exit code and the one-line output still say what happened.
+    return false;
   }
 }
 
@@ -368,17 +408,25 @@ export async function runCli(deps: CliDeps): Promise<number> {
     if (reportReplacesLock(config.reportPath, config.lockPath)) throw new RefreshRefused("config.reportIsLock");
   } catch (error) {
     const code = error instanceof RefreshRefused ? error.code : "config.invalid";
-    // Written only where it cannot replace the lock (writeReport checks); else stderr only.
-    const written = code !== "config.reportIsLock" && safeToWrite(reportPathFrom(deps.env), lockPathFrom(deps.env));
-    if (written) tryWriteReport(reportPathFrom(deps.env), lockPathFrom(deps.env), failureReport(code, deps.now()));
+    // Written only where it cannot replace the lock (writeReport checks) or be the file a
+    // contender writes; else stderr only.
+    // The path checks are repeated here because loadConfig may have stopped before them.
+    const reportPath = reportPathFrom(deps.env);
+    const writable =
+      code !== "config.reportIsLock" &&
+      path.resolve(refusedPathFrom(reportPath)) !== path.resolve(reportPath) &&
+      safeToWrite(reportPath, lockPathFrom(deps.env));
+    const written = writable && tryWriteReport(reportPath, lockPathFrom(deps.env), () => failureReport(code, deps.now()));
     deps.error(`legacy-refresh: ${code}${written ? "" : " (report not written)"}`);
     return 2;
   }
   const lock = await acquireLock(config.lockPath);
   if (!lock.held) {
-    // Another run is copying right now (or the lock cannot be taken): not safe to read.
-    tryWriteReport(config.reportPath, config.lockPath, failureReport(lock.code, deps.now()));
-    deps.error(`legacy-refresh: ${lock.code === "locked" ? "locked (another run in progress)" : lock.code}`);
+    // The owner's report (`running`, or its result) stays as it is: only the lock owner
+    // writes last-run.json. This attempt is recorded beside it.
+    const written = tryWriteReport(refusedPathFrom(config.reportPath), config.lockPath, () => failureReport(lock.code, deps.now()));
+    const reason = lock.code === "locked" ? "locked (another run in progress)" : lock.code;
+    deps.error(`legacy-refresh: ${reason}${written ? "" : " (report not written)"}`);
     return 3;
   }
   try {
@@ -398,8 +446,8 @@ export async function runCli(deps: CliDeps): Promise<number> {
     deps.log(summary(report));
     return report.ok ? 0 : 1;
   } catch {
-    tryWriteReport(config.reportPath, config.lockPath, failureReport("failed.unexpected", deps.now()));
-    deps.error("legacy-refresh: failed.unexpected");
+    const written = tryWriteReport(config.reportPath, config.lockPath, () => failureReport("failed.unexpected", deps.now()));
+    deps.error(`legacy-refresh: failed.unexpected${written ? "" : " (report not written)"}`);
     return 1;
   } finally {
     // Only this run's own descriptor; the file stays, and children still alive keep the lock.

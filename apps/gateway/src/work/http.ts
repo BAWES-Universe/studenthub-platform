@@ -30,7 +30,7 @@ export interface WorkHttpServices {
 type Json = { readonly status: number; readonly body: unknown };
 const ok = (body: unknown): Json => ({ status: 200, body });
 const NOT_FOUND = /(^|_)not_found$/;
-const CONFLICT = new Set(["overlaps_assignment", "ambiguous_contract", "contract_not_applicable", "request_not_pending", "duplicate_request", "open_session",
+const CONFLICT = new Set(["person_paused", "overlaps_assignment", "ambiguous_contract", "contract_not_applicable", "request_not_pending", "duplicate_request", "open_session",
   "recruit_card_reused", "already_working", "not_working", "overlaps_session", "session_open", "session_replaced", "session_changed", "session_not_rejected", "appeal_open", "not_decided", "not_deleted", "already_deleted",
   "outside_assignment", "not_assigned", "store_removed", "sessions_after_end"]);
 function refusal(code: string, extra: Record<string, unknown> = {}): Json {
