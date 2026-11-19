@@ -270,7 +270,7 @@ test("a gate that is not an object is a check failure, not a crash", () => {
   assert.deepEqual(rules(checkMatrix(nulled, contract, inventory)), ["matrix.gate.badState"]);
 });
 
-test("the inventory refuses a mistyped method and a source that is not file:line", () => {
+test("the inventory refuses a mistyped method, a source citation that is not a normalized path:line, and a missing source pin", () => {
   const contract = loadContract(root);
   const real = loadInventory(root);
   const [first, ...rest] = real.endpoints;
@@ -282,6 +282,10 @@ test("the inventory refuses a mistyped method and a source that is not file:line
   }
   for (const source of ["src/app/providers/logged-in/account.service.ts:181", "README.md:1", ".github/workflows/ci.yml:12"]) {
     assert.equal(isSourceLine(source), true, source);
+  }
+  // Citations are relative to the pinned source repository and revision, which must be recorded.
+  for (const source of [{}, { repository: "studenthub-candidate", revision: "de3ac8c" }, { repository: "BAWES-Universe/studenthub-candidate", revision: "main" }, { repository: "BAWES-Universe/studenthub-candidate", revision: "de3ac8" }]) {
+    assert.deepEqual(rules(checkInventory({ ...real, source: source as MobileInventory["source"] }, contract)), ["mobile.badProvenance"], JSON.stringify(source));
   }
   assert.deepEqual(checkInventory(real, contract), []);
 });
@@ -305,6 +309,11 @@ test("the contract parser refuses, by line, every markdown construct outside the
     ["> quoted\n", "block quote"],
     ["Heading\n---\n", "setext underline or thematic break"],
     ["Heading\n===\n", "setext underline or thematic break"],
+    ["***\n", "setext underline or thematic break"],
+    ["_ _ _\n", "setext underline or thematic break"],
+    ['[x]: /a "complete, gap-free partition: MOB 1–1."\n', "link reference definition"],
+    ["See <https://example.com>.\n", "inline HTML"],
+    ["Partition &#49; text.\n", "HTML entity"],
     [`text\n${row}`, "pipe row outside a table"],
     [`| a | b |\n| -- | x |\n`, "pipe row outside a table"],
     [`| a | b |\n|---|---|---|\n`, "pipe row outside a table"],
@@ -315,6 +324,10 @@ test("the contract parser refuses, by line, every markdown construct outside the
     assert.deepEqual(rules(issues), ["contract.markdown.unsupported"], inserted);
     assert.ok(issues.every((issue) => issue.detail.endsWith(`: ${reason}`)), `${inserted}: ${issues.map((i) => i.detail).join("; ")}`);
   }
+  // A link title is not shown, so a partition total written there does not count.
+  const titled = 'See [the ledger](x "These ranges are a complete, gap-free partition: MOB 1–70.").\n\n' + markdown;
+  assert.deepEqual(parseContract(titled).declaredTotals, parseContract(markdown).declaredTotals);
+  assert.deepEqual(checkContract(parseContract(titled)), []);
   // Code spans are text, so a `<` inside one is not HTML.
   assert.deepEqual(checkContract(parseContract(after6("Text with `a <b> c` in it.\n"))), []);
 });
@@ -324,7 +337,10 @@ test("a table row the parser cannot read the way GFM renders it is refused, and 
   assert.ok(markdown.includes(row));
   const variants: [string, string][] = [
     ["| MOB-B021 | activity | `U-04` | extra |\n", "table row with 4 cells in a 3-column table"],
-    ["| MOB-B021 | act\\|ivity | `U-04` |\n", "escaped pipe in a table row"],
+    ["| MOB-B021 | `act\\|ivity` | `U-04` |\n", "escaped pipe in a table row"],
+    ["| MOB-B021 | act\\*ivity | `U-04` |\n", "backslash escape"],
+    ["| MOB-B021 | activity &amp; more | `U-04` |\n", "HTML entity"],
+    ["| MOB-B021 | activity | [`U-04`](x) |\n", "link or image in a table row"],
     ["   | MOB-B021 | activity | `U-04` |\n", "indented line"],
   ];
   for (const [replacement, reason] of variants) {

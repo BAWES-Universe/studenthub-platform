@@ -149,9 +149,11 @@ export const requirementSubject = (section: "import" | "release", id: string): s
 export const HTTP_METHODS: readonly MobileEndpoint["method"][] = ["GET", "POST", "PATCH", "PUT", "DELETE"];
 
 /**
- * A source citation: a normalized repository-relative file path and a line number from 1.
- * Absolute paths, backslashes, empty segments and `.` or `..` segments are refused, so a
- * citation cannot point outside the repository or at a line that does not exist.
+ * A source citation's syntax: a normalized repository-relative file path and a line number
+ * from 1. Absolute paths, backslashes, empty segments and `.` or `..` segments are refused.
+ * Citations point into the source repository and revision the inventory records
+ * (`source.repository`, `source.revision`), not into this tree, so this checks the form
+ * only: it cannot tell whether that file or line exists at that revision.
  */
 export function isSourceLine(source: unknown): boolean {
   if (typeof source !== "string") return false;
@@ -227,8 +229,24 @@ function checkGates(section: string, id: string, row: ScreenRow, required: reado
   return issues;
 }
 
-export function checkInventory(inventory: MobileInventory, contract: ParsedContract): ContractIssue[] {
+/**
+ * Where the inventory was read: an `owner/name` repository and a 7 to 40 hex commit. Every
+ * source citation is relative to this pin.
+ */
+export function checkProvenance(source: unknown): ContractIssue[] {
+  const record = (source ?? {}) as Record<string, unknown>;
   const issues: ContractIssue[] = [];
+  if (typeof record.repository !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(record.repository)) {
+    issues.push({ rule: "mobile.badProvenance", detail: `inventory source.repository '${String(record.repository)}' is not owner/name` });
+  }
+  if (typeof record.revision !== "string" || !/^[0-9a-f]{7,40}$/.test(record.revision)) {
+    issues.push({ rule: "mobile.badProvenance", detail: `inventory source.revision '${String(record.revision)}' is not a 7 to 40 hex commit` });
+  }
+  return issues;
+}
+
+export function checkInventory(inventory: MobileInventory, contract: ParsedContract): ContractIssue[] {
+  const issues: ContractIssue[] = [...checkProvenance(inventory.source)];
   const seen = new Set<string>();
   for (const endpoint of inventory.endpoints) {
     const key = mobileKey(endpoint);
@@ -239,7 +257,7 @@ export function checkInventory(inventory: MobileInventory, contract: ParsedContr
       issues.push({ rule: "mobile.noSource", detail: `${key} cites no source line` });
     } else {
       for (const source of endpoint.sources) {
-        if (!isSourceLine(source)) issues.push({ rule: "mobile.badSource", detail: `${key} cites '${String(source)}', not a repository-relative file:line` });
+        if (!isSourceLine(source)) issues.push({ rule: "mobile.badSource", detail: `${key} cites '${String(source)}', not a normalized repository-relative path:line` });
       }
     }
     const target = contract.targets.get(endpoint.target);

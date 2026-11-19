@@ -77,10 +77,17 @@ function unsupportedReason(line: string): string | undefined {
   if (/^(?:`{3,}|~{3,})/.test(line)) return "code fence";
   if (line.startsWith("<")) return "HTML block";
   if (line.startsWith(">")) return "block quote";
-  if (/^(?:=+|-+)[ \t]*$/.test(line)) return "setext underline or thematic break";
+  if (/^(?:=+|-+)[ \t]*$/.test(line) || /^([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)) return "setext underline or thematic break";
+  // A link reference definition renders as nothing, so text in its title would be unseen.
+  if (/^\[[^\]]*\]:/.test(line)) return "link reference definition";
   // Code spans are taken out first: `reference.<catalogue>` is text, not a tag.
   const outsideCode = line.replace(/(`+)(?:(?!\1)[\s\S])*?\1/g, "");
   if (/<(?:[A-Za-z/!?])/.test(outsideCode)) return "inline HTML";
+  // Entities and backslash escapes render as other characters than the parser reads.
+  if (/&#?[A-Za-z0-9]+;/.test(outsideCode)) return "HTML entity";
+  if (outsideCode.includes("\\")) return "backslash escape";
+  // A link's destination and title are not shown in a table cell, so ids there would be unseen.
+  if (line.startsWith("|") && /[[\]]/.test(outsideCode)) return "link or image in a table row";
   return undefined;
 }
 
@@ -109,8 +116,11 @@ export function parseContract(markdown: string): ParsedContract {
   // Refused, with the line number, because each can change what a reader sees without the
   // parser modelling it: any leading indentation (code blocks, list continuations, tabs),
   // fence-like lines (``` or ~~~, valid fences or not), HTML blocks and inline HTML outside
-  // code spans (comments, tags), block quotes, setext underlines, escaped pipes in a table,
-  // a pipe row outside a table, and text inside a table that GFM would turn into a row.
+  // code spans (comments, tags, autolinks), HTML entities and backslash escapes outside
+  // code spans, block quotes, setext underlines and thematic breaks, link reference
+  // definitions, links or images in a table row, a pipe row outside a table, and text
+  // inside a table that GFM would turn into a row. In paragraph text a link's destination
+  // and title are dropped before the partition totals are read, since neither is shown.
   const unsupported: { line: number; reason: string }[] = [];
   const refuse = (index: number, reason: string) => void unsupported.push({ line: index + 1, reason });
   const accepted: string[] = [];
@@ -141,7 +151,8 @@ export function parseContract(markdown: string): ParsedContract {
         refuse(index, "text inside a table");
         continue;
       }
-      accepted.push(line);
+      // A link's destination and title are not shown; only its text counts.
+      accepted.push(line.replace(/\]\([^)]*\)/g, "]"));
       continue;
     }
     if (line.includes("\\|")) {
