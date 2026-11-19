@@ -18,6 +18,7 @@ import {
   formatCursor, kuwaitDate, parseCursor, parseRange,
   type AssignmentRequest, type EmployerDecisionView, type HoursCursor, type HoursRange, type SessionStatus, type WorkSession,
 } from "../../../../packages/work/src/index.js";
+import { exportQuery, WORK_EXPORT_KINDS } from "./exports.js";
 import type { WorkHttpServices } from "./http.js";
 import { clock, duration, esc, FormTooLarge, longDate, notice, plain, redirect, sessionCookie, STATUS_LABEL, tooLarge, write } from "./pages.js";
 import { pageDocument } from "../web-ui.js";
@@ -154,6 +155,23 @@ function reviewRow(s: WorkSession, d: EmployerDecisionView | null, people: Reado
   return `<li class="p-card" id="s-${s.id}"><h3>${box} ${esc(who)}</h3><p>${esc(time)} · ${esc(stores.get(s.storeId) ?? "Store")}</p><p><strong>${esc(status)}</strong>${marks.length ? ` · ${esc(marks.join(", "))}` : ""}</p>${placesText(s)}${s.note ? `<p>Their note: ${esc(s.note)}</p>` : ""}${decisionText(d, people)}${undo}${correct}</li>`;
 }
 
+/**
+ * The export buttons (P-1): on the company screen, these hours in detail or per
+ * person (legacy work-log-detailed-excel and work-log-excel); on the staff work
+ * logs, who worked where over the range (legacy export-assigned-history). Each
+ * posts to the shared export route with the screen's filters in its query; the
+ * export service checks who may export. Store screens have none, as in legacy.
+ */
+function exportForm(place: Place, f: Filters): string {
+  if (place.storeId) return "";
+  const button = (kind: string, query: Record<string, string | undefined>, label: string) =>
+    `<form method="post" action="/exports/${kind}?${esc(exportQuery(query))}"><button type="submit">${label}</button></form>`;
+  const range = { from: f.range.from, to: f.range.to };
+  if (place.staff) return `<section class="p-card" aria-label="Export">${button(WORK_EXPORT_KINDS.history, range, "Export who worked where (CSV)")}</section>`;
+  const company = { orgId: place.orgId, ...range, status: f.status ?? undefined, store: f.storeId ?? undefined };
+  return `<section class="p-card" aria-label="Export"><p>Export these hours as a CSV file.</p>${button(WORK_EXPORT_KINDS.detailed, company, "Export each entry")}${button(WORK_EXPORT_KINDS.summary, company, "Export totals per person")}</section>`;
+}
+
 /** O-11 and M-03; `undefined` when the actor may not see this company or store. */
 export async function renderReview(services: WorkHttpServices, actor: string, place: Place, f: Filters, message: { kind: "success" | "error"; text: string } | null): Promise<string | undefined> {
   const page = place.staff
@@ -181,7 +199,7 @@ export async function renderReview(services: WorkHttpServices, actor: string, pl
   // The form's default button comes first and is disabled, so Enter in the reason field submits nothing (not a row's undo, not an approval).
   const decide = `<form method="post" action="${place.base}/decide" class="p-card"><button type="submit" disabled hidden aria-hidden="true" tabindex="-1"></button><input type="hidden" name="back" value="${esc(back)}">${totals}${list}${fields}</form>`;
   const more = page.next ? `<nav class="p-card"><a href="${place.base}?${esc(filterQuery(f, place, page.next))}">More hours</a></nav>` : "";
-  return reviewShell(place.title, `${message ? notice(message.kind, message.text) : ""}${storeNav(place, "time-approvals")}${filterForm}${decide}${more}`);
+  return reviewShell(place.title, `${message ? notice(message.kind, message.text) : ""}${storeNav(place, "time-approvals")}${filterForm}${exportForm(place, f)}${decide}${more}`);
 }
 
 /** M-04; `undefined` when the actor may not see this store's requests. */
