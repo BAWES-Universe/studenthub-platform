@@ -4,7 +4,8 @@ import { candidateDocumentsRoute, organizationDocumentsRoute } from "./documents
 import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, languagePreferencePageRoute, languagePreferenceRoute, bankDetailsRoute, profileRecordsRoute, peopleDirectoryRoute, civilIdReviewRoute } from "./profile.js";
 import { organizationProfileRoute, organizationStatusRoute, organizationCommercialTermsRoute, organizationApprovedToHireRoute, organizationNotesRoute, organizationBrandsRoute, organizationStoresRoute, organizationDeletionRoute, organizationCreationRoute, organizationAccountManagerPageRoute, organizationAccountManagerRoute } from "./organizations.js";
 import { payContractsRoute } from "./pay-contracts.js";
-import { accessRoute } from "./access.js";
+import { recruitChecklistRoute, recruitEmployerViewRoute, recruitFulltimersRoute, recruitInterviewsRoute, recruitInvitationsRoute, recruitJobsRoute, recruitPeopleSearchRoute, recruitPipelineRoute, recruitRequestApplicationsRoute, recruitRequestsRoute } from "./recruit.js";
+import { abuseGateRoute, accessRoute, companyContactsRoute, companyTeamRoute, companyRegistrationRoute, staffViewRoute, storeManagerRoute } from "./access.js";
 import { handleLegacyLink } from "../legacy-link-http.js";
 import { handleDocumentsUpload } from "../documents-upload-http.js";
 import { handleDocumentsActions } from "../documents-actions-http.js";
@@ -38,6 +39,7 @@ const civilIdSuggestionRoute: GatewayRoute = { name: "civil-id-suggestion", hand
 const areaRoute: GatewayRoute = { name: "area", handle: (ctx) => handleArea(ctx.request, ctx.response, ctx.login?.area) };
 
 export const ROUTES: readonly GatewayRoute[] = [
+  abuseGateRoute,
   catalogueRoute,
   candidateDocumentsRoute,
   documentsUploadRoute,
@@ -70,6 +72,21 @@ export const ROUTES: readonly GatewayRoute[] = [
   peopleDirectoryRoute,
   civilIdReviewRoute,
   accessRoute,
+  staffViewRoute,
+  companyRegistrationRoute,
+  companyTeamRoute,
+  companyContactsRoute,
+  storeManagerRoute,
+  recruitRequestsRoute,
+  recruitPipelineRoute,
+  recruitChecklistRoute,
+  recruitPeopleSearchRoute,
+  recruitInvitationsRoute,
+  recruitEmployerViewRoute,
+  recruitInterviewsRoute,
+  recruitJobsRoute,
+  recruitFulltimersRoute,
+  recruitRequestApplicationsRoute,
 ];
 
 export { runRoutes } from "./context.js";

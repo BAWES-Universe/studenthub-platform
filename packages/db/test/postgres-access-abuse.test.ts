@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { after, before, test } from "node:test";
+import pg from "pg";
+import { createOrganization, createPrincipal } from "@studenthub/contracts";
+import { PostgresAccessAbuseStore, PostgresAuthzStore, runMigrations } from "@studenthub/db";
+import { parseCidr } from "../../access/src/index.js";
+
+const URL = process.env.DATABASE_URL ?? "";
+let pool: pg.Pool, store: PostgresAccessAbuseStore, authz: PostgresAuthzStore;
+
+before(async () => {
+  if (!URL) throw Error("DATABASE_URL is required to run the db suite");
+  pool = new pg.Pool({ connectionString: URL });
+  await runMigrations(pool);
+  store = new PostgresAccessAbuseStore({ pool });
+  authz = new PostgresAuthzStore(pool);
+});
+after(async () => pool.end());
+
+async function person() {
+  const id = `a8-${randomUUID()}`;
+  await authz.registerPrincipal(createPrincipal({ id, pbuuids: [], displayName: `Person ${id}` }));
+  return id;
+}
+
+test("A8_LIMITS the count is per person and kind, exact under concurrency, and starts again in the next window", async () => {
+  const [one, two] = [await person(), await person()];
+  const window = 1_800_000_000;
+  const counts = await Promise.all(Array.from({ length: 20 }, () => store.hit(one, "write", window)));
+  assert.deepEqual([...counts].sort((a, b) => a - b), Array.from({ length: 20 }, (_, index) => index + 1), "every request counted once");
+  assert.equal(await store.hit(one, "upload", window), 1, "uploads counted apart from writes");
+  assert.equal(await store.hit(two, "write", window), 1, "another person has their own count");
+  assert.equal(await store.hit(one, "write", window + 600), 1, "a new window starts at one");
+  // A second store over another pool (another gateway process) shares the count.
+  const other = new PostgresAccessAbuseStore({ connectionString: URL });
+  try { assert.equal(await other.hit(one, "write", window), 21); } finally { await other.close(); }
+});
+
+test("A8_BLOCKS blocks keep who, when and why, can be removed once, and are never deleted", async () => {
+  const admin = await person();
+  const net = `198.18.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}/32`;
+  assert.deepEqual(await store.changeBlock(admin, { action: "block", cidr: parseCidr(net)!, reason: "Credential stuffing" }, () => true), { kind: "blocked" });
+  assert.deepEqual(await store.changeBlock(admin, { action: "block", cidr: parseCidr(net)!, reason: "Again" }, () => true), { kind: "refused", reason: "already_blocked" });
+  const row = (await store.blocks()).find((item) => item.cidr === net);
+  assert.equal(row?.reason, "Credential stuffing");
+  assert.equal(row?.createdBy.principalId, admin);
+  assert.deepEqual(await store.changeBlock(admin, { action: "unblock", cidr: parseCidr(net)!, reason: "Was a shared office" }, () => true), { kind: "unblocked" });
+  assert.equal((await store.blocks()).some((item) => item.cidr === net), false);
+  assert.deepEqual(await store.changeBlock(admin, { action: "unblock", cidr: parseCidr(net)!, reason: "Was a shared office" }, () => true), { kind: "refused", reason: "not_blocked" });
+  await assert.rejects(pool.query("DELETE FROM ip_blocks WHERE cidr = $1::cidr", [net]), /never deleted/);
+  await assert.rejects(pool.query("UPDATE ip_blocks SET reason = 'edited' WHERE cidr = $1::cidr", [net]), /only be removed, once/);
+  await assert.rejects(pool.query("UPDATE ip_blocks SET id = gen_random_uuid() WHERE cidr = $1::cidr AND created_by = $2", [net, admin]), /only be removed, once/);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM ip_blocks WHERE cidr = $1::cidr AND created_by = $2", [net, admin])).rows[0].n, 1, "this test's row stays");
+  // A mapped IPv6 network would have two spellings and an unblock could miss it: it is stored as IPv4 only.
+  await assert.rejects(pool.query("INSERT INTO ip_blocks (id, cidr, reason, created_by) VALUES (gen_random_uuid(), '::ffff:203.0.113.0/120', 'mapped', $1)", [admin]), /check constraint/);
+});
+
+test("A8_BLOCKS an admin grant revoked while the block waits for the caller's lock blocks nothing", async () => {
+  const root = `a8-root-${randomUUID()}`;
+  await authz.upsertOrganization(createOrganization({ id: root, name: `Root ${root}` }));
+  const admin = await person();
+  await authz.grantMany(admin, [{ orgId: root, role: "admin", scope: "subtree" }]);
+  const net = `198.19.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}/32`;
+  const holder = await pool.connect();
+  try {
+    // A revocation holds the person's lock, as grant changes and pauses do.
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [admin]);
+    await holder.query("DELETE FROM grants WHERE principal_id = $1", [admin]);
+    const change = store.changeBlock(admin, { action: "block", cidr: parseCidr(net)!, reason: "Credential stuffing" },
+      (grants) => grants.some((grant) => grant.orgId === root && grant.role === "admin"));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await holder.query("COMMIT");
+    assert.deepEqual(await change, { kind: "refused", reason: "not_allowed" });
+  } finally {
+    holder.release();
+  }
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM ip_blocks WHERE cidr = $1::cidr", [net])).rows[0].n, 0, "nothing was written");
+});

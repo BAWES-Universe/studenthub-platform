@@ -3,16 +3,17 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
-const areas = ["profile", "access", "catalogue", "organizations", "pay-contracts", "ops", "documents", "notifications"] as const;
+const areas = ["profile", "access", "catalogue", "organizations", "pay-contracts", "ops", "documents", "notifications", "recruit"] as const;
 const expected = {
   profile: ["BANK_DETAILS_OPERATION", "LANGUAGES", "LANGUAGE_FIELD", "LegacyCandidateAlreadyLinkedError", "PERSON_PROFILE_FIELDS", "PersonProfileBrowserRetryableError", "PostgresBankDetailsStore", "PostgresLegacyLinkStore", "PostgresPersonLocationStore", "PostgresPersonProfileStore", "PostgresProfileRecordStore", "PostgresReferenceResolver", "PostgresSafeWriteStore", "PrincipalAlreadyLinkedError", "SAFE_WRITE_OPERATION", "personRecordRef", "safeWritePrincipalRef"],
-  access: ["AUTHORIZATION_MUTATION_OPERATIONS", "PostgresAccessGrantsStore", "PostgresAuthzStore", "PostgresLoginStore", "organizationAuditRef", "principalAuditRef", "readLiveLoginSessionPerson", "requestAuditRef"],
+  access: ["AUTHORIZATION_MUTATION_OPERATIONS", "PostgresAccessAbuseStore", "PostgresAccessContactsStore", "PostgresAccessGrantsStore", "PostgresAccessInvitationsStore", "PostgresAccessPausesStore", "PostgresAccessRegistrationsStore", "PostgresAccessStaffViewsStore", "PostgresAccessStoreManagersStore", "PostgresAuthzStore", "PostgresLoginStore", "organizationAuditRef", "principalAuditRef", "readLiveLoginSessionPerson", "requestAuditRef"],
   catalogue: ["PostgresCatalogueStore"],
   organizations: ["ORGANIZATION_ACCOUNT_MANAGER_OPERATION", "ORGANIZATION_APPROVED_TO_HIRE_OPERATION", "ORGANIZATION_BRAND_LINK_OPERATION", "ORGANIZATION_BRAND_UNLINK_OPERATION", "ORGANIZATION_COMMERCIAL_TERMS_OPERATION", "ORGANIZATION_CREATE_OPERATION", "ORGANIZATION_DELETION_OPERATION", "ORGANIZATION_NOTES_OPERATION", "ORGANIZATION_PROFILE_OPERATION", "ORGANIZATION_STATUS_OPERATION", "ORGANIZATION_STORE_CREATE_OPERATION", "ORGANIZATION_STORE_REMOVE_OPERATION", "ORGANIZATION_STORE_UPDATE_OPERATION", "PostgresOrganizationAccountManagerReads", "PostgresOrganizationAccountManagerStore", "PostgresOrganizationApprovedToHireStore", "PostgresOrganizationBrandsStore", "PostgresOrganizationCommercialTermsStore", "PostgresOrganizationCreationStore", "PostgresOrganizationDeletionStore", "PostgresOrganizationNotesStore", "PostgresOrganizationProfileReads", "PostgresOrganizationProfileStore", "PostgresOrganizationStatusStore", "PostgresOrganizationStoresStore"],
   "pay-contracts": ["PAY_CONTRACT_CREATE_SAFE_WRITE_OPERATION", "PostgresFinanceReferenceResolver", "PostgresPayContractSafeWriteStore", "PostgresPayContractStore"],
   ops: ["DEFAULT_DATABASE_URL", "PostgresExportsStore", "PostgresJobRunsStore", "bootstrapAdmin", "databaseUrl", "runMigrations"],
   documents: [],
   notifications: ["EMAIL_CLAIM_LEASE_SECONDS", "PostgresEmailOutboxStore", "PostgresNotificationsStore", "recordOrganizationStatusChanged"],
+  recruit: ["PostgresRecruitChecklistStore", "PostgresRecruitFulltimersStore", "PostgresRecruitInterviewsStore", "PostgresRecruitInvitationsStore", "PostgresRecruitJobsStore", "PostgresRecruitPeopleSearchStore", "PostgresRecruitPipelineStore", "PostgresRecruitRequestApplicationsStore", "PostgresRecruitRequestsStore", "RECRUIT_SYSTEM_ACTOR_REF"],
 } as const;
 
 async function moduleFor(specifier: string): Promise<Record<string, unknown>> {
@@ -21,7 +22,7 @@ async function moduleFor(specifier: string): Promise<Record<string, unknown>> {
 
 test("PREP_EXPORTS explicit database area exports resolve with their assigned values", async () => {
   const manifest = JSON.parse(await readFile(resolve("packages/db/package.json"), "utf8")) as { exports: Record<string, Record<string, string>> };
-  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions", "./billing"].sort());
+  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions", "./billing", "./universe"].sort());
   assert.equal(JSON.stringify(manifest.exports).includes("*"), false);
   for (const area of areas) {
     assert.deepEqual(manifest.exports[`./${area}`], { types: `./dist/${area}/index.d.ts`, import: `./dist/${area}/index.js` });
@@ -35,6 +36,12 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
   const assertions = await moduleFor("@studenthub/db/assertions");
   assert.deepEqual(Object.keys(assertions), ["PostgresReplayStore"]);
   assert.equal(typeof assertions.PostgresReplayStore, "function");
+  // Universe embed is subpath-only too (E2): the root golden stays unchanged.
+  assert.deepEqual(manifest.exports["./universe"], {
+    types: "./dist/universe/index.d.ts", import: "./dist/universe/index.js",
+  });
+  const universe = await moduleFor("@studenthub/db/universe");
+  assert.deepEqual(Object.keys(universe).sort(), ["PostgresUniverseEmbedStore", "universeEmbedDigest"]);
   // Billing is subpath-only too (invoices lane, migrations 0590 to 0599).
   assert.deepEqual(manifest.exports["./billing"], {
     types: "./dist/billing/index.d.ts", import: "./dist/billing/index.js",
@@ -84,6 +91,6 @@ test("PREP_CLOSURE deployment closure follows database subpaths and pinned migra
 });
 
 test("PREP_STABLE database subpaths preserve values without adding behavior", () => {
-  assert.equal(areas.length, 8);
+  assert.equal(areas.length, 9);
   assert.equal(new Set(areas.flatMap(area => expected[area])).size, areas.flatMap(area => expected[area]).length);
 });

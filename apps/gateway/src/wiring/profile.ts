@@ -2,6 +2,7 @@ import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
 import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
+import type { SessionStore } from "@studenthub/login-contract";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
 import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, kuwaitDate, type ApprovedProfileAdapter, type CivilIdOcrStore, type CivilIdStore, type OwnProfileReader } from "@studenthub/profile";
 import { createPeopleDirectory } from "../people-directory.js";
@@ -111,7 +112,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
     put: access.loginStore.sessions.put,
     delete: access.loginStore.sessions.delete,
     async get(id: string) {
-      const personId = await readLiveLoginSessionPerson(browserSessionPool, id);
+      const personId = await checkedLiveSessionPerson(access.loginStore.sessions, browserSessionPool, id);
       return personId ? { id, personId } : undefined;
     },
   } : access.loginStore.sessions;
@@ -138,7 +139,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
           choices: () => personProfiles.readOriginChoices(),
           async authorize(session) {
             if (!session) return null;
-            const principalId = await readLiveLoginSessionPerson(browserSessionPool, session);
+            const principalId = await checkedLiveSessionPerson(access.loginStore.sessions, browserSessionPool, session);
             if (!principalId || !await access.authzStore.getPrincipal(principalId)) return null;
             const canEdit = async (field: string): Promise<boolean> => {
               if (field !== "kuwaitiMother") return true;
@@ -185,3 +186,22 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
     async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), profileReadPool.end(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close()]); },
   };
 }
+
+/**
+ * A session's person for the browser-edit and legacy-link routes. These read
+ * the live row on the browser pool, with no session housekeeping (U2B). When
+ * the SHU-457 upstream check is on, the login store's sessions carry its mark,
+ * and the read goes through that checked store first, so the check applies
+ * here as on every other route; the browser pool must then name the same person.
+ */
+export async function checkedLiveSessionPerson(
+  sessions: Pick<SessionStore, "get">, pool: Pick<pg.PoolClient, "query">, id: string,
+): Promise<string | undefined> {
+  if (!(sessions as { readonly [UPSTREAM_CHECKED]?: true })[UPSTREAM_CHECKED]) return readLiveLoginSessionPerson(pool, id);
+  const checked = await sessions.get(id);
+  if (!checked) return undefined;
+  const personId = await readLiveLoginSessionPerson(pool, id);
+  return personId === checked.personId ? personId : undefined;
+}
+
+const UPSTREAM_CHECKED = Symbol.for("studenthub.login.upstream-confirming");

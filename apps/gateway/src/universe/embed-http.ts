@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { WEB_CSS } from "../web-ui.js";
+import { handleEmbedRuntime } from "./embed-service.js";
 import { APP_POLICY, universeEmbedPolicy, writeEmbedResponse, type UniverseEmbedConfig } from "./embed-policy.js";
 
 /** E1 is deliberately inert: no login, cookies, identity, storage or profile IO. */
@@ -24,6 +25,23 @@ export function handleUniverseEmbed(request: IncomingMessage, response: ServerRe
   // spelling (with an ignored query string) can match; query values do nothing.
   const path = request.url?.split("?", 1)[0];
   const route = `${request.method} ${path}`;
+  // E2: with a complete runtime, the same closed manifest is served for real.
+  // HEAD (the Universe probe), the stylesheet and unknown routes keep E1 behaviour.
+  if (config.runtime && route !== "HEAD /universe/embed" && route !== "GET /assets/studenthub.css"
+    && (route === "GET /universe/embed" || route === "GET /universe/embed/embed.js"
+      || JSON_ROUTES.has(route) || TOP_LEVEL_ROUTES.has(route))) {
+    const runtime = config.runtime;
+    void handleEmbedRuntime(request, response, config, runtime, route).then((handled) => {
+      if (!handled) writeEmbedResponse(response, 404, '{"error":"not_found"}', "application/json");
+    }, (error: unknown) => {
+      // Route and error class only: never the URL (callback code and state), cookies or message text.
+      console.error(JSON.stringify({ event: "universe_embed_unavailable", route,
+        error: error instanceof Error ? error.name : typeof error }));
+      if (response.headersSent) { response.destroy(); return; }
+      writeEmbedResponse(response, 503, '{"error":"unavailable"}', "application/json");
+    });
+    return;
+  }
   if (route === "GET /universe/embed" || route === "HEAD /universe/embed") {
     const html = NOT_READY.replace("</head>", '<script src="/universe/embed/embed.js" defer></script></head>');
     // Universe probes HEAD first and only retries GET after a 405. The probe
