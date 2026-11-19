@@ -59,3 +59,27 @@ Legacy evidence (`BAWES-Universe/studenthub` @ 55119d3): `console/controllers/Cr
 - Recipients, decided at send time: staff who turned the email on (`morning_summary_subscriptions`, the rebuild's form of legacy's morning-report permission, per SHU-211), who still hold a staff or admin grant over the operator organization's subtree, and whose account is not paused. Legacy sent to the invoice mailbox with staff in CC; here each staff member gets their own copy and nothing goes to a shared inbox. The importer maps legacy's permission holders onto subscriptions. The outbox claim checks the same rule again on every delivery attempt, so someone who turns the email off, loses staff access or is paused after it was queued gets it suppressed, never sent.
 - Staff page: `GET /workspace/morning-summary` shows today's counters, fresh at read time, with the same values the email carries, and what each missing counter waits on; `POST` with `email=on|off` turns the email on or off for the staff member themself (same-origin only). Anyone who is not staff gets the same not found. Served by the comms HTTP handler, so no new route line.
 - Not in this slice: recruiter productivity (the other half of P-2), which needs the recruit lane's activity events.
+
+## Slice 7: exports audit and the country and university lists (2026-11-19)
+
+The audit of every legacy download is in the project's `contracts/exports-audit.md`. This slice
+builds the reports lane's part of family 1 and makes the export seam general, so other lanes add
+kinds without touching the routes.
+
+- **How to add an export kind (any lane).** Two additions, nothing else:
+  1. An `ExportKind` in your package (`packages/<lane>/...` or `packages/exports/src/`): its id,
+     its closed `filterKeys`, its `columns` (the row whitelist), `authorize` and `rows`. Register
+     it in `apps/gateway/src/wiring/ops.ts`, in the `ExportService` kind list. `authorize` is the
+     only access decision; the service calls it at request and again at download.
+  2. One entry in `EXPORT_HTTP_KINDS` (`apps/gateway/src/exports-http.ts`): `filters(query)`
+     turns the query string into the kind's filters or null (refused before the service is
+     reached), `filename` names the download, `noun` names the rows on the result page, and
+     optional `forRequester` resolves filters such as account manager "me".
+  The page's button is a form that posts to `/exports/<kind id>?<filters>`. `GET /exports/<id>`
+  serves every kind under its own file name.
+- **Kinds `catalogue-country` and `catalogue-university`.** Every active catalogue entry of
+  the type with how many person profiles point at it (nationality or university). Columns ID,
+  Name, Code, Total Candidate. Legacy also had an Arabic name; the catalogue holds one name, so
+  that column has no source. Staff only (operator staff or admin grant). No filters: any query
+  parameter refuses the request.
+- **Page.** `GET /workspace/lists` for staff, with the two Export buttons.
