@@ -9,6 +9,7 @@ import {
 jobCandidateDecision,   evaluationAllowed, interviewCompanyDecision, internalNoteDecision, interviewOutbox, interviewStageAllowed, interviewTransitionAllowed, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed,
   recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision,
 } from "../../recruit/src/index.js";
+import { PostgresAccessPausesStore } from "@studenthub/db";
 import { revokeDuring, whileUncommitted } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
@@ -25,7 +26,7 @@ before(async () => {
   stores = new PostgresOrganizationStoresStore({ pool, writeDecision: organizationStoreWriteDecision, readDecision: organizationStoreReadDecision });
   requests = new PostgresRecruitRequestsStore({
     pool, createDecision: (r, o, a) => requestCreateDecision(r, o, a, OPS), readDecision: (r, o, a) => requestReadDecision(r, o, a, OPS),
-    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [],
+    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [], paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids), pipelineAuthority: (p, a, r) => pipelineAuthority(p, a, pipelineLeadDecision(r, OPS), pipelineRecruiterEligible(r, OPS)),
   });
   pipeline = new PostgresRecruitPipelineStore({
     pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
@@ -35,7 +36,7 @@ before(async () => {
   interviews = new PostgresRecruitInterviewsStore({
     pool, companyDecision: (r, o, a) => interviewCompanyDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS),
     authority: pipelineAuthority, internalDecision: (r) => internalNoteDecision(r, OPS), stageAllowed: interviewStageAllowed, transitionAllowed: interviewTransitionAllowed,
-    evaluationAllowed, outbox: interviewOutbox,
+    evaluationAllowed, outbox: interviewOutbox, paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids),
   });
 });
 after(async () => pool.end());
@@ -155,4 +156,28 @@ test("REC6_TREE_RACE a reparent that removes the company caller's ancestor autho
   const reparent = `SELECT pg_advisory_xact_lock(hashtext('studenthub:organizations:tree')); UPDATE organizations SET parent_org_id = '${elsewhere}' WHERE id = '${middle}'`;
   assert.deepEqual(await whileUncommitted(pool, reparent, [], () => interviews.schedule(holder, s.requestId, fields(s.cardId))), { kind: "not_found" });
   assert.equal((await pool.query("SELECT 1 FROM recruit_interviews WHERE card_id = $1", [s.cardId])).rowCount, 0);
+});
+
+test("REC6_PAUSED a paused person's interviews and card are hidden from the company; internal callers still see them", async () => {
+  const s = await setup();
+  assert.equal((await pipeline.move(s.recruiter, s.cardId, "contacted")).kind, "moved");
+  assert.equal((await interviews.schedule(s.owner, s.requestId, fields(s.cardId))).kind, "scheduled");
+  const pauses = new PostgresAccessPausesStore({ pool });
+  const change = (action: "pause" | "resume") => pauses.apply({ callerId: s.staff, request: { targetPrincipalId: s.noor, action, reason: "test pause" }, decide: () => ({ kind: "apply" }) });
+  assert.equal((await change("pause")).kind, "paused");
+  const company = (await interviews.forRequest(s.owner, s.requestId))!;
+  assert.deepEqual([company.interviews.length, company.cards.length], [0, 0], "the company sees neither the interview nor the card");
+  for (const who of [s.staff, s.recruiter]) {
+    const page = (await interviews.forRequest(who, s.requestId))!;
+    assert.deepEqual([page.interviews.length, page.cards.length], [1, 1]);
+  }
+  // The paused port is asked after the snapshot's connection is released: a one-connection pool still answers.
+  const small = new pg.Pool({ connectionString: URL, max: 1, connectionTimeoutMillis: 2000 });
+  try {
+    const one = new PostgresRecruitInterviewsStore({ ...interviews.options, pool: small, paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool: small }).paused(ids) });
+    const within = <T>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the page waited for a second connection")), 5000).unref())]);
+    assert.deepEqual((await within(one.forRequest(s.owner, s.requestId)))!.interviews.length, 0);
+  } finally { await small.end(); }
+  assert.equal((await change("resume")).kind, "resumed");
+  assert.equal((await interviews.forRequest(s.owner, s.requestId))!.interviews.length, 1);
 });

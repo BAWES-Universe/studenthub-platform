@@ -9,6 +9,7 @@ import {
 jobCandidateDecision,   checklistAdminDecision, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitNotesDecision, recruitStaffDecision,
   requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision,
 } from "../../recruit/src/index.js";
+import { PostgresAccessPausesStore } from "@studenthub/db";
 import { revokeDuring, whileUncommitted } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
@@ -25,7 +26,7 @@ before(async () => {
   stores = new PostgresOrganizationStoresStore({ pool, writeDecision: organizationStoreWriteDecision, readDecision: organizationStoreReadDecision });
   requests = new PostgresRecruitRequestsStore({
     pool, createDecision: (r, o, a) => requestCreateDecision(r, o, a, OPS), readDecision: (r, o, a) => requestReadDecision(r, o, a, OPS),
-    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [],
+    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [], paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids), pipelineAuthority: (p, a, r) => pipelineAuthority(p, a, pipelineLeadDecision(r, OPS), pipelineRecruiterEligible(r, OPS)),
   });
   pipeline = new PostgresRecruitPipelineStore({
     pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
