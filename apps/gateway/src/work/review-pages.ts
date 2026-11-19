@@ -178,7 +178,8 @@ export async function renderReview(services: WorkHttpServices, actor: string, pl
 <label>Note<textarea name="note" maxlength="2000"></textarea></label><label><input type="checkbox" name="notePublic" value="on"> Let the person see the note</label>
 <label>Rating<select name="rating"><option value="">No rating</option>${[1, 2, 3, 4, 5].map((n) => `<option value="${n}">${n} of 5</option>`).join("")}</select></label>
 <button type="submit" name="action" value="approve">Approve selected</button> <button type="submit" name="action" value="reject">Reject selected</button></fieldset>`;
-  const decide = `<form method="post" action="${place.base}/decide" class="p-card"><input type="hidden" name="back" value="${esc(back)}">${totals}${list}${fields}</form>`;
+  // The form's default button comes first and is disabled, so Enter in the reason field submits nothing (not a row's undo, not an approval).
+  const decide = `<form method="post" action="${place.base}/decide" class="p-card"><button type="submit" disabled hidden aria-hidden="true" tabindex="-1"></button><input type="hidden" name="back" value="${esc(back)}">${totals}${list}${fields}</form>`;
   const more = page.next ? `<nav class="p-card"><a href="${place.base}?${esc(filterQuery(f, place, page.next))}">More hours</a></nav>` : "";
   return reviewShell(place.title, `${message ? notice(message.kind, message.text) : ""}${storeNav(place, "time-approvals")}${filterForm}${decide}${more}`);
 }

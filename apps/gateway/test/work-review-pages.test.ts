@@ -102,6 +102,10 @@ test("WORK_REVIEW M-03 is the store's queue: waiting hours by default, scoped to
   assert.deepEqual(calls[0], ["company", "actor", "co", { from: "2026-11-01", to: "2026-11-18" }, { storeId: STORE, status: "pending", after: null }]);
   assert.match(page.html, /Time approvals: Avenues &lt;Mall&gt;/);
   assert.match(page.html, new RegExp(`action="/store/${STORE}/time-approvals/decide"`));
+  // Enter in the reason field uses the form's default button, the first submit button: it is disabled, so it can't undo a row or decide.
+  const decideForm = page.html.slice(page.html.indexOf(`action="/store/${STORE}/time-approvals/decide"`));
+  assert.match(decideForm, /^[^>]*><button type="submit" disabled hidden aria-hidden="true" tabindex="-1"><\/button>/);
+  assert.ok(decideForm.indexOf('name="undo"') > decideForm.indexOf("disabled hidden"));
   // D-WK1: the approver sees both places, start and stop, and a session without them shows none.
   assert.match(page.html, /Started at <a href="https:\/\/www\.openstreetmap\.org\/\?mlat=29\.37590&amp;mlon=47\.97740#map=17\/29\.37590\/47\.97740" rel="noopener noreferrer" target="_blank">29\.37590, 47\.97740<\/a>, stopped at <a [^>]*>29\.37000, 47\.98000<\/a>/);
   assert.equal((page.html.match(/Started at/g) ?? []).length, 1);
