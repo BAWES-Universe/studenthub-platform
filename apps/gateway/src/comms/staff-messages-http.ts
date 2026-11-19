@@ -13,6 +13,11 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
  * GET /workspace/people/<person>/emails is the person's email delivery log for staff (contract
  * C-2): each email's class, state and attempts with their closed outcome codes. It never shows
  * the address or the text, which the log does not read.
+ *
+ * GET /workspace/morning-summary is today's morning summary for staff (contract P-2): each
+ * counter with its number, or "not available" while its source has not landed, read fresh
+ * with the same values the 08:00 email carries. POST turns that email on or off for the
+ * staff member themself.
  */
 export interface StaffDeliveryLogEntry {
   readonly id: string; readonly emailClass: string; readonly state: string; readonly createdAt: Date; readonly sentAt: Date | null;
@@ -22,9 +27,13 @@ export interface StaffMessagesHttpService {
   isStaff(principalId: string): Promise<boolean>;
   send(senderPrincipalId: string, input: { recipientPrincipalId: string; kind: string; body?: string | null; sendKey: string }): Promise<StaffMessageResult>;
   deliveryLog?(recipientPrincipalId: string, offset: number, limit: number): Promise<{ rows: readonly StaffDeliveryLogEntry[]; total: number } | null>;
+  morningSummary?: {
+    today(viewer: string): Promise<{ readonly day: string; readonly subscribed: boolean; readonly rows: readonly { readonly key: string; readonly label: string; readonly value: number | null; readonly waitsOn: string | null }[] } | undefined>;
+    subscribe(viewer: string, on: boolean): Promise<boolean>;
+  };
 }
 
-const PATH = /^\/workspace\/people\/([^/]+)\/(message|emails)$/, LOG_PAGE = 50, PERSON = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/, LIMIT = 8192;
+const PATH = /^\/workspace\/people\/([^/]+)\/(message|emails)$/, SUMMARY_PATH = "/workspace/morning-summary", LOG_PAGE = 50, PERSON = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/, LIMIT = 8192;
 const esc = (v: string) => v.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const cookie = (v: string | undefined) => v?.split(";").map(x => x.trim()).find(x => x.startsWith("__Host-studenthub_session="))?.slice(26);
 const NOT_FOUND = { status: "not_found" } as const;
@@ -35,12 +44,12 @@ function reply(req: IncomingMessage, res: ServerResponse, status: number, body: 
   return true;
 }
 
-async function form(req: IncomingMessage): Promise<URLSearchParams | null> {
+async function form(req: IncomingMessage, allowed: readonly string[] = ["kind", "body", "send_key"]): Promise<URLSearchParams | null> {
   if (!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/i.test(req.headers["content-type"] ?? "") || Number(req.headers["content-length"]) > LIMIT) { req.resume(); return null; }
   req.setEncoding("utf8"); let raw = "";
   for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > LIMIT) return null; }
   const params = new URLSearchParams(raw), keys = [...params.keys()];
-  if (new Set(keys).size !== keys.length || keys.some(k => !["kind", "body", "send_key"].includes(k))) return null;
+  if (new Set(keys).size !== keys.length || keys.some(k => !allowed.includes(k))) return null;
   return params;
 }
 
@@ -48,7 +57,7 @@ function formPage(path: string): string {
   return `<main><h1>Message this person</h1><p>They will see it in their notifications.</p><form method="post" action="${esc(path)}"><input type="hidden" name="send_key" value="${randomUUID()}"><fieldset><legend>What to send</legend><label><input type="radio" name="kind" value="profile_photo_request" required> Ask for a profile photo</label><label><input type="radio" name="kind" value="civil_id_request"> Ask for their civil ID</label><label><input type="radio" name="kind" value="message"> Send a message</label></fieldset><label>Message (only for "Send a message", up to ${STAFF_MESSAGE_BODY_MAX} characters) <textarea name="body" maxlength="${STAFF_MESSAGE_BODY_MAX}"></textarea></label><button type="submit">Send</button></form></main>`;
 }
 
-const CLASS_LABELS: Record<string, string> = { "account.notice": "Account notice", "civil_id.result": "Civil ID result" };
+const CLASS_LABELS: Record<string, string> = { "account.notice": "Account notice", "civil_id.result": "Civil ID result", "staff.morning_summary": "Morning summary" };
 const STATE_LABELS: Record<string, string> = { pending: "Waiting to send", sending: "Sending", sent: "Sent", failed: "Not delivered", not_sent: "Not sent", suppressed: "Switched off by the person" };
 const iso = (d: Date | null) => d ? d.toISOString() : null;
 
@@ -74,9 +83,39 @@ async function deliveryLog(req: IncomingMessage, res: ServerResponse, service: S
   return true;
 }
 
+async function morningSummary(req: IncomingMessage, res: ServerResponse, service: StaffMessagesHttpService, viewer: string, origin: string | undefined): Promise<true> {
+  const summary = service.morningSummary!;
+  if (req.method === "POST") {
+    if (!req.headers.origin || !origin || req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); return reply(req, res, 403, { status: "forbidden" }, "Not saved", "We could not verify this request."); }
+    const params = await form(req, ["email"]), email = params?.get("email");
+    if (email !== "on" && email !== "off") return reply(req, res, 400, { status: "invalid", field: "email" }, "Not saved", "The request was not valid.");
+    if (!(await summary.subscribe(viewer, email === "on"))) return reply(req, res, 404, NOT_FOUND, "Not found", "The page could not be found.");
+    if (wantsHtml(req.headers.accept)) { res.writeHead(303, { location: SUMMARY_PATH, "cache-control": "no-store" }); res.end(); return true; }
+    return reply(req, res, 200, { status: "ok", subscribed: email === "on" }, "Saved", "Saved.");
+  }
+  req.resume();
+  if (req.method !== "GET") { res.writeHead(405, { allow: "GET, POST" }); res.end(); return true; }
+  const today = await summary.today(viewer);
+  if (!today) return reply(req, res, 404, NOT_FOUND, "Not found", "The page could not be found.");
+  if (!wantsHtml(req.headers.accept)) {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", vary: "Accept", "x-content-type-options": "nosniff" });
+    res.end(JSON.stringify({ status: "ok", day: today.day, subscribed: today.subscribed, counters: today.rows })); return true;
+  }
+  const rows = today.rows.map(r => `<tr><td>${esc(r.label)}</td><td>${r.value === null ? `Not available<br><small>Waits on ${esc(r.waitsOn ?? "its source")}</small>` : r.value}</td></tr>`).join("");
+  const toggle = `<form method="post" action="${SUMMARY_PATH}"><input type="hidden" name="email" value="${today.subscribed ? "off" : "on"}"><p>${today.subscribed ? "You get this summary by email every morning at 8:00." : "You do not get this summary by email."}</p><button type="submit">${today.subscribed ? "Stop the morning email" : "Email me this every morning"}</button></form>`;
+  writeHtml(res, 200, pageDocument("Morning summary", `<main><h1>Morning summary</h1><p>${esc(today.day)}, Kuwait time. These numbers are current as of now.</p><table><thead><tr><th>What needs attention</th><th>Count</th></tr></thead><tbody>${rows}</tbody></table>${toggle}</main>`), { "cache-control": "no-store" });
+  return true;
+}
+
 export async function handleStaffMessages(req: IncomingMessage, res: ServerResponse, service: StaffMessagesHttpService | undefined, origin: string | undefined,
   authorize: (session: string) => Promise<string | undefined>): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://gateway.invalid"), path = url.pathname, match = path.match(PATH);
+  if (path === SUMMARY_PATH) {
+    const session = cookie(req.headers.cookie), viewer = service?.morningSummary && session ? await authorize(session) : undefined;
+    let staff = false; if (viewer) try { staff = await service!.isStaff(viewer); } catch { /* treated as not staff */ }
+    if (!viewer || !staff) { req.resume(); return reply(req, res, 404, NOT_FOUND, "Not found", "The page could not be found."); }
+    return morningSummary(req, res, service!, viewer, origin);
+  }
   if (!match) return false;
   let recipient: string;
   try { recipient = decodeURIComponent(match[1]!); } catch { req.resume(); return reply(req, res, 404, NOT_FOUND, "Not found", "The page could not be found."); }

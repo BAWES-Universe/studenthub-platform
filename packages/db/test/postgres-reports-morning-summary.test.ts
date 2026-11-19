@@ -1,0 +1,159 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { after, before, test } from "node:test";
+import pg from "pg";
+import { createOrganization, createPrincipal } from "@studenthub/contracts";
+import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
+import { PostgresMorningSummaryStore } from "@studenthub/db/reports";
+import { validateTemplateParameters } from "../../notifications/src/index.js";
+import { MorningSummaryService } from "../../reports/src/index.js";
+
+const URL = process.env.DATABASE_URL ?? "";
+const OPS = `ms-ops-${randomUUID()}`;
+let pool: pg.Pool, authz: PostgresAuthzStore, store: PostgresMorningSummaryStore;
+let company: string, storeId: string, creator: string;
+
+before(async () => {
+  if (!URL) throw Error("DATABASE_URL is required to run the db suite");
+  pool = new pg.Pool({ connectionString: URL });
+  await runMigrations(pool);
+  authz = new PostgresAuthzStore(pool);
+  await authz.upsertOrganization(createOrganization({ id: OPS, name: "Operator" }));
+  store = new PostgresMorningSummaryStore({ pool, operatorOrgIds: [OPS] });
+  company = `ms-co-${randomUUID()}`; storeId = randomUUID();
+  await authz.upsertOrganization(createOrganization({ id: company, name: company }));
+  await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Avenues',$3,$3)", [storeId, company, "a".repeat(64)]);
+  creator = await principal("creator");
+});
+after(async () => pool.end());
+
+async function principal(prefix: string, grants: { orgId: string; role: string; scope: "self" | "subtree" }[] = []) {
+  const id = `ms-${prefix}-${randomUUID()}`;
+  await authz.registerPrincipal(createPrincipal({ id, pbuuids: [], email: `${id}@example.invalid` }));
+  if (grants.length) await authz.grantMany(id, grants as never);
+  return id;
+}
+const request = async (status: string, org = company, store = storeId) => {
+  const id = randomUUID();
+  await pool.query(`INSERT INTO recruit_requests(id,org_id,store_id,created_by_principal_id,position_title,description,compensation_text,position_type,headcount,status,close_reason)
+    VALUES($1,$2,$3,$4,'Cashier','Front till','3 KWD an hour','part_time',1,$5,$6)`, [id, org, store, creator, status, status === "closed" ? "cancelled" : null]);
+  return id;
+};
+const interview = async (requestId: string, at: string, status = "scheduled") => {
+  const card = randomUUID();
+  await pool.query("INSERT INTO recruit_pipeline_cards(id,request_id,person_principal_id,stage) VALUES($1,$2,$3,'interviewing')", [card, requestId, await principal("candidate")]);
+  await pool.query("INSERT INTO recruit_interviews(id,card_id,scheduled_at,duration_minutes,mode,status,closed_at) VALUES($1,$2,$3,30,'phone',$4,$5)",
+    [randomUUID(), card, at, status, status === "scheduled" ? null : at]);
+};
+// A far past Kuwait day nobody else writes interviews for.
+const someDay = () => new Date(Date.UTC(1972, 0, 1) + Math.floor(Math.random() * 18_000) * 86_400_000).toISOString().slice(0, 10);
+const shift = (day: string, days: number) => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+test("REPORTS_MORNING_SUMMARY_PG interviews scheduled on the Kuwait day, for a request still open", async () => {
+  const day = someDay(), prev = shift(day, -1), next = shift(day, 1);
+  const open = await request("open"), filling = await request("filling");
+  const n = async () => (await store.counts(day)).interviewScheduledToday;
+  assert.equal(await n(), 0);
+  await interview(open, `${prev}T21:00:00Z`); // 00:00 in Kuwait: counts
+  await interview(filling, `${day}T20:59:59Z`); // 23:59:59 in Kuwait: counts
+  assert.equal(await n(), 2);
+  await interview(open, `${prev}T20:59:59Z`); // the day before in Kuwait
+  await interview(await request("open"), `${day}T21:00:00Z`); // the next Kuwait day
+  await interview(await request("open"), `${day}T09:00:00Z`, "cancelled");
+  await interview(await request("open"), `${day}T09:00:00Z`, "completed");
+  assert.equal(await n(), 2, "other days, cancelled and completed interviews do not count");
+  assert.equal((await store.counts(next)).interviewScheduledToday, 1);
+  // A request that is filled or closed no longer needs the meeting organised.
+  const filled = await request("filling");
+  await interview(filled, `${day}T10:00:00Z`);
+  assert.equal(await n(), 3);
+  await pool.query("UPDATE recruit_requests SET status='filled' WHERE id=$1", [filled]);
+  assert.equal(await n(), 2);
+});
+
+test("REPORTS_MORNING_SUMMARY_PG active requests are open or filling, for KWD companies (no currency means KWD)", async () => {
+  const day = someDay(), n = async () => (await store.counts(day)).activeRequests;
+  const base = await n();
+  await request("open"); await request("filling");
+  assert.equal(await n(), base + 2);
+  await request("draft"); await request("closed");
+  const filled = await request("filling"); await pool.query("UPDATE recruit_requests SET status='filled' WHERE id=$1", [filled]);
+  assert.equal(await n(), base + 2, "draft, filled and closed requests are not active");
+  const usd = `ms-usd-${randomUUID()}`, usdStore = randomUUID();
+  await authz.upsertOrganization(createOrganization({ id: usd, name: usd }));
+  await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Mall',$3,$3)", [usdStore, usd, "a".repeat(64)]);
+  await pool.query("INSERT INTO organization_commercial_terms(org_id,field,value) VALUES($1,'currency_code','USD')", [usd]);
+  await request("open", usd, usdStore);
+  assert.equal(await n(), base + 2, "a company billed in another currency is not counted, as legacy");
+  await pool.query("UPDATE organization_commercial_terms SET value='KWD' WHERE org_id=$1 AND field='currency_code'", [usd]);
+  assert.equal(await n(), base + 3);
+});
+
+test("REPORTS_MORNING_SUMMARY_PG assigned people whose civil ID expired before the day", async () => {
+  const day = "2026-11-19", n = async () => (await store.counts(day)).assignedExpiredCivilID;
+  const base = await n();
+  const civil = (id: string, expiry: string | null) => pool.query("INSERT INTO person_civil_ids(principal_id,expiry_date) VALUES($1,$2)", [id, expiry]);
+  const assign = (id: string, start: string, end: string | null) => pool.query(`INSERT INTO work_assignments(id,person_principal_id,org_id,store_id,contract_resolution,start_date,end_date,source,created_by)
+    VALUES($1,$2,$3,$4,'{}',$5,$6,'staff',$7)`, [randomUUID(), id, company, storeId, start, end, creator]);
+  const expiredOpen = await principal("a"), expiredFuture = await principal("b"), expiredEnded = await principal("c"), validAssigned = await principal("d"), expiredUnassigned = await principal("e"), expiresToday = await principal("f");
+  await civil(expiredOpen, "2026-11-18"); await assign(expiredOpen, "2026-01-01", null);
+  await civil(expiredFuture, "2025-01-01"); await assign(expiredFuture, "2026-12-01", "2026-12-31");
+  assert.equal(await n(), base + 2, "a current or upcoming assignment with an expired civil ID counts");
+  await civil(expiredEnded, "2026-01-01"); await assign(expiredEnded, "2026-01-01", "2026-11-18");
+  await civil(validAssigned, "2027-01-01"); await assign(validAssigned, "2026-01-01", null);
+  await civil(expiredUnassigned, "2026-01-01");
+  await civil(expiresToday, day); await assign(expiresToday, "2026-01-01", null);
+  assert.equal(await n(), base + 2, "an ended assignment, a valid ID, nobody assigned and an ID expiring today do not count");
+  await pool.query("UPDATE person_civil_ids SET released_at=now() WHERE principal_id=$1", [expiredOpen]);
+  assert.equal(await n(), base + 1, "a released civil ID is not counted");
+});
+
+test("REPORTS_MORNING_SUMMARY_PG the email goes once a day to subscribed staff who are still staff and not paused", async () => {
+  const staff = await principal("staff", [{ orgId: OPS, role: "staff", scope: "subtree" }]);
+  const admin = await principal("admin", [{ orgId: OPS, role: "admin", scope: "subtree" }]);
+  const quiet = await principal("quiet", [{ orgId: OPS, role: "staff", scope: "subtree" }]);
+  const former = await principal("former");
+  const selfOnly = await principal("self", [{ orgId: OPS, role: "staff", scope: "self" }]);
+  const paused = await principal("paused", [{ orgId: OPS, role: "staff", scope: "subtree" }]);
+  const service = new MorningSummaryService(store, { async isStaff() { return true; } });
+  for (const id of [staff, admin, former, selfOnly, paused]) await service.subscribe(id, true);
+  await service.subscribe(staff, true);
+  await pool.query("INSERT INTO account_pauses(id,principal_id,paused_by,reason,suspended_grants,suspended_stores) VALUES($1,$2,$3,'Away for now','[]','[]')", [randomUUID(), paused, creator]);
+  const mine = new Set([staff, admin, quiet, former, selfOnly, paused]);
+  assert.deepEqual((await store.recipients()).filter(id => mine.has(id)).sort(), [admin, staff].sort());
+
+  const day = someDay(), at = new Date(`${day}T05:00:00Z`);
+  const build = (raw: Readonly<Record<string, number>>) => MorningSummaryService.parameters(day, raw);
+  const sent = await store.sendDay(day, at, build);
+  assert.equal(sent?.recipients, (await store.recipients()).length);
+  const rows = (await pool.query("SELECT recipient_principal_id, template_parameters, state, idempotency_key FROM email_outbox WHERE class='staff.morning_summary' AND idempotency_key LIKE $1", [`staff.morning_summary:${day}:%`])).rows;
+  assert.deepEqual(rows.map(r => r.recipient_principal_id).filter(id => mine.has(id)).sort(), [admin, staff].sort());
+  for (const r of rows) {
+    assert.equal(r.idempotency_key, `staff.morning_summary:${day}:${r.recipient_principal_id}`);
+    assert.equal(r.state, "pending");
+    assert.doesNotThrow(() => validateTemplateParameters("staff.morning_summary", r.template_parameters));
+    assert.equal(r.template_parameters.counters.missingBankInfo, null);
+  }
+  const [run] = (await pool.query("SELECT counters, recipients FROM morning_summary_runs WHERE day=$1::date", [day])).rows;
+  assert.equal(run.recipients, rows.length);
+  assert.equal(run.counters.missingBankInfo, null);
+  assert.equal(await store.sendDay(day, at, build), null, "a day is sent once");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM email_outbox WHERE idempotency_key LIKE $1", [`staff.morning_summary:${day}:%`])).rows[0].n, rows.length);
+  await assert.rejects(pool.query("UPDATE morning_summary_runs SET recipients=0 WHERE day=$1::date", [day]), /append-only/);
+  await assert.rejects(pool.query("DELETE FROM morning_summary_runs WHERE day=$1::date", [day]), /append-only/);
+
+  // Parameters that do not validate send nothing and leave the day due.
+  const failing = someDay();
+  await assert.rejects(store.sendDay(failing, at, () => { throw new TypeError("invalid closed email template parameters"); }), /closed/);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM morning_summary_runs WHERE day=$1::date", [failing])).rows[0].n, 0);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM email_outbox WHERE idempotency_key LIKE $1", [`staff.morning_summary:${failing}:%`])).rows[0].n, 0);
+
+  // Turning it off takes them out of the next send.
+  await service.subscribe(staff, false);
+  assert.equal(await store.isSubscribed(staff), false);
+  assert.equal(await store.isSubscribed(admin), true);
+  assert.deepEqual((await store.recipients()).filter(id => mine.has(id)), [admin]);
+  await assert.rejects(store.sendDay("not-a-day", at, build), RangeError);
+  // Keep the shared database's outbox free of these test emails.
+  await pool.query("UPDATE email_outbox SET state='not_sent' WHERE idempotency_key LIKE 'staff.morning_summary:%' AND state='pending' AND recipient_principal_id LIKE 'ms-%'");
+});
