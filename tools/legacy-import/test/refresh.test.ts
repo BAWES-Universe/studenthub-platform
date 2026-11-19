@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acquireLock, createMysqlClient, runCli, summary } from "../src/refresh-cli.js";
+import { acquireLock, createMysqlClient, runCli, spawnScoped, summary } from "../src/refresh-cli.js";
 import {
   isExcluded,
   loadConfig,
@@ -374,9 +374,16 @@ test("no child process in the refresh CLI bypasses spawnScoped (the flock helper
 function fakeTools(dir: string, helpScript: string): string {
   const bin = path.join(dir, "bin");
   const log = path.join(dir, "children.log");
-  const record = `legacy=$(env | grep -c '^LEGACY_REFRESH_'); pwd=\${MYSQL_PWD:+set}; if { true >&3; } 2>/dev/null; then fd3=open; else fd3=closed; fi; echo "$(basename "$0") $1 legacy=$legacy pwd=$pwd fd3=$fd3" >> ${JSON.stringify(log)}`;
+  // Logs argv[1..2], the LEGACY_REFRESH_* and MYSQL_* variables it can see, whether its
+  // HOME holds any file (an option file there would be read) and whether fd 3 is open.
+  const record = [
+    `legacy=$(env | grep -c '^LEGACY_REFRESH_'); mysqlenv=$(env | grep '^MYSQL_' | cut -d= -f1 | sort | tr '\\n' ' ')`,
+    `if [ -d "$HOME" ] && [ -z "$(ls -A "$HOME")" ]; then home=empty; else home=used; fi`,
+    `if { true >&3; } 2>/dev/null; then fd3=open; else fd3=closed; fi`,
+    `echo "$(basename "$0") $1 $2 legacy=$legacy env=[$mysqlenv] home=$home fd3=$fd3" >> ${JSON.stringify(log)}`,
+  ].join("\n");
   const tools: Record<string, string> = {
-    mysqldump: `#!/bin/sh\n${record}\nif [ "$1" = "--help" ]; then\n${helpScript}\nfi\necho "SELECT 1;"\n`,
+    mysqldump: `#!/bin/sh\n${record}\nif [ "$2" = "--help" ]; then\n${helpScript}\nfi\necho "SELECT 1;"\n`,
     mysql: `#!/bin/sh\n${record}\nfor a in "$@"; do if [ "$a" = "-e" ]; then echo "uuid-x"; exit 0; fi; done\ncat > /dev/null\n`,
   };
   for (const [name, body] of Object.entries(tools)) {
@@ -386,26 +393,39 @@ function fakeTools(dir: string, helpScript: string): string {
   return log;
 }
 
+/** A HOME whose option files would connect as someone else, to somewhere else. */
+function conflictingHome(dir: string): string {
+  const home = path.join(dir, "home");
+  mkdirSync(home);
+  writeFileSync(path.join(home, ".my.cnf"), "[client]\nuser=intruder\npassword=wrong\nhost=intruder.example\n[mysqldump]\nuser=intruder\n");
+  writeFileSync(path.join(home, ".mylogin.cnf"), "");
+  return home;
+}
+
 async function withFakeTools(helpScript: string, body: (dir: string, log: string, lockFd: number) => Promise<void>): Promise<void> {
   const dir = mkdtempSync(path.join(tmpdir(), "refresh-children-"));
-  const saved = { PATH: process.env.PATH, SOURCE: process.env.LEGACY_REFRESH_SOURCE_URL, TARGET: process.env.LEGACY_REFRESH_TARGET_URL };
+  const keys = ["PATH", "HOME", "LEGACY_REFRESH_SOURCE_URL", "LEGACY_REFRESH_TARGET_URL", "MYSQL_HOST", "MYSQL_TEST_LOGIN_FILE"] as const;
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   const lock = await acquireLock(path.join(dir, "run.lock"));
   assert.equal(lock.held, true);
   if (!lock.held) return;
   try {
     mkdirSync(path.join(dir, "bin"));
     const log = fakeTools(dir, helpScript);
-    // The parent holds both credential URLs, as the staging cron job does.
+    // The parent holds both credential URLs, as the staging cron job does, plus a HOME
+    // with option files and MYSQL_* variables that point somewhere else.
     process.env.PATH = `${path.join(dir, "bin")}:${saved.PATH ?? ""}`;
+    process.env.HOME = conflictingHome(dir);
     process.env.LEGACY_REFRESH_SOURCE_URL = SOURCE;
     process.env.LEGACY_REFRESH_TARGET_URL = TARGET;
+    process.env.MYSQL_HOST = "intruder.example";
+    process.env.MYSQL_TEST_LOGIN_FILE = path.join(process.env.HOME, ".mylogin.cnf");
     await body(dir, log, lock.fd);
   } finally {
-    process.env.PATH = saved.PATH;
-    if (saved.SOURCE === undefined) delete process.env.LEGACY_REFRESH_SOURCE_URL;
-    else process.env.LEGACY_REFRESH_SOURCE_URL = saved.SOURCE;
-    if (saved.TARGET === undefined) delete process.env.LEGACY_REFRESH_TARGET_URL;
-    else process.env.LEGACY_REFRESH_TARGET_URL = saved.TARGET;
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
     closeSync(lock.fd);
     rmSync(dir, { recursive: true, force: true });
   }
@@ -419,11 +439,14 @@ test("every mysql child, the mysqldump probe included, gets the scrubbed env and
     assert.equal(await client.serverId(source), "uuid-x");
     await client.copy(source, target, ["candidate"]);
     const lines = readFileSync(log, "utf8").trim().split("\n").sort();
+    // --no-defaults first, so no option file is read; an empty HOME, so no ~/.my.cnf or
+    // ~/.mylogin.cnf exists to read; MYSQL_PWD is the only MYSQL_* variable.
+    const seen = "legacy=0 env=[MYSQL_PWD ] home=empty fd3=open";
     assert.deepEqual(lines, [
-      "mysql --host=legacy-replica.internal legacy=0 pwd=set fd3=open",
-      "mysql --host=staging-db.internal legacy=0 pwd=set fd3=open",
-      "mysqldump --help legacy=0 pwd=set fd3=open",
-      "mysqldump --host=legacy-replica.internal legacy=0 pwd=set fd3=open",
+      `mysql --no-defaults --host=legacy-replica.internal ${seen}`,
+      `mysql --no-defaults --host=staging-db.internal ${seen}`,
+      `mysqldump --no-defaults --help ${seen}`,
+      `mysqldump --no-defaults --host=legacy-replica.internal ${seen}`,
     ]);
   });
 });
@@ -440,4 +463,33 @@ test("a hung mysqldump probe is killed and reaped by the run deadline", async ()
     // Settled on close, so the probe is already gone (reaped), not merely signalled.
     assert.throws(() => process.kill(pid, 0), /ESRCH/);
   });
+});
+
+test("the real mysql client ignores a conflicting ~/.my.cnf when started through spawnScoped", async (t) => {
+  const printDefaults = (child: ReturnType<typeof spawn>) =>
+    new Promise<string>((resolve) => {
+      let out = "";
+      child.stdout!.setEncoding("utf8");
+      child.stdout!.on("data", (chunk: string) => (out += chunk));
+      child.on("error", () => resolve("missing"));
+      child.on("close", () => resolve(out));
+    });
+  const dir = mkdtempSync(path.join(tmpdir(), "refresh-mycnf-"));
+  const savedHome = process.env.HOME;
+  try {
+    const home = conflictingHome(dir);
+    // Control: the installed client does read that file when nothing stops it.
+    const plain = await printDefaults(spawn("mysql", ["--print-defaults"], { env: { PATH: process.env.PATH, HOME: home }, stdio: ["ignore", "pipe", "ignore"] }));
+    if (plain === "missing") return t.skip("no mysql client installed");
+    assert.match(plain, /--user=intruder/);
+    process.env.HOME = home;
+    for (const tool of ["mysql", "mysqldump"] as const) {
+      const scoped = await printDefaults(spawnScoped({}, tool, ["--print-defaults"], parseDatabaseUrl(SOURCE, "source"), ["ignore", "pipe", "ignore"]));
+      assert.doesNotMatch(scoped, /intruder|wrong/, `${tool} read the option file`);
+    }
+  } finally {
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

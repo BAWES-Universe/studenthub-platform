@@ -15,7 +15,8 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { closeSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,9 +50,28 @@ function mysqlArgs(db: DatabaseUrl): string[] {
   return [...connectionArgs(db), `--init-command=SET SESSION lock_wait_timeout=${LOCK_WAIT_TIMEOUT_S}`];
 }
 
-/** The password goes through the child's environment only; stderr is discarded. */
+let emptyHome: string | undefined;
+/**
+ * An empty, private directory used as every child's HOME, so no `~/.my.cnf` or
+ * `~/.mylogin.cnf` of the account running the job can supply a user, password, host or
+ * other option. Created once per process and removed when the process exits.
+ */
+function childHome(): string {
+  if (emptyHome === undefined) {
+    const dir = mkdtempSync(path.join(tmpdir(), "legacy-refresh-home-"));
+    emptyHome = dir;
+    process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+  }
+  return emptyHome;
+}
+
+/**
+ * The child's whole environment: the password for `db` only, an empty HOME, and nothing
+ * else of the parent's (no LEGACY_REFRESH_* URLs, no MYSQL_HOST, MYSQL_TCP_PORT,
+ * MYSQL_TEST_LOGIN_FILE or the like). stderr is discarded.
+ */
 function childEnv(db: DatabaseUrl): NodeJS.ProcessEnv {
-  return { PATH: process.env.PATH, HOME: process.env.HOME, MYSQL_PWD: db.password, LANG: "C" };
+  return { PATH: process.env.PATH, HOME: childHome(), MYSQL_PWD: db.password, LANG: "C" };
 }
 
 type Streams = ["ignore" | "pipe", "ignore" | "pipe", "ignore"];
@@ -65,14 +85,17 @@ export interface ChildScope {
 }
 
 /**
- * The only way this tool starts a mysql or mysqldump process. Every child gets the scrubbed
- * environment for `db` (never the parent's, which holds both LEGACY_REFRESH_*_URL values),
+ * The only way this tool starts a mysql or mysqldump process. Every child runs with
+ * `--no-defaults` first and gets the scrubbed environment for `db` with an empty HOME
+ * (never the parent's, which holds both LEGACY_REFRESH_*_URL values and option files),
  * the run's lock descriptor as fd 3, and the run's abort signal with SIGKILL. A test fails
  * if any other spawn call appears in this file besides this one and the flock helper.
  */
 export function spawnScoped(scope: ChildScope, command: "mysql" | "mysqldump", args: readonly string[], db: DatabaseUrl, streams: Streams): ChildProcess {
   const stdio: (Streams[number] | number)[] = scope.lockFd === undefined ? [...streams] : [...streams, scope.lockFd];
-  return spawn(command, args, { env: childEnv(db), stdio, signal: scope.signal, killSignal: "SIGKILL" });
+  // --no-defaults must come first: no option file (/etc/mysql, /etc/my.cnf, ~/.my.cnf) is read,
+  // so the connection is exactly the host, port, user and MYSQL_PWD this tool chose.
+  return spawn(command, ["--no-defaults", ...args], { env: childEnv(db), stdio, signal: scope.signal, killSignal: "SIGKILL" });
 }
 
 /**
