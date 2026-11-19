@@ -80,3 +80,23 @@ test("REPORTS_CATALOGUE_HTTP anyone else, a signed-out visitor and a cross-site 
   assert.equal((await post(base, "/exports/no-such-kind", STAFF)).status, 404);
   assert.equal([...store.rows.values()].filter(r => r.outcome === "created").length, 0);
 });
+
+test("REPORTS_CATALOGUE_HTTP with civil ID review on, staff still reach the lists page and the morning summary (the login copy keeps non-enumerable staffMessages)", async t => {
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  await rig.sessions.put({ id: STAFF, personId: "staff-1" });
+  const isStaff = async (id: string) => id === "staff-1";
+  const login = { ...rig.app, exports: createExportsHttp(rig.sessions, new ExportService(new Memory, [])), civilIdReview: { staffDocuments: {} },
+    web: { origin: ORIGIN, profiles: { readOwn: async () => ({ kind: "not_found" }) } } } as unknown as BrowserLoginApplication;
+  // As production wires it (login-runtime.ts): staffMessages is a non-enumerable property.
+  Object.defineProperty(login, "staffMessages", { enumerable: false, value: { isStaff, send: async () => { throw Error("unused"); },
+    morningSummary: { today: async () => ({ day: "2026-11-19", subscribed: false, rows: [] }), subscribe: async () => true } } });
+  const server = createGatewayServer(undefined, undefined, undefined, login, undefined, undefined, {} as never);
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const address = server.address(); assert(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+  assert.equal((await fetch(`${base}/workspace/lists`, { headers: { cookie: cookie(STAFF), accept: "text/html" } })).status, 200);
+  const summary = await fetch(`${base}/workspace/morning-summary`, { headers: { cookie: cookie(STAFF) } });
+  assert.equal(summary.status, 200);
+  assert.equal(((await summary.json()) as { day: string }).day, "2026-11-19");
+});

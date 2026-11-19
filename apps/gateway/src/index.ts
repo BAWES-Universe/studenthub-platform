@@ -158,7 +158,9 @@ export function createGatewayServer(
     throw new RangeError("maxRequestBytes must be a positive safe integer");
   }
 
-  const reviewLogin=documents&&login?.civilIdReview?{...login,civilIdReview:{...login.civilIdReview,staffDocuments:login.civilIdReview.staffDocuments??new StaffDocuments({documents,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:login.civilIdReview.store})}}:login;
+  // A copy of every own property, the non-enumerable ones (staffMessages, notifications) included:
+  // an object spread would drop them and switch those routes off whenever civil ID review is on.
+  const reviewLogin=documents&&login?.civilIdReview?Object.defineProperties(Object.create(Object.getPrototypeOf(login)) as BrowserLoginApplication,{...Object.getOwnPropertyDescriptors(login),civilIdReview:{value:{...login.civilIdReview,staffDocuments:login.civilIdReview.staffDocuments??new StaffDocuments({documents,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:login.civilIdReview.store})},enumerable:true,writable:true,configurable:true}}):login;
   // When reserved, the terminal gate supplies the missing-Host 400 and policy.
   // Otherwise retain Node's existing automatic Host-header requirement.
   return createServer({ requireHostHeader: universeEmbed === undefined }, (request, response) => {
