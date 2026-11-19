@@ -79,6 +79,13 @@ export class PostgresWorkStaffTimeStore {
     return Object.freeze(rows.map((r) => r.principal_id));
   }
 
+  /** Email addresses on file for these principals, for the staff hours export. */
+  async emails(principalIds: readonly string[]): Promise<ReadonlyMap<string, string>> {
+    if (principalIds.length === 0) return new Map();
+    const { rows } = await this.#db.pool.query<{ id: string; email: string | null }>("SELECT id, email FROM principals WHERE id = ANY($1::text[])", [[...principalIds]]);
+    return new Map(rows.filter((r) => r.email).map((r) => [r.id, r.email!]));
+  }
+
   async staffWithSessionOn(workDate: string): Promise<ReadonlySet<string>> {
     const { rows } = await this.#db.pool.query<{ staff_principal_id: string }>("SELECT DISTINCT staff_principal_id FROM work_staff_sessions WHERE work_date = $1::date", [workDate]);
     return new Set(rows.map((r) => r.staff_principal_id));
