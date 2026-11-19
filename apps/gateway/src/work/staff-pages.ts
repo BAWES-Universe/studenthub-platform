@@ -49,6 +49,7 @@ const REFUSALS: Readonly<Record<string, string>> = {
   session_open: "Hours still in progress can't be corrected.",
   session_replaced: "Those hours were already corrected. Correct the newer entry instead.",
   appeal_not_found: "That appeal doesn't match these hours.",
+  appeal_open: "The person has another open appeal on these hours. Resolve that one first.",
   outside_assignment: "The person wasn't placed there on that date.",
   overlaps_session: "Those times overlap other hours of the person.",
   in_future: "Hours can't be in the future.",
@@ -300,7 +301,7 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
     if (result.kind !== "refused") { redirect(res, `/work/appeals/${appealId}?done=${result.kind}`); return true; }
     const detail = await services.appeals.detail(actor, appealId);
     if ("kind" in detail || detail.appeal.personId === actor) { write(res, ...plain(404, "Appeal not found", "This appeal doesn't exist or isn't in a company you look after.")); return true; }
-    write(res, result.code === "forbidden" ? 403 : 400, await renderStaffAppeal(services, detail, refusal(result.code ?? "invalid_input"),
+    write(res, result.code === "forbidden" ? 403 : result.code === "appeal_open" ? 409 : 400, await renderStaffAppeal(services, detail, refusal(result.code ?? "invalid_input"),
       action === "missing-time" ? { form: "missing", values: entryValues(form) } : null));
   } catch (error) {
     if (!res.headersSent) write(res, ...(tooLarge(error) ?? plain(503, "Work is unavailable", "Something went wrong. Try again in a moment."))); else res.destroy();

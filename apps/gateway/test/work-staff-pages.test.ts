@@ -165,6 +165,10 @@ test("WORK_STAFF A-13 appeals: staff list, replies, status, added time and corre
   assert.equal(refused.status, 400);
   assert.match(refused.html, /overlap other hours/);
   assert.match(refused.html, /step="0.001" name="startedAt" value="2026-11-18T09:00:00"/, "the correction form starts from the session's Kuwait times");
+  // Reopening while the person has another open appeal on those hours is a conflict with its own message.
+  const reopen = await post(`/work/appeals/${APPEAL}/status`, "status=in_progress", { world: { outcome: { kind: "refused", code: "appeal_open" } } });
+  assert.equal(reopen.status, 409);
+  assert.match(reopen.html, /another open appeal on these hours/);
   const own = await post(`/work/appeals/${APPEAL}/status`, "status=resolved", { world: { outcome: { kind: "refused", code: "appeal_not_found" }, detail: { ...detail, appeal: { ...appeal, personId: "staff" } } } });
   assert.equal(own.status, 404);
   // A refused correction naming the actor's own appeal gets no staff view either.
