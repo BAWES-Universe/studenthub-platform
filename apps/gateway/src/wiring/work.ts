@@ -10,6 +10,7 @@ import {
 } from "../../../../packages/work/src/index.js";
 import { PostgresAccessPausesStore, PostgresAccessStoreManagersStore } from "@studenthub/db/access";
 import { recordWorkSessionDecision, retractWorkSessionDecision } from "@studenthub/db/comms";
+import type { RecruitPlacementPort } from "@studenthub/db/recruit";
 import type { WorkHttpServices } from "../work/http.js";
 import type { wireAccess } from "./access.js";
 import type { Wired, WiringSettings } from "./context.js";
@@ -36,6 +37,8 @@ export interface WorkWiringPorts {
   readonly paused?: (personIds: readonly string[]) => Promise<ReadonlySet<string>>;
   /** Decision notices to the person; defaults to the comms lane's feed producers (`@studenthub/db/comms`). */
   readonly notices?: WorkDecisionHooks;
+  /** Staff hours per day for the staff hours export (legacy's fallback for a session with no end); none until the staff record exists. */
+  readonly staffHoursPerDay?: (staffIds: readonly string[]) => Promise<ReadonlyMap<string, number>>;
 }
 
 /**
@@ -78,11 +81,25 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
     storeNames: (ids) => viewStore.storeNames(ids),
     storeInfo: (id) => viewStore.storeInfo(id),
     personNames: (ids) => viewStore.personNames(ids),
+    companyNames: (ids) => viewStore.companyNames(ids),
     storesOf: (orgId) => viewStore.storesOf(orgId),
     staffTime: new StaffTimeService({ store: staffTimeStore, grants, newId }),
+    staffEmails: (ids) => staffTimeStore.emails(ids),
+    ...(ports.staffHoursPerDay ? { staffHoursPerDay: ports.staffHoursPerDay } : {}),
   };
   return {
     services: { work },
     async close() { await pool.end(); },
   };
+}
+
+/**
+ * The recruit stage's placement port (contract E/W1): "placed" makes the
+ * assignment through the work lane's PlacementService, which refuses a paused
+ * person and replays a retry of the same recruit card. Undefined while the work
+ * lane is off, so the recruit lane keeps answering work_unavailable.
+ */
+export function recruitPlacementPort(work: Pick<WorkHttpServices, "placements"> | undefined): RecruitPlacementPort | undefined {
+  if (!work) return undefined;
+  return { placeFromRecruit: (actorId, request) => work.placements.placeFromRecruit(actorId, request), available: true };
 }

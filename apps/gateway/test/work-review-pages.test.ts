@@ -189,3 +189,16 @@ test("WORK_REVIEW A-12 work logs: staff see every company, filter by person, dec
   const done = await post("/work/logs/decide", `back=${encodeURIComponent("/work/logs?person=person-1")}&sessionId=${S1}&action=approve`, {}, decided);
   assert.equal(done.headers.location, "/work/logs?person=person-1&done=decided");
 });
+
+test("WORK_EXPORT the company screen exports these hours in detail or per person to the shared export route; the store screen has no export", async () => {
+  const page = await request("/organization/co/work?from=2026-11-01&to=2026-11-18&status=approved&store=" + STORE);
+  const query = `orgId=co&amp;from=2026-11-01&amp;to=2026-11-18&amp;status=approved&amp;store=${STORE}`;
+  assert.ok(page.html.includes(`<form method="post" action="/exports/work-log-detailed?${query}"><button type="submit">Export each entry</button></form>`), page.html);
+  assert.ok(page.html.includes(`<form method="post" action="/exports/work-log-summary?${query}"><button type="submit">Export totals per person</button></form>`));
+  // No status or store chosen: they are left out of the query, not sent empty.
+  assert.ok((await request("/organization/co/work?from=2026-11-01&to=2026-11-18&status=")).html.includes('action="/exports/work-log-summary?orgId=co&amp;from=2026-11-01&amp;to=2026-11-18"'));
+  assert.doesNotMatch((await request(`/store/${STORE}/time-approvals`)).html, /\/exports\//);
+  assert.ok((await request("/work/logs?from=2026-01-01&to=2026-11-18")).html.includes('<form method="post" action="/exports/work-assigned-history?from=2026-01-01&amp;to=2026-11-18"><button type="submit">Export who worked where (CSV)</button></form>'));
+  // The old screen-local export path is gone.
+  assert.equal((await post("/organization/co/work/export", "kind=summary")).handled, false);
+});

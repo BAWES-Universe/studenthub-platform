@@ -95,6 +95,7 @@ test("STAFF_TIME_PAGES /work/staff-time lists days with names, pages on, and sho
   assert.match(page.html, /<td>Omar<\/td><td>2026-11-17<\/td><td>09:00<\/td><td><\/td><td>0h 00m<\/td><td>Not ended<\/td>/);
   assert.match(page.html, /href="\/work\/staff-time\?from=2026-11-01&amp;to=2026-11-18&amp;staff=other&amp;inactive=2026-11-18&amp;after=2026-11-17%7Eother">More days/);
   assert.match(page.html, /Not started on Wednesday, 18 November 2026[\s\S]*<li>nameless<\/li><li>Omar<\/li>/);
+  assert.ok(page.html.includes('<form method="post" action="/exports/work-staff-sessions?from=2026-11-01&amp;to=2026-11-18&amp;staff=other" class="p-card" aria-label="Export">'));
   assert.deepEqual(calls.find((c) => c[0] === "days"), ["days", "actor", "2026-11-01", "2026-11-18", { staffId: "other", after: null }]);
   assert.deepEqual(calls.find((c) => c[0] === "inactive"), ["inactive", "actor", "2026-11-18"]);
   // Defaults: this Kuwait month so far; the cursor round-trips.
