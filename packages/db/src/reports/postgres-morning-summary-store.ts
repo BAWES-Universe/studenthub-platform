@@ -1,5 +1,6 @@
 import pg from "pg";
 import { databaseUrl } from "../connection.js";
+import { idCardExpiredCount, idCardNeedsCount } from "./postgres-id-cards-store.js";
 
 /**
  * The morning summary's Postgres side (contract P-2). It reads the counters whose source has
@@ -20,7 +21,9 @@ const COUNTS = `SELECT
   (SELECT count(*)::int FROM recruit_requests r LEFT JOIN organization_commercial_terms t ON t.org_id = r.org_id AND t.field = 'currency_code'
      WHERE r.status IN ('open','filling') AND COALESCE(t.value, 'KWD') = 'KWD') AS "activeRequests",
   (SELECT count(*)::int FROM person_civil_ids p WHERE p.expiry_date < $1::date AND p.released_at IS NULL
-     AND EXISTS (SELECT 1 FROM work_assignments a WHERE a.person_principal_id = p.principal_id AND (a.end_date IS NULL OR a.end_date >= $1::date))) AS "assignedExpiredCivilID"`;
+     AND EXISTS (SELECT 1 FROM work_assignments a WHERE a.person_principal_id = p.principal_id AND (a.end_date IS NULL OR a.end_date >= $1::date))) AS "assignedExpiredCivilID",
+  ${idCardExpiredCount("$1")} AS "totalExpiredCards",
+  ${idCardNeedsCount("$1")} AS "id_need_generated"`;
 
 /**
  * Who may get the email: subscribed, still StudentHub staff (a staff or admin grant over an

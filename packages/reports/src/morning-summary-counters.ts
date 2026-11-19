@@ -18,8 +18,8 @@ const available: MorningSummarySource = { kind: "available" };
 export const MORNING_SUMMARY_COUNTERS = [
   { key: "interviewScheduledToday", label: "Interviews scheduled today: organise the meeting between the company and the candidates", source: available },
   { key: "companyMoreThen40DaysWithoutPayment", label: "Urgent: companies with assigned staff that have not made a payment in 40 days", source: missing("transfers from the pay lane") },
-  { key: "totalExpiredCards", label: "Candidates with expired ID cards", source: missing("candidate ID cards, which no lane holds yet") },
-  { key: "id_need_generated", label: "Candidates assigned to work without ID cards", source: missing("candidate ID cards, which no lane holds yet") },
+  { key: "totalExpiredCards", label: "Candidates with expired ID cards", source: available },
+  { key: "id_need_generated", label: "Candidates assigned to work without ID cards", source: available },
   { key: "activeRequests", label: "Active requests that need an update", source: available },
   { key: "last40daysNoRequest", label: "Active clients who have not made a request in over 40 days", source: missing("company start dates and active flags from the importer") },
   { key: "requireFollowup", label: "Clients requiring follow-up", source: missing("company follow-up dates, which no lane holds yet") },
