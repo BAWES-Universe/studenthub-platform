@@ -68,7 +68,7 @@ test("PREP_WIRING_SOURCE keeps construction out of the login runtime", async () 
 test("PREP_WIRING_COUNT closes every independently constructed pool exactly once", async (t) => {
   const ended = new Map<pg.Pool, number>();
   t.mock.method(pg.Pool.prototype, "end", async function(this: pg.Pool) { ended.set(this, (ended.get(this) ?? 0) + 1); });
-  for (const [environment, expected] of [[env, 30], [{ ...env, SAFE_WRITE_SIGNING_KEY: KEY }, 36]] as const) {
+  for (const [environment, expected] of [[env, 31], [{ ...env, SAFE_WRITE_SIGNING_KEY: KEY }, 37]] as const) {
     ended.clear();
     const runtime = createRuntimeLoginFromEnv(environment)!;
     await runtime.close();
