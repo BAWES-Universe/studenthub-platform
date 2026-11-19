@@ -190,7 +190,8 @@ export function assignedHistoryExport(services: WorkHttpServices): ExportKind<As
         const page = await services.placements.history(actor, { from: f.from, to: f.to }, after);
         if (!page) throw new Error("export authorization changed");
         all.push(...page.rows);
-        if (!page.next) break;
+        // One past the cap is enough for the export service to refuse the file.
+        if (!page.next || all.length > EXPORT_ROW_CAP) break;
         after = page.next;
       }
       const [people, stores, companies] = await Promise.all([names(services.personNames, all.map((a) => a.personId)), names(services.storeNames, all.map((a) => a.storeId)),
