@@ -550,14 +550,17 @@ test("the real mysql client ignores a conflicting ~/.my.cnf when started through
     for (const tool of ["mysql", "mysqldump"] as const) {
       // Control: the installed tool does read that file when nothing stops it.
       process.env.HOME = savedHome;
-      const plain = await printDefaults(spawn(tool, ["--print-defaults"], { env: { PATH: process.env.PATH, HOME: home }, stdio: ["ignore", "pipe", "ignore"] }));
+      // `--help` ends with the option values in effect (`user  intruder`). MySQL accepts
+      // `--print-defaults` only as the first argument, so it cannot follow `--no-defaults`.
+      const plain = await printDefaults(spawn(tool, ["--help"], { env: { PATH: process.env.PATH, HOME: home }, stdio: ["ignore", "pipe", "ignore"] }));
       if (!plain.spawned) continue; // not installed: skipped, and said so below
       assert.equal(plain.code, 0, `${tool} control run failed`);
-      assert.match(plain.out, /--user=intruder/, `${tool} control did not read the option file`);
+      assert.match(plain.out, /^user\s+intruder$/m, `${tool} control did not read the option file`);
       process.env.HOME = home;
-      const scoped = await printDefaults(spawnScoped({}, tool, ["--print-defaults"], parseDatabaseUrl(SOURCE, "source"), ["ignore", "pipe", "ignore"]));
+      const scoped = await printDefaults(spawnScoped({}, tool, ["--help"], parseDatabaseUrl(SOURCE, "source"), ["ignore", "pipe", "ignore"]));
       assert.equal(scoped.spawned, true, `${tool} scoped run did not start`);
       assert.equal(scoped.code, 0, `${tool} scoped run failed`);
+      assert.match(scoped.out, /^user\s+/m, `${tool} scoped run printed no option values`);
       assert.doesNotMatch(scoped.out, /intruder|wrong/, `${tool} read the option file`);
       checked.push(tool);
     }
