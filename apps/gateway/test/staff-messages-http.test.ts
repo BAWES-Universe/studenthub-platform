@@ -3,12 +3,12 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test, { type TestContext } from "node:test";
 import { StaffMessagesService, type StaffMessageDraft, type StaffMessageStoreResult } from "../../../packages/comms/src/staff-messages.js";
-import { handleStaffMessages } from "../src/comms/staff-messages-http.js";
+import { handleStaffMessages, type StaffDeliveryLogEntry } from "../src/comms/staff-messages-http.js";
 import { ROUTES } from "../src/routes/index.js";
 
 const ORIGIN = "https://studenthub.example", STAFF = "staff-1", PERSON = "person-1", KEY = "6f1c2a4e-8b7d-4c3a-9e2f-1a2b3c4d5e6f";
 
-async function rig(t: TestContext, staff = new Set([STAFF])) {
+async function rig(t: TestContext, staff = new Set([STAFF]), log: StaffDeliveryLogEntry[] | undefined = undefined) {
   const drafts: StaffMessageDraft[] = [];
   const store = { async send(draft: StaffMessageDraft): Promise<StaffMessageStoreResult> {
     const prior = drafts.find(d => d.sendKey === draft.sendKey);
@@ -18,7 +18,9 @@ async function rig(t: TestContext, staff = new Set([STAFF])) {
   } };
   const authority = { async isStaff(id: string) { return staff.has(id); } };
   const service = new StaffMessagesService(store, authority);
-  const http = { isStaff: authority.isStaff, send: service.send.bind(service) };
+  const logCalls: [string, number, number][] = [];
+  const http = { isStaff: authority.isStaff, send: service.send.bind(service),
+    ...(log ? { deliveryLog: async (person: string, offset: number, limit: number) => { logCalls.push([person, offset, limit]); return person === "missing" ? null : { rows: log.slice(offset, offset + limit), total: log.length }; } } : {}) };
   const server = createServer(async (req, res) => {
     const handled = await handleStaffMessages(req, res, http, ORIGIN, async session => session === "s-staff" ? STAFF : session === "s-person" ? PERSON : undefined);
     if (!handled) { res.writeHead(418); res.end(); }
@@ -28,8 +30,8 @@ async function rig(t: TestContext, staff = new Set([STAFF])) {
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const post = (path: string, fields: Record<string, string>, session = "s-staff", headers: Record<string, string> = {}) => fetch(base + path, { method: "POST",
     headers: { cookie: `__Host-studenthub_session=${session}`, origin: ORIGIN, "content-type": "application/x-www-form-urlencoded", accept: "application/json", ...headers }, body: new URLSearchParams(fields).toString() });
-  const get = (path: string, session = "s-staff") => fetch(base + path, { headers: { cookie: `__Host-studenthub_session=${session}`, accept: "text/html" } });
-  return { drafts, post, get };
+  const get = (path: string, session = "s-staff", accept = "text/html") => fetch(base + path, { headers: { cookie: `__Host-studenthub_session=${session}`, accept } });
+  return { drafts, post, get, logCalls };
 }
 
 test("COMMS_STAFF_SEND_HTTP the send route is registered with the gateway routes", () => {
@@ -93,6 +95,46 @@ test("COMMS_STAFF_SEND_HTTP other paths are left to the next route", async (t) =
   assert.equal((await x.get(`/workspace/people/${PERSON}`)).status, 418);
 });
 
+const entry = (n: number): StaffDeliveryLogEntry => ({ id: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, emailClass: "civil_id.result", state: "sent",
+  createdAt: new Date("2026-11-19T06:00:00Z"), sentAt: new Date("2026-11-19T06:05:00Z"),
+  attempts: [{ attempt: 1, outcome: "failed", failureCode: "provider_timeout", at: new Date("2026-11-19T06:00:30Z") }, { attempt: 2, outcome: "sent", failureCode: null, at: new Date("2026-11-19T06:05:00Z") }] });
+
+test("COMMS_EMAIL_DELIVERY_LOG_HTTP staff see a person's emails with each try, and no address or text", async (t) => {
+  const x = await rig(t, undefined, Array.from({ length: 51 }, (_, i) => entry(i + 1)));
+  const path = `/workspace/people/${PERSON}/emails`;
+  const json = await x.get(path, "s-staff", "application/json");
+  assert.equal(json.status, 200);
+  const body = await json.json() as { status: string; page: number; total: number; emails: { attempts: unknown[] }[] };
+  assert.deepEqual({ status: body.status, page: body.page, total: body.total, count: body.emails.length }, { status: "ok", page: 1, total: 51, count: 50 });
+  assert.deepEqual(body.emails[0], { id: entry(1).id, emailClass: "civil_id.result", state: "sent", createdAt: "2026-11-19T06:00:00.000Z", sentAt: "2026-11-19T06:05:00.000Z",
+    attempts: [{ attempt: 1, outcome: "failed", failureCode: "provider_timeout", at: "2026-11-19T06:00:30.000Z" }, { attempt: 2, outcome: "sent", failureCode: null, at: "2026-11-19T06:05:00.000Z" }] });
+  const page2 = await x.get(`${path}?page=2`, "s-staff", "application/json");
+  assert.equal(((await page2.json()) as { emails: unknown[] }).emails.length, 1);
+  assert.deepEqual(x.logCalls, [[PERSON, 0, 50], [PERSON, 50, 50]]);
+  const html = await (await x.get(path)).text();
+  assert.match(html, /Civil ID result/);
+  assert.match(html, /provider_timeout/);
+  assert.match(html, /Addresses and email text are not shown/);
+  assert.match(html, /href="\/workspace\/people\/person-1\/emails\?page=2">Older</);
+  for (const bad of ["0", "-1", "x", "1.5", "1234567"]) assert.equal((await x.get(`${path}?page=${bad}`, "s-staff", "application/json")).status, 400, bad);
+  assert.equal((await x.get("/workspace/people/missing/emails", "s-staff", "application/json")).status, 404);
+  assert.equal((await x.post(path, { kind: "civil_id_request", send_key: KEY })).status, 405);
+});
+
+test("COMMS_EMAIL_DELIVERY_LOG_HTTP non-staff and signed-out callers get the same not found, and nothing is read", async (t) => {
+  const x = await rig(t, undefined, [entry(1)]), path = `/workspace/people/${PERSON}/emails`;
+  for (const session of ["s-person", "nobody", ""]) {
+    const res = await x.get(path, session, "application/json");
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { status: "not_found" });
+  }
+  assert.deepEqual(x.logCalls, []);
+  const empty = await rig(t, undefined, []);
+  assert.match(await (await empty.get(path)).text(), /No emails to this person yet/);
+  const unwired = await rig(t);
+  assert.equal((await unwired.get(path, "s-staff", "application/json")).status, 404);
+});
+
 test("COMMS_STAFF_SEND_HTTP the production login runtime carries the staff send service", async () => {
   const { createRuntimeLoginFromEnv } = await import("../src/login-runtime.js");
   const runtime = createRuntimeLoginFromEnv({
@@ -102,8 +144,9 @@ test("COMMS_STAFF_SEND_HTTP the production login runtime carries the staff send 
     OIDC_AUTHORIZATION_URL: "https://identity.test.invalid/authorize", OIDC_TOKEN_URL: "https://identity.test.invalid/token",
     OIDC_JWKS_URL: "https://identity.test.invalid/jwks", LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.test.invalid/profile",
   })!;
-  const staffMessages = (runtime.application as { staffMessages?: { isStaff: unknown; send: unknown } }).staffMessages;
+  const staffMessages = (runtime.application as { staffMessages?: { isStaff: unknown; send: unknown; deliveryLog?: unknown } }).staffMessages;
   assert.equal(typeof staffMessages?.isStaff, "function");
   assert.equal(typeof staffMessages?.send, "function");
+  assert.equal(typeof staffMessages?.deliveryLog, "function");
   await runtime.close();
 });

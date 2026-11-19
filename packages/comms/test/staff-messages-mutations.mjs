@@ -10,6 +10,10 @@ const mutations=[
  ['types filter is closed','if (values.some(v => !this.#byKind.has(v)))','if (false)','COMMS_FEED_TYPES','packages/notifications/test/notifications.test.js','packages/notifications/src/notifications.js'],
  ['registry checks payloads','&& d.parameters(row.parameters)','&& true','COMMS_FEED_REGISTRY','packages/notifications/test/notifications.test.js','packages/notifications/src/notifications.js'],
  ['send route staff gate','if (!staff) {','if (false) {','COMMS_STAFF_SEND_HTTP','apps/gateway/test/staff-messages-http.test.js','apps/gateway/src/comms/staff-messages-http.js'],
+ ['civil ID result is transactional','"civil_id.result": { required: true','"civil_id.result": { required: false','COMMS_EMAIL_CIVIL_ID_RESULT','packages/notifications/test/email-classes.test.js','packages/notifications/src/email-templates.js'],
+ ['volume levels step past each multiple','Math.floor((sentCount - 1) / threshold)','Math.floor(sentCount / threshold)','COMMS_EMAIL_VOLUME','packages/notifications/test/email-classes.test.js','packages/notifications/src/email-volume.js'],
+ ['a failed run keeps its own error','throw failed ? failure : error','throw error','COMMS_EMAIL_VOLUME','packages/notifications/test/email-classes.test.js','packages/notifications/src/email-volume.js'],
+ ['delivery log page is bounded','^[1-9][0-9]{0,5}$','^[0-9]{1,7}$','COMMS_EMAIL_DELIVERY_LOG_HTTP','apps/gateway/test/staff-messages-http.test.js','apps/gateway/src/comms/staff-messages-http.js'],
  ['feed renders the stored body','renderStaffMessage(message.kind, message.body)','renderStaffMessage(message.kind, null)','COMMS_FEED_STAFF','packages/notifications/test/notifications.test.js','packages/notifications/src/notifications.js'],
 ];
 const root=new URL('../../../',import.meta.url);
@@ -29,4 +33,4 @@ for(const[name,from,to,token,suite,file]of mutations){
   assert.match(run.stdout+run.stderr,new RegExp(`not ok \\d+ - ${token}`));
  }finally{await rm(dir,{recursive:true,force:true})}
 }
-process.stdout.write(`${mutations.length}/${mutations.length} comms staff-message mutations killed\n`);
+process.stdout.write(`${mutations.length}/${mutations.length} comms mutations killed\n`);
