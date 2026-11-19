@@ -6,11 +6,18 @@ import type { PayableInput, PayableLineage, PayableWorkSource } from "../../work
 
 export interface Period { readonly start: string; readonly end: string }
 export interface LineClaim { readonly personId: string; readonly contractId: string | null; readonly period: Period }
+export interface AcknowledgedWorkBasis {
+  readonly version: "studenthub.payroll.acknowledged-work.v1";
+  readonly fingerprint: string;
+}
 export interface FinalizedRoot {
   readonly rootId: string;
   readonly personId: string;
   /** Reference to immutable original result plus all finalized adjustments. */
   readonly recognizedRevision: string;
+  /** Trusted immutable Work state acknowledged by this exact Pay revision. No
+   * basis means review is required; never derive this from the current Work view. */
+  readonly acknowledgedWork?: AcknowledgedWorkBasis;
 }
 export interface HourlyCandidate extends LineClaim {
   readonly kind: "hourly"; readonly key: string; readonly orgId: string;
@@ -50,6 +57,14 @@ function validatePeriod(p: Period): void {
 }
 function claimKey(c: LineClaim): string { return JSON.stringify([c.personId,c.contractId,c.period.start,c.period.end]); }
 const digest = (x: unknown): string => createHash("sha256").update(JSON.stringify(x)).digest("hex");
+/** Captures material Work state and correction/decision provenance, not money.
+ * Finance produces this only for the Work snapshot it actually acknowledges. */
+export function acknowledgedWorkBasis(lineage: PayableLineage): AcknowledgedWorkBasis {
+  const version = "studenthub.payroll.acknowledged-work.v1";
+  const s = lineage.inForce;
+  return {version, fingerprint:digest([version,lineage.rootId,lineage.sessionIds,
+    s===null?null:[s.sessionId,s.assignmentId,s.orgId,s.workDate,s.durationSeconds,s.status,s.decisionId,s.changedAt]])};
+}
 export function payableFingerprint(i: PayableInput): string {
   return digest([i.version,i.assignmentId,i.personId,i.orgId,i.storeId,i.payContractId,
     i.period.start,i.period.end,i.approvedSeconds,i.pendingSeconds,i.rejectedSeconds,i.openSessions,
@@ -91,11 +106,32 @@ export async function planGeneration(options: {
   const resolvedRoots=new Set<string>();
   for(const current of resolved){
     const paid=finalized.get(current.rootId);if(!paid||resolvedRoots.has(current.rootId))throw new Error("invalid lineage response");resolvedRoots.add(current.rootId);
-    adjustmentReviews.push({finalized:paid,current});
+    const acknowledged=paid.acknowledgedWork;
+    const observed=acknowledgedWorkBasis(current);
+    if(!acknowledged||acknowledged.version!==observed.version||acknowledged.fingerprint!==observed.fingerprint) {
+      adjustmentReviews.push({finalized:paid,current});
+    }
   }
   for(const root of finalized.keys())if(!resolvedRoots.has(root))blocked.push({key:root,reason:"finalized_lineage_unresolved"});
+  // Identify salary contracts before either path can reserve a person/contract/period.
+  // Weekly eligibility does not turn an ineligible salary contract into hourly pay.
+  const monthlyContracts=[...(options.monthlyContracts??[])].sort((a,b)=>a.id.localeCompare(b.id));
+  const monthlyById=new Map<string,MonthlyContract>();
+  for(const c of monthlyContracts){
+    if(monthlyById.has(c.id))throw new Error("duplicate monthly contract");
+    monthlyById.set(c.id,c);
+  }
   const groups=new Map<string,PayableInput[]>();
-  for(const i of inputs){if(!i.sessions.length)continue;const k=claimKey({personId:i.personId,contractId:i.payContractId,period:options.period});groups.set(k,[...(groups.get(k)??[]),i]);}
+  for(const i of inputs){
+    if(!i.sessions.length)continue;
+    const monthly=i.payContractId===null?undefined:monthlyById.get(i.payContractId);
+    if(monthly){
+      if(monthly.personId!==i.personId)throw new Error("monthly contract owner mismatch");
+      continue;
+    }
+    const k=claimKey({personId:i.personId,contractId:i.payContractId,period:options.period});
+    groups.set(k,[...(groups.get(k)??[]),i]);
+  }
   for(const [k,group] of [...groups].sort(([a],[b])=>a.localeCompare(b))){
     if(claims.has(k)){blocked.push({key:k,reason:"existing_line_including_manual"});continue;}
     if(group.some(i=>i.sessions.some(s=>finalized.has(s.lineageRootId)))){blocked.push({key:k,reason:"finalized_lineage_requires_adjustment"});continue;}
@@ -108,13 +144,11 @@ export async function planGeneration(options: {
     const sorted=[...group].sort((a,b)=>a.assignmentId.localeCompare(b.assignmentId));
     candidates.push({kind:"hourly",key:digest(["f2-hourly-v1",k]),personId:first.personId,contractId:first.payContractId,orgId:first.orgId,period:{...options.period},inputs:sorted,confirmationReferences:refs});claims.add(k);
   }
-  if(options.monthlyContracts?.length){
+  if(monthlyContracts.length){
     if(!options.weeklyBusinessDate)throw new Error("weekly business date required");
     const week=weeklyPeriod(options.weeklyBusinessDate);
     if(week.start!==options.period.start||week.end!==options.period.end)throw new Error("weekly period must be legacy rolling seven days");
-    const seen=new Set<string>();
-    for(const c of [...options.monthlyContracts].sort((a,b)=>a.id.localeCompare(b.id))){
-      if(seen.has(c.id))throw new Error("duplicate monthly contract");seen.add(c.id);
+    for(const c of monthlyContracts){
       if((c.startDate!==null&&!date(c.startDate))||(c.endDate!==null&&!date(c.endDate))||!c.rateRevision)throw new Error("invalid monthly contract snapshot");
       if(!c.active||!c.personActive||!c.autoGenerate||(c.startDate!==null&&c.startDate>week.end)||(c.endDate!==null&&c.endDate<week.end))continue;
       const claim={personId:c.personId,contractId:c.id,period:week},k=claimKey(claim);

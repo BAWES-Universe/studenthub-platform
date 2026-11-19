@@ -49,8 +49,14 @@ CREATE TRIGGER pay_generation_roots_immutable BEFORE UPDATE OR DELETE ON pay_gen
 CREATE TRIGGER pay_generation_receipts_immutable BEFORE UPDATE OR DELETE ON pay_generation_receipts FOR EACH ROW EXECUTE FUNCTION pay_generation_immutable();
 CREATE FUNCTION pay_generation_period_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
- IF (NEW.period_start<>OLD.period_start OR NEW.period_end<>OLD.period_end OR NEW.company_id<>OLD.company_id) AND EXISTS(SELECT 1 FROM pay_generation_claims WHERE transfer_id=OLD.id) THEN
-  RAISE EXCEPTION 'claimed generation transfer identity is immutable' USING ERRCODE='55000';
+ -- Header updates already lock the same parent row as pay-line writes.
+ IF (NEW.period_start,NEW.period_end,NEW.company_id) IS DISTINCT FROM (OLD.period_start,OLD.period_end,OLD.company_id) THEN
+  IF EXISTS(SELECT 1 FROM pay_generation_claims WHERE transfer_id=OLD.id) THEN
+   RAISE EXCEPTION 'claimed generation transfer identity is immutable' USING ERRCODE='55000';
+  END IF;
+  IF EXISTS(SELECT 1 FROM pay_transfer_lines WHERE transfer_id=OLD.id) THEN
+   RAISE EXCEPTION 'transfer identity is immutable while pay lines are retained' USING ERRCODE='55000';
+  END IF;
  END IF; RETURN NEW;
 END $$;
 CREATE TRIGGER pay_generation_period_guard BEFORE UPDATE ON pay_transfers FOR EACH ROW EXECUTE FUNCTION pay_generation_period_guard();

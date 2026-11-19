@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StaffMessageResult } from "../../../../packages/comms/src/staff-messages.js";
 import { STAFF_MESSAGE_BODY_MAX } from "../../../../packages/comms/src/staff-messages.js";
 import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
+import type { IdCardsHttpService } from "../reports/id-cards-http.js";
 
 /**
  * Staff sends a document request or a message to one person (legacy types 12 to 14):
@@ -31,6 +32,8 @@ export interface StaffMessagesHttpService {
     today(viewer: string): Promise<{ readonly day: string; readonly subscribed: boolean; readonly rows: readonly { readonly key: string; readonly label: string; readonly value: number | null; readonly waitsOn: string | null }[] } | undefined>;
     subscribe(viewer: string, on: boolean): Promise<boolean>;
   };
+  /** S8 ID cards, sharing this composition's pool. */
+  idCards?: IdCardsHttpService;
 }
 
 const PATH = /^\/workspace\/people\/([^/]+)\/(message|emails)$/, SUMMARY_PATH = "/workspace/morning-summary", LOG_PAGE = 50, PERSON = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/, LIMIT = 8192;

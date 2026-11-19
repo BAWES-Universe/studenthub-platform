@@ -7,12 +7,23 @@ import {PostgresPayLinesStore} from "../src/payroll/postgres-pay-lines-store.js"
 import {PostgresGenerationStore,type LockedGenerationBatch} from "../src/payroll/postgres-generation-store.js";
 import {validatePayLine} from "../../payroll/src/pay-lines.js";
 import {commitGeneration} from "../../payroll/src/generation-transaction.js";
-// Explicit local disposable DB only. Both PostgreSQL URL spellings used by CI work.
+// Only accept a plain disposable-DB URL, then pass validated fields to pg rather than
+// letting a second URL parser reinterpret the connection target.
 const connectionString=process.env.DATABASE_URL;
 if(!connectionString)throw Error("F2 tests require explicit local disposable DATABASE_URL (no default)");
 const databaseUrl=new URL(connectionString);
-if(!["postgres:","postgresql:"].includes(databaseUrl.protocol)||!["localhost","127.0.0.1","[::1]"].includes(databaseUrl.hostname))throw Error("F2 tests refuse non-local DATABASE_URL");
-const pool=new pg.Pool({connectionString});
+if(!["postgres:","postgresql:"].includes(databaseUrl.protocol)||
+   !["localhost","127.0.0.1","[::1]"].includes(databaseUrl.hostname)||
+   databaseUrl.search||databaseUrl.hash||databaseUrl.pathname.length<2||databaseUrl.port==="0"){
+ throw Error("F2 tests require a plain local DATABASE_URL with an explicit database name");
+}
+const pool=new pg.Pool({
+ host:databaseUrl.hostname==="[::1]"?"::1":"127.0.0.1",
+ port:Number(databaseUrl.port||"5432"),
+ user:decodeURIComponent(databaseUrl.username),
+ password:decodeURIComponent(databaseUrl.password),
+ database:decodeURIComponent(databaseUrl.pathname.slice(1)),
+});
 before(async()=>{
  await runMigrations(pool);
  const ledger=await pool.query("SELECT version FROM schema_migrations WHERE version = ANY($1::text[]) ORDER BY version",[["0550_pay_transfer_lines","0556_pay_generation_claims"]]);

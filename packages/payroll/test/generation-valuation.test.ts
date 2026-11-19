@@ -36,3 +36,17 @@ test("F2_F1 mismatched rate snapshot fails whole preview, does not emit a batch"
 test("F2_F1 duplicate input candidate cannot create duplicate drafts",async()=>{
  const plan=await planGeneration(options);const bad:GenerationPlan={...plan,candidates:[plan.candidates[0]!,plan.candidates[0]!]};await assert.rejects(valueGenerationPlan(bad,port),/duplicate candidate/);
 });
+
+test("F2_F1 approved sessions on a salary contract do not displace the eligible weekly payout",async()=>{
+ const salaryWork:PayableInput={...work,personId:"salary-person",payContractId:"salary-contract",assignmentId:"salary-assignment",
+   sessions:work.sessions.map(s=>({...s,sessionId:"salary-session",lineageRootId:"salary-root"}))};
+ const confirmedContractIds:(string|null)[]=[];
+ const plan=await planGeneration({...options,work:{...options.work,async payableInputs(){return [salaryWork,work];}},
+   confirmations:{async confirm(i){confirmedContractIds.push(i.payContractId);return confirm.confirm(i);}}});
+ const batch=await valueGenerationPlan(plan,port);
+ assert.deepEqual(confirmedContractIds,["hourly-contract"]);
+ assert.deepEqual(batch.blocked,[]);
+ assert.deepEqual(batch.lines.map(l=>[l.personId,l.candidateTotal,l.companyTotal]).sort(),[
+   ["hourly-person","5.000","7.500"],["salary-person","100.000","150.000"]]);
+ assert.equal(plan.candidates.find(c=>c.personId==="salary-person")?.kind,"monthly-weekly");
+});

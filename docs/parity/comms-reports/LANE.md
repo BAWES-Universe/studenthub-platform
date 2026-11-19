@@ -91,3 +91,39 @@ kinds without touching the routes.
   byte for byte with that Content-Type and file name. The row and byte caps, the requester
   binding, the 15-minute expiry, the re-authorization at download and the audit row are the
   same as for CSV. A pay kind still needs its `EXPORT_HTTP_KINDS` entry for the request route.
+
+## S8: ID cards and certificates (2026-11-19)
+
+Handed to this lane by the orchestrator; no other lane holds it. Spec: project contract
+`queue15-16-people-staff.md`, "S8 ID cards and certificates". Legacy: staff
+`CandidateIdCardController` (list, generate, renew, list expired, total expired), the
+`candidate_id_card` table (one card per candidate, expiry date, three months from generate or
+renew), the card view rendered to PNG by headless Chromium, the `verification/` app behind the
+QR code, and the staff and candidate appreciation (experience) certificate PDFs.
+
+Planned PRs, in order (migrations 0602 to 0609):
+1. **Cards and the staff page** (this PR, migration 0602). `id_cards` (one per person, card
+   number, expiry, issuing staff member or legacy row id) and the append-only `id_card_events`.
+   `GET/POST /workspace/id-cards`: who is assigned and has no card, whose card has expired,
+   every card; issue or renew a batch of up to 100, all or nothing, each valid three calendar
+   months from today in Asia/Kuwait (30 Nov gives 28 Feb). Issuing again re-issues, as legacy
+   does. Only people with an assignment that has not ended can be given or renew a card (legacy
+   `filterAssigned`). `GET /profile/id-card`: the person's own card with name, card number,
+   legacy employee ID, company, store and valid-until date. Company and store are read from the
+   work lane's assignments when the card is shown (the one running today, else the next), so a
+   move shows without a new card. The morning summary's two ID card counters ("expired ID
+   cards" and "assigned without ID cards") switch on with the same queries.
+2. **The card as a PDF**, with the person's photo. The person downloads their own; staff
+   download a batch's cards as one PDF (legacy's generate returned a zip of front and back
+   PNGs per person).
+3. **Verification.** The QR on the card opens a signed, expiring public page with name, photo,
+   company and validity only. Legacy's page also showed the civil ID number (finding F10); the
+   new one never shows it or the phone.
+4. **Experience certificates** from work history, as PDFs (legacy appreciation certificate:
+   name, company, store, from and to dates).
+5. **The ID card list export**, if still wanted: legacy's `CandidateIdCard::createExcel` is
+   only called from `createZip`, which nothing calls, so production does not produce that
+   Excel today (checked at legacy @ 55119d3).
+
+Legacy cards carry over through `id_cards.legacy_ref` (the legacy row id); the importer owns
+that copy.
