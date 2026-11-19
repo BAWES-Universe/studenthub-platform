@@ -1,7 +1,7 @@
 /**
  * Builds the matrix rows from the screen contract and the mobile inventory. Existing
  * gate states are kept while the row's subject (a screen's route, an endpoint's target
- * and disposition) is unchanged; when the subject changes, the old evidence no longer
+ * and disposition, an import or release requirement's revision) is unchanged; when the subject changes, the old evidence no longer
  * applies and the row's gates reopen. Rows that left the source are dropped, so removals
  * show up in review as a data diff.
  */
@@ -12,6 +12,7 @@ import {
   RELEASE_STEPS,
   mobileKey,
   mobileSubject,
+  requirementSubject,
   type Gates,
   type Matrix,
   type MobileInventory,
@@ -92,11 +93,11 @@ export function seedMatrix(contract: ParsedContract, inventory: MobileInventory,
   }
   const imports: Record<string, ScreenRow & { title: string }> = {};
   for (const [id, title] of Object.entries(IMPORT_DOMAINS)) {
-    imports[id] = { title, ...row("cutover", GATES.import, previous?.imports[id]) };
+    imports[id] = { title, ...row("cutover", GATES.import, previous?.imports[id], requirementSubject("import", id)) };
   }
   const release: Record<string, ScreenRow & { title: string }> = {};
   for (const [id, title] of Object.entries(RELEASE_STEPS)) {
-    release[id] = { title, ...row(RELEASE_LANE[id] ?? "cutover", GATES.release, previous?.release[id]) };
+    release[id] = { title, ...row(RELEASE_LANE[id] ?? "cutover", GATES.release, previous?.release[id], requirementSubject("release", id)) };
   }
   return {
     version: 1,

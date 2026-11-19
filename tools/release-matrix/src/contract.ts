@@ -38,6 +38,8 @@ export interface ParsedContract {
   readonly declaredTotals: Readonly<Record<string, number>>;
   /** Target or exclusion ids defined more than once, with both source lines. */
   readonly duplicateTargets?: readonly { readonly id: string; readonly first: number; readonly again: number }[];
+  /** Appendices whose partition total is declared more than once. */
+  readonly duplicateTotals?: readonly string[];
 }
 
 const ID_IN_TICKS = /`((?:EX|[UCOMAG])-\d{2})(?:\.\.(\d{2}))?`/g;
@@ -89,7 +91,17 @@ export function parseContract(markdown: string): ParsedContract {
     targets.set(id, target);
   };
 
+  // Fenced blocks are examples, not ledger: a row moved into one no longer maps anything.
+  let fence: string | undefined;
   lines.forEach((line, index) => {
+    const marker = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (marker) {
+      const kind = marker[1]![0]!;
+      if (fence === undefined) fence = kind;
+      else if (fence === kind) fence = undefined;
+      return;
+    }
+    if (fence !== undefined) return;
     const row = cells(line);
     if (row.length < 3) return;
     const section = sectionOf(lines, index);
@@ -121,14 +133,17 @@ export function parseContract(markdown: string): ParsedContract {
   });
 
   const declaredTotals: Record<string, number> = {};
+  const duplicateTotals: string[] = [];
   const partition = /complete, gap-free partition:\s*([^.]+)\./.exec(markdown);
   if (partition) {
     for (const match of partition[1]!.matchAll(/([A-Z]+)\s+1[–-](\d+)/g)) {
-      declaredTotals[match[1]!] = Number(match[2]);
+      // A second total for the same appendix is reported, never allowed to replace the first.
+      if (match[1]! in declaredTotals) duplicateTotals.push(match[1]!);
+      else declaredTotals[match[1]!] = Number(match[2]);
     }
   }
 
-  return { targets, ledger, declaredTotals, duplicateTargets: duplicates };
+  return { targets, ledger, declaredTotals, duplicateTargets: duplicates, duplicateTotals };
 }
 
 /** Ids named in free text such as "`C-01..02`" or "C-06..07"; used for data files too. */
@@ -143,6 +158,9 @@ export function idsIn(text: string): string[] {
  */
 export function checkContract(contract: ParsedContract): ContractIssue[] {
   const issues: ContractIssue[] = [];
+  for (const app of contract.duplicateTotals ?? []) {
+    issues.push({ rule: "contract.partition.declaredTwice", detail: `section 6 declares the ${app} total more than once` });
+  }
   for (const dup of contract.duplicateTargets ?? []) {
     issues.push({ rule: "contract.target.duplicate", detail: `${dup.id} is defined on line ${dup.first} and again on line ${dup.again}` });
   }

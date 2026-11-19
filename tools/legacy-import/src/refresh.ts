@@ -5,6 +5,9 @@
  * counts rows. Conditions it enforces rather than trusts:
  *  - read-only against legacy: the source account may hold only USAGE, SELECT and
  *    SHOW VIEW; any other privilege refuses the run;
+ *  - a complete inventory: SELECT must cover the whole source database (`db`.* or *.*,
+ *    with no partial revoke), because a table the account cannot see would otherwise be
+ *    pruned from the mirror while the run still reported ok;
  *  - the target is a database named `legacy_mirror` on a server other than the source
  *    (different host name in config, and a different @@server_uuid at run time);
  *  - bearer-token tables are never copied;
@@ -14,9 +17,10 @@
  *  - credentials reach mysql/mysqldump through MYSQL_PWD in the child environment,
  *    never through argv, and never appear in the report;
  *  - one run at a time (a kernel flock held for the life of the run and its children);
- *  - every run that ends, however it ends, leaves a fresh last-run.json, and a run in
- *    progress marks it `running`, so a consumer checking `ok` never reads a stale or
- *    half-copied mirror.
+ *  - every run that holds the lock leaves a fresh last-run.json however it ends, and
+ *    marks it `running` while it copies; a run refused by the lock writes
+ *    last-refused.json instead and never touches the owner's report. Readers hold the
+ *    same lock (shared) while they read, see docs/lanes/cutover/PLAN.md.
  *
  * The scheduler (cron on the staging host, installed by a Hermes card) runs
  * `node dist/tools/legacy-import/src/refresh-cli.js` with the environment below.
@@ -86,6 +90,9 @@ export function parseDatabaseUrl(value: string | undefined, name: string): Datab
 
 export const DEFAULT_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 
+/** Node's largest timer delay; a longer one fires after 1 ms. */
+export const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
 export const DEFAULT_REPORT_PATH = "/var/lib/legacy-refresh/last-run.json";
 
 /** Where the report goes; readable even when the rest of the configuration is not. */
@@ -98,6 +105,14 @@ export const DEFAULT_LOCK_PATH = "/var/lib/legacy-refresh/run.lock";
 /** Where the run lock lives; readable even when the rest of the configuration is not. */
 export function lockPathFrom(env: NodeJS.ProcessEnv): string {
   return env.LEGACY_REFRESH_LOCK || DEFAULT_LOCK_PATH;
+}
+
+/**
+ * Where a run refused by the lock records itself: beside the report, never the report
+ * itself, so a contender cannot overwrite the lock owner's `running` or `ok`.
+ */
+export function refusedPathFrom(reportPath: string): string {
+  return path.join(path.dirname(reportPath), "last-refused.json");
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): RefreshConfig {
@@ -113,8 +128,40 @@ export function loadConfig(env: NodeJS.ProcessEnv): RefreshConfig {
   // every report write, see reportReplacesLock in refresh-cli.ts.
   if (path.resolve(reportPath) === path.resolve(lockPath)) throw new RefreshRefused("config.reportIsLock");
   const timeoutMs = env.LEGACY_REFRESH_TIMEOUT_MS ? Number(env.LEGACY_REFRESH_TIMEOUT_MS) : DEFAULT_TIMEOUT_MS;
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new RefreshRefused("config.timeout.invalid");
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMEOUT_MS) throw new RefreshRefused("config.timeout.invalid");
   return { source, target, reportPath, lockPath, timeoutMs };
+}
+
+/** Splits a privilege list on commas outside parentheses: `SELECT (a, b), SHOW VIEW`. */
+function splitPrivileges(list: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of list) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    if (ch === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+    } else current += ch;
+  }
+  parts.push(current);
+  return parts.map((p) => p.trim());
+}
+
+interface ParsedGrant {
+  readonly privileges: string[];
+  /** The object as written after ON, backticks and escaped wildcards removed: `db.*`, `*.*`, `db.table`. */
+  readonly object: string;
+}
+
+function parseGrant(line: string): ParsedGrant | undefined {
+  const match = /^(?:GRANT|REVOKE)\s+(.+?)\s+ON\s+(?:TABLE\s+|FUNCTION\s+|PROCEDURE\s+)?(\S+)\s+(?:TO|FROM)\s+/i.exec(line.trim());
+  if (!match) return undefined;
+  return {
+    privileges: splitPrivileges(match[1]!),
+    object: match[2]!.replace(/`/g, "").replace(/\\([_%])/g, "$1"),
+  };
 }
 
 /**
@@ -131,15 +178,14 @@ export function writePrivileges(grants: readonly string[]): string[] {
     if (upper.length === 0 || upper.startsWith("REVOKE ")) continue;
     read += 1;
     if (/WITH\s+GRANT\s+OPTION/.test(upper)) found.add("GRANT OPTION");
-    const head = /^GRANT\s+(.+?)\s+ON\s+/.exec(upper);
-    if (!head) {
+    const parsed = upper.startsWith("GRANT ") ? parseGrant(upper) : undefined;
+    if (!parsed) {
       // Role grants ("GRANT `role` TO ...") can carry anything; refuse what we can't read.
       found.add("UNREADABLE GRANT");
       continue;
     }
-    const privileges = head[1]!
-      .split(",")
-      .map((p) => p.trim().replace(/\s*\(.*\)$/, "").replace(/\s+/g, " "));
+    // A column list ("SELECT (`a`, `b`)") belongs to its privilege; only the name counts.
+    const privileges = parsed.privileges.map((p) => p.replace(/\s*\(.*\)$/s, "").replace(/\s+/g, " "));
     for (const privilege of privileges) {
       if (!READ_ONLY_PRIVILEGES.includes(privilege)) found.add(privilege || "UNREADABLE GRANT");
     }
@@ -148,10 +194,32 @@ export function writePrivileges(grants: readonly string[]): string[] {
   return [...found].sort();
 }
 
+/**
+ * True when SELECT covers every table of `database`: a whole-database or global SELECT
+ * grant without a column list, and no partial revoke of SELECT anywhere. Table-level or
+ * column-level grants are not enough, because information_schema then lists only the
+ * tables the account can see, and the mirror would lose the rest on the next prune.
+ */
+export function coversDatabase(grants: readonly string[], database: string): boolean {
+  let covered = false;
+  for (const line of grants) {
+    const trimmed = line.trim();
+    const parsed = parseGrant(trimmed);
+    if (!parsed) continue;
+    const select = parsed.privileges.some((p) => /^SELECT$/i.test(p));
+    if (/^REVOKE\s/i.test(trimmed)) {
+      if (parsed.privileges.some((p) => /^SELECT\b/i.test(p))) return false;
+      continue;
+    }
+    if (select && (parsed.object === "*.*" || parsed.object === `${database}.*`)) covered = true;
+  }
+  return covered;
+}
+
 /** A report for a run that ended before or outside `runRefresh` (config, lock, crash). */
 export function failureReport(code: string, at: Date): RefreshReport {
   const iso = at.toISOString();
-  return { ok: false, code, startedAt: iso, finishedAt: iso, durationMs: 0, excluded: [], tables: {}, totalRows: 0 };
+  return { ok: false, code, startedAt: iso, finishedAt: iso, durationMs: 0, excluded: [], nonTransactional: [], tables: {}, totalRows: 0 };
 }
 
 export function isExcluded(table: string): boolean {
@@ -166,6 +234,12 @@ export interface RefreshReport {
   readonly finishedAt: string;
   readonly durationMs: number;
   readonly excluded: readonly string[];
+  /**
+   * Copied tables whose engine is not InnoDB (MyISAM, MEMORY, ...). `--single-transaction`
+   * gives them no snapshot, so their rows may be from slightly later than the rest; they
+   * are copied and named here so a reader can tell.
+   */
+  readonly nonTransactional: readonly string[];
   readonly tables: Readonly<Record<string, number>>;
   readonly totalRows: number;
 }
@@ -175,9 +249,15 @@ export interface MysqlPort {
   /** The server's own identity (`@@server_uuid`), whatever host name reached it. */
   serverId(db: DatabaseUrl): Promise<string>;
   grants(db: DatabaseUrl): Promise<string[]>;
+  /** Base-table names, complete and exact (no truncation at tabs or newlines). */
   tables(db: DatabaseUrl): Promise<string[]>;
+  /** The storage engine of every base table. */
+  engines(db: DatabaseUrl): Promise<Record<string, string>>;
+  /** True when the server folds table names to lower case (`lower_case_table_names` != 0). */
+  foldsCase(db: DatabaseUrl): Promise<boolean>;
   /** Streams a consistent snapshot of `tables` from source into target, replacing them. */
   copy(source: DatabaseUrl, target: DatabaseUrl, tables: readonly string[]): Promise<void>;
+  /** Drops every table not in `keep` (compared under the server's case rule), with foreign key checks off. */
   dropTablesNotIn(target: DatabaseUrl, keep: readonly string[]): Promise<void>;
   counts(db: DatabaseUrl, tables: readonly string[]): Promise<Record<string, number>>;
 }
@@ -188,6 +268,7 @@ export async function runRefresh(
   clock: () => Date = () => new Date(),
 ): Promise<RefreshReport> {
   const started = clock();
+  let nonTransactional: string[] = [];
   const finish = (ok: boolean, code: string, excluded: string[] = [], tables: Record<string, number> = {}): RefreshReport => {
     const finished = clock();
     return {
@@ -197,6 +278,7 @@ export async function runRefresh(
       finishedAt: finished.toISOString(),
       durationMs: finished.getTime() - started.getTime(),
       excluded,
+      nonTransactional,
       tables,
       totalRows: Object.values(tables).reduce((sum, n) => sum + n, 0),
     };
@@ -209,15 +291,28 @@ export async function runRefresh(
     if (sourceId === targetId) return finish(false, "target.isSource");
 
     step = "grants";
-    const writes = writePrivileges(await mysql.grants(config.source));
-    if (writes.length > 0) return finish(false, "source.notReadOnly");
+    const grants = await mysql.grants(config.source);
+    if (writePrivileges(grants).length > 0) return finish(false, "source.notReadOnly");
+    if (!coversDatabase(grants, config.source.database)) return finish(false, "source.partialGrant");
 
     step = "tables";
     const all = (await mysql.tables(config.source)).sort();
     const excluded = all.filter(isExcluded);
     const copied = all.filter((table) => !isExcluded(table));
     if (copied.length === 0) return finish(false, "source.empty", excluded);
+    const engines = await mysql.engines(config.source);
+    nonTransactional = copied.filter((table) => (engines[table] ?? "").toUpperCase() !== "INNODB");
 
+    step = "target";
+    if (await mysql.foldsCase(config.target)) {
+      const folded = new Set(copied.map((table) => table.toLowerCase()));
+      if (folded.size !== copied.length) return finish(false, "source.caseCollision", excluded);
+    }
+
+    // Prune first: a table excluded since the last run (a token table, say) leaves the
+    // mirror before anything else happens, even if the copy then fails.
+    step = "prune";
+    await mysql.dropTablesNotIn(config.target, copied);
     step = "copy";
     await mysql.copy(config.source, config.target, copied);
     step = "prune";

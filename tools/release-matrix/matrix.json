@@ -2512,6 +2512,7 @@
     "M-1": {
       "title": "People: legacy candidate rows into profiles, with a reconciliation report",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "built": {
           "state": "open"
@@ -2530,6 +2531,7 @@
     "M-2": {
       "title": "Documents: the four kinds copied from legacy storage with checksums",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "built": {
           "state": "open"
@@ -2548,6 +2550,7 @@
     "M-3": {
       "title": "Identity links: bulk report of unlinked, multiply-offered and conflicting records",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "built": {
           "state": "open"
@@ -2566,6 +2569,7 @@
     "M-4": {
       "title": "Organizations, stores, contacts and catalogues, with id maps",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "built": {
           "state": "open"
@@ -2584,6 +2588,7 @@
     "M-5": {
       "title": "Work, recruit and finance history, each reconciled to legacy totals",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "built": {
           "state": "open"
@@ -2602,6 +2607,7 @@
     "M-6": {
       "title": "Full baseline import rehearsed on the approved copy, every domain reconciled",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "built": {
           "state": "open"
@@ -2620,6 +2626,7 @@
     "M-7": {
       "title": "Incremental import: deltas, deletions and restart safety for the final sync",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "built": {
           "state": "open"
@@ -2638,8 +2645,9 @@
   },
   "release": {
     "K-1": {
-      "title": "Legacy read-only switch for the final delta, with rollback",
+      "title": "Legacy maintenance mode built (stops writes for the final delta) and its rollback rehearsed",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2649,6 +2657,7 @@
     "K-4": {
       "title": "Every replacement journey verified end to end on staging",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2658,6 +2667,7 @@
     "K-5": {
       "title": "Final sync, single-writer cutover and rollback rehearsed",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2667,6 +2677,7 @@
     "K-6": {
       "title": "Go/no-go with Khalid: parity, safety, window, rollback",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2676,6 +2687,7 @@
     "K-7": {
       "title": "Supervised switch and stabilisation",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2685,6 +2697,7 @@
     "K-8": {
       "title": "Legacy retired after retention and recovery sign-off",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2694,6 +2707,7 @@
     "X-4": {
       "title": "Backup restore proven, timed, with row counts",
       "lane": "platform",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2703,6 +2717,7 @@
     "X-5": {
       "title": "Main pages measured at legacy volume",
       "lane": "platform",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2712,6 +2727,7 @@
     "PAY-REPLAY": {
       "title": "Twelve-month payroll replay with zero unexplained difference",
       "lane": "pay",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2721,6 +2737,7 @@
     "PAY-SHADOW": {
       "title": "December shadow month with zero unexplained difference",
       "lane": "pay",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2728,8 +2745,19 @@
       }
     },
     "MOBILE-COMPAT": {
-      "title": "Installed mobile builds work against the platform with legacy API retired",
+      "title": "Installed store builds proven against the platform's mobile API on staging",
       "lane": "cutover",
+      "subject": "requirement r1",
+      "gates": {
+        "done": {
+          "state": "open"
+        }
+      }
+    },
+    "MOBILE-RETIRE": {
+      "title": "Legacy mobile API retired at cutover, installed store builds still working",
+      "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"
@@ -2739,6 +2767,7 @@
     "REFRESH": {
       "title": "Daily read-only legacy refresh on staging",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open",
@@ -2749,6 +2778,7 @@
     "SWITCHES": {
       "title": "Lane switches turned on at cutover as legacy stops writing each domain: WORK_LANE_ENABLED=true (with SAFE_WRITE_SIGNING_KEY) when legacy stops writing hours, after the work ports are wired in login-runtime (access managedStores and comms notices)",
       "lane": "cutover",
+      "subject": "requirement r1",
       "gates": {
         "done": {
           "state": "open"

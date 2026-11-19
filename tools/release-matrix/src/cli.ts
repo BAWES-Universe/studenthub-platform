@@ -10,10 +10,20 @@ import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { checkContract } from "./contract.js";
+import { checkContract, type ContractIssue, type ParsedContract } from "./contract.js";
 import { MATRIX_PATH, loadContract, loadInventory, loadMatrix, repoRoot } from "./files.js";
-import { blockers, checkInventory, checkMatrix, PHASES, type Blocker, type Phase } from "./matrix.js";
+import { blockers, checkInventory, checkMatrix, PHASES, type Blocker, type Matrix, type MobileInventory, type Phase } from "./matrix.js";
 import { seedMatrix } from "./seed.js";
+
+/**
+ * Seeds from valid sources only: a mistyped id would otherwise drop its row and the
+ * evidence recorded on it. The previous matrix is not checked, so stale rows still
+ * regenerate from valid sources.
+ */
+export function seedIfValid(contract: ParsedContract, inventory: MobileInventory, previous?: Matrix): { readonly issues: ContractIssue[]; readonly matrix?: Matrix } {
+  const issues = [...checkContract(contract), ...checkInventory(inventory, contract)];
+  return issues.length > 0 ? { issues } : { issues, matrix: seedMatrix(contract, inventory, previous) };
+}
 
 export function renderReport(open: readonly Blocker[], totalRows: number): string {
   const byLane = new Map<string, Map<string, number>>();
@@ -42,7 +52,10 @@ function main(command: string | undefined, phaseArg?: string): number {
 
   if (command === "seed") {
     const previous = existsSync(path.join(root, MATRIX_PATH)) ? loadMatrix(root) : undefined;
-    writeFileSync(path.join(root, MATRIX_PATH), `${JSON.stringify(seedMatrix(contract, inventory, previous), null, 2)}\n`);
+    const seeded = seedIfValid(contract, inventory, previous);
+    for (const issue of seeded.issues) console.error(`${issue.rule}: ${issue.detail}`);
+    if (!seeded.matrix) return 1;
+    writeFileSync(path.join(root, MATRIX_PATH), `${JSON.stringify(seeded.matrix, null, 2)}\n`);
     return 0;
   }
 

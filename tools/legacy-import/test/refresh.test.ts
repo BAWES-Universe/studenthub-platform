@@ -7,6 +7,7 @@ import test from "node:test";
 
 import { acquireLock, createMysqlClient, runCli, spawnScoped, summary } from "../src/refresh-cli.js";
 import {
+  coversDatabase,
   isExcluded,
   loadConfig,
   parseDatabaseUrl,
@@ -34,6 +35,12 @@ function fakeMysql(overrides: Partial<MysqlPort> = {}, log: string[] = []): Mysq
     },
     async tables(db: DatabaseUrl) {
       return db.database === "payroll" ? Object.keys(legacy) : [...mirror.keys()];
+    },
+    async engines() {
+      return Object.fromEntries(Object.keys(legacy).map((table) => [table, "InnoDB"]));
+    },
+    async foldsCase() {
+      return false;
     },
     async copy(_source, _target, tables) {
       log.push(`copy ${tables.join(",")}`);
@@ -95,6 +102,47 @@ test("the read-only check is an allowlist: unlisted, unknown or missing privileg
   assert.deepEqual(writePrivileges([]), ["NO GRANTS"]);
 });
 
+test("a column list is one privilege, commas inside it included", () => {
+  const on = (privileges: string) => [`GRANT ${privileges} ON \`payroll\`.\`candidate\` TO \`r\`@\`%\``];
+  assert.deepEqual(writePrivileges(on("SELECT (`id`, `name`), SHOW VIEW")), []);
+  assert.deepEqual(writePrivileges(on("SELECT (`id`, `name`), INSERT (`name`)")), ["INSERT"]);
+  assert.deepEqual(writePrivileges(on("UPDATE (`a`,`b`,`c`)")), ["UPDATE"]);
+});
+
+test("SELECT must cover the whole source database, or the run refuses before copying", async () => {
+  assert.equal(coversDatabase(READ_ONLY, "payroll"), true);
+  assert.equal(coversDatabase(["GRANT SELECT ON *.* TO `r`@`%`"], "payroll"), true);
+  assert.equal(coversDatabase(["GRANT SELECT ON `pay\\_roll`.* TO `r`@`%`"], "pay_roll"), true);
+  assert.equal(coversDatabase(["GRANT USAGE ON *.* TO `r`@`%`", "GRANT SELECT ON `payroll`.`candidate` TO `r`@`%`"], "payroll"), false);
+  assert.equal(coversDatabase(["GRANT SELECT (`id`) ON `payroll`.* TO `r`@`%`"], "payroll"), false);
+  assert.equal(coversDatabase(["GRANT SELECT ON `other`.* TO `r`@`%`"], "payroll"), false);
+  assert.equal(coversDatabase([...READ_ONLY, "REVOKE SELECT ON `payroll`.`staff` FROM `r`@`%`"], "payroll"), false);
+  const log: string[] = [];
+  const tableOnly = ["GRANT USAGE ON *.* TO `r`@`%`", "GRANT SELECT ON `payroll`.`candidate` TO `r`@`%`"];
+  const report = await runRefresh(loadConfig(env), fakeMysql({ grants: async () => tableOnly }, log), ticking());
+  assert.deepEqual([report.ok, report.code], [false, "source.partialGrant"]);
+  assert.deepEqual(log, [], "nothing pruned or copied");
+});
+
+test("non-InnoDB tables are copied and named, since they have no snapshot", async () => {
+  const report = await runRefresh(loadConfig(env), fakeMysql({ engines: async () => ({ candidate: "InnoDB", company: "MyISAM", transfer: "InnoDB" }) }), ticking());
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.nonTransactional, ["company"]);
+});
+
+test("on a case-folding target, source names that fold together refuse before anything is touched", async () => {
+  const log: string[] = [];
+  const report = await runRefresh(
+    loadConfig(env),
+    fakeMysql({ foldsCase: async () => true, tables: async (db) => (db.database === "payroll" ? ["Candidate", "candidate", "company"] : []) }, log),
+    ticking(),
+  );
+  assert.deepEqual([report.ok, report.code], [false, "source.caseCollision"]);
+  assert.deepEqual(log, []);
+  const fine = await runRefresh(loadConfig(env), fakeMysql({ foldsCase: async () => true }), ticking());
+  assert.equal(fine.ok, true);
+});
+
 test("token tables are never copied", () => {
   assert.equal(isExcluded("candidate_token"), true);
   assert.equal(isExcluded("session"), true);
@@ -108,7 +156,9 @@ test("a refresh copies every non-token table, prunes stale mirror tables, and re
   const log: string[] = [];
   const report = await runRefresh(loadConfig(env), fakeMysql({}, log), ticking());
   assert.equal(report.ok, true);
-  assert.deepEqual(log, ["copy candidate,company,transfer", "keep candidate,company,transfer"]);
+  // Pruned before the copy (an excluded table never outlives a failed copy) and after it.
+  assert.deepEqual(log, ["keep candidate,company,transfer", "copy candidate,company,transfer", "keep candidate,company,transfer"]);
+  assert.deepEqual(report.nonTransactional, []);
   assert.deepEqual(report.tables, { candidate: 3, company: 2, transfer: 4 });
   assert.deepEqual(report.excluded, ["candidate_token", "staff_token"]);
   assert.equal(report.totalRows, 9);
@@ -133,6 +183,8 @@ test("failures report a fixed code per step and never the error text", async () 
     [{ grants: async () => Promise.reject(leaky) }, "failed.grants"],
     [{ tables: async () => Promise.reject(leaky) }, "failed.tables"],
     [{ copy: async () => Promise.reject(leaky) }, "failed.copy"],
+    [{ foldsCase: async () => Promise.reject(leaky) }, "failed.target"],
+    [{ engines: async () => Promise.reject(leaky) }, "failed.tables"],
     [{ dropTablesNotIn: async () => Promise.reject(leaky) }, "failed.prune"],
     [{ counts: async () => Promise.reject(leaky) }, "failed.counts"],
     [{ counts: async () => ({ candidate: 3 }) }, "target.countMissing"],
@@ -172,7 +224,10 @@ test("every way a run ends leaves a fresh report, so a stale ok is never read", 
     const holder = await acquireLock(lockPath);
     assert.equal(holder.held, true);
     assert.equal(await runCli(deps()), 3);
-    assert.deepEqual([report().ok, report().code], [false, "locked"]);
+    // Only the lock owner writes last-run.json; the refused attempt is recorded beside it.
+    assert.deepEqual([report().ok, report().code], [true, "ok"]);
+    const refused = JSON.parse(readFileSync(path.join(dir, "last-refused.json"), "utf8")) as { ok: boolean; code: string };
+    assert.deepEqual([refused.ok, refused.code], [false, "locked"]);
     if (holder.held) closeSync(holder.fd);
 
     let seenDuringCopy = "";
@@ -204,7 +259,7 @@ test("every way a run ends leaves a fresh report, so a stale ok is never read", 
     assert.equal(await runCli(deps({ now: crashingClock })), 1);
     assert.equal(report().ok, false);
     assert.equal(existsSync(lockPath), true, "the lock file is never deleted");
-    assert.deepEqual(readdirSync(dir).sort(), ["last-run.json", "run.lock"], "no temp report files left behind");
+    assert.deepEqual(readdirSync(dir).sort(), ["last-refused.json", "last-run.json", "run.lock"], "no temp report files left behind");
     for (const line of lines) assert.equal(/s3cret|m1rror|legacy-replica|staging-db/.test(line), false, line);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -322,6 +377,9 @@ test("a report path that is the lock path is refused before anything is written"
   const same = { ...env, LEGACY_REFRESH_REPORT: "/var/lib/x/run.lock", LEGACY_REFRESH_LOCK: "/var/lib/x/../x/run.lock" };
   assert.throws(() => loadConfig(same), /config.reportIsLock/);
   assert.throws(() => loadConfig({ ...env, LEGACY_REFRESH_TIMEOUT_MS: "soon" }), /config.timeout.invalid/);
+  // Above Node's largest timer delay a timeout would fire after 1 ms.
+  assert.throws(() => loadConfig({ ...env, LEGACY_REFRESH_TIMEOUT_MS: String(2 ** 31) }), /config.timeout.invalid/);
+  assert.equal(loadConfig({ ...env, LEGACY_REFRESH_TIMEOUT_MS: String(2 ** 31 - 1) }).timeoutMs, 2 ** 31 - 1);
   assert.equal(loadConfig(env).timeoutMs, 4 * 60 * 60 * 1000);
 });
 
@@ -455,38 +513,55 @@ test("a hung mysqldump probe is killed and reaped by the run deadline", async ()
   await withFakeTools('echo $$ > "$(dirname "$0")/../probe.pid"; exec sleep 30', async (dir, _log, lockFd) => {
     const deadline = new AbortController();
     const client = createMysqlClient(lockFd, deadline.signal);
+    const pidFile = path.join(dir, "probe.pid");
+    const copying = client.copy(parseDatabaseUrl(SOURCE, "source"), parseDatabaseUrl(TARGET, "target"), ["candidate"]);
+    // Abort only once the probe is running, however slow the machine is to start it.
+    const waitUntil = Date.now() + 10_000;
+    while (!(existsSync(pidFile) && readFileSync(pidFile, "utf8").trim().length > 0)) {
+      assert.ok(Date.now() < waitUntil, "the probe never started");
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const pid = Number(readFileSync(pidFile, "utf8"));
     const started = Date.now();
-    setTimeout(() => deadline.abort(), 200);
-    await assert.rejects(client.copy(parseDatabaseUrl(SOURCE, "source"), parseDatabaseUrl(TARGET, "target"), ["candidate"]), /probe.aborted/);
+    deadline.abort();
+    await assert.rejects(copying, /probe.aborted/);
     assert.ok(Date.now() - started < 5000, "the copy waited for the probe instead of the deadline");
-    const pid = Number(readFileSync(path.join(dir, "probe.pid"), "utf8"));
     // Settled on close, so the probe is already gone (reaped), not merely signalled.
     assert.throws(() => process.kill(pid, 0), /ESRCH/);
   });
 });
 
 test("the real mysql client ignores a conflicting ~/.my.cnf when started through spawnScoped", async (t) => {
+  type Run = { readonly spawned: boolean; readonly code: number | null; readonly out: string };
   const printDefaults = (child: ReturnType<typeof spawn>) =>
-    new Promise<string>((resolve) => {
+    new Promise<Run>((resolve) => {
       let out = "";
+      let spawned = true;
       child.stdout!.setEncoding("utf8");
       child.stdout!.on("data", (chunk: string) => (out += chunk));
-      child.on("error", () => resolve("missing"));
-      child.on("close", () => resolve(out));
+      child.on("error", () => (spawned = false));
+      child.on("close", (code) => resolve({ spawned, code, out }));
     });
   const dir = mkdtempSync(path.join(tmpdir(), "refresh-mycnf-"));
   const savedHome = process.env.HOME;
   try {
     const home = conflictingHome(dir);
-    // Control: the installed client does read that file when nothing stops it.
-    const plain = await printDefaults(spawn("mysql", ["--print-defaults"], { env: { PATH: process.env.PATH, HOME: home }, stdio: ["ignore", "pipe", "ignore"] }));
-    if (plain === "missing") return t.skip("no mysql client installed");
-    assert.match(plain, /--user=intruder/);
-    process.env.HOME = home;
+    const checked: string[] = [];
     for (const tool of ["mysql", "mysqldump"] as const) {
+      // Control: the installed tool does read that file when nothing stops it.
+      process.env.HOME = savedHome;
+      const plain = await printDefaults(spawn(tool, ["--print-defaults"], { env: { PATH: process.env.PATH, HOME: home }, stdio: ["ignore", "pipe", "ignore"] }));
+      if (!plain.spawned) continue; // not installed: skipped, and said so below
+      assert.equal(plain.code, 0, `${tool} control run failed`);
+      assert.match(plain.out, /--user=intruder/, `${tool} control did not read the option file`);
+      process.env.HOME = home;
       const scoped = await printDefaults(spawnScoped({}, tool, ["--print-defaults"], parseDatabaseUrl(SOURCE, "source"), ["ignore", "pipe", "ignore"]));
-      assert.doesNotMatch(scoped, /intruder|wrong/, `${tool} read the option file`);
+      assert.equal(scoped.spawned, true, `${tool} scoped run did not start`);
+      assert.equal(scoped.code, 0, `${tool} scoped run failed`);
+      assert.doesNotMatch(scoped.out, /intruder|wrong/, `${tool} read the option file`);
+      checked.push(tool);
     }
+    if (checked.length < 2) t.skip(`checked ${checked.join(", ") || "nothing"}; not installed: ${["mysql", "mysqldump"].filter((x) => !checked.includes(x)).join(", ")}`);
   } finally {
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;

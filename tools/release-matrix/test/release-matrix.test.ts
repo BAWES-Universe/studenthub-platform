@@ -7,7 +7,7 @@ import { checkContract, idsIn, parseContract } from "../src/contract.js";
 import { CONTRACT_PATH, loadContract, loadInventory, loadMatrix, repoRoot } from "../src/files.js";
 import { blockers, checkInventory, checkMatrix, citesDecision, citesEvidence, GATES, mobileKey, type Matrix, type MobileInventory } from "../src/matrix.js";
 import { laneForOwner, seedMatrix } from "../src/seed.js";
-import { isEntryPoint, renderReport } from "../src/cli.js";
+import { isEntryPoint, renderReport, seedIfValid } from "../src/cli.js";
 
 const root = repoRoot();
 const markdown = readFileSync(path.join(root, CONTRACT_PATH), "utf8");
@@ -142,13 +142,25 @@ test("evidence must name a PR at a head, a run or a run report; a waiver must na
   for (const bad of ["not-real", "PR #512", "PR #512 at main", "PR #512 at 1a2b3c", "https://example.com/actions/runs/1", "run 12345678"]) {
     assert.equal(citesEvidence(bad), false, bad);
   }
+  // A citation is a whole token; it may sit inside text and end a sentence.
+  for (const good of ["merged as PR #512 at 1a2b3c4.", "(PR #504 comment 6954521676)", "see run https://github.com/o/r/actions/runs/1, green"]) {
+    assert.equal(citesEvidence(good), true, good);
+  }
+  for (const bad of ["PR #512 at 1a2b3c4-rc", "PR #512 at 1a2b3c4.bak", "XPR #512 at 1a2b3c4", "PR #504 comment 6954521676-draft", "run https://github.com/o/r/actions/runs/1-x"]) {
+    assert.equal(citesEvidence(bad), false, bad);
+  }
+  assert.equal(citesDecision("contracts/decisions-2026-10-27.md.bak"), false);
+  assert.equal(citesDecision("old/contracts/decisions-2026-10-27.md"), false);
+  assert.equal(citesDecision("recorded in contracts/decisions-2026-10-27.md."), true);
   assert.equal(citesDecision("contracts/decisions-2026-10-27.md"), true);
   assert.equal(citesDecision("PR #393 comment 6951406632"), true);
   assert.equal(citesDecision("agreed on a call"), false);
 });
 
 test("blockers count every open gate and every open mobile disposition; evidence closes a gate", () => {
-  const base = loadMatrix(root);
+  // A freshly seeded matrix (every gate open), so the test does not depend on how far
+  // the committed matrix has progressed.
+  const base = seedMatrix(loadContract(root), loadInventory(root));
   // A fixture inventory with one open and one decided endpoint, independent of live decisions.
   const real = loadInventory(root);
   const [a, b] = real.endpoints;
@@ -165,13 +177,13 @@ test("blockers count every open gate and every open mobile disposition; evidence
 });
 
 test("the candidate checkpoint leaves cutover and retirement steps to their own checkpoints", () => {
-  const base = loadMatrix(root);
   const inventory = loadInventory(root);
+  const base = seedMatrix(loadContract(root), inventory);
   const ids = (phase: "candidate" | "cutover" | "retired") =>
     new Set(blockers(base, inventory, phase).filter((x) => x.section === "release").map((x) => x.id));
   const candidate = ids("candidate");
-  for (const later of ["K-6", "K-7", "K-8", "PAY-SHADOW", "SWITCHES"]) assert.equal(candidate.has(later), false, later);
-  for (const now of ["K-4", "K-5", "PAY-REPLAY", "REFRESH"]) assert.equal(candidate.has(now), true, now);
+  for (const later of ["K-6", "K-7", "K-8", "PAY-SHADOW", "SWITCHES", "MOBILE-RETIRE"]) assert.equal(candidate.has(later), false, later);
+  for (const now of ["K-1", "K-4", "K-5", "PAY-REPLAY", "REFRESH", "MOBILE-COMPAT"]) assert.equal(candidate.has(now), true, now);
   assert.equal(ids("cutover").has("K-7"), true);
   assert.equal(ids("cutover").has("K-8"), false);
   assert.equal(ids("retired").has("K-8"), true);
@@ -246,4 +258,74 @@ test("the CLI recognises itself as the entry point through a symlink or a path w
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("a gate that is not an object is a check failure, not a crash", () => {
+  const contract = loadContract(root);
+  const inventory = loadInventory(root);
+  const nulled = clone(loadMatrix(root));
+  (nulled.screens["C-11"]!.gates as Record<string, unknown>).built = null;
+  assert.deepEqual(rules(checkMatrix(nulled, contract, inventory)), ["matrix.gate.badState"]);
+  (nulled.screens["C-11"]!.gates as Record<string, unknown>).built = "done";
+  assert.deepEqual(rules(checkMatrix(nulled, contract, inventory)), ["matrix.gate.badState"]);
+});
+
+test("the inventory refuses a mistyped method and a source that is not file:line", () => {
+  const contract = loadContract(root);
+  const real = loadInventory(root);
+  const [first, ...rest] = real.endpoints;
+  const typo: MobileInventory = { ...real, endpoints: [{ ...first!, method: "GTE" as "GET" }, ...rest] };
+  assert.deepEqual(rules(checkInventory(typo, contract)), ["mobile.badMethod"]);
+  const blank: MobileInventory = { ...real, endpoints: [{ ...first!, sources: [""] }, ...rest] };
+  assert.deepEqual(rules(checkInventory(blank, contract)), ["mobile.badSource"]);
+  assert.deepEqual(checkInventory(real, contract), []);
+});
+
+test("a ledger row moved into a fenced example no longer counts", () => {
+  const row = "| MOB-B021 | activity | `U-04` |\n";
+  assert.ok(markdown.includes(row));
+  const fenced = markdown.replace(row, "").replace(/(## 6\.[^\n]*\n)/, `$1\n\`\`\`\n${row}\`\`\`\n`);
+  assert.notEqual(fenced, markdown);
+  const issues = checkContract(parseContract(fenced));
+  assert.deepEqual(rules(issues), ["contract.partition.gap"]);
+  assert.match(issues[0]!.detail, /MOB-B021/);
+});
+
+test("an appendix total declared twice is reported, not silently replaced", () => {
+  const doubled = markdown.replace(/(complete, gap-free partition:\s*)/, "$1MOB 1-66, ");
+  assert.notEqual(doubled, markdown);
+  assert.deepEqual(rules(checkContract(parseContract(doubled))), ["contract.partition.declaredTwice"]);
+});
+
+test("seed refuses invalid sources, so a mistyped id cannot drop a row and its evidence", () => {
+  const contract = parseContract(markdown);
+  const inventory = loadInventory(root);
+  const previous = clone(loadMatrix(root));
+  (previous.screens["U-04"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "PR #1 at 0123abcd" };
+  const lines = markdown.split("\n");
+  const at = lines.findIndex((line) => line.trim().startsWith("| `U-04`"));
+  const typo = [...lines.slice(0, at), lines[at]!.replace("`U-04`", "`U-09`"), ...lines.slice(at + 1)].join("\n");
+  const refused = seedIfValid(parseContract(typo), inventory, previous);
+  assert.equal(refused.matrix, undefined);
+  assert.ok(refused.issues.length > 0);
+  const ok = seedIfValid(contract, inventory, previous);
+  assert.deepEqual(ok.matrix!.screens["U-04"]!.gates.built, { state: "done", evidence: "PR #1 at 0123abcd" });
+});
+
+test("a changed import or release requirement reopens its gates; a reworded title does not", () => {
+  const contract = loadContract(root);
+  const inventory = loadInventory(root);
+  const previous = clone(loadMatrix(root));
+  (previous.release["SWITCHES"]!.gates as Record<string, unknown>).done = { state: "done", evidence: "PR #9 at abcdef1" };
+  (previous.imports["M-1"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "PR #9 at abcdef1" };
+  // Same requirement, new wording: evidence stays.
+  (previous.release["SWITCHES"] as { title: string }).title = "an older wording";
+  assert.deepEqual(seedMatrix(contract, inventory, previous).release["SWITCHES"]!.gates.done, { state: "done", evidence: "PR #9 at abcdef1" });
+  // Recorded against an older requirement revision: stale, and seeding reopens it.
+  (previous.release["SWITCHES"] as { subject: string }).subject = "requirement r0";
+  (previous.imports["M-1"] as { subject: string }).subject = "requirement r0";
+  assert.deepEqual(rules(checkMatrix(previous, contract, inventory)), ["matrix.row.stale"]);
+  const seeded = seedMatrix(contract, inventory, previous);
+  assert.deepEqual(seeded.release["SWITCHES"]!.gates.done, { state: "open" });
+  assert.deepEqual(seeded.imports["M-1"]!.gates.built, { state: "open" });
 });
