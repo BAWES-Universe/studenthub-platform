@@ -34,7 +34,9 @@ test('PHOTO_NONE no photo, two photos, another person or org, a format the card 
   ];
   for (const [label, docs] of cases) {
     const audit = auditLog();
-    assert.equal(await personalPhotoSource({ store: memory(docs), orgId: 'org', audit: audit.port }).read('person-1', 'staff-9'), null, label);
+    // Compared as a boolean: a failure must not print megabytes of photo bytes.
+    const got = await personalPhotoSource({ store: memory(docs), orgId: 'org', audit: audit.port }).read('person-1', 'staff-9');
+    assert.equal(got === null, true, label);
     assert.equal(audit.views.length, 0, label);
   }
   assert.equal(PERSONAL_PHOTO_MAX_BYTES, 2 * 1024 * 1024);
