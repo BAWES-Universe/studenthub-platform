@@ -282,6 +282,18 @@ test("every way a run ends leaves a fresh report, so a stale ok is never read", 
     };
     assert.equal(await runCli(deps({ now: crashingClock })), 1);
     assert.equal(report().ok, false);
+    assert.equal(lines.at(-1), "legacy-refresh: failed.unexpected");
+    // When the fallback report cannot be built or written either, the output line says so.
+    staleOk();
+    let started = false;
+    const deadClock = () => {
+      if (started) throw new Error("clock");
+      started = true;
+      return new Date();
+    };
+    assert.equal(await runCli(deps({ now: deadClock })), 1);
+    assert.equal(lines.at(-1), "legacy-refresh: failed.unexpected (report not written)");
+    assert.equal(report().code, "running", "the last report written is the run's own running marker");
     assert.equal(existsSync(lockPath), true, "the lock file is never deleted");
     assert.deepEqual(readdirSync(dir).sort(), ["last-refused.json", "last-run.json", "run.lock"], "no temp report files left behind");
     for (const line of lines) assert.equal(/s3cret|m1rror|legacy-replica|staging-db/.test(line), false, line);

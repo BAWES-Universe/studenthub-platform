@@ -311,6 +311,34 @@ test("a heading or a partition total inside a fenced example changes nothing", (
   assert.deepEqual(checkContract(parseContract(total)), []);
 });
 
+test("indentation follows CommonMark: four columns is code, not a fence, heading or row", () => {
+  const row = "| MOB-B021 | activity | `U-04` |\n";
+  const after6 = (inner: string) => markdown.replace(/(## 6\.[^\n]*\n)/, `$1\n${inner}`);
+  // A four-space fence opens nothing, so a duplicate row after it is still seen.
+  const duplicated = after6(`    \`\`\`\n\n${row}`);
+  assert.deepEqual(rules(checkContract(parseContract(duplicated))), ["contract.partition.duplicate"]);
+  assert.deepEqual(rules(checkContract(parseContract(after6("\t~~~\n\n" + row)))), ["contract.partition.duplicate"]);
+  // Up to three spaces still opens one, and the row inside it does not count.
+  const moved = markdown.replace(row, "");
+  const fenced = moved.replace(/(## 6\.[^\n]*\n)/, `$1\n   \`\`\`\n${row}   \`\`\`\n`);
+  assert.deepEqual(rules(checkContract(parseContract(fenced))), ["contract.partition.gap"]);
+  // A row indented four columns is code and does not count; a heading indented three still does.
+  const coded = moved.replace(/(## 6\.[^\n]*\n)/, `$1\n    ${row}`);
+  assert.deepEqual(rules(checkContract(parseContract(coded))), ["contract.partition.gap"]);
+  assert.deepEqual(checkContract(parseContract(markdown.replace(/^## 6\./m, "   ## 6."))), []);
+});
+
+test("a ledger row inside an HTML comment does not count", () => {
+  const row = "| MOB-B021 | activity | `U-04` |\n";
+  const moved = markdown.replace(row, "");
+  for (const inner of [`<!--\n${row}-->\n`, `<!-- hidden\n${row}still hidden -->\n`]) {
+    const issues = checkContract(parseContract(moved.replace(/(## 6\.[^\n]*\n)/, `$1\n${inner}`)));
+    assert.deepEqual(rules(issues), ["contract.partition.gap"], inner);
+  }
+  // A one-line comment hides only itself.
+  assert.deepEqual(checkContract(parseContract(markdown.replace(/(## 6\.[^\n]*\n)/, "$1\n<!-- note -->\n"))), []);
+});
+
 test("an appendix total declared twice is reported, not silently replaced", () => {
   const doubled = markdown.replace(/(complete, gap-free partition:\s*)/, "$1MOB 1-66, ");
   assert.notEqual(doubled, markdown);

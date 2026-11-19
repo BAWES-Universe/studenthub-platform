@@ -83,26 +83,38 @@ export function parseContract(markdown: string): ParsedContract {
     targets.set(id, target);
   };
 
-  // Fenced blocks are examples, not ledger: a row, heading or total moved into one no longer
-  // counts. As in CommonMark, a fence closes only on the same character, at least as many
-  // of it as opened the block, and nothing after them but whitespace.
+  // Fenced blocks and HTML comments are examples or hidden text, not ledger: a row, heading
+  // or total inside one no longer counts. The rules follow CommonMark, so the parser sees
+  // what a reader sees: a fence opens with at most three spaces of indentation and closes
+  // only on the same character, at least as many of it, with nothing after them but
+  // whitespace; a line indented four columns or more is code, not a heading or table row.
   let fence: { char: string; length: number } | undefined;
+  let comment = false;
   let section = "";
   const unfenced: string[] = [];
   lines.forEach((line, index) => {
+    if (comment) {
+      if (line.includes("-->")) comment = false;
+      return;
+    }
     if (fence === undefined) {
-      const open = /^\s*(`{3,}|~{3,})/.exec(line);
+      const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
       if (open) {
         fence = { char: open[1]![0]!, length: open[1]!.length };
         return;
       }
+      if (/^ {0,3}<!--/.test(line)) {
+        comment = !line.slice(line.indexOf("<!--") + 4).includes("-->");
+        return;
+      }
     } else {
-      const close = /^\s*(`{3,}|~{3,})\s*$/.exec(line);
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
       if (close && close[1]![0] === fence.char && close[1]!.length >= fence.length) fence = undefined;
       return;
     }
+    if (/^(?: {4}| {0,3}\t)/.test(line)) return;
     unfenced.push(line);
-    const heading = /^##\s+(\d+)\./.exec(line);
+    const heading = /^ {0,3}##[ \t]+(\d+)\./.exec(line);
     if (heading) section = heading[1]!;
     const row = cells(line);
     if (row.length < 3) return;

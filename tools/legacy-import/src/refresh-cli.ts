@@ -388,11 +388,12 @@ function safeToWrite(reportPath: string, lockPath: string): boolean {
 
 /**
  * Best effort: a report that cannot be written must not hide the run's own exit code.
- * Returns whether it was written, so the output line can say when it was not.
+ * Returns whether it was written, so the output line can say when it was not. The report
+ * is built inside the attempt, so a failure while building it also counts as not written.
  */
-function tryWriteReport(reportPath: string, lockPath: string, report: RefreshReport): boolean {
+function tryWriteReport(reportPath: string, lockPath: string, report: () => RefreshReport): boolean {
   try {
-    writeReport(reportPath, lockPath, report);
+    writeReport(reportPath, lockPath, report());
     return true;
   } catch {
     return false;
@@ -415,7 +416,7 @@ export async function runCli(deps: CliDeps): Promise<number> {
       code !== "config.reportIsLock" &&
       path.resolve(refusedPathFrom(reportPath)) !== path.resolve(reportPath) &&
       safeToWrite(reportPath, lockPathFrom(deps.env));
-    const written = writable && tryWriteReport(reportPath, lockPathFrom(deps.env), failureReport(code, deps.now()));
+    const written = writable && tryWriteReport(reportPath, lockPathFrom(deps.env), () => failureReport(code, deps.now()));
     deps.error(`legacy-refresh: ${code}${written ? "" : " (report not written)"}`);
     return 2;
   }
@@ -423,7 +424,7 @@ export async function runCli(deps: CliDeps): Promise<number> {
   if (!lock.held) {
     // The owner's report (`running`, or its result) stays as it is: only the lock owner
     // writes last-run.json. This attempt is recorded beside it.
-    const written = tryWriteReport(refusedPathFrom(config.reportPath), config.lockPath, failureReport(lock.code, deps.now()));
+    const written = tryWriteReport(refusedPathFrom(config.reportPath), config.lockPath, () => failureReport(lock.code, deps.now()));
     const reason = lock.code === "locked" ? "locked (another run in progress)" : lock.code;
     deps.error(`legacy-refresh: ${reason}${written ? "" : " (report not written)"}`);
     return 3;
@@ -445,8 +446,8 @@ export async function runCli(deps: CliDeps): Promise<number> {
     deps.log(summary(report));
     return report.ok ? 0 : 1;
   } catch {
-    tryWriteReport(config.reportPath, config.lockPath, failureReport("failed.unexpected", deps.now()));
-    deps.error("legacy-refresh: failed.unexpected");
+    const written = tryWriteReport(config.reportPath, config.lockPath, () => failureReport("failed.unexpected", deps.now()));
+    deps.error(`legacy-refresh: failed.unexpected${written ? "" : " (report not written)"}`);
     return 1;
   } finally {
     // Only this run's own descriptor; the file stays, and children still alive keep the lock.
