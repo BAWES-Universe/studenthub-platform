@@ -22,7 +22,7 @@ async function moduleFor(specifier: string): Promise<Record<string, unknown>> {
 
 test("PREP_EXPORTS explicit database area exports resolve with their assigned values", async () => {
   const manifest = JSON.parse(await readFile(resolve("packages/db/package.json"), "utf8")) as { exports: Record<string, Record<string, string>> };
-  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions", "./billing", "./universe"].sort());
+  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions", "./billing", "./comms", "./universe"].sort());
   assert.equal(JSON.stringify(manifest.exports).includes("*"), false);
   for (const area of areas) {
     assert.deepEqual(manifest.exports[`./${area}`], { types: `./dist/${area}/index.d.ts`, import: `./dist/${area}/index.js` });
@@ -36,6 +36,13 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
   const assertions = await moduleFor("@studenthub/db/assertions");
   assert.deepEqual(Object.keys(assertions), ["PostgresReplayStore"]);
   assert.equal(typeof assertions.PostgresReplayStore, "function");
+  // Comms is subpath-only as well (comms lane, staff messages).
+  assert.deepEqual(manifest.exports["./comms"], {
+    types: "./dist/comms/index.d.ts", import: "./dist/comms/index.js",
+  });
+  const comms = await moduleFor("@studenthub/db/comms");
+  assert.deepEqual(Object.keys(comms).sort(), ["PostgresStaffMessagesStore", "recordWorkSessionDecision", "retractWorkSessionDecision"]);
+  assert.equal(typeof comms.PostgresStaffMessagesStore, "function");
   // Universe embed is subpath-only too (E2): the root golden stays unchanged.
   assert.deepEqual(manifest.exports["./universe"], {
     types: "./dist/universe/index.d.ts", import: "./dist/universe/index.js",
