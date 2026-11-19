@@ -49,9 +49,23 @@ const interview = async (requestId: string, at: string, status = "scheduled") =>
 // A far past Kuwait day nobody else writes interviews for.
 const someDay = () => new Date(Date.UTC(1972, 0, 1) + Math.floor(Math.random() * 18_000) * 86_400_000).toISOString().slice(0, 10);
 const shift = (day: string, days: number) => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+// A day (with its neighbours) that no earlier run, queued summary or interview fixture holds, reserved for this suite.
+const reserved = new Set<string>();
+async function freshDay(): Promise<string> {
+  for (;;) {
+    const day = someDay();
+    if ([-1, 0, 1].some(d => reserved.has(shift(day, d)))) continue;
+    const { rows: [row] } = await pool.query<{ taken: boolean }>(`SELECT EXISTS (SELECT 1 FROM morning_summary_runs WHERE day BETWEEN $1::date - 1 AND $1::date + 1)
+      OR EXISTS (SELECT 1 FROM email_outbox WHERE idempotency_key LIKE 'staff.morning_summary:' || $1 || ':%')
+      OR EXISTS (SELECT 1 FROM recruit_interviews WHERE scheduled_at >= ($1::date - 2)::timestamp AND scheduled_at < ($1::date + 3)::timestamp) AS taken`, [day]);
+    if (row!.taken) continue;
+    for (const d of [-1, 0, 1]) reserved.add(shift(day, d));
+    return day;
+  }
+}
 
 test("REPORTS_MORNING_SUMMARY_PG interviews scheduled on the Kuwait day, for a request still open", async () => {
-  const day = someDay(), prev = shift(day, -1), next = shift(day, 1);
+  const day = await freshDay(), prev = shift(day, -1), next = shift(day, 1);
   const open = await request("open"), filling = await request("filling");
   const n = async () => (await store.counts(day)).interviewScheduledToday;
   assert.equal(await n(), 0);
@@ -73,7 +87,7 @@ test("REPORTS_MORNING_SUMMARY_PG interviews scheduled on the Kuwait day, for a r
 });
 
 test("REPORTS_MORNING_SUMMARY_PG active requests are open or filling, for KWD companies (no currency means KWD)", async () => {
-  const day = someDay(), n = async () => (await store.counts(day)).activeRequests;
+  const day = await freshDay(), n = async () => (await store.counts(day)).activeRequests;
   const base = await n();
   await request("open"); await request("filling");
   assert.equal(await n(), base + 2);
@@ -123,7 +137,7 @@ test("REPORTS_MORNING_SUMMARY_PG the email goes once a day to subscribed staff w
   const mine = new Set([staff, admin, quiet, former, selfOnly, paused]);
   assert.deepEqual((await store.recipients()).filter(id => mine.has(id)).sort(), [admin, staff].sort());
 
-  const day = someDay(), at = new Date(`${day}T05:00:00Z`);
+  const day = await freshDay(), at = new Date(`${day}T05:00:00Z`);
   const build = (raw: Readonly<Record<string, number>>) => MorningSummaryService.parameters(day, raw);
   const sent = await store.sendDay(day, at, build);
   assert.equal(sent?.recipients, (await store.recipients()).length);
@@ -144,7 +158,7 @@ test("REPORTS_MORNING_SUMMARY_PG the email goes once a day to subscribed staff w
   await assert.rejects(pool.query("DELETE FROM morning_summary_runs WHERE day=$1::date", [day]), /append-only/);
 
   // Parameters that do not validate send nothing and leave the day due.
-  const failing = someDay();
+  const failing = await freshDay();
   await assert.rejects(store.sendDay(failing, at, () => { throw new TypeError("invalid closed email template parameters"); }), /closed/);
   assert.equal((await pool.query("SELECT count(*)::int n FROM morning_summary_runs WHERE day=$1::date", [failing])).rows[0].n, 0);
   assert.equal((await pool.query("SELECT count(*)::int n FROM email_outbox WHERE idempotency_key LIKE $1", [`staff.morning_summary:${failing}:%`])).rows[0].n, 0);
@@ -166,7 +180,7 @@ test("REPORTS_MORNING_SUMMARY_PG every delivery attempt rechecks the recipient: 
   const [kept, left, demoted, paused] = [await principal("kept", grant), await principal("left", grant), await principal("demoted", grant), await principal("paused2", grant)];
   const service = new MorningSummaryService(store, { async isStaff() { return true; } });
   for (const id of [kept, left, demoted, paused]) await service.subscribe(id, true);
-  const day = someDay();
+  const day = await freshDay();
   await store.sendDay(day, new Date(`${day}T05:00:00Z`), raw => MorningSummaryService.parameters(day, raw));
   await service.subscribe(left, false);
   await pool.query("DELETE FROM grants WHERE principal_id=$1", [demoted]);
