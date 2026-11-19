@@ -40,6 +40,11 @@ test("REPORTS_EXPORT_OWN_FORMAT the table refuses an unsafe name, a bad type, ha
     [{ contentType: XLSX, fileName: "../etc/passwd" }, "created"],
     [{ contentType: XLSX, fileName: "a\"b.xlsx" }, "created"],
     [{ contentType: "text/html; script", fileName: "x.txt" }, "created"],
+    // The CHECKs' `$` is end of string, so a trailing line break is refused as well.
+    [{ contentType: XLSX, fileName: "safe.xlsx\n" }, "created"],
+    [{ contentType: XLSX, fileName: "safe.xlsx\r\n" }, "created"],
+    [{ contentType: "text/plain\n", fileName: "x.txt" }, "created"],
+    [{ contentType: "text/plain\r\n", fileName: "x.txt" }, "created"],
   ] as const) await assert.rejects(store.save(row({ file, outcome }) as never), /check constraint/, file.fileName);
   await assert.rejects(pool.query("INSERT INTO exports(id,kind,requester_principal_id,filters,row_count,outcome,created_at,expires_at,content_type) VALUES($1,'k',$2,'{}',0,'created',now(),now()+interval '1 minute','text/plain')",
     [randomUUID(), principalId]), /exports_own_format_pair/);

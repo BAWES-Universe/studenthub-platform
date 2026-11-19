@@ -56,7 +56,9 @@ test("REPORTS_EXPORT_OWN_FORMAT a kind with its own format keeps every CSV guara
   assert.equal(await service.download("staff-2", made.id), null, "only the requester");
   allowed = false; assert.equal(await service.download("staff-1", made.id), null, "access rechecked at download"); allowed = true;
   now = new Date(now.getTime() + EXPORT_EXPIRY_MS); assert.equal(await service.download("staff-1", made.id), null, "15-minute expiry");
-  for (const bad of [{ fileName: "../x.xlsx" }, { fileName: "x\".xlsx" }, { contentType: "text/html; script" }]) {
+  for (const bad of [{ fileName: "../x.xlsx" }, { fileName: "x\".xlsx" }, { contentType: "text/html; script" },
+    // A trailing line break would end the download headers early; `$` without the m flag refuses it.
+    { fileName: "safe.xlsx\n" }, { fileName: "safe.xlsx\r\n" }, { contentType: "text/plain\n" }, { contentType: "text/plain\r\n" }]) {
     const broken = { ...bank, id: "broken", serialize: () => ({ bytes: Buffer.from("x"), contentType: "text/plain", fileName: "x.txt", ...bad }) };
     await assert.rejects(new ExportService(new Memory, [broken as never]).request("staff-1", "broken", {}), /invalid file/, JSON.stringify(bad));
   }
