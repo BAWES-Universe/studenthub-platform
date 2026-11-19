@@ -93,8 +93,10 @@ go to the person's feed through the comms lane's `recordWorkSessionDecision` and
 notice port given in place of them must have both, or startup stops.
 
 A person whose StudentHub access is paused (access lane A6, `PostgresAccessPausesStore.paused`)
-can't be placed: staff placing them, accepting a company's request for them, and the recruit
-stage are refused with `person_paused` (409). A company asking for them is told the person
+can't be placed: staff placing them, accepting a company's request for them, and
+`placeFromRecruit` are refused with `person_paused` (409). The running gateway doesn't give
+`wireRecruit` the work lane's placement port yet, so until it does the recruit stage answers
+`work_unavailable` (409) for everyone, paused or not. A company asking for them is told the person
 isn't found, because a paused person is hidden from employers. Pausing already ends their
 sign-ins and takes their grants, so they can't log hours; hours already logged stay visible to
 their employer and to pay.
