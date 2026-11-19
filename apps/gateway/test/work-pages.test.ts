@@ -110,7 +110,13 @@ test("WORK_PAGES writes need the same origin and a form; the person comes from t
   assert.equal((await post("/work/track/start", "latitude=29.3&longitude=47.9", { cookie: null }, calls)).status, 401);
   assert.equal((await post("/work/track/start", "latitude=29.3&longitude=47.9&personId=x", {}, calls)).status, 400);
   assert.equal((await post("/work/track/start", "{}", { contentType: "application/json" }, calls)).status, 400);
+  assert.equal((await post("/work/track/start", "latitude=29.3&longitude=47.9", { contentType: "application/x-www-form-urlencodedx" }, calls)).status, 400);
   assert.equal(calls.length, 0);
+  // A browser or proxy may add a charset or change case; the media type is what counts.
+  for (const contentType of ["application/x-www-form-urlencoded; charset=UTF-8", "Application/X-WWW-Form-URLEncoded"]) {
+    const ok = await post("/work/track/start", "latitude=29.3&longitude=47.9", { contentType }, []);
+    assert.equal(ok.status, 303, contentType);
+  }
   const started = await post("/work/track/start", "latitude=29.3&longitude=47.9", {}, calls);
   assert.deepEqual([started.status, started.headers.location], [303, "/work/track?done=started"]);
   assert.deepEqual(calls[0], ["start", "person", { latitude: 29.3, longitude: 47.9 }]);

@@ -70,6 +70,19 @@ test("WORK_HTTP the signed-in person is the actor; writes need same origin, JSON
   assert.equal(out.headers["cache-control"], "no-store");
 });
 
+test("WORK_HTTP the JSON check reads the media type, not the raw header", async () => {
+  for (const contentType of ["application/json; charset=utf-8", "Application/JSON", " application/json ;charset=UTF-8", "application/json;charset=\"utf-8\""]) {
+    const calls: unknown[][] = [];
+    const out = await post("/api/work/sessions/discard", { sessionId: ID }, { contentType }, calls);
+    assert.deepEqual([out.status, calls], [200, [["discard", "person", ID]]], contentType);
+  }
+  for (const contentType of ["application/jsonx", "application/json-patch+json", "text/json", "; application/json", "", "application/x-www-form-urlencoded; x=application/json"]) {
+    const calls: unknown[][] = [];
+    const out = await post("/api/work/sessions/discard", { sessionId: ID }, { contentType }, calls);
+    assert.deepEqual([out.status, out.json, calls], [400, { error: "invalid_input" }, []], contentType);
+  }
+});
+
 test("WORK_HTTP refusals map to 400, 403, 404 and 409 and keep extra detail", async () => {
   assert.deepEqual([(await post("/api/work/sessions/start", {})).status, (await post("/api/work/sessions/start", {})).json], [400, { error: "location_required" }]);
   const stopCalls: unknown[][] = [];

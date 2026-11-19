@@ -4,6 +4,7 @@
 // a same-origin JSON POST. Refusal codes from packages/work pass through.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { mediaType } from "./media-type.js";
 import {
   isIsoDate, isUuid, parseAppealCursor, parseCursor, parseLocation, parsePlacementInput, parseRange, formatCursor,
   type AppealService, type DecisionService, type HoursViews, type PlacementService, type SessionService, type SessionStatus,
@@ -209,7 +210,7 @@ export async function handleWork(req: IncomingMessage, res: ServerResponse, serv
     if (route.method === "POST") {
       if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); send({ status: 403, body: { error: "origin_rejected" } }); return true; }
       if (!person) { req.resume(); send({ status: 401, body: { error: "unauthorized" } }); return true; }
-      if (req.headers["content-type"] !== "application/json") { req.resume(); send(refusal("invalid_input")); return true; }
+      if (mediaType(req) !== "application/json") { req.resume(); send(refusal("invalid_input")); return true; }
       const parsed = await readJson(req);
       const object = parsed.ok ? record(parsed.value) : undefined;
       if (!object) { send(refusal("invalid_input")); return true; }

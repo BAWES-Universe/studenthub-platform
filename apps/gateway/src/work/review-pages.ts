@@ -13,6 +13,7 @@
 // (company, staff, or the store's manager) on each request.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { mediaType } from "./media-type.js";
 import {
   formatCursor, kuwaitDate, parseCursor, parseRange,
   type AssignmentRequest, type EmployerDecisionView, type HoursCursor, type HoursRange, type SessionStatus, type WorkSession,
@@ -55,7 +56,7 @@ const REQUEST_STATUS: Readonly<Record<string, string>> = { pending: "Waiting for
 
 /** Reads a same-origin form; only `repeated` keys may appear more than once. */
 async function readFields(req: IncomingMessage, allowed: readonly string[], repeated: readonly string[] = []): Promise<Map<string, string[]> | undefined> {
-  if (req.headers["content-type"] !== "application/x-www-form-urlencoded") { req.resume(); return undefined; }
+  if (mediaType(req) !== "application/x-www-form-urlencoded") { req.resume(); return undefined; }
   if (Number(req.headers["content-length"]) > FORM_LIMIT) { req.resume(); throw new FormTooLarge(); }
   const chunks: Buffer[] = [];
   let size = 0;

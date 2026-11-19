@@ -43,14 +43,14 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   } as unknown as WorkHttpServices;
 }
 
-type Opt = { method?: string; body?: string; origin?: string; cookie?: string | null; service?: WorkHttpServices | undefined; world?: World };
+type Opt = { method?: string; body?: string; origin?: string; cookie?: string | null; contentType?: string; service?: WorkHttpServices | undefined; world?: World };
 async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
   const req = Readable.from(o.body !== undefined ? [o.body] : []) as Readable & { method?: string; url?: string; headers: Record<string, string> };
   req.method = o.method ?? "GET";
   req.url = path;
   req.headers = {
     ...(o.cookie === null ? {} : { cookie: `__Host-studenthub_session=${o.cookie ?? SESSION}` }),
-    ...(o.body !== undefined ? { "content-type": "application/x-www-form-urlencoded", "content-length": String(Buffer.byteLength(o.body)) } : {}),
+    ...(o.body !== undefined ? { "content-type": o.contentType ?? "application/x-www-form-urlencoded", "content-length": String(Buffer.byteLength(o.body)) } : {}),
     ...(o.origin ? { origin: o.origin } : {}),
   };
   const res = new EventEmitter() as EventEmitter & { statusCode: number; headersSent: boolean; headers: Record<string, string>; chunks: string[]; writeHead(s: number, h: Record<string, string>): void; end(v?: unknown): void; destroy(): void };
@@ -120,7 +120,10 @@ test("WORK_REVIEW decisions: same origin, selected sessions, the decision fields
   assert.equal((await post("/organization/co/work/decide", body, { origin: "https://evil.invalid" }, calls)).status, 403);
   assert.equal((await post("/organization/co/work/decide", `${body}&orgId=other`, {}, calls)).status, 400);
   assert.equal((await post("/organization/co/work/decide", `${body}&reason=again`, {}, calls)).status, 400, "a field other than sessionId can't repeat");
+  assert.equal((await post("/organization/co/work/decide", body, { contentType: "text/plain" }, calls)).status, 400);
   assert.equal(calls.filter((c) => c[0] === "decideSessions").length, 0);
+  const charset = await post("/organization/co/work/decide", body, { contentType: " Application/x-www-form-urlencoded ; charset=utf-8" }, []);
+  assert.equal(charset.status, 303, "a charset parameter and case don't refuse the form");
   const done = await post("/organization/co/work/decide", body, {}, calls);
   assert.deepEqual([done.status, done.headers.location], [303, "/organization/co/work?from=2026-10-01&to=2026-10-31&status=pending&done=decided"]);
   assert.deepEqual(calls.find((c) => c[0] === "decideSessions"), ["decideSessions", "actor", [S1, S2], { decision: "reject", reason: "late", note: "n", rating: "3", notePublic: "on" }]);

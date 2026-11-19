@@ -7,6 +7,7 @@
 
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { mediaType } from "./media-type.js";
 import {
   APPEAL_PAGE_SIZE, formatCursor, parseAppealCursor, parseCursor, parseLocation, parseRange, kuwaitDate,
   type AppealDetail, type HoursCursor, type Assignment, type HoursPage, type PersonDecisionView, type SessionOutcome, type WorkAppeal, type WorkSession,
@@ -90,7 +91,7 @@ export function sessionCookie(header: string | undefined): string | undefined {
   return undefined;
 }
 export async function readForm(req: IncomingMessage, allowed: readonly string[], limit: number = FORM_LIMIT): Promise<Record<string, string> | undefined> {
-  if (req.headers["content-type"] !== "application/x-www-form-urlencoded") { req.resume(); return undefined; }
+  if (mediaType(req) !== "application/x-www-form-urlencoded") { req.resume(); return undefined; }
   if (Number(req.headers["content-length"]) > limit) { req.resume(); throw new FormTooLarge(); }
   const chunks: Buffer[] = [];
   let size = 0;
