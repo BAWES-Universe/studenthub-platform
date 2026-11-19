@@ -407,8 +407,9 @@ export async function runCli(deps: CliDeps): Promise<number> {
     if (reportReplacesLock(config.reportPath, config.lockPath)) throw new RefreshRefused("config.reportIsLock");
   } catch (error) {
     const code = error instanceof RefreshRefused ? error.code : "config.invalid";
-    // Written only where it cannot replace the lock (writeReport checks); else stderr only.
-    const writable = code !== "config.reportIsLock" && safeToWrite(reportPathFrom(deps.env), lockPathFrom(deps.env));
+    // Written only where it cannot replace the lock (writeReport checks) or be the file a
+    // contender writes; else stderr only.
+    const writable = code !== "config.reportIsLock" && code !== "config.reportIsRefused" && safeToWrite(reportPathFrom(deps.env), lockPathFrom(deps.env));
     const written = writable && tryWriteReport(reportPathFrom(deps.env), lockPathFrom(deps.env), failureReport(code, deps.now()));
     deps.error(`legacy-refresh: ${code}${written ? "" : " (report not written)"}`);
     return 2;
@@ -417,8 +418,9 @@ export async function runCli(deps: CliDeps): Promise<number> {
   if (!lock.held) {
     // The owner's report (`running`, or its result) stays as it is: only the lock owner
     // writes last-run.json. This attempt is recorded beside it.
-    tryWriteReport(refusedPathFrom(config.reportPath), config.lockPath, failureReport(lock.code, deps.now()));
-    deps.error(`legacy-refresh: ${lock.code === "locked" ? "locked (another run in progress)" : lock.code}`);
+    const written = tryWriteReport(refusedPathFrom(config.reportPath), config.lockPath, failureReport(lock.code, deps.now()));
+    const reason = lock.code === "locked" ? "locked (another run in progress)" : lock.code;
+    deps.error(`legacy-refresh: ${reason}${written ? "" : " (report not written)"}`);
     return 3;
   }
   try {

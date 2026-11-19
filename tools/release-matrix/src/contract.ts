@@ -69,14 +69,6 @@ function cells(line: string): string[] {
   return trimmed.slice(1, trimmed.endsWith("|") ? -1 : undefined).split("|").map((cell) => cell.trim());
 }
 
-function sectionOf(lines: readonly string[], index: number): string {
-  for (let i = index; i >= 0; i -= 1) {
-    const match = /^##\s+(\d+)\./.exec(lines[i]!);
-    if (match) return match[1]!;
-  }
-  return "";
-}
-
 export function parseContract(markdown: string): ParsedContract {
   const lines = markdown.split("\n");
   const targets = new Map<string, TargetScreen>();
@@ -91,20 +83,29 @@ export function parseContract(markdown: string): ParsedContract {
     targets.set(id, target);
   };
 
-  // Fenced blocks are examples, not ledger: a row moved into one no longer maps anything.
-  let fence: string | undefined;
+  // Fenced blocks are examples, not ledger: a row, heading or total moved into one no longer
+  // counts. As in CommonMark, a fence closes only on the same character, at least as many
+  // of it as opened the block, and nothing after them but whitespace.
+  let fence: { char: string; length: number } | undefined;
+  let section = "";
+  const unfenced: string[] = [];
   lines.forEach((line, index) => {
-    const marker = /^\s*(`{3,}|~{3,})/.exec(line);
-    if (marker) {
-      const kind = marker[1]![0]!;
-      if (fence === undefined) fence = kind;
-      else if (fence === kind) fence = undefined;
+    if (fence === undefined) {
+      const open = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (open) {
+        fence = { char: open[1]![0]!, length: open[1]!.length };
+        return;
+      }
+    } else {
+      const close = /^\s*(`{3,}|~{3,})\s*$/.exec(line);
+      if (close && close[1]![0] === fence.char && close[1]!.length >= fence.length) fence = undefined;
       return;
     }
-    if (fence !== undefined) return;
+    unfenced.push(line);
+    const heading = /^##\s+(\d+)\./.exec(line);
+    if (heading) section = heading[1]!;
     const row = cells(line);
     if (row.length < 3) return;
-    const section = sectionOf(lines, index);
 
     if (section === "3") {
       const id = /^`([UCOMAG]-\d{2})`$/.exec(row[0]!);
@@ -134,7 +135,7 @@ export function parseContract(markdown: string): ParsedContract {
 
   const declaredTotals: Record<string, number> = {};
   const duplicateTotals: string[] = [];
-  const partition = /complete, gap-free partition:\s*([^.]+)\./.exec(markdown);
+  const partition = /complete, gap-free partition:\s*([^.]+)\./.exec(unfenced.join("\n"));
   if (partition) {
     for (const match of partition[1]!.matchAll(/([A-Z]+)\s+1[–-](\d+)/g)) {
       // A second total for the same appendix is reported, never allowed to replace the first.

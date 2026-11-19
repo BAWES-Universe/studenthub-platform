@@ -127,24 +127,45 @@ export function loadConfig(env: NodeJS.ProcessEnv): RefreshConfig {
   // CLI also refuses aliases (symlinked directories, symlinks, hard links) on disk before
   // every report write, see reportReplacesLock in refresh-cli.ts.
   if (path.resolve(reportPath) === path.resolve(lockPath)) throw new RefreshRefused("config.reportIsLock");
+  // A run refused by the lock writes last-refused.json beside the report; if the report
+  // were that file, a contender would overwrite the lock owner's report.
+  if (path.resolve(refusedPathFrom(reportPath)) === path.resolve(reportPath)) throw new RefreshRefused("config.reportIsRefused");
   const timeoutMs = env.LEGACY_REFRESH_TIMEOUT_MS ? Number(env.LEGACY_REFRESH_TIMEOUT_MS) : DEFAULT_TIMEOUT_MS;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMEOUT_MS) throw new RefreshRefused("config.timeout.invalid");
   return { source, target, reportPath, lockPath, timeoutMs };
 }
 
-/** Splits a privilege list on commas outside parentheses: `SELECT (a, b), SHOW VIEW`. */
+/**
+ * Splits a privilege list on commas outside parentheses: `SELECT (a, b), SHOW VIEW`.
+ * Parentheses and commas inside backtick-quoted column names (a doubled backtick is a
+ * literal one) do not count. A list whose quotes or parentheses do not balance comes back
+ * as one empty entry, which every caller treats as an unreadable grant.
+ */
 function splitPrivileges(list: string): string[] {
   const parts: string[] = [];
   let depth = 0;
+  let quoted = false;
   let current = "";
-  for (const ch of list) {
-    if (ch === "(") depth += 1;
-    else if (ch === ")") depth = Math.max(0, depth - 1);
-    if (ch === "," && depth === 0) {
+  for (let i = 0; i < list.length; i += 1) {
+    const ch = list[i]!;
+    if (ch === "`") {
+      if (quoted && list[i + 1] === "`") {
+        current += "``";
+        i += 1;
+        continue;
+      }
+      quoted = !quoted;
+    } else if (!quoted && ch === "(") depth += 1;
+    else if (!quoted && ch === ")") {
+      depth -= 1;
+      if (depth < 0) return [""];
+    }
+    if (ch === "," && depth === 0 && !quoted) {
       parts.push(current);
       current = "";
     } else current += ch;
   }
+  if (quoted || depth !== 0) return [""];
   parts.push(current);
   return parts.map((p) => p.trim());
 }

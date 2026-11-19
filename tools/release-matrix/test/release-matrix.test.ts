@@ -291,6 +291,26 @@ test("a ledger row moved into a fenced example no longer counts", () => {
   assert.match(issues[0]!.detail, /MOB-B021/);
 });
 
+test("a fence closes only on its own marker, at least as long, with nothing after it", () => {
+  const row = "| MOB-B021 | activity | `U-04` |\n";
+  const fenceAround = (inner: string) => markdown.replace(row, "").replace(/(## 6\.[^\n]*\n)/, `$1\n${inner}`);
+  // A shorter run, the other marker, or a run with text after it all stay inside the block.
+  for (const inner of [`\`\`\`\`\n\`\`\`\n${row}\`\`\`\`\n`, `~~~\n\`\`\`\n${row}~~~\n`, `\`\`\`\n\`\`\` js\n${row}\`\`\`\n`]) {
+    const issues = checkContract(parseContract(fenceAround(inner)));
+    assert.deepEqual(rules(issues), ["contract.partition.gap"], inner);
+    assert.match(issues[0]!.detail, /MOB-B021/);
+  }
+});
+
+test("a heading or a partition total inside a fenced example changes nothing", () => {
+  const heading = markdown.replace(/(## 6\.[^\n]*\n)/, "$1\n```\n## 3. Example\n```\n");
+  assert.notEqual(heading, markdown);
+  assert.deepEqual(checkContract(parseContract(heading)), []);
+  const total = "```\nThese ranges are a complete, gap-free partition: MOB 1–70.\n```\n\n" + markdown;
+  assert.deepEqual(parseContract(total).declaredTotals, parseContract(markdown).declaredTotals);
+  assert.deepEqual(checkContract(parseContract(total)), []);
+});
+
 test("an appendix total declared twice is reported, not silently replaced", () => {
   const doubled = markdown.replace(/(complete, gap-free partition:\s*)/, "$1MOB 1-66, ");
   assert.notEqual(doubled, markdown);

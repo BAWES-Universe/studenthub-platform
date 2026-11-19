@@ -30,7 +30,7 @@ Gates: screens `built` (on main with tests) and `verified` (journey walked on st
 
 Each screen and exclusion row records the route it was checked against, and each mobile row records its target and disposition (`subject`). Import domains and release steps record their requirement revision (`requirement r1`, from `REQUIREMENT_REVISION` in `src/matrix.ts`); bump it when what the row asks for changes, not when its title is reworded. If the contract, inventory or a revision changes a subject, `check` fails until `seed` runs, and `seed` reopens that row's gates: evidence for the old route, disposition or requirement does not prove the new one.
 
-The checks also refuse a gate value that is not an object, an inventory method outside GET, POST, PATCH, PUT and DELETE, a source citation that is not `file:line`, a ledger row inside a fenced example block (it no longer counts), and an appendix total declared twice.
+The checks also refuse a gate value that is not an object, an inventory method outside GET, POST, PATCH, PUT and DELETE, a source citation that is not `file:line`, a ledger row inside a fenced example block (it no longer counts; headings and partition totals inside one are ignored too, and a fence closes only on its own marker, at least as long), and an appendix total declared twice.
 
 ## Why the ledger check lives here
 

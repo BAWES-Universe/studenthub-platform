@@ -107,6 +107,13 @@ test("a column list is one privilege, commas inside it included", () => {
   assert.deepEqual(writePrivileges(on("SELECT (`id`, `name`), SHOW VIEW")), []);
   assert.deepEqual(writePrivileges(on("SELECT (`id`, `name`), INSERT (`name`)")), ["INSERT"]);
   assert.deepEqual(writePrivileges(on("UPDATE (`a`,`b`,`c`)")), ["UPDATE"]);
+  // Parentheses and commas inside a quoted column name are part of the name.
+  assert.deepEqual(writePrivileges(on("SELECT (`a(`), UPDATE (`b`)")), ["UPDATE"]);
+  assert.deepEqual(writePrivileges(on("SELECT (`a,)`, `b``)`), INSERT (`c`)")), ["INSERT"]);
+  assert.deepEqual(writePrivileges(on("SELECT (`a)`), SHOW VIEW")), []);
+  // A list that does not balance cannot be read, so the run refuses.
+  assert.deepEqual(writePrivileges(on("SELECT (`a`, SHOW VIEW")), ["UNREADABLE GRANT"]);
+  assert.deepEqual(writePrivileges(on("SELECT `a, SHOW VIEW")), ["UNREADABLE GRANT"]);
 });
 
 test("SELECT must cover the whole source database, or the run refuses before copying", async () => {
@@ -228,6 +235,15 @@ test("every way a run ends leaves a fresh report, so a stale ok is never read", 
     assert.deepEqual([report().ok, report().code], [true, "ok"]);
     const refused = JSON.parse(readFileSync(path.join(dir, "last-refused.json"), "utf8")) as { ok: boolean; code: string };
     assert.deepEqual([refused.ok, refused.code], [false, "locked"]);
+    assert.equal(lines.at(-1), "legacy-refresh: locked (another run in progress)");
+    // When the refusal record cannot be written, the output line says so.
+    rmSync(path.join(dir, "last-refused.json"));
+    mkdirSync(path.join(dir, "last-refused.json"));
+    writeFileSync(path.join(dir, "last-refused.json", "keep"), "");
+    assert.equal(await runCli(deps()), 3);
+    assert.equal(lines.at(-1), "legacy-refresh: locked (another run in progress) (report not written)");
+    rmSync(path.join(dir, "last-refused.json"), { recursive: true });
+    assert.equal(await runCli(deps()), 3);
     if (holder.held) closeSync(holder.fd);
 
     let seenDuringCopy = "";
@@ -376,6 +392,8 @@ test("a missing flock binary fails closed once, with no double close and no cras
 test("a report path that is the lock path is refused before anything is written", () => {
   const same = { ...env, LEGACY_REFRESH_REPORT: "/var/lib/x/run.lock", LEGACY_REFRESH_LOCK: "/var/lib/x/../x/run.lock" };
   assert.throws(() => loadConfig(same), /config.reportIsLock/);
+  // The report cannot be the file a run refused by the lock writes.
+  assert.throws(() => loadConfig({ ...env, LEGACY_REFRESH_REPORT: "/var/lib/x/last-refused.json" }), /config.reportIsRefused/);
   assert.throws(() => loadConfig({ ...env, LEGACY_REFRESH_TIMEOUT_MS: "soon" }), /config.timeout.invalid/);
   // Above Node's largest timer delay a timeout would fire after 1 ms.
   assert.throws(() => loadConfig({ ...env, LEGACY_REFRESH_TIMEOUT_MS: String(2 ** 31) }), /config.timeout.invalid/);
