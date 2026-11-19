@@ -94,7 +94,9 @@ notice port given in place of them must have both, or startup stops.
 
 A person whose StudentHub access is paused (access lane A6, `PostgresAccessPausesStore.paused`)
 can't be placed: staff placing them, accepting a company's request for them, and
-`placeFromRecruit` are refused with `person_paused` (409). The running gateway doesn't give
+`placeFromRecruit` are refused with `person_paused` (409). The placement reads the pause inside
+its own transaction after taking the person's access lock, the same advisory lock the pause and
+resume take, so a pause can't commit between the check and the placement. The running gateway doesn't give
 `wireRecruit` the work lane's placement port yet, so until it does the recruit stage answers
 `work_unavailable` (409) for everyone, paused or not. A company asking for them is told the person
 isn't found, because a paused person is hidden from employers. Pausing already ends their

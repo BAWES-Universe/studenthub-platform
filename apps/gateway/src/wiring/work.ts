@@ -56,7 +56,8 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
   const grants: GrantsPort = access.authzStore;
   // Store managers come from the access lane (A4) on the work pool unless a port is given.
   const managed: ManagedStoresPort = ports.managedStores ?? new PostgresAccessStoreManagersStore({ pool });
-  // Paused people (A6) can't be placed; a company asking for one is told the person isn't found.
+  // Paused people (A6): a company asking for one is told the person isn't found. Placement itself
+  // reads the pause inside its own transaction, under the lock the pause takes.
   const pauses = ports.paused ? undefined : new PostgresAccessPausesStore({ pool });
   const paused = ports.paused ?? ((personIds: readonly string[]) => pauses!.paused(personIds));
   const placementStore = new PostgresWorkPlacementStore(pool);

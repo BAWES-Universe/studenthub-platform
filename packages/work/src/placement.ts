@@ -97,6 +97,14 @@ export interface PlacementTransaction {
   openSessionCount(assignmentId: string): Promise<number>;
   /** Number of sessions recorded at this assignment (not deleted, not imported) dated after `date`. */
   sessionsAfter(assignmentId: string, date: IsoDate): Promise<number>;
+  /**
+   * Takes the person's access lock, held until this transaction ends, and says
+   * whether their access is paused (A6), read inside this transaction. The access
+   * lane's pause takes the same lock, so a pause can't commit between this check
+   * and the placement: it waits for the placement, or the placement waits for it
+   * and sees it.
+   */
+  lockPersonPaused(personId: string): Promise<boolean>;
   event(event: WorkEvent): Promise<void>;
 }
 
@@ -217,7 +225,11 @@ export interface PlacementServiceOptions {
   readonly now?: () => Date;
   /** Stores the actor manages (access lane A4); none when the lane is not wired. */
   readonly managedStores?: (actorId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
-  /** Which of these people have their StudentHub access paused (access lane A6); nobody when the lane is not wired. */
+  /**
+   * Which of these people have their StudentHub access paused (access lane A6); nobody when the lane is not wired.
+   * Hides a paused person from a company's request. Placement itself doesn't use it: it reads the pause inside its
+   * own transaction under the person's access lock (`PlacementTransaction.lockPersonPaused`).
+   */
   readonly paused?: (personIds: readonly string[]) => Promise<ReadonlySet<string>>;
 }
 
@@ -444,7 +456,8 @@ export class PlacementService {
     if (store.status !== "active") return { kind: "refused", code: "store_removed" };
     if (!(await this.#store.personExists(input.personId))) return { kind: "refused", code: "person_not_found" };
     // Staff, a request's acceptance and the recruit lane can't place someone whose access is paused (A6); resume them first.
-    if (await this.#isPaused(input.personId)) return { kind: "refused", code: "person_paused" };
+    // Checked under the person's access lock inside this transaction, so a pause can't slip in before the placement commits.
+    if (await tx.lockPersonPaused(input.personId)) return { kind: "refused", code: "person_paused" };
     const today = kuwaitDate(this.#now());
     const startDate = input.startDate ?? today;
     const endDate = input.endDate ?? null;

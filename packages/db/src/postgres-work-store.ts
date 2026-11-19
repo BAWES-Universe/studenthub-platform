@@ -263,8 +263,12 @@ export interface WorkPlacementTransaction {
   decideRequest(id: string, status: "accepted" | "rejected" | "cancelled", actorId: string, reason: string | null): Promise<void>;
   openSessionCount(assignmentId: string): Promise<number>;
   sessionsAfter(assignmentId: string, date: IsoDate): Promise<number>;
+  lockPersonPaused(personId: string): Promise<boolean>;
   event(e: WorkEventRecord): Promise<void>;
 }
+
+/** The per-principal advisory lock key PostgresAuthzStore and the access lane's pause and resume take. */
+const PRINCIPAL_LOCK_KEY = 5959;
 
 function placementTransaction(client: PoolClient): WorkPlacementTransaction {
   return {
@@ -307,6 +311,13 @@ function placementTransaction(client: PoolClient): WorkPlacementTransaction {
       const { rows } = await client.query<{ n: number }>(
         "SELECT count(*)::int AS n FROM work_sessions WHERE assignment_id = $1 AND deleted_at IS NULL AND source <> 'import' AND work_date > $2::date", [assignmentId, date]);
       return rows[0]?.n ?? 0;
+    },
+    async lockPersonPaused(personId) {
+      // The pause holds this lock until it commits; read after taking it, on this
+      // transaction's own connection, so a pause that won the lock is seen.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [personId, PRINCIPAL_LOCK_KEY]);
+      const { rowCount } = await client.query("SELECT 1 FROM account_pauses WHERE principal_id = $1 AND resumed_at IS NULL", [personId]);
+      return Boolean(rowCount);
     },
     event: (e) => insertEvent(client, e),
   };

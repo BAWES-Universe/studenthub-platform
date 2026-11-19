@@ -142,6 +142,52 @@ test("W1_PG the access lane's pause store keeps a paused person from being place
   assert.equal((await placement.decideRequest(w.staff, before.kind === "requested" ? before.request.id : "", "accept")).kind, "accepted");
 });
 
+/** Whether some session waits on the person's access lock (the per-principal advisory lock), polled for up to five seconds. */
+async function waitsOnAccessLock(personId: string): Promise<boolean> {
+  for (let i = 0; i < 100; i += 1) {
+    const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_locks l, (SELECT hashtextextended($1, 5959) AS k) h
+      WHERE l.locktype = 'advisory' AND NOT l.granted AND l.objsubid = 1 AND l.classid::bigint = ((h.k >> 32) & 4294967295) AND l.objid::bigint = (h.k & 4294967295)`, [personId]);
+    if (rows[0]!.n > 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+test("W1_PG a pause and a placement don't interleave: a pause that commits while the placement waits is seen, and a pause waits for a placement", async () => {
+  const pauses = new PostgresAccessPausesStore({ pool });
+  const placement = new PlacementService({ store: placements, grants: authz, newId: () => randomUUID(), now: () => new Date("2026-11-18T06:00:00Z"),
+    paused: (ids) => pauses.paused(ids) });
+  // A pause in progress holds the person's access lock and has written its row, not yet committed.
+  const w = await world();
+  await contract(w.person, w.company, w.store);
+  const pausing = await pool.connect();
+  try {
+    await pausing.query("BEGIN");
+    await pausing.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [w.person]);
+    await pausing.query("INSERT INTO account_pauses(id, principal_id, paused_by, reason, suspended_grants, suspended_stores) VALUES($1, $2, $3, 'left the program', '[]', '[]')", [randomUUID(), w.person, w.staff]);
+    const placing = placement.place(w.staff, { personId: w.person, storeId: w.store });
+    assert.equal(await waitsOnAccessLock(w.person), true, "the placement waits for the pause");
+    await pausing.query("COMMIT");
+    assert.deepEqual(await placing, { kind: "refused", code: "person_paused" });
+  } finally {
+    pausing.release();
+  }
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM work_assignments WHERE person_principal_id = $1", [w.person])).rows[0].n, 0);
+  // The other way round: the access lane's own pause waits for a placement holding the lock, then pauses.
+  const v = await world();
+  const placing = await pool.connect();
+  try {
+    await placing.query("BEGIN");
+    await placing.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [v.person]);
+    const pause = pauses.apply({ callerId: v.staff, request: { targetPrincipalId: v.person, action: "pause", reason: "left the program" }, decide: () => ({ kind: "apply" }) });
+    assert.equal(await waitsOnAccessLock(v.person), true, "the pause takes the same lock");
+    await placing.query("COMMIT");
+    assert.equal((await pause).kind, "paused");
+  } finally {
+    placing.release();
+  }
+});
+
 test("W1_PG a store's requests are listed even behind 500 newer requests at another store", async () => {
   const w = await world();
   const busy = randomUUID();

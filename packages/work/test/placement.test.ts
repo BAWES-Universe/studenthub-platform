@@ -73,6 +73,7 @@ class MemoryPlacements implements PlacementStore {
       decideRequest: async (id, status, actorId, reason) => { const i = this.requests.findIndex((r) => r.id === id); this.requests[i] = { ...this.requests[i]!, status, decidedBy: actorId, decidedAt: NOW.toISOString(), decisionReason: reason }; },
       openSessionCount: async () => this.openSessions,
       sessionsAfter: async (_id, date) => this.sessionDates.filter((d) => d > date).length,
+      lockPersonPaused: async (id) => PAUSED.has(id),
       event: async (e) => { this.events.push(e); },
     };
     try { return await work(tx); } catch (error) { this.assignments = snapshot.a; this.requests = snapshot.r; this.events = snapshot.e; throw error; }
