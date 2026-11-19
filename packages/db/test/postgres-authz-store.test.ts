@@ -1,3 +1,4 @@
+import { assertDisposableFixturePool, resetPayAwareFixture } from "./helpers/pay-aware-fixture-reset.js";
 /**
  * SHU-55 acceptance tests: PostgresAuthzStore against the REAL lab Postgres
  * (127.0.0.1:55432/studenthub_authz, DATABASE_URL overridable).
@@ -116,6 +117,7 @@ before(async () => {
 });
 
 beforeEach(async () => {
+  assertDisposableFixturePool(adminPool);
   activeStores = [];
   activeLoginStores = [];
   // Test isolation is deliberate owner administration. Production app paths
@@ -127,9 +129,7 @@ beforeEach(async () => {
     "ALTER TABLE organization_notes DISABLE TRIGGER organization_notes_no_truncate",
   );
   try {
-    await adminPool.query(
-      "TRUNCATE authorization_mutation_audit, login_states, login_sessions, external_identities, organizations, principals, principal_pbuuids, grants RESTART IDENTITY CASCADE",
-    );
+    await resetPayAwareFixture(adminPool, "TRUNCATE authorization_mutation_audit, login_states, login_sessions, external_identities, organizations, principals, principal_pbuuids, grants RESTART IDENTITY CASCADE");
   } finally {
     try {
       await adminPool.query(

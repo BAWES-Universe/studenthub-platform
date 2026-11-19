@@ -1,3 +1,4 @@
+import { assertDisposableFixturePool, resetPayAwareFixture } from "./helpers/pay-aware-fixture-reset.js";
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
 import { randomUUID } from "node:crypto";
@@ -16,9 +17,10 @@ before(async () => {
   await runMigrations(pool);
 });
 beforeEach(async () => {
+  assertDisposableFixturePool(pool);
   await pool.query("ALTER TABLE organization_notes DISABLE TRIGGER organization_notes_no_truncate");
   try {
-    await pool.query("TRUNCATE catalogue_submissions, catalogue_items, organizations CASCADE");
+    await resetPayAwareFixture(pool, "TRUNCATE catalogue_submissions, catalogue_items, organizations CASCADE");
   } finally {
     await pool.query("ALTER TABLE organization_notes ENABLE TRIGGER organization_notes_no_truncate");
   }

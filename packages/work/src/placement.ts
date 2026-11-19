@@ -97,6 +97,14 @@ export interface PlacementTransaction {
   openSessionCount(assignmentId: string): Promise<number>;
   /** Number of sessions recorded at this assignment (not deleted, not imported) dated after `date`. */
   sessionsAfter(assignmentId: string, date: IsoDate): Promise<number>;
+  /**
+   * Takes the person's access lock, held until this transaction ends, and says
+   * whether their access is paused (A6), read inside this transaction. The access
+   * lane's pause takes the same lock, so a pause can't commit between this check
+   * and the placement: it waits for the placement, or the placement waits for it
+   * and sees it.
+   */
+  lockPersonPaused(personId: string): Promise<boolean>;
   event(event: WorkEvent): Promise<void>;
 }
 
@@ -140,7 +148,7 @@ export interface PlacementInput {
 }
 
 export type PlacementRefusal =
-  | "invalid_input" | "forbidden" | "person_not_found" | "store_not_found" | "store_removed"
+  | "invalid_input" | "forbidden" | "person_not_found" | "person_paused" | "store_not_found" | "store_removed"
   | "overlaps_assignment" | "ambiguous_contract" | "contract_not_applicable"
   | "request_not_found" | "request_not_pending" | "duplicate_request"
   | "assignment_not_found" | "end_before_start" | "open_session" | "sessions_after_end" | "recruit_card_reused";
@@ -217,6 +225,12 @@ export interface PlacementServiceOptions {
   readonly now?: () => Date;
   /** Stores the actor manages (access lane A4); none when the lane is not wired. */
   readonly managedStores?: (actorId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
+  /**
+   * Which of these people have their StudentHub access paused (access lane A6); nobody when the lane is not wired.
+   * Hides a paused person from a company's request. Placement itself doesn't use it: it reads the pause inside its
+   * own transaction under the person's access lock (`PlacementTransaction.lockPersonPaused`).
+   */
+  readonly paused?: (personIds: readonly string[]) => Promise<ReadonlySet<string>>;
 }
 
 export class PlacementService {
@@ -225,6 +239,7 @@ export class PlacementService {
   readonly #newId: () => string;
   readonly #now: () => Date;
   readonly #managed: (actorId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
+  readonly #paused: (personIds: readonly string[]) => Promise<ReadonlySet<string>>;
 
   constructor(options: PlacementServiceOptions) {
     this.#store = options.store;
@@ -232,6 +247,11 @@ export class PlacementService {
     this.#newId = options.newId;
     this.#now = options.now ?? (() => new Date());
     this.#managed = options.managedStores ?? (async () => []);
+    this.#paused = options.paused ?? (async () => new Set());
+  }
+
+  async #isPaused(personId: string): Promise<boolean> {
+    return (await this.#paused([personId])).has(personId);
   }
 
   async #manages(actorId: string, store: { readonly id: string; readonly orgId: string }): Promise<boolean> {
@@ -303,7 +323,8 @@ export class PlacementService {
     if (OPERATOR_ORG_IDS.includes(store.orgId) || !(isCompanyFor(grants, store.orgId, store.ancestors) || isStaffFor(grants, store.orgId, store.ancestors)
       || await this.#manages(actorId, store))) return { kind: "refused", code: "forbidden" };
     if (store.status !== "active") return { kind: "refused", code: "store_removed" };
-    if (!(await this.#store.personExists(input.personId))) return { kind: "refused", code: "person_not_found" };
+    // A paused person is hidden from employers (A6), so to a company they are not found.
+    if (!(await this.#store.personExists(input.personId)) || await this.#isPaused(input.personId)) return { kind: "refused", code: "person_not_found" };
     const request: AssignmentRequest = Object.freeze({
       id: this.#newId(), personId: input.personId, orgId: store.orgId, storeId: store.id, status: "pending", note,
       requestedBy: actorId, requestedAt: this.#now().toISOString(), decidedBy: null, decidedAt: null, decisionReason: null,
@@ -434,6 +455,9 @@ export class PlacementService {
     const { source } = origin;
     if (store.status !== "active") return { kind: "refused", code: "store_removed" };
     if (!(await this.#store.personExists(input.personId))) return { kind: "refused", code: "person_not_found" };
+    // Staff, a request's acceptance and the recruit lane can't place someone whose access is paused (A6); resume them first.
+    // Checked under the person's access lock inside this transaction, so a pause can't slip in before the placement commits.
+    if (await tx.lockPersonPaused(input.personId)) return { kind: "refused", code: "person_paused" };
     const today = kuwaitDate(this.#now());
     const startDate = input.startDate ?? today;
     const endDate = input.endDate ?? null;

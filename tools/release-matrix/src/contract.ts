@@ -38,6 +38,12 @@ export interface ParsedContract {
   readonly declaredTotals: Readonly<Record<string, number>>;
   /** Target or exclusion ids defined more than once, with both source lines. */
   readonly duplicateTargets?: readonly { readonly id: string; readonly first: number; readonly again: number }[];
+  /** How many "complete, gap-free partition:" declarations the contract makes; exactly one is valid. */
+  readonly partitionDeclarations?: number;
+  /** Appendices whose partition total is declared more than once. */
+  readonly duplicateTotals?: readonly string[];
+  /** Lines in markdown the parser does not model, so it cannot say what a reader sees there. */
+  readonly unsupported?: readonly { readonly line: number; readonly reason: string }[];
 }
 
 const ID_IN_TICKS = /`((?:EX|[UCOMAG])-\d{2})(?:\.\.(\d{2}))?`/g;
@@ -67,16 +73,48 @@ function cells(line: string): string[] {
   return trimmed.slice(1, trimmed.endsWith("|") ? -1 : undefined).split("|").map((cell) => cell.trim());
 }
 
-function sectionOf(lines: readonly string[], index: number): string {
-  for (let i = index; i >= 0; i -= 1) {
-    const match = /^##\s+(\d+)\./.exec(lines[i]!);
-    if (match) return match[1]!;
-  }
-  return "";
+/** Why a non-blank line falls outside the subset parseContract models, or undefined. */
+function unsupportedReason(line: string): string | undefined {
+  if (/^[ \t]/.test(line)) return "indented line";
+  if (/^(?:`{3,}|~{3,})/.test(line)) return "code fence";
+  if (line.startsWith("<")) return "HTML block";
+  if (line.startsWith(">")) return "block quote";
+  if (/^(?:=+|-+)[ \t]*$/.test(line) || /^([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)) return "setext underline or thematic break";
+  // A link reference definition renders as nothing, so text in its title would be unseen.
+  if (/^\[[^\]]*\]:/.test(line)) return "link reference definition";
+  // Code spans are taken out first: `reference.<catalogue>` is text, not a tag.
+  const outsideCode = line.replace(/(`+)(?:(?!\1)[\s\S])*?\1/g, "");
+  if (/<(?:[A-Za-z/!?])/.test(outsideCode)) return "inline HTML";
+  // Entities and backslash escapes render as other characters than the parser reads.
+  if (/&#?[A-Za-z0-9]+;/.test(outsideCode)) return "HTML entity";
+  // GFM splits table cells before it reads escapes, so `\|` in a row (even in code) is its own case.
+  if (line.startsWith("|") && line.includes("\\|")) return "escaped pipe in a table row";
+  if (outsideCode.includes("\\")) return "backslash escape";
+  // A link's destination and title are not shown in a table cell, so ids there would be unseen.
+  if (line.startsWith("|") && /[[\]]/.test(outsideCode)) return "link or image in a table row";
+  return undefined;
 }
+
+/**
+ * Refusals that start a new block. GFM ends a table at one of these, so the table context
+ * is dropped with them; any other refused line inside a table is still one of its rows.
+ */
+const ENDS_TABLE = new Set(["code fence", "HTML block", "block quote", "setext underline or thematic break"]);
 
 export function parseContract(markdown: string): ParsedContract {
   const lines = markdown.split("\n");
+  const lineAt = (index: number): string => (lines[index] ?? "").replace(/\r$/, "");
+  /** The width of the table whose header row is at `index`, or 0 when no table opens there. */
+  const tableOpenedAt = (index: number): number => {
+    const header = cells(lineAt(index));
+    const previous = index === 0 ? "" : lineAt(index - 1);
+    const delimiter = cells(lineAt(index + 1));
+    const opens =
+      (/^[ \t]*$/.test(previous) || /^#{1,6}(?:[ \t]|$)/.test(previous)) &&
+      delimiter.length === header.length &&
+      delimiter.every((cell) => /^:?-+:?$/.test(cell));
+    return opens ? header.length : 0;
+  };
   const targets = new Map<string, TargetScreen>();
   const ledger: LedgerRow[] = [];
   const definedAt = new Map<string, number>();
@@ -89,26 +127,103 @@ export function parseContract(markdown: string): ParsedContract {
     targets.set(id, target);
   };
 
-  lines.forEach((line, index) => {
+  // The parser reads a strict subset of GitHub markdown and refuses everything else, so
+  // what it counts is exactly what a reader sees. The subset is the one the contract uses:
+  //   - ATX headings (`#` to `######`) starting in column 1;
+  //   - GFM tables starting in column 1, after a blank line or a heading: a header row, a
+  //     delimiter row with the same number of cells, and body rows with that number of
+  //     cells, ended by a blank line or a heading;
+  //   - paragraph and list text starting in column 1;
+  //   - blank lines.
+  // Refused, with the line number, because each can change what a reader sees without the
+  // parser modelling it: any leading indentation (code blocks, list continuations, tabs),
+  // fence-like lines (``` or ~~~, valid fences or not), HTML blocks and inline HTML outside
+  // code spans (comments, tags, autolinks), HTML entities and backslash escapes outside
+  // code spans, block quotes, setext underlines and thematic breaks, link reference
+  // definitions, links or images in a table row, a pipe row outside a table, and text
+  // inside a table that GFM would turn into a row. In paragraph text a link's destination
+  // and title are dropped before the partition totals are read, since neither is shown.
+  // A refusal never loses table context: a refused header row still opens its table, and a
+  // refused body row is still a row, so the rows around it are read as GFM shows them. Only
+  // a refused line that starts a new block (fence, HTML, block quote, thematic break) ends
+  // the table, as it does in GFM.
+  const unsupported: { line: number; reason: string }[] = [];
+  const refuse = (index: number, reason: string) => void unsupported.push({ line: index + 1, reason });
+  const accepted: string[] = [];
+  let section = "";
+  let tableWidth = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!.replace(/\r$/, "");
+    if (/^[ \t]*$/.test(line)) {
+      tableWidth = 0;
+      accepted.push(line);
+      continue;
+    }
+    const reason = unsupportedReason(line);
+    if (reason) {
+      refuse(index, reason);
+      if (tableWidth > 0) {
+        // A refused body row is still a row: the rows after it stay in the table.
+        if (ENDS_TABLE.has(reason)) tableWidth = 0;
+      } else {
+        // A refused header row still opens its table, so its body rows are read, not refused.
+        const width = tableOpenedAt(index);
+        if (width > 0) {
+          tableWidth = width;
+          index += 1;
+        }
+      }
+      continue;
+    }
+    if (/^#{1,6}(?:[ \t]|$)/.test(line)) {
+      tableWidth = 0;
+      accepted.push(line);
+      if (/^##(?:[ \t]|$)/.test(line)) section = /^##[ \t]+(\d+)\./.exec(line)?.[1] ?? "";
+      else if (/^#(?:[ \t]|$)/.test(line)) section = "";
+      continue;
+    }
+    if (!line.startsWith("|")) {
+      if (tableWidth > 0) {
+        refuse(index, "text inside a table");
+        continue;
+      }
+      // A link's destination and title are not shown; only its text counts.
+      accepted.push(line.replace(/\]\([^)]*\)/g, "]"));
+      continue;
+    }
     const row = cells(line);
-    if (row.length < 3) return;
-    const section = sectionOf(lines, index);
+    if (tableWidth === 0) {
+      if (tableOpenedAt(index) === 0) {
+        refuse(index, "pipe row outside a table");
+        continue;
+      }
+      tableWidth = row.length;
+      accepted.push(line, lines[index + 1]!);
+      index += 1;
+      continue;
+    }
+    if (row.length !== tableWidth) {
+      refuse(index, `table row with ${row.length} cells in a ${tableWidth}-column table`);
+      continue;
+    }
+    accepted.push(line);
+    if (row.length < 3) continue;
 
     if (section === "3") {
       const id = /^`([UCOMAG]-\d{2})`$/.exec(row[0]!);
-      if (!id) return;
+      if (!id) continue;
       define(id[1]!, { id: id[1]!, kind: "screen", route: row[1]!, owner: row[5] ?? "" }, index + 1);
-      return;
+      continue;
     }
     if (section === "5") {
       const id = /^`(EX-\d{2})`$/.exec(row[0]!);
-      if (!id) return;
+      if (!id) continue;
       define(id[1]!, { id: id[1]!, kind: "exclusion", route: row[1]!, owner: "SHU-213" }, index + 1);
-      return;
+      continue;
     }
     if (section === "6") {
       const key = /^([A-Z]+)-B(\d{3})(?:\.\.(\d{3}))?$/.exec(row[0]!);
-      if (!key) return;
+      if (!key) continue;
       ledger.push({
         app: key[1]!,
         from: Number(key[2]),
@@ -118,17 +233,23 @@ export function parseContract(markdown: string): ParsedContract {
         line: index + 1,
       });
     }
-  });
+  }
 
   const declaredTotals: Record<string, number> = {};
-  const partition = /complete, gap-free partition:\s*([^.]+)\./.exec(markdown);
-  if (partition) {
+  const duplicateTotals: string[] = [];
+  // Every declaration is read, not just the first: a reader sees all of them, so a second
+  // one (even with the same totals, even wrapped across lines or capitalised) is reported.
+  const declarations = [...accepted.join("\n").matchAll(/complete,\s+gap-free\s+partition:\s*([^.]+)\./gi)];
+  const partitionDeclarations = declarations.length;
+  for (const partition of declarations) {
     for (const match of partition[1]!.matchAll(/([A-Z]+)\s+1[–-](\d+)/g)) {
-      declaredTotals[match[1]!] = Number(match[2]);
+      // A second total for the same appendix is reported, never allowed to replace the first.
+      if (match[1]! in declaredTotals) duplicateTotals.push(match[1]!);
+      else declaredTotals[match[1]!] = Number(match[2]);
     }
   }
 
-  return { targets, ledger, declaredTotals, duplicateTargets: duplicates };
+  return { targets, ledger, declaredTotals, partitionDeclarations, duplicateTargets: duplicates, duplicateTotals, unsupported };
 }
 
 /** Ids named in free text such as "`C-01..02`" or "C-06..07"; used for data files too. */
@@ -143,6 +264,15 @@ export function idsIn(text: string): string[] {
  */
 export function checkContract(contract: ParsedContract): ContractIssue[] {
   const issues: ContractIssue[] = [];
+  for (const { line, reason } of contract.unsupported ?? []) {
+    issues.push({ rule: "contract.markdown.unsupported", detail: `line ${line}: ${reason}` });
+  }
+  if ((contract.partitionDeclarations ?? 1) > 1) {
+    issues.push({ rule: "contract.partition.declaredTwice", detail: `the contract declares its partition ${contract.partitionDeclarations} times; it must declare it once` });
+  }
+  for (const app of contract.duplicateTotals ?? []) {
+    issues.push({ rule: "contract.partition.declaredTwice", detail: `section 6 declares the ${app} total more than once` });
+  }
   for (const dup of contract.duplicateTargets ?? []) {
     issues.push({ rule: "contract.target.duplicate", detail: `${dup.id} is defined on line ${dup.first} and again on line ${dup.again}` });
   }
