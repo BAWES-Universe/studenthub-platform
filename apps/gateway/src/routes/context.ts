@@ -20,6 +20,7 @@ import type { CivilIdService } from "@studenthub/profile";
 import type { CivilIdSuggestionService } from "../civil-id-suggestion-http.js";
 import type { CivilIdReviewHttpService } from "../civil-id-review-http.js";
 import type { AreaHttp } from "../area-http.js";
+import type { StaffMessagesHttpService } from "../comms/staff-messages-http.js";
 import type { PeopleDirectoryPage } from "../people-directory.js";
 import type { RecruitRequests } from "../recruit/requests-http.js";
 import type { RecruitPipeline } from "../recruit/pipeline-http.js";
@@ -72,6 +73,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly staffView?: import("../access/staff-view.js").StaffViewPorts;
   readonly registrations?: import("../access/company-registration.js").CompanyRegistrationPorts;
   readonly recruitRequestApplications?: RecruitRequestApplications;
+  readonly staffMessages?: StaffMessagesHttpService;
 };
 
 export interface GatewayRouteContext {
