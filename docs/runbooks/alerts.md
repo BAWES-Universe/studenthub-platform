@@ -33,6 +33,7 @@ platform-on-call owns every route. The on-call primary responds and the backup e
 | [job_failed](#job_failed) | platform-on-call | SEV-2 | Inspect the closed job name and durable outcome; reproduce only with synthetic inputs. | Escalate when the job is critical or the next scheduled run also fails. |
 | [job_overlap](#job_overlap) | platform-on-call | SEV-3 | Confirm the existing run progresses and renews its lease; do not start overlapping work. | Escalate to SEV-2 if the holder is stale or repeated work is refused. |
 | [job_missed](#job_missed) | platform-on-call | SEV-2 | Check scheduling and the latest scrubbed outcome, then restore the operator-managed schedule. | Escalate when a critical job misses another interval. |
+| [email_volume](#email_volume) | platform-on-call | SEV-3 | Open the admin outbox and check which classes are sending; look for a loop or a bulk send nobody planned. | Escalate to SEV-2 if the count keeps climbing past the next level the same day. |
 
 ### journey_failures
 
@@ -61,6 +62,10 @@ Follow the `job_overlap` table row and preserve the single-run lease contract.
 ### job_missed
 
 Follow the `job_missed` table row and verify a later successful durable run.
+
+### email_volume
+
+The day's sent emails (Asia/Kuwait day) passed the daily threshold (500, as legacy `mailThreshold`) or another multiple of it. Each level alerts once a day; `email_volume_alerts` holds the day, level and count. Follow the `email_volume` table row.
 
 ## How to verify
 
