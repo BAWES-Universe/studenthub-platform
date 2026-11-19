@@ -103,6 +103,12 @@ test("WORK_HTTP refusals map to 400, 403, 404 and 409 and keep extra detail", as
   assert.equal((await post(`/api/work/sessions/${ID}/correct`, { startedAt: "x" })).status, 409);
   assert.equal((await request("/api/work/hours/company/acme?from=2026-11-01&to=2026-11-30")).status, 403);
   assert.equal((await request("/api/work/placements/company/acme")).status, 403);
+  // A malformed store id is the caller's mistake (400), never a database cast error (503), and the service isn't asked.
+  const badStore: unknown[][] = [];
+  assert.deepEqual([(await request("/api/work/placements/company/acme?storeId=nope", {}, badStore)).status, badStore.filter((c) => c[0] === "forOrganization")], [400, []]);
+  const emptyStore: unknown[][] = [];
+  await request("/api/work/placements/company/acme?storeId=", {}, emptyStore);
+  assert.deepEqual(emptyStore.find((c) => c[0] === "forOrganization"), ["forOrganization", "person", "acme", undefined], "an empty store filter is no filter");
   const listed: unknown[][] = [];
   assert.equal((await request(`/api/work/placement-requests/company/acme?status=pending&storeId=${ID}`, {}, listed)).status, 403);
   assert.deepEqual(listed[0], ["requestsFor", "person", "acme", { storeId: ID, status: "pending" }]);
