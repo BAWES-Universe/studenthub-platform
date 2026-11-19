@@ -90,7 +90,9 @@ than `true` or `false` stops startup. `wireWork` reads store managers from the a
 lane (A4, `PostgresAccessStoreManagersStore.managedStores`) on the work pool. Decision notices
 go to the person's feed through the comms lane's `recordWorkSessionDecision` and
 `retractWorkSessionDecision` (`@studenthub/db/comms`), on the decision's own client. A
-notice port given in place of them must have both, or startup stops.
+notice port given in place of them must have both, or startup stops. When the lane is on, the
+main navigation shows "My work" (`nav.work`, `apps/gateway/src/contributions/work.ts`), which
+opens `/work/track`; when it is off the entry is hidden.
 
 | Who | Routes |
 |---|---|
@@ -161,7 +163,6 @@ The person comes from the session cookie, and posts need the same origin and a f
 
 - A-14 (staff my work: standup, leave, expenses and their own sessions); it depends on the P1 and F4 lanes.
 - A session detail page for M-03 (`/store/:storeId/time-approvals/:sessionId`); each session is decided in the queue for now.
-- A "Work" entry in the main navigation. This goes through the shared `apps/gateway/src/contributions` seam and copy keys, as its own small change.
 - Arabic copy for the work screens.
 - A reply box for the person on an appeal: the contract lists `appeals.self.comment`, but W-6 lets only staff post updates, as legacy did. This is to be confirmed with the legacy rules before it is added.
 - The importer run itself (cutover lane, M-5).
