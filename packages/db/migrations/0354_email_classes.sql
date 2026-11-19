@@ -57,7 +57,8 @@ CREATE INDEX email_outbox_recipient_idx ON email_outbox(recipient_principal_id, 
 -- alerts again at 1000, 1500 and so on. Its date check assigns instead of comparing, so a
 -- raised threshold leaks into the next day. Here each (Kuwait day, level) is one row: level n
 -- means the day passed n times the threshold, and the row is written once, so each level
--- alerts once and a new day starts again at level 1.
+-- alerts once and a new day starts again at level 1. A check that finds the day several levels
+-- up (500 to 1501 between two runs) writes and alerts every level it skipped, lowest first.
 CREATE TABLE email_volume_alerts (
   day date NOT NULL,
   level integer NOT NULL CHECK (level > 0),

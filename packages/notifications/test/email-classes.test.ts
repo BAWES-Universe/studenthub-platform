@@ -59,12 +59,11 @@ test("COMMS_EMAIL_VOLUME the day is the Kuwait calendar day", () => {
 
 class MemoryVolume implements EmailVolumeStore {
   sent = new Map<string, number>(); recorded = new Set<string>(); calls: string[] = [];
-  async recordVolumeCrossing(day: string, threshold: number): Promise<EmailVolumeCrossing | null> {
+  async recordVolumeCrossings(day: string, threshold: number): Promise<EmailVolumeCrossing[]> {
     this.calls.push(day);
-    const n = this.sent.get(day) ?? 0, level = volumeLevel(n, threshold);
-    if (!level || this.recorded.has(`${day}:${level}`)) return null;
-    this.recorded.add(`${day}:${level}`);
-    return { day, level, sentCount: n, threshold };
+    const n = this.sent.get(day) ?? 0, out: EmailVolumeCrossing[] = [];
+    for (let level = 1; level <= volumeLevel(n, threshold); level++) if (!this.recorded.has(`${day}:${level}`)) { this.recorded.add(`${day}:${level}`); out.push({ day, level, sentCount: n, threshold }); }
+    return out;
   }
 }
 
@@ -76,7 +75,10 @@ test("COMMS_EMAIL_VOLUME each level alerts once a day and a new day starts again
   store.sent.set("2026-11-18", 1001); await run(day1);
   store.sent.set("2026-11-19", 501); await run(day2);
   assert.deepEqual(alerts.map(a => [a.day, a.level]), [["2026-11-18", 1], ["2026-11-18", 2], ["2026-11-19", 1]]);
-  assert.equal(await checkEmailVolume(store, day2), null);
+  assert.deepEqual(await checkEmailVolume(store, day2), []);
+  // One run that jumps from level 1 to past 1500 alerts for 2 and 3, lowest first.
+  store.sent.set("2026-11-19", 1501); await run(day2);
+  assert.deepEqual(alerts.slice(3).map(a => [a.day, a.level]), [["2026-11-19", 2], ["2026-11-19", 3]]);
   await assert.rejects(checkEmailVolume(store, day2, 0), RangeError);
 });
 
@@ -85,7 +87,7 @@ test("COMMS_EMAIL_VOLUME a failed delivery run still checks the volume, then rep
   store.sent.set("2026-11-18", 600);
   await assert.rejects(deliverAndCheckVolume(async () => { throw Error("email delivery failed"); }, store, c => { alerts.push(c); }, () => at), /email delivery failed/);
   assert.equal(alerts.length, 1);
-  const broken: EmailVolumeStore = { async recordVolumeCrossing() { throw Error("count failed"); } };
+  const broken: EmailVolumeStore = { async recordVolumeCrossings() { throw Error("count failed"); } };
   await assert.rejects(deliverAndCheckVolume(async () => { throw Error("email delivery failed"); }, broken, () => {}, () => at), /email delivery failed/);
   await assert.rejects(deliverAndCheckVolume(async () => 3, broken, () => {}, () => at), /count failed/);
   assert.equal(await deliverAndCheckVolume(async () => 3, new MemoryVolume(), () => {}, () => at), 3);
