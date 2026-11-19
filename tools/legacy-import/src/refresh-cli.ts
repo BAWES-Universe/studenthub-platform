@@ -15,7 +15,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { closeSync, mkdirSync, mkdtempSync, openSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import {
   failureReport,
   loadConfig,
+  lockPathFrom,
   RefreshRefused,
   reportPathFrom,
   runRefresh,
@@ -236,15 +237,64 @@ export function summary(report: RefreshReport): string {
   return `legacy-refresh: ${report.code} tables=${Object.keys(report.tables).length} rows=${report.totalRows} excluded=${report.excluded.length} ms=${report.durationMs}`;
 }
 
-function writeReport(reportPath: string, report: RefreshReport): void {
+/** `p` with every existing ancestor resolved through symlinks (the leaf itself is not). */
+function canonicalEntry(p: string): string {
+  const absolute = path.resolve(p);
+  const rest: string[] = [path.basename(absolute)];
+  let dir = path.dirname(absolute);
+  for (;;) {
+    try {
+      return path.join(realpathSync(dir), ...rest);
+    } catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) return absolute;
+      rest.unshift(path.basename(dir));
+      dir = parent;
+    }
+  }
+}
+
+function fileId(p: string): string | undefined {
+  try {
+    const stat = statSync(p);
+    return `${stat.dev}:${stat.ino}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * True when renaming a file onto `reportPath` could replace, or touch, the lock file: the
+ * same directory entry after resolving symlinked directories, or (followed through any
+ * symlink) the same inode, which also covers a symlink or hard link to the lock.
+ */
+export function reportReplacesLock(reportPath: string, lockPath: string): boolean {
+  if (canonicalEntry(reportPath) === canonicalEntry(lockPath)) return true;
+  const report = fileId(reportPath);
+  return report !== undefined && report === fileId(lockPath);
+}
+
+/**
+ * The only way a report is written. It refuses (throws) when the report could replace the
+ * lock file, so no exit path, configuration error included, can swap the locked inode.
+ * The temp file is created exclusively (`wx`), so it never truncates or replaces an
+ * existing file, and only a temp file this call created is removed.
+ */
+function writeReport(reportPath: string, lockPath: string, report: RefreshReport): void {
+  if (reportReplacesLock(reportPath, lockPath)) throw new RefreshRefused("config.reportIsLock");
   mkdirSync(path.dirname(reportPath), { recursive: true });
   // A temp name per writer, so two writers can never interleave in one temp file.
   const temp = `${reportPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  const fd = openSync(temp, "wx", 0o640); // fails if anything already has this name
   try {
-    writeFileSync(temp, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o640 });
+    try {
+      writeFileSync(fd, `${JSON.stringify(report, null, 2)}\n`);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(temp, reportPath);
   } finally {
-    rmSync(temp, { force: true });
+    rmSync(temp, { force: true }); // ours: created above; gone already after the rename
   }
 }
 
@@ -293,10 +343,18 @@ export interface CliDeps {
   readonly error: (line: string) => void;
 }
 
-/** Best effort: a report that cannot be written must not hide the run's own exit code. */
-function tryWriteReport(reportPath: string, report: RefreshReport): void {
+function safeToWrite(reportPath: string, lockPath: string): boolean {
   try {
-    writeReport(reportPath, report);
+    return !reportReplacesLock(reportPath, lockPath);
+  } catch {
+    return false;
+  }
+}
+
+/** Best effort: a report that cannot be written must not hide the run's own exit code. */
+function tryWriteReport(reportPath: string, lockPath: string, report: RefreshReport): void {
+  try {
+    writeReport(reportPath, lockPath, report);
   } catch {
     // The exit code and the one-line output still say what happened.
   }
@@ -304,25 +362,27 @@ function tryWriteReport(reportPath: string, report: RefreshReport): void {
 
 /** One run. Exit codes: 0 ok, 1 refresh failed, 2 configuration invalid, 3 locked or lock unavailable. */
 export async function runCli(deps: CliDeps): Promise<number> {
-  const reportPath = reportPathFrom(deps.env);
   let config: RefreshConfig;
   try {
     config = loadConfig(deps.env);
+    if (reportReplacesLock(config.reportPath, config.lockPath)) throw new RefreshRefused("config.reportIsLock");
   } catch (error) {
     const code = error instanceof RefreshRefused ? error.code : "config.invalid";
-    tryWriteReport(reportPath, failureReport(code, deps.now()));
-    deps.error(`legacy-refresh: ${code}`);
+    // Written only where it cannot replace the lock (writeReport checks); else stderr only.
+    const written = code !== "config.reportIsLock" && safeToWrite(reportPathFrom(deps.env), lockPathFrom(deps.env));
+    if (written) tryWriteReport(reportPathFrom(deps.env), lockPathFrom(deps.env), failureReport(code, deps.now()));
+    deps.error(`legacy-refresh: ${code}${written ? "" : " (report not written)"}`);
     return 2;
   }
   const lock = await acquireLock(config.lockPath);
   if (!lock.held) {
     // Another run is copying right now (or the lock cannot be taken): not safe to read.
-    tryWriteReport(config.reportPath, failureReport(lock.code, deps.now()));
+    tryWriteReport(config.reportPath, config.lockPath, failureReport(lock.code, deps.now()));
     deps.error(`legacy-refresh: ${lock.code === "locked" ? "locked (another run in progress)" : lock.code}`);
     return 3;
   }
   try {
-    writeReport(config.reportPath, failureReport("running", deps.now()));
+    writeReport(config.reportPath, config.lockPath, failureReport("running", deps.now()));
     // A deadline long enough for a normal copy; past it every child is killed and reaped
     // (each step waits for its children to close) before the lock is released.
     const deadline = new AbortController();
@@ -334,11 +394,11 @@ export async function runCli(deps: CliDeps): Promise<number> {
       clearTimeout(timer);
     }
     if (deadline.signal.aborted && !report.ok) report = { ...report, code: "failed.timeout" };
-    writeReport(config.reportPath, report);
+    writeReport(config.reportPath, config.lockPath, report);
     deps.log(summary(report));
     return report.ok ? 0 : 1;
   } catch {
-    tryWriteReport(config.reportPath, failureReport("failed.unexpected", deps.now()));
+    tryWriteReport(config.reportPath, config.lockPath, failureReport("failed.unexpected", deps.now()));
     deps.error("legacy-refresh: failed.unexpected");
     return 1;
   } finally {

@@ -43,7 +43,7 @@ Job: `tools/legacy-import/src/refresh-cli.ts` (`node dist/tools/legacy-import/sr
 - reads `SHOW GRANTS` for the session and `@@mandatory_roles`, so a mandatory role cannot add a write privilege unseen;
 - dumps with `--set-gtid-purged=OFF` (where mysqldump supports it), so no RELOAD is needed and no replication state reaches the mirror;
 - bounds every wait: each mysql session has `lock_wait_timeout=600`, the whole run has a deadline (`LEGACY_REFRESH_TIMEOUT_MS`, default four hours) after which every child is killed and reaped, and a failing side of the copy stops the other;
-- refuses a report path equal to the lock path.
+- never writes a report that could replace the lock file: every report write (configuration errors included) first refuses a report path that is the lock path through a symlinked directory, a symlink or a hard link, and then reports on stderr only. Temp files are created exclusively and never replace an existing file. The only other files it touches are the lock file (opened for append, never truncated, replaced or deleted) and a private empty HOME for the mysql tools.
 
 Configuration (root-only env file on the staging host): `LEGACY_REFRESH_SOURCE_URL` (read-only legacy account), `LEGACY_REFRESH_TARGET_URL` (mirror account, `legacy_mirror` database), optional `LEGACY_REFRESH_REPORT` and `LEGACY_REFRESH_LOCK`. Consumers read the mirror only after checking `last-run.json` says `ok`. The matrix row `REFRESH` closes with the first timer-triggered run's time and counts (the 2026-11-17 install run was manual, so it stays open until then).
 

@@ -93,15 +93,24 @@ export function reportPathFrom(env: NodeJS.ProcessEnv): string {
   return env.LEGACY_REFRESH_REPORT || DEFAULT_REPORT_PATH;
 }
 
+export const DEFAULT_LOCK_PATH = "/var/lib/legacy-refresh/run.lock";
+
+/** Where the run lock lives; readable even when the rest of the configuration is not. */
+export function lockPathFrom(env: NodeJS.ProcessEnv): string {
+  return env.LEGACY_REFRESH_LOCK || DEFAULT_LOCK_PATH;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): RefreshConfig {
   const source = parseDatabaseUrl(env.LEGACY_REFRESH_SOURCE_URL, "source");
   const target = parseDatabaseUrl(env.LEGACY_REFRESH_TARGET_URL, "target");
   if (target.database !== MIRROR_DATABASE) throw new RefreshRefused("config.target.notMirror");
   if (target.host === source.host && target.port === source.port) throw new RefreshRefused("config.target.isSource");
   const reportPath = reportPathFrom(env);
-  const lockPath = env.LEGACY_REFRESH_LOCK || "/var/lib/legacy-refresh/run.lock";
+  const lockPath = lockPathFrom(env);
   // The report is replaced by rename; if it were the lock file, a rename would swap the
-  // locked inode for a fresh one and let a second run in.
+  // locked inode for a fresh one and let a second run in. This is the lexical check; the
+  // CLI also refuses aliases (symlinked directories, symlinks, hard links) on disk before
+  // every report write, see reportReplacesLock in refresh-cli.ts.
   if (path.resolve(reportPath) === path.resolve(lockPath)) throw new RefreshRefused("config.reportIsLock");
   const timeoutMs = env.LEGACY_REFRESH_TIMEOUT_MS ? Number(env.LEGACY_REFRESH_TIMEOUT_MS) : DEFAULT_TIMEOUT_MS;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new RefreshRefused("config.timeout.invalid");

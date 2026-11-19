@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -490,6 +490,68 @@ test("the real mysql client ignores a conflicting ~/.my.cnf when started through
   } finally {
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("no run, misconfigured or not, can replace the lock file while another run holds it", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "refresh-lock-alias-"));
+  const state = path.join(dir, "state");
+  const lockPath = path.join(state, "run.lock");
+  const held = await acquireLock(lockPath);
+  assert.equal(held.held, true);
+  if (!held.held) return;
+  try {
+    const inode = statSync(lockPath).ino;
+    symlinkSync(state, path.join(dir, "alias"));
+    symlinkSync(lockPath, path.join(dir, "link.json"));
+    linkSync(lockPath, path.join(dir, "hard.json"));
+    const aliases = [lockPath, path.join(dir, "alias", "run.lock"), path.join(dir, "link.json"), path.join(dir, "hard.json"), path.join(dir, "alias", "..", "state", "run.lock")];
+    for (const report of aliases) {
+      for (const valid of [true, false]) {
+        let copied = false;
+        const errors: string[] = [];
+        const code = await runCli({
+          env: { ...(valid ? env : { LEGACY_REFRESH_TARGET_URL: TARGET }), LEGACY_REFRESH_REPORT: report, LEGACY_REFRESH_LOCK: lockPath },
+          mysql: () => fakeMysql({ copy: async () => void (copied = true) }),
+          now: () => new Date(),
+          log: () => undefined,
+          error: (line) => errors.push(line),
+        });
+        const label = `${report} (${valid ? "valid" : "invalid"} config)`;
+        assert.equal(code, 2, label);
+        assert.equal(copied, false, label);
+        assert.match(errors.join("\n"), /report not written/, label);
+        // Same inode under the lock path, still empty, still locked, no temp files left.
+        assert.equal(statSync(lockPath).ino, inode, label);
+        assert.equal(readFileSync(lockPath, "utf8"), "", label);
+        assert.deepEqual(readdirSync(state), ["run.lock"], label);
+        const second = await acquireLock(lockPath);
+        assert.deepEqual(second, { held: false, code: "locked" }, label);
+      }
+    }
+  } finally {
+    closeSync(held.fd);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a config error still writes its report when the report path is distinct from the lock", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "refresh-config-report-"));
+  try {
+    const report = path.join(dir, "last-run.json");
+    const code = await runCli({
+      env: { LEGACY_REFRESH_TARGET_URL: TARGET, LEGACY_REFRESH_REPORT: report, LEGACY_REFRESH_LOCK: path.join(dir, "run.lock") },
+      mysql: () => fakeMysql(),
+      now: () => new Date(),
+      log: () => undefined,
+      error: () => undefined,
+    });
+    assert.equal(code, 2);
+    const written = JSON.parse(readFileSync(report, "utf8")) as { ok: boolean; code: string };
+    assert.deepEqual([written.ok, written.code], [false, "config.source.missing"]);
+    assert.deepEqual(readdirSync(dir), ["last-run.json"]);
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
