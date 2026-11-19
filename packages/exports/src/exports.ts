@@ -36,10 +36,12 @@ export class ExportService {
     const record=await this.#save(principalId,kindId,closed,count,"created",bytes);
     return{ok:true,id:record.id,downloadUrl:`/exports/${record.id}`,rowCount:count};
   }
-  async download(principalId:string,id:string):Promise<Buffer|null>{
+  async download(principalId:string,id:string):Promise<Buffer|null>{return(await this.downloadFile(principalId,id))?.bytes??null;}
+  /** The download with its kind id, so the caller can name the file after the kind. */
+  async downloadFile(principalId:string,id:string):Promise<{readonly kind:string;readonly bytes:Buffer}|null>{
     const record=await this.#store.find(id);if(!record||record.requesterPrincipalId!==principalId||record.outcome!=="created"||!record.bytes||record.expiresAt.getTime()<=this.#now().getTime())return null;
     const kind=this.#kinds.get(record.kind);if(!kind||!await kind.authorize(principalId,record.filters as never))return null;
-    return record.bytes;
+    return{kind:record.kind,bytes:record.bytes};
   }
   cleanExpired():Promise<number>{return this.#store.cleanExpired(this.#now());}
   async #save(principalId:string,kind:string,filters:Readonly<Record<string,unknown>>,rowCount:number,outcome:ExportOutcome,bytes:Buffer|null){const createdAt=this.#now();const record:StoredExport={id:randomUUID(),kind,requesterPrincipalId:principalId,filters:Object.freeze({...filters}),rowCount,outcome,createdAt,expiresAt:new Date(createdAt.getTime()+EXPORT_EXPIRY_MS),bytes};await this.#store.save(record);return record;}
