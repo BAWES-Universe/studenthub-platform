@@ -287,7 +287,8 @@ export function createGatewayServer(
     if (request.method === "GET" && request.url && /^\/exports\/[^/]+$/.test(requestPath(request.url))) {
       const file=await login?.exports?.download(cookieValue(request.headers.cookie,"__Host-studenthub_session"),requestPath(request.url).slice(9));
       if(!file){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
-      response.writeHead(200,{"content-type":"text/csv; charset=utf-8","content-disposition":`attachment; filename="${file.filename}"`,"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});response.end(file.bytes);return;
+      const disposition="attachment; filename=\""+file.filename+"\"";
+      response.writeHead(200,{"content-type":file.contentType,"content-disposition":disposition,"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});response.end(file.bytes);return;
     }
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace") {

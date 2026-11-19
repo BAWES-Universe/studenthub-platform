@@ -20,7 +20,7 @@ test("REPORTS_CATALOGUE_EXPORT country and university lists write only ID, Name,
   const uni = await service.request("staff-1", CATALOGUE_LIST_KINDS.university, {});
   assert.ok(uni.ok);
   assert.equal(store.rows.get(uni.id)!.bytes!.toString("utf8"), "﻿ID,Name,Code,Total Candidate\r\nu1,Kuwait University,,5\r\n");
-  assert.deepEqual(await service.downloadFile("staff-1", uni.id), { kind: "catalogue-university", bytes: store.rows.get(uni.id)!.bytes });
+  assert.deepEqual(await service.downloadFile("staff-1", uni.id), { kind: "catalogue-university", bytes: store.rows.get(uni.id)!.bytes, file: null });
 });
 
 test("REPORTS_CATALOGUE_EXPORT only staff: anyone else is refused and audited, and a lost grant stops the download", async () => {
@@ -33,4 +33,33 @@ test("REPORTS_CATALOGUE_EXPORT only staff: anyone else is refused and audited, a
   assert.equal(await service.download("staff-1", made.id), null, "another staff member cannot use the link");
   staff.delete("staff-2");
   assert.equal(await service.download("staff-2", made.id), null);
+});
+
+test("REPORTS_EXPORT_OWN_FORMAT a kind with its own format keeps every CSV guarantee: whitelisted rows only, requester binding, expiry, re-authorization and audit", async () => {
+  const { EXPORT_EXPIRY_MS } = await import("../src/exports.js");
+  let allowed = true, seen: unknown[][] = [];
+  let now = new Date("2026-11-19T08:00:00Z");
+  const bank = { id: "pay-bank-file", filterKeys: ["batch"], columns: ["Beneficiary", "Amount"], authorize: async () => allowed,
+    async *rows() { yield ["A", 10]; yield ["B", 20]; },
+    serialize(columns: readonly string[], rows: readonly (readonly unknown[])[], filters: { batch?: string }) {
+      seen = [[...columns], ...rows.map(r => [...r])];
+      return { bytes: Buffer.from([0x50, 0x4b, 0x03, 0x04, rows.length]), contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName: `bank-${filters.batch}.xlsx` };
+    } };
+  const store = new Memory, service = new ExportService(store, [bank as never], () => now);
+  const made = await service.request("staff-1", "pay-bank-file", { batch: "b7", extra: "dropped" });
+  assert.ok(made.ok); assert.equal(made.rowCount, 2);
+  assert.deepEqual(seen, [["Beneficiary", "Amount"], ["A", 10], ["B", 20]]);
+  const record = store.rows.get(made.id)!;
+  assert.deepEqual(record.filters, { batch: "b7" }); assert.equal(record.outcome, "created");
+  assert.deepEqual(await service.downloadFile("staff-1", made.id), { kind: "pay-bank-file", bytes: Buffer.from([0x50, 0x4b, 0x03, 0x04, 2]),
+    file: { contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName: "bank-b7.xlsx" } });
+  assert.equal(await service.download("staff-2", made.id), null, "only the requester");
+  allowed = false; assert.equal(await service.download("staff-1", made.id), null, "access rechecked at download"); allowed = true;
+  now = new Date(now.getTime() + EXPORT_EXPIRY_MS); assert.equal(await service.download("staff-1", made.id), null, "15-minute expiry");
+  for (const bad of [{ fileName: "../x.xlsx" }, { fileName: "x\".xlsx" }, { contentType: "text/html; script" },
+    // A trailing line break would end the download headers early; `$` without the m flag refuses it.
+    { fileName: "safe.xlsx\n" }, { fileName: "safe.xlsx\r\n" }, { contentType: "text/plain\n" }, { contentType: "text/plain\r\n" }]) {
+    const broken = { ...bank, id: "broken", serialize: () => ({ bytes: Buffer.from("x"), contentType: "text/plain", fileName: "x.txt", ...bad }) };
+    await assert.rejects(new ExportService(new Memory, [broken as never]).request("staff-1", "broken", {}), /invalid file/, JSON.stringify(bad));
+  }
 });
