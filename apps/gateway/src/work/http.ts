@@ -107,7 +107,8 @@ const ROUTES: readonly Route[] = [
   // W-1 placements.
   { method: "GET", pattern: /^\/api\/work\/placements\/mine$/, handle: async (p, _i, s) => ok({ assignments: await s.placements.mine(p) }) },
   { method: "GET", pattern: /^\/api\/work\/placements\/company\/([A-Za-z0-9._:-]{1,256})$/, handle: async (p, { params, query }, s) => {
-    const storeId = query.get("storeId") ?? undefined;
+    // An empty `?storeId=` means no store filter, like the sibling list routes.
+    const storeId = query.get("storeId") || undefined;
     if (storeId !== undefined && !isUuid(storeId)) return refusal("invalid_input");
     const list = await s.placements.forOrganization(p, params[0]!, storeId?.toLowerCase());
     return list ? ok({ assignments: list }) : refusal("forbidden");
