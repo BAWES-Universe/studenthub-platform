@@ -30,7 +30,7 @@ test("REPORTS_ID_CARD_PHOTO_AUDIT printing a card records the photo read as id_c
 });
 
 test("REPORTS_ID_CARD_PHOTO_AUDIT an id_card_render row is always the personal photo with its version; existing kinds keep their rules", async () => {
-  for (const [kind, type, version] of [["id_card_render", "resume", randomUUID()], ["id_card_render", "civil-id-front", randomUUID()], ["id_card_render", "personal-photo", null], ["id_card_render", null, null], ["card_print", "personal-photo", randomUUID()]] as const)
+  for (const [kind, type, version] of [["id_card_render", "resume", randomUUID()], ["id_card_render", "civil-id-front", randomUUID()], ["id_card_render", "personal-photo", null], ["id_card_render", null, null], ["id_card_render", null, randomUUID()], ["card_print", "personal-photo", randomUUID()]] as const)
     await assert.rejects(view(kind, type, version), /check constraint/, `${kind} ${type} ${version}`);
   await view("person_document_issue", "resume", randomUUID());
   await view("person_page", null, null);

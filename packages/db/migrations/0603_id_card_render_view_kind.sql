@@ -8,5 +8,5 @@ ALTER TABLE staff_person_views ADD CONSTRAINT staff_person_views_kind_check CHEC
 ALTER TABLE staff_person_views DROP CONSTRAINT staff_person_views_check;
 ALTER TABLE staff_person_views ADD CONSTRAINT staff_person_views_check CHECK (
   (kind IN ('civil_id_image_issue','civil_id_image_deliver','person_document_issue','person_document_deliver') AND document_type IS NOT NULL AND document_version IS NOT NULL)
-  OR (kind = 'id_card_render' AND document_type = 'personal-photo' AND document_version IS NOT NULL)
+  OR (kind = 'id_card_render' AND document_type IS NOT NULL AND document_type = 'personal-photo' AND document_version IS NOT NULL)
   OR (kind IN ('civil_id_page','person_page') AND document_type IS NULL AND document_version IS NULL));
