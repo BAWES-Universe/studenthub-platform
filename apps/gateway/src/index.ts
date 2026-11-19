@@ -31,7 +31,7 @@ import {
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { renderAdminJobs, type AdminJobsPage } from "./admin-jobs.js";
 import {renderAdminOutbox,type AdminOutboxPage}from"./admin-outbox.js";
-import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
+import { EXPORT_HTTP_KINDS } from "./exports-http.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding, renderSignedOut, renderAccessPaused,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,renderNotifications,
@@ -158,7 +158,9 @@ export function createGatewayServer(
     throw new RangeError("maxRequestBytes must be a positive safe integer");
   }
 
-  const reviewLogin=documents&&login?.civilIdReview?{...login,civilIdReview:{...login.civilIdReview,staffDocuments:login.civilIdReview.staffDocuments??new StaffDocuments({documents,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:login.civilIdReview.store})}}:login;
+  // A copy of every own property, the non-enumerable ones (staffMessages, notifications) included:
+  // an object spread would drop them and switch those routes off whenever civil ID review is on.
+  const reviewLogin=documents&&login?.civilIdReview?Object.defineProperties(Object.create(Object.getPrototypeOf(login)) as BrowserLoginApplication,{...Object.getOwnPropertyDescriptors(login),civilIdReview:{value:{...login.civilIdReview,staffDocuments:login.civilIdReview.staffDocuments??new StaffDocuments({documents,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:login.civilIdReview.store})},enumerable:true,writable:true,configurable:true}}):login;
   // When reserved, the terminal gate supplies the missing-Host 400 and policy.
   // Otherwise retain Node's existing automatic Host-header requirement.
   return createServer({ requireHostHeader: universeEmbed === undefined }, (request, response) => {
@@ -269,20 +271,24 @@ export function createGatewayServer(
       return;
     }
 
-    if (request.method === "POST" && request.url && requestPath(request.url) === "/exports/company-directory") {
-      const origin=request.headers.origin,contentType=request.headers["content-type"]?.split(";",1)[0];
-      if(!login?.exports||request.headers["sec-fetch-site"]==="cross-site"||origin!==login.web?.origin||contentType!=="application/x-www-form-urlencoded"){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
-      const filters=parseCompanyDirectoryExportQuery(new URL(request.url,"http://gateway.invalid").searchParams);
+    const exportKind = request.method === "POST" && request.url ? /^\/exports\/([a-z][a-z0-9-]{0,63})$/.exec(requestPath(request.url))?.[1] : undefined;
+    if (exportKind !== undefined && request.url) {
+      const origin=request.headers.origin,contentType=request.headers["content-type"]?.split(";",1)[0],kind=EXPORT_HTTP_KINDS.get(exportKind);
+      if(!kind||!login?.exports||request.headers["sec-fetch-site"]==="cross-site"||origin!==login.web?.origin||contentType!=="application/x-www-form-urlencoded"){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
+      const filters=kind.filters(new URL(request.url,"http://gateway.invalid").searchParams);
       if(!filters){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
-      const result=await login.exports.request(cookieValue(request.headers.cookie,"__Host-studenthub_session"),filters);
-      if(html){const content=result.status===200?`<main><h1>Export ready.</h1><p>${result.body.rowCount} companies exported.</p><a class="button primary" href="${result.body.downloadUrl}">Download CSV</a></main>`:result.status===409?`<main><h1>Export refused.</h1><p>This export exceeds the 10,000 row limit. Narrow the filters and try again.</p></main>`:`<main><h1>Export not found.</h1></main>`;writeHtml(response,result.status,pageDocument("Company export",content),{},true);return;}
+      const result=await login.exports.request(cookieValue(request.headers.cookie,"__Host-studenthub_session"),kind.id,filters);
+      // A refused or unknown export answers exactly like an unknown kind, so the response never tells whether a kind exists.
+      if(result.status===404){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
+      if(html){const content=result.status===200?`<main><h1>Export ready.</h1><p>${result.body.rowCount} ${kind.noun} exported.</p><a class="button primary" href="${result.body.downloadUrl}">Download CSV</a></main>`:`<main><h1>Export refused.</h1><p>This export exceeds the 10,000 row limit. Narrow the filters and try again.</p></main>`;writeHtml(response,result.status,pageDocument("Export",content),{},true);return;}
       writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store"}});return;
     }
 
     if (request.method === "GET" && request.url && /^\/exports\/[^/]+$/.test(requestPath(request.url))) {
-      const bytes=await login?.exports?.download(cookieValue(request.headers.cookie,"__Host-studenthub_session"),requestPath(request.url).slice(9));
-      if(!bytes){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
-      response.writeHead(200,{"content-type":"text/csv; charset=utf-8","content-disposition":'attachment; filename="company-directory.csv"',"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});response.end(bytes);return;
+      const file=await login?.exports?.download(cookieValue(request.headers.cookie,"__Host-studenthub_session"),requestPath(request.url).slice(9));
+      if(!file){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
+      const disposition="attachment; filename=\""+file.filename+"\"";
+      response.writeHead(200,{"content-type":file.contentType,"content-disposition":disposition,"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});response.end(file.bytes);return;
     }
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace") {

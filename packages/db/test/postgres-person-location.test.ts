@@ -1,3 +1,4 @@
+import { resetPayAwareFixture } from "./helpers/pay-aware-fixture-reset.js";
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
 import pg from "pg";
@@ -7,7 +8,7 @@ import { PostgresPersonLocationStore } from "@studenthub/db/profile";
 const DB_URL=process.env.DATABASE_URL??"";let pool:pg.Pool,store:PostgresPersonLocationStore,person:string,testNumber=0,idNumber=0;
 const actor="a".repeat(64),now=new Date("2026-11-09T12:00:00.000Z");
 before(async()=>{if(!DB_URL)throw new Error("DATABASE_URL is required for PostgreSQL person-location tests");pool=new pg.Pool({connectionString:DB_URL});await runMigrations(pool);store=new PostgresPersonLocationStore({pool});});
-beforeEach(async()=>{await pool.query("TRUNCATE person_location_events,person_locations,catalogue_area_details,catalogue_items CASCADE");testNumber++;idNumber=0;person=`shu555-person-${testNumber}`;await new PostgresAuthzStore(pool).registerPrincipal(createPrincipal({id:person,pbuuids:[],email:`${person}@example.invalid`}));});
+beforeEach(async()=>{await resetPayAwareFixture(pool, "TRUNCATE person_location_events,person_locations,catalogue_area_details,catalogue_items CASCADE");testNumber++;idNumber=0;person=`shu555-person-${testNumber}`;await new PostgresAuthzStore(pool).registerPrincipal(createPrincipal({id:person,pbuuids:[],email:`${person}@example.invalid`}));});
 after(async()=>pool.end());
 const nextUuid=()=>`00000000-0000-4000-8000-${String(testNumber*100+(++idNumber)).padStart(12,"0")}`;
 async function item(kind:string,status:"active"|"deleted"="active"){const id=nextUuid();await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,status,created_by_ref,updated_by_ref,created_at,updated_at,deleted_at) VALUES($1::uuid,$2::text,$3::text,$3::text,$4::text,$5::text,$5::text,$6::timestamptz,$6::timestamptz,$7::timestamptz)`,[id,kind,`Synthetic ${id}`,status,actor,now,status==="deleted"?now:null]);return id;}

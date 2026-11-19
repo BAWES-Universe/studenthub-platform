@@ -128,6 +128,22 @@ test("F3_PG F1 line write waits for same parent lock then refuses locked state",
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM pay_transfer_lines WHERE transfer_id=$1", [id])).rows[0].n, 1);
 });
 
+test("F3_PG authorized admin unlock preserves the company and records each exact source version", async () => {
+  const id = await draft(), s = service(a, effects());
+  for (const from of ["locked", "payment_sent"] as const) {
+    assert.equal((await s.transition(actor, id, "lock")).kind, "changed");
+    if (from === "payment_sent") assert.equal((await s.transition(actor, id, "payment_sent")).kind, "changed");
+    const previous = (await snapshot(id)).transfer;
+    assert.equal(previous.status, from);
+    assert.equal((await s.transition(actor, id, "admin_unlock")).kind, "changed");
+    const transfer = (await pool.query("SELECT company_id,status,version FROM pay_transfers WHERE id=$1", [id])).rows[0];
+    assert.deepEqual(transfer, { company_id: company, status: "draft", version: previous.version + 1 });
+    const witness = (await pool.query("SELECT from_status,to_status,unlock_source_version FROM pay_transfer_lifecycle_history WHERE transfer_id=$1 AND action='admin_unlock' ORDER BY id DESC LIMIT 1", [id])).rows[0];
+    assert.deepEqual(witness, { from_status: from, to_status: "draft", unlock_source_version: previous.version });
+  }
+  assert.equal((await snapshot(id)).effects.length, 1, "relock preserves the synthetic effect identity");
+});
+
 test("F3_PG received date, complete guard, history immutable and relock reuse", async () => {
   const id = await draft(), s = service(a, effects());
   await s.transition(actor, id, "lock");

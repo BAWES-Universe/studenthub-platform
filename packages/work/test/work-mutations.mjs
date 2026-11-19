@@ -12,8 +12,31 @@ const pages = "apps/gateway/src/work/pages.js", pagesSuite = "apps/gateway/test/
 const staffPages = "apps/gateway/src/work/staff-pages.js", staffSuite = "apps/gateway/test/work-staff-pages.test.js";
 const review = "apps/gateway/src/work/review-pages.js", reviewSuite = "apps/gateway/test/work-review-pages.test.js";
 const legacy = "packages/work/src/legacy.js", legacySuite = "packages/work/test/legacy.test.js";
+const staffTime = "packages/work/src/staff-time.js", staffTimeSuite = "packages/work/test/staff-time.test.js";
+const staffTimePages = "apps/gateway/src/work/staff-time-pages.js", staffTimePagesSuite = "apps/gateway/test/work-staff-time-pages.test.js";
+const exportsFile = "apps/gateway/src/work/exports.js", exportsSuite = "apps/gateway/test/work-exports.test.js";
 const mutations = [
+  ["staff time is operator staff only", "async #staff(actorId) { return isOperatorStaff(await this.#grants.listGrantsForPrincipal(actorId)); }", "async #staff(actorId) { return true; }", "STAFF_TIME", staffTime, staffTimeSuite],
+  ["end closes today's session only", "const open = await this.#store.openSession(actorId, kuwaitDate(now));", "const open = this.#store.sessions?.find((s) => s.staffId === actorId && s.endedAt === null);", "STAFF_TIME", staffTime, staffTimeSuite],
+  ["a staff member reads only their own days", "const staffId = admin ? options.staffId : actorId;", "const staffId = options.staffId;", "STAFF_TIME_LIST", staffTime, staffTimeSuite],
+  ["inactive list is for admins", "if (!(await this.#admin(actorId)))\n            return refused(\"forbidden\");\n        const [everyone", "const [everyone", "STAFF_TIME_INACTIVE", staffTime, staffTimeSuite],
+  ["inactive leaves out who started", "!active.has(id)", "true", "STAFF_TIME_INACTIVE", staffTime, staffTimeSuite],
+  ["/me/work lists only their own days", "today.workDate, { staffId: actor })", "today.workDate)", "STAFF_TIME_PAGES", staffTimePages, staffTimePagesSuite],
+  ["start and end need the same origin", "if (req.headers.origin !== origin || req.headers[\"sec-fetch-site\"] === \"cross-site\") {\n            req.resume();\n            write(res, ...plain(403, \"Request refused\"", "if (false) {\n            req.resume();\n            write(res, ...plain(403, \"Request refused\"", "STAFF_TIME_PAGES", staffTimePages, staffTimePagesSuite],
+  ["history is operator staff only", "if (!isOperatorStaff(await this.#grants.listGrantsForPrincipal(actorId)))", "if (false)", "W1_HISTORY", placement, placementSuite],
+  ["history refuses a reversed range", "|| range.from > range.to)", ")", "W1_HISTORY", placement, placementSuite],
+  ["history pages", "next: rows.length > HISTORY_PAGE_SIZE && last ?", "next: false ?", "W1_HISTORY", placement, placementSuite],
+  ["company export authorised", 'return !("kind" in page);', "return true;", "WORK_EXPORT", exportsFile, exportsSuite],
+  ["history export authorised", "(await services.placements.history(actor, parsed)) !== undefined", "true", "WORK_EXPORT", exportsFile, exportsSuite],
+  ["open hours count nowhere", "if (s.endedAt === null)\n                    continue;", "", "WORK_EXPORT", exportsFile, exportsSuite],
+  ["staff export authorised", 'return page.kind === "days";', "return true;", "WORK_EXPORT", exportsFile, exportsSuite],
+  ["a day not ended adds the hours per day", "t.open * Math.round((perDay.get(id) ?? 0) * 60)", "0", "WORK_EXPORT", exportsFile, exportsSuite],
+  ["history export stops past the cap", "if (++count > EXPORT_ROW_CAP)", "if (++count < 0)", "WORK_EXPORT", exportsFile, exportsSuite],
+  ["staff hours export stops past the cap", "if (!page.next || totals.size > EXPORT_ROW_CAP)", "if (!page.next)", "WORK_EXPORT", exportsFile, exportsSuite],
+  ["detailed export stops past the cap", "if (rows.length > EXPORT_ROW_CAP)", "if (false)", "WORK_EXPORT", exportsFile, exportsSuite],
   ["staff-only placement", "store.ancestors))\n            return { kind: \"refused\", code: \"forbidden\" };\n        return this.#store.transaction((tx) => this.#place(tx, actorId, input, store, STAFF_ORIGIN));", "store.ancestors))\n            ;\n        return this.#store.transaction((tx) => this.#place(tx, actorId, input, store, STAFF_ORIGIN));", "W1_PLACE", placement, placementSuite],
+  ["paused people aren't placed", "if (await tx.lockPersonPaused(input.personId))", "if (false)", "W1_PAUSED", placement, placementSuite],
+  ["paused people hidden from a company's request", "|| await this.#isPaused(input.personId))", ")", "W1_PAUSED", placement, placementSuite],
   ["civil ID inclusive", "civilId.expiry < startDate", "civilId.expiry <= startDate", "W1_WARN", placement, placementSuite],
   ["ambiguous contract", "if (matches.length > 1)\n", "if (matches.length > 9)\n", "W1_CONTRACT", placement, placementSuite],
   ["open session blocks ending", "ending && (await tx.openSessionCount(current.id)) > 0", "false", "W1_END", placement, placementSuite],

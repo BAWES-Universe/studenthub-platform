@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PayContract } from "@studenthub/pay-contracts";
 import {
-  chooseContract, kuwaitDate, parsePlacementInput, PlacementConflict, placementWarnings, PlacementService,
+  chooseContract, HISTORY_PAGE_SIZE, kuwaitDate, parsePlacementInput, PlacementConflict, placementWarnings, PlacementService,
   type Assignment, type AssignmentRequest, type PlacementStore, type PlacementTransaction, type StoreFacts, type WorkEvent, type WorkGrant,
 } from "../src/index.js";
 
@@ -29,12 +29,17 @@ class MemoryPlacements implements PlacementStore {
   openSessions = 0;
   async store(id: string) { return this.stores.get(id); }
   async organizationAncestors(orgId: string) { return orgId === "company" ? ["group", "root"] : orgId === "rival" || orgId === "group" ? ["root"] : undefined; }
-  async personExists(id: string) { return id === "person" || id === "other-person"; }
+  async personExists(id: string) { return id === "person" || id === "other-person" || id === "paused-person"; }
   async civilId() { return this.civil; }
   async contracts(personId: string) { return this.contractsByPerson.get(personId) ?? []; }
   async assignment(id: string) { return this.assignments.find((a) => a.id === id); }
   async request(id: string) { return this.requests.find((r) => r.id === id); }
   async assignmentForRecruitCard(id: string) { return this.assignments.find((a) => a.recruitCardId === id); }
+  async assignmentHistory(filter: { from: string; to: string; after?: { startDate: string; id: string }; limit: number }) {
+    const key = (a: Assignment) => `${a.startDate} ${a.id}`;
+    return this.assignments.filter((a) => a.startDate <= filter.to && (a.endDate === null || a.endDate >= filter.from)
+      && (!filter.after || key(a) > `${filter.after.startDate} ${filter.after.id}`)).sort((x, y) => key(x).localeCompare(key(y))).slice(0, filter.limit);
+  }
   async listAssignments(filter: { personId?: string; orgIds?: readonly string[]; includeSubtree?: boolean; storeId?: string }) {
     const under = async (orgId: string) => filter.includeSubtree === true ? (await this.organizationAncestors(orgId)) ?? [] : [];
     const out = [];
@@ -73,6 +78,7 @@ class MemoryPlacements implements PlacementStore {
       decideRequest: async (id, status, actorId, reason) => { const i = this.requests.findIndex((r) => r.id === id); this.requests[i] = { ...this.requests[i]!, status, decidedBy: actorId, decidedAt: NOW.toISOString(), decisionReason: reason }; },
       openSessionCount: async () => this.openSessions,
       sessionsAfter: async (_id, date) => this.sessionDates.filter((d) => d > date).length,
+      lockPersonPaused: async (id) => PAUSED.has(id),
       event: async (e) => { this.events.push(e); },
     };
     try { return await work(tx); } catch (error) { this.assignments = snapshot.a; this.requests = snapshot.r; this.events = snapshot.e; throw error; }
@@ -95,8 +101,10 @@ const MANAGED: Record<string, { orgId: string; storeId: string }[]> = { manager:
 function service(store = new MemoryPlacements()) {
   ids = 0;
   return { store, svc: new PlacementService({ store, grants: { listGrantsForPrincipal: async (id) => GRANTS[id] ?? [] }, newId: () => `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`, now: () => NOW,
-    managedStores: async (id) => MANAGED[id] ?? [] }) };
+    managedStores: async (id) => MANAGED[id] ?? [], paused: async (personIds) => new Set(personIds.filter((id) => PAUSED.has(id))) }) };
 }
+/** People whose StudentHub access is paused (access lane A6). */
+const PAUSED = new Set<string>(["paused-person"]);
 
 test("W1_DATES Kuwait date is used for defaults: 21:30Z on the 17th is the 18th", () => {
   assert.equal(kuwaitDate(NOW), "2026-11-18");
@@ -213,6 +221,27 @@ test("W1_REQUEST staff accept places the person in the same transaction; a refus
   assert.deepEqual(store.events.map((e) => e.kind), ["assignment_request.created", "assignment.created", "assignment_request.accepted"]);
 });
 
+test("W1_PAUSED a paused person can't be placed by staff, a request's acceptance or the recruit stage; to a company they are not found", async () => {
+  const { store, svc } = service();
+  store.contractsByPerson.set("paused-person", store.contractsByPerson.get("person") ?? []);
+  assert.deepEqual(await svc.place("staff", { personId: "paused-person", storeId: STORE }), { kind: "refused", code: "person_paused" });
+  assert.deepEqual(await svc.placeFromRecruit("staff", { recruitCardId: "11111111-2222-4333-8444-555555555555", requestId: null, personId: "paused-person", storeId: STORE, startDate: null, endDate: null }),
+    { kind: "refused", code: "person_paused" });
+  // The company never learns the person is paused (A6 hides them from employers).
+  assert.deepEqual(await svc.request("owner", { personId: "paused-person", storeId: STORE }), { kind: "refused", code: "person_not_found" });
+  // A request made before the pause can't be accepted while it lasts, and stays pending.
+  PAUSED.delete("paused-person");
+  const req = await svc.request("owner", { personId: "paused-person", storeId: STORE });
+  PAUSED.add("paused-person");
+  const id = req.kind === "requested" ? req.request.id : "";
+  assert.deepEqual(await svc.decideRequest("staff", id, "accept"), { kind: "refused", code: "person_paused" });
+  assert.equal(store.requests[0]?.status, "pending");
+  assert.equal(store.assignments.length, 0);
+  // Resumed, the same request is accepted.
+  PAUSED.delete("paused-person");
+  try { assert.equal((await svc.decideRequest("staff", id, "accept")).kind, "accepted"); } finally { PAUSED.add("paused-person"); }
+});
+
 test("W1_REQUEST staff reject with a reason; the company may cancel its own pending request", async () => {
   const { store, svc } = service();
   const a = await svc.request("owner", { personId: "person", storeId: STORE });
@@ -308,4 +337,28 @@ test("W1_REQUEST_LIST staff, the company and the store's manager list requests; 
   assert.deepEqual(await svc.decideRequest("manager", id, "accept"), { kind: "refused", code: "forbidden" });
   assert.deepEqual(await svc.decideRequest("wrongOrgManager", id, "cancel"), { kind: "refused", code: "forbidden" });
   assert.deepEqual(await svc.decideRequest("manager", id, "cancel"), { kind: "cancelled" });
+});
+
+test("W1_HISTORY operator staff list who worked where over a range, paged; anyone else gets nothing", async () => {
+  const { store, svc } = service();
+  assert.equal((await svc.place("staff", { personId: "person", storeId: STORE, startDate: "2026-01-01", endDate: "2026-03-31" })).kind, "placed");
+  assert.equal((await svc.place("staff", { personId: "person", storeId: STORE, startDate: "2026-04-01" })).kind, "placed");
+  const range = { from: "2026-03-01", to: "2026-03-31" };
+  // Only the first placement overlaps March; an open end overlaps every later day.
+  assert.deepEqual((await svc.history("staff", range))?.rows.map((a) => a.startDate), ["2026-01-01"]);
+  assert.deepEqual((await svc.history("staff", { from: "2026-03-31", to: "2027-01-01" }))?.rows.map((a) => a.startDate), ["2026-01-01", "2026-04-01"]);
+  assert.deepEqual((await svc.history("staff", { from: "2025-01-01", to: "2025-12-31" }))?.rows, []);
+  for (const actor of ["owner", "groupOwner", "candidate", "finance", "recruiter", "manager"]) assert.equal(await svc.history(actor, range), undefined, actor);
+  assert.equal(await svc.history("staff", { from: "2026-04-01", to: "2026-03-01" }), undefined, "a reversed range");
+  assert.equal(await svc.history("staff", { from: "2026-02-30", to: "2026-03-01" }), undefined, "a date that doesn't exist");
+  assert.equal(await svc.history("staff", range, { startDate: "2026-01-01", id: "nope" }), undefined, "a bad cursor");
+  // Paging: HISTORY_PAGE_SIZE rows, then the rest after the cursor.
+  for (let i = 0; i < HISTORY_PAGE_SIZE; i++) store.assignments.push({ ...store.assignments[0]!, id: `10000000-0000-4000-8000-${String(i).padStart(12, "0")}`, startDate: "2026-02-01" });
+  const first = await svc.history("staff", range);
+  assert.equal(first?.rows.length, HISTORY_PAGE_SIZE);
+  assert.ok(first?.next);
+  const second = await svc.history("staff", range, first!.next);
+  assert.equal(second?.rows.length, 1);
+  assert.equal(second?.next, null);
+  assert.equal(new Set([...first!.rows, ...second!.rows].map((a) => a.id)).size, HISTORY_PAGE_SIZE + 1);
 });

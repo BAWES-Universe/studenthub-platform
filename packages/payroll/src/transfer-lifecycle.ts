@@ -122,9 +122,11 @@ export class TransferLifecycleService {
       };
       if (action === "lock") await tx.ensureChildrenAndInvoices(transfer.id);
       if (action === "payment_received") await tx.markInvoicesPaid(transfer.id);
+      // The DB guard recognizes only an unlock witness written in this transaction.
+      if (action === "admin_unlock") await tx.appendHistory(change);
       if (action === "delete") await tx.softDeleteGroup(transfer.id);
       else await tx.setState(transfer.id, to, action === "payment_received" ? paymentReceivedDate(instant) : undefined);
-      await tx.appendHistory(change);
+      if (action !== "admin_unlock") await tx.appendHistory(change);
       return { kind: "changed", change };
   }
 }

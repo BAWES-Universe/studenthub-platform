@@ -1,3 +1,4 @@
+import { assertDisposableFixturePool, resetPayAwareFixture } from "./helpers/pay-aware-fixture-reset.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, beforeEach, test } from "node:test";
@@ -23,10 +24,11 @@ before(async () => {
   await runMigrations(pool);
 });
 beforeEach(async () => {
+  assertDisposableFixturePool(pool);
   // Owner administration for isolation; app paths cannot truncate the audit ledger.
   await pool.query("ALTER TABLE authorization_mutation_audit DISABLE TRIGGER authorization_mutation_audit_no_truncate");
   try {
-    await pool.query("TRUNCATE authorization_mutation_audit, pay_contracts, catalogue_submissions, catalogue_items RESTART IDENTITY CASCADE");
+    await resetPayAwareFixture(pool, "TRUNCATE authorization_mutation_audit, pay_contracts, catalogue_submissions, catalogue_items RESTART IDENTITY CASCADE");
   } finally {
     await pool.query("ALTER TABLE authorization_mutation_audit ENABLE TRIGGER authorization_mutation_audit_no_truncate");
   }

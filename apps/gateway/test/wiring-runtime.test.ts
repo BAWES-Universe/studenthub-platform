@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import pg from "pg";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
-import { wireWork } from "../src/wiring/work.js";
+import { recruitPlacementPort, wireWork } from "../src/wiring/work.js";
 
 const env = {
   DATABASE_URL: "postgres://synthetic:synthetic@127.0.0.1:1/synthetic",
@@ -68,11 +68,27 @@ test("PREP_WIRING_SOURCE keeps construction out of the login runtime", async () 
 test("PREP_WIRING_COUNT closes every independently constructed pool exactly once", async (t) => {
   const ended = new Map<pg.Pool, number>();
   t.mock.method(pg.Pool.prototype, "end", async function(this: pg.Pool) { ended.set(this, (ended.get(this) ?? 0) + 1); });
-  for (const [environment, expected] of [[env, 30], [{ ...env, SAFE_WRITE_SIGNING_KEY: KEY }, 36]] as const) {
+  for (const [environment, expected] of [[env, 31], [{ ...env, SAFE_WRITE_SIGNING_KEY: KEY }, 37]] as const) {
     ended.clear();
     const runtime = createRuntimeLoginFromEnv(environment)!;
     await runtime.close();
     assert.equal(ended.size, expected);
     assert.ok([...ended.values()].every(count => count === 1));
   }
+});
+
+test("PREP_WIRING_RECRUIT_PLACEMENT the recruit stage's \"placed\" reaches the work lane's placeFromRecruit when the lane is on; off, recruit keeps its stub", async () => {
+  assert.equal(recruitPlacementPort(undefined), undefined);
+  const calls: unknown[][] = [];
+  const placements = { placeFromRecruit: async (...args: unknown[]) => { calls.push(args); return { kind: "placed", assignmentId: "a-1", created: calls.length === 1 }; } };
+  const port = recruitPlacementPort({ placements } as never)!;
+  assert.equal(port.available, true);
+  const request = { recruitCardId: "11111111-2222-4333-8444-555555555555", requestId: "66666666-7777-4888-8999-000000000000", personId: "person", storeId: "aaaaaaaa-0000-4000-8000-000000000001", startDate: null, endDate: null };
+  assert.deepEqual(await port.placeFromRecruit("staff", request), { kind: "placed", assignmentId: "a-1", created: true });
+  // A retry of the same card is passed through as is; PlacementService replays it (W1_RECRUIT, W1_PG).
+  assert.deepEqual(await port.placeFromRecruit("staff", request), { kind: "placed", assignmentId: "a-1", created: false });
+  assert.deepEqual(calls, [["staff", request], ["staff", request]]);
+  // The runtime hands the port to wireRecruit.
+  const source = await readFile(new URL("../src/login-runtime.js", import.meta.url), "utf8");
+  assert.match(source, /wireRecruit\(settings, access\.services, recruitPlacementPort\(workArea\.services\.work\)\)/);
 });

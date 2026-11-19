@@ -72,8 +72,10 @@ export class PostgresTransferLifecycleTransaction {
   }
   async appendHistory(change: PayLifecycleHistory): Promise<void> {
     this.requireLock(change.transferId);
-    await this.client.query("INSERT INTO pay_transfer_lifecycle_history(transfer_id,actor_id,action,from_status,to_status,deleted,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7)",
+    const result = await this.client.query(
+      "INSERT INTO pay_transfer_lifecycle_history(transfer_id,actor_id,action,from_status,to_status,deleted,occurred_at,unlock_source_version) SELECT id,$2,$3,$4,$5,$6,$7,CASE WHEN $3::text='admin_unlock' THEN version ELSE NULL END FROM pay_transfers WHERE id=$1 AND ($3::text<>'admin_unlock' OR status=$4)",
       [change.transferId, change.actorId, change.action, change.from, change.to, change.deleted, change.occurredAt]);
+    if (result.rowCount !== 1) throw new Error("pay_lifecycle_history_subject_changed");
   }
 }
 

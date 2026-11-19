@@ -1,12 +1,13 @@
 # F-3 transfer lifecycle integration handoff
 
-Base main: `6f98fd1df6f8a1bdc918b52f3eb387f121c31954`.
+Restacked after F-1 squash `472e2983faab85793b5dff52a2b9e9859c544eef`.
 Spec: desk #393 `a303d7efe568bd510d8df9b75fbbb74044504528`,
 `docs/lanes/pay/F-3.md`, decisions-2026-10-27.md, finance-outcomes.md.
 Main parity: `docs/parity/finance-contracts-and-payroll.md` FI-F9/F10/F15.
 
-This slice is a domain implementation, not a deployed payroll journey. No
-migrations, shared exports, gateway routes, provider calls or money movement.
+This slice includes the lifecycle domain, PostgreSQL adapter and its own migration.
+It is not a deployed payroll journey: no shared exports, gateway routes, provider
+calls or money movement.
 No permission matrix is guessed. No default/no-op billing adapter is supplied.
 
 ## Interfaces
@@ -55,14 +56,18 @@ node_modules/.bin/tsc --target ES2022 --module NodeNext --moduleResolution NodeN
 node --test .f3-build/test/transfer-lifecycle.test.js
 ```
 
-Root package/wiring remains integrator-owned. No 0562–0567 migrations consumed.
+Root package/wiring remains integrator-owned. Only the F-3 migration 0562 is used.
 
 ## PostgreSQL follow-up (local only)
 
 F3 now adds `packages/db/src/payroll/postgres-transfer-lifecycle-store.ts` and
 `0562_pay_transfer_lifecycle.sql`. The adapter locks the actual F1 parent row,
 updates its optimistic version, stores Kuwait receipt date, and appends immutable
-history in the same transaction. No child/invoice schema is invented. Missing
+history in the same transaction. An authorized admin unlock records its witness
+before changing state, binding the same transfer, source state/version and DB
+transaction. The guard rejects company reassignment independently and limits
+the unlock update to status and version; the witness is not a replacement for
+Access policy or a boundary against a role allowed to forge history. No child/invoice schema is invented. Missing
 billing effects explicitly throw `pay_lifecycle_billing_unavailable`; lock,
 payment-received and deletion cannot report false success without that adapter.
 Access/current-membership policy is mandatory and transaction-bound. Its eventual
