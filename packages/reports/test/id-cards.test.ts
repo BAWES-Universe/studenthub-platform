@@ -78,3 +78,26 @@ test("REPORTS_ID_CARDS a card is valid through its expiry day, in Kuwait time", 
   assert.equal((await rig("2026-11-19T21:00:00Z").service.own("holder"))?.valid, false);
   assert.equal(await rig().service.own("nobody"), undefined);
 });
+
+test("REPORTS_ID_CARDS_PDF the person's own card and staff batches print as PDF; a missing or unreadable photo still prints", async () => {
+  const store = new Store(), reads: string[] = [];
+  const photos = { async read(id: string) { reads.push(id); if (id === "holder") throw new Error("storage down"); return null; } };
+  const service = new IdCardsService(store, { async isStaff(id: string) { return id === "staff"; } }, () => new Date("2026-11-19T06:00:00Z"), photos);
+  const own = await service.ownPdf("holder");
+  assert.ok(own?.subarray(0, 5).equals(Buffer.from("%PDF-")));
+  assert.ok(own!.toString("latin1").includes("(Alia Badr) Tj"));
+  assert.equal(await service.ownPdf("nobody"), undefined);
+  assert.deepEqual(await service.staffPdf("person", ["holder"]), { status: "not_found" });
+  for (const people of [[], ["holder", "holder"], ["bad id"], Array.from({ length: ID_CARD_BATCH_MAX + 1 }, (_, i) => `p${i}`)])
+    assert.deepEqual(await service.staffPdf("staff", people), { status: "invalid" });
+  assert.deepEqual(await service.staffPdf("staff", ["holder", "nobody"]), { status: "refused", refusals: [{ personId: "nobody", code: "no_card" }] });
+  const batch = await service.staffPdf("staff", ["holder"]);
+  assert.equal(batch.status, "ok");
+  assert.deepEqual(reads, ["holder", "holder"]);
+});
+
+test("REPORTS_ID_CARDS_PDF a staff print batch is taken before authorization", async () => {
+  const store = new Store(), people = ["holder"];
+  const service = new IdCardsService(store, { async isStaff() { people.push("nobody"); return true; } }, () => new Date("2026-11-19T06:00:00Z"));
+  assert.equal((await service.staffPdf("staff", people)).status, "ok");
+});

@@ -22,5 +22,6 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
   return { http: { isStaff: authority.isStaff, send: (sender, input) => service.send(sender, input),
     deliveryLog: (person, offset, limit) => emails.deliveryLog(person, offset, limit),
     morningSummary: { today: viewer => summary.today(viewer), subscribe: (viewer, on) => summary.subscribe(viewer, on) },
-    idCards: { isStaff: authority.isStaff, list: (viewer, view, name, page) => idCards.list(viewer, view, name, page), write: (viewer, action, people) => idCards.write(viewer, action, people), own: person => idCards.own(person) } }, close: () => pool.end() };
+    idCards: { isStaff: authority.isStaff, list: (viewer, view, name, page) => idCards.list(viewer, view, name, page), write: (viewer, action, people) => idCards.write(viewer, action, people), own: person => idCards.own(person),
+      ownPdf: person => idCards.ownPdf(person), staffPdf: (viewer, people) => idCards.staffPdf(viewer, people) } }, close: () => pool.end() };
 }

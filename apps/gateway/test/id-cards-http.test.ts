@@ -13,7 +13,7 @@ async function rig(t: TestContext) {
   let refuse: { personId: string; code: "not_assigned" }[] = [];
   const store: IdCardsStore = {
     async list(view: IdCardView) {
-      return view === "needs" ? { total: 1, rows: [{ personId: "p-<1>", name: "Alia <b>Badr</b>", employeeId: "C00042", cardNumber: null, expiresOn: null, placement: { company: "Sultan Center", store: "Avenues" } }] } : { total: 0, rows: [] };
+      return view === "needs" ? { total: 1, rows: [{ personId: "p-<1>", name: "Alia <b>Badr</b>", employeeId: "C00042", cardNumber: null, expiresOn: null, placement: { company: "Sultan Center", store: "Avenues" } }] } : view === "issued" ? { total: 1, rows: [{ personId: PERSON, name: "Alia Badr", employeeId: "C00042", cardNumber: 17, expiresOn: "2099-01-01", placement: { company: "Sultan Center", store: "Avenues" } }] } : { total: 0, rows: [] };
     },
     async write(action, people) { if (refuse.length) return refuse; writes.push({ action, people }); return []; },
     async card(person) { return person === PERSON ? { name: "Alia Badr", arabicName: "علياء بدر", employeeId: "C00042", cardNumber: 17, expiresOn: "2099-01-01", issuedAt: new Date("2026-11-19T00:00:00Z"), placement: { company: "Sultan Center", store: "Avenues" } } : undefined; },
@@ -21,7 +21,7 @@ async function rig(t: TestContext) {
   };
   const authority = { async isStaff(id: string) { return id === STAFF; } };
   const service = new IdCardsService(store, authority);
-  const http = { isStaff: authority.isStaff, list: service.list.bind(service), write: service.write.bind(service), own: service.own.bind(service) };
+  const http = { isStaff: authority.isStaff, list: service.list.bind(service), write: service.write.bind(service), own: service.own.bind(service), ownPdf: service.ownPdf.bind(service), staffPdf: service.staffPdf.bind(service) };
   const server = createServer(async (req, res) => {
     if (!await handleIdCards(req, res, http, ORIGIN, async s => s === "s-staff" ? STAFF : s === "s-person" ? PERSON : s === "s-other" ? "other" : undefined)) { res.writeHead(418); res.end(); }
   });
@@ -62,6 +62,9 @@ test("REPORTS_ID_CARDS_HTTP staff see who needs a card, escaped, and a form to i
   assert.match(html, /Sultan Center, Avenues/);
   assert.match(html, /<button type="submit" name="action" value="issue">Issue cards<\/button>/);
   assert.match(await (await x.get("/workspace/id-cards?view=expired", "s-staff", "text/html")).text(), /No assigned person has an expired card/);
+  const issued = await (await x.get("/workspace/id-cards?view=issued", "s-staff", "text/html")).text();
+  assert.match(issued, /<button type="submit" name="action" value="renew">Renew cards<\/button> <button type="submit" name="action" value="issue">Re-issue cards<\/button>/, "people with a card can be renewed or re-issued");
+  assert.doesNotMatch(html, /Re-issue/, "the needs list only issues");
   for (const bad of ["?view=all", "?page=0", "?page=x", `?name=${"a".repeat(101)}`]) assert.equal((await x.get(`/workspace/id-cards${bad}`, "s-staff")).status, 400, bad);
 });
 
@@ -100,4 +103,31 @@ test("REPORTS_ID_CARDS_HTTP a person sees their own card, a note when they have 
   assert.match(await (await x.get("/profile/id-card", "s-other", "text/html")).text(), /You do not have a StudentHub ID card yet/);
   assert.equal((await x.get("/profile/id-card")).status, 401);
   assert.equal((await fetch(x.base + "/profile/id-card", { method: "POST", headers: { cookie: "__Host-studenthub_session=s-person" } })).status, 405);
+});
+
+test("REPORTS_ID_CARDS_PDF_HTTP the person downloads their card; staff print a batch; others get not found", async (t) => {
+  const x = await rig(t);
+  const own = await x.get("/profile/id-card.pdf", "s-person", "*/*");
+  assert.equal(own.status, 200);
+  assert.equal(own.headers.get("content-type"), "application/pdf");
+  assert.equal(own.headers.get("content-disposition"), 'attachment; filename="studenthub-id-card.pdf"');
+  assert.equal(own.headers.get("cache-control"), "no-store");
+  assert.ok(Buffer.from(await own.arrayBuffer()).subarray(0, 5).equals(Buffer.from("%PDF-")));
+  assert.equal((await x.get("/profile/id-card.pdf", "s-other")).status, 404, "no card, no PDF");
+  assert.equal((await x.get("/profile/id-card.pdf")).status, 401);
+  assert.match(await (await x.get("/profile/id-card", "s-person", "text/html")).text(), /href="\/profile\/id-card\.pdf"/);
+
+  const print = await x.get(`/workspace/id-cards/print?person=${PERSON}`, "s-staff", "*/*");
+  assert.equal(print.status, 200); assert.equal(print.headers.get("content-type"), "application/pdf");
+  assert.equal(print.headers.get("content-disposition"), 'attachment; filename="id-cards.pdf"');
+  assert.deepEqual(await (await x.get(`/workspace/id-cards/print?person=${PERSON}&person=nobody`, "s-staff")).json(), { status: "refused", refusals: [{ personId: "nobody", code: "no_card" }] });
+  for (const bad of ["", "?person=a&person=a", "?person=a&other=1"]) assert.equal((await x.get(`/workspace/id-cards/print${bad}`, "s-staff")).status, 400, bad);
+  for (const session of [undefined, "s-person"]) {
+    const res = await x.get(`/workspace/id-cards/print?person=${PERSON}`, session);
+    assert.equal(res.status, 404); assert.deepEqual(await res.json(), { status: "not_found" });
+  }
+  assert.equal((await fetch(`${x.base}/workspace/id-cards/print?person=${PERSON}`, { method: "POST", headers: { cookie: "__Host-studenthub_session=s-person" } })).status, 404, "non-staff: not found for any method");
+  assert.equal((await fetch(`${x.base}/workspace/id-cards/print?person=${PERSON}`, { method: "POST", headers: { cookie: "__Host-studenthub_session=s-staff" } })).status, 405);
+  const saved = await (await x.post(`action=issue&person=${PERSON}`, "s-staff", { accept: "text/html" })).text();
+  assert.match(saved, new RegExp(`href="/workspace/id-cards/print\\?person=${PERSON}"`));
 });
