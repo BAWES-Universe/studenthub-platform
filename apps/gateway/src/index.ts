@@ -280,9 +280,12 @@ export function createGatewayServer(
     }
 
     if (request.method === "GET" && request.url && /^\/exports\/[^/]+$/.test(requestPath(request.url))) {
-      const bytes=await login?.exports?.download(cookieValue(request.headers.cookie,"__Host-studenthub_session"),requestPath(request.url).slice(9));
-      if(!bytes){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
-      response.writeHead(200,{"content-type":"text/csv; charset=utf-8","content-disposition":'attachment; filename="company-directory.csv"',"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});response.end(bytes);return;
+      const exportSession=cookieValue(request.headers.cookie,"__Host-studenthub_session"),exportId=requestPath(request.url).slice(9);
+      // The file is named after its kind (kind ids are fixed [a-z-] names); a service without file() serves the company directory only.
+      const file=login?.exports?.file?await login.exports.file(exportSession,exportId):await login?.exports?.download(exportSession,exportId).then(bytes=>bytes?{kind:"company-directory",bytes}:null);
+      if(!file){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
+      const bytes=file.bytes,fileName=/^[a-z][a-z-]{0,63}$/.test(file.kind)?file.kind:"export";
+      response.writeHead(200,{"content-type":"text/csv; charset=utf-8","content-disposition":`attachment; filename="${fileName}.csv"`,"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});response.end(bytes);return;
     }
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace") {

@@ -25,6 +25,7 @@ import { wireOrganizations } from "./wiring/organizations.js";
 import { wirePayContracts } from "./wiring/pay-contracts.js";
 import { wireWork, workLaneEnabled } from "./wiring/work.js";
 import { wireOps } from "./wiring/ops.js";
+import { workExportKinds } from "./work/exports.js";
 import { wireRecruit } from "./wiring/recruit.js";
 import {PostgresNotificationsStore} from "@studenthub/db/notifications";
 import {NotificationsService} from "../../../packages/notifications/src/notifications.js";
@@ -301,7 +302,7 @@ export function createRuntimeLoginFromEnv(
   const organizationArea = wireOrganizations(settings, access.services);
   const payContractArea = wirePayContracts(settings, access.services);
   const workArea = wireWork(settings, access.services, { enabled: workLaneEnabled(env.WORK_LANE_ENABLED) });
-  const ops = wireOps(settings, access.services, organizationArea.services);
+  const ops = wireOps(settings, access.services, organizationArea.services, workArea.services.work ? workExportKinds(workArea.services.work) : []);
   const recruitArea = wireRecruit(settings, access.services);
   const accessLane = wireAccessLane(settings, access.services, env);
   // SHU-457: every reader of the login store's sessions gets the bound T check.

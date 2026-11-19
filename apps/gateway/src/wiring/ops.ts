@@ -4,7 +4,7 @@ import { createAdminJobs } from "../admin-jobs.js";
 import { createAdminOutbox } from "../admin-outbox.js";
 import { createExportsHttp } from "../exports-http.js";
 import { createJobRegistry, writeJobAlert } from "../../../../packages/observability/src/jobs.js";
-import { ExportService } from "../../../../packages/exports/src/exports.js";
+import { ExportService, type ExportKind } from "../../../../packages/exports/src/exports.js";
 import { createCompanyDirectoryExport } from "../../../../packages/exports/src/company-directory-export.js";
 import type { wireAccess } from "./access.js";
 import type { Wired, WiringSettings } from "./context.js";
@@ -13,7 +13,8 @@ import type { wireOrganizations } from "./organizations.js";
 type Access = ReturnType<typeof wireAccess>["services"];
 type Organizations = ReturnType<typeof wireOrganizations>["services"];
 
-export function wireOps(settings: WiringSettings, access: Access, organizationArea: Organizations): Wired<{
+// `areaKinds`: export kinds other areas register with the one export service (P-1), e.g. the work lane's.
+export function wireOps(settings: WiringSettings, access: Access, organizationArea: Organizations, areaKinds: readonly ExportKind<never>[] = []): Wired<{
   readonly exports: ReturnType<typeof createExportsHttp>;
   readonly adminJobs: ReturnType<typeof createAdminJobs>;
   readonly adminOutbox: ReturnType<typeof createAdminOutbox>;
@@ -21,10 +22,10 @@ export function wireOps(settings: WiringSettings, access: Access, organizationAr
   const jobRuns = new PostgresJobRunsStore({connectionString:settings.databaseUrl});
   const emailOutbox=new PostgresEmailOutboxStore({connectionString:settings.databaseUrl});
   const exportsStore=new PostgresExportsStore({connectionString:settings.databaseUrl});
-  const exportsService=new ExportService(exportsStore,[createCompanyDirectoryExport(organizationArea.organizations) as never]);
+  const exportsService=new ExportService(exportsStore,[createCompanyDirectoryExport(organizationArea.organizations) as never, ...areaKinds]);
   return {
     services: {
-      exports:createExportsHttp(access.loginStore.sessions,exportsService),
+      exports:createExportsHttp(access.loginStore.sessions,exportsService,exportsStore),
       ...({adminJobs:createAdminJobs(access.loginStore.sessions,access.authzStore,jobRuns,createJobRegistry(jobRuns,writeJobAlert))} as { adminJobs: ReturnType<typeof createAdminJobs> }),
       ...({adminOutbox:createAdminOutbox(access.loginStore.sessions,access.authzStore,emailOutbox)} as { adminOutbox: ReturnType<typeof createAdminOutbox> }),
     },

@@ -623,3 +623,34 @@ test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes ar
   await assert.rejects(pool.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids)
     VALUES($1,$2,$3,$4,'2026-11-10','day','approved','{}')`, [randomUUID(), w.company, w.store, w.person]), /work_decisions_actor/);
 });
+
+test("W1_PG who worked where: placements overlapping a range, oldest first, keyset-paged; company names", async () => {
+  const w = await world();
+  await contract(w.person, w.company, w.store);
+  const now = { value: new Date("2026-11-18T06:00:00Z") };
+  const { placement } = services(now);
+  const placed = async (startDate: string, endDate?: string) => {
+    const out = await placement.place(w.staff, { personId: w.person, storeId: w.store, startDate, ...(endDate ? { endDate } : {}) });
+    assert.equal(out.kind, "placed");
+    return out.kind === "placed" ? out.assignment.id : "";
+  };
+  // Other tests leave open placements that overlap any later range, so read whole and keep only these three.
+  const early = await placed("2031-01-01", "2031-01-31"), mid = await placed("2031-02-01", "2031-02-28"), open = await placed("2031-03-01");
+  const ids = async (from: string, to: string, after?: { startDate: string; id: string }, limit = 100_000) =>
+    (await placements.assignmentHistory({ from, to, ...(after ? { after } : {}), limit })).filter((a) => [early, mid, open].includes(a.id)).map((a) => a.id);
+  assert.deepEqual(await ids("2031-01-15", "2031-02-01"), [early, mid], "both ends of the range are inclusive");
+  assert.deepEqual(await ids("2031-02-15", "2031-12-31"), [mid, open], "an open end overlaps every later day");
+  assert.deepEqual(await ids("2032-01-01", "2032-12-31"), [open]);
+  assert.deepEqual(await ids("2030-01-01", "2030-12-31"), [], "before every one of them");
+  assert.deepEqual(await ids("2031-01-01", "2031-12-31", { startDate: "2031-01-01", id: early }), [mid, open], "continues after the cursor");
+  const page = await placements.assignmentHistory({ from: "2031-01-01", to: "2031-01-31", limit: 1 });
+  assert.equal(page.length, 1);
+  // The service is for operator staff only: staff of a group or a company owner get nothing.
+  if (!(await pool.query("SELECT 1 FROM organizations WHERE id = 'root'")).rowCount) await authz.upsertOrganization(createOrganization({ id: "root", name: "StudentHub" }));
+  const operator = await principal("operator", [{ orgId: "root", role: "staff", scope: "subtree" }]);
+  assert.ok(Array.isArray((await placement.history(operator, { from: "2031-01-01", to: "2031-12-31" }))?.rows));
+  assert.equal(await placement.history(w.staff, { from: "2031-01-01", to: "2031-12-31" }), undefined);
+  assert.equal(await placement.history(w.owner, { from: "2031-01-01", to: "2031-12-31" }), undefined);
+  assert.deepEqual(await viewStore.companyNames([w.company, "work-co-missing"]), new Map([[w.company, w.company]]));
+  assert.deepEqual(await viewStore.companyNames([]), new Map());
+});

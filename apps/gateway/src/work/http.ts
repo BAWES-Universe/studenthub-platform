@@ -23,6 +23,8 @@ export interface WorkHttpServices {
   readonly storeInfo?: (storeId: string) => Promise<{ readonly orgId: string; readonly name: string; readonly active: boolean } | undefined>;
   /** A company's active stores, for the staff placement form; absent means a store ID field. */
   readonly storesOf?: (orgId: string) => Promise<readonly { readonly id: string; readonly name: string }[]>;
+  /** Company names for the work exports; absent means the company ID. */
+  readonly companyNames?: (orgIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
   /** Names of people shown in employer and staff lists; absent means a generic label. */
   readonly personNames?: (personIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
 }

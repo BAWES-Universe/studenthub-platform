@@ -71,6 +71,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
     storeNames: (ids) => viewStore.storeNames(ids),
     storeInfo: (id) => viewStore.storeInfo(id),
     personNames: (ids) => viewStore.personNames(ids),
+    companyNames: (ids) => viewStore.companyNames(ids),
     storesOf: (orgId) => viewStore.storesOf(orgId),
   };
   return {

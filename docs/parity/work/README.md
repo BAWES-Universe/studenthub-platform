@@ -159,6 +159,33 @@ The person comes from the session cookie, and posts need the same origin and a f
 | One appeal page for everyone | `/work/appeals/:id` shows the person's view to the appellant and the staff view to staff of that company; anyone else gets 404 | W-6 ownership |
 | The A-13 list shares `/work/appeals` with the person's list | `?as=staff` asks for the staff list; the server checks the staff grant on every request (contract rule 1) | No context switch exists yet |
 
+## Exports (P-1)
+
+The work exports go through the one export service (`packages/exports`), so each is checked
+when it is asked for and again at download, its link works for 15 minutes for the person who
+asked, and every export, refused ones included, is audited. The kinds live in
+`apps/gateway/src/work/exports.ts` and are registered with the service by `wireOps` when the work
+lane is on. Files are CSV; legacy wrote Excel.
+
+| Kind | Legacy | Who | Columns |
+|---|---|---|---|
+| `work-log-detailed` | company `candidate/work-log-detailed-excel` | the company, staff, a store's manager for their stores | Session ID, Person ID, Person, Store ID, Store, Date, Start time, End time, Total time, Total seconds, Note, Status, Via, Created at, Decided at |
+| `work-log-summary` | company `candidate/work-log-excel` | as above | Person ID, Person, Company, Store, Hours, Minutes, Seconds, Approved, Waiting, Rejected |
+| `work-assigned-history` | staff `candidate/export-assigned-history` | operator staff | Person ID, Person, Start date, End date, Company, Store |
+
+- The company export takes the work review screen's filters (dates, status, store), with the
+  same range limit of a year. The buttons are on `/organization/:orgId/work`; staff export who
+  worked where from `/work/logs`. Store screens have no export, as in legacy.
+- Legacy put the summary and one sheet per person in the detailed file; here they are two
+  files. Legacy's summary added every status into one total; that total is kept, with the
+  approved, waiting and rejected parts beside it. Hours still in progress count nowhere.
+  Legacy's bonus column was always 0 and is left out.
+- Times are Kuwait time. Total time keeps legacy's "2 hour 30 minutes 5 seconds", with the
+  seconds beside it.
+- Who worked where lists every placement that overlaps the range. Legacy's currency, name and
+  email filters are not carried over; the file can be filtered after download.
+- Over 10,000 rows is refused; the screen asks for a shorter range.
+
 ## Not yet here
 
 - A-14 (staff my work: standup, leave, expenses and their own sessions); it depends on the P1 and F4 lanes.

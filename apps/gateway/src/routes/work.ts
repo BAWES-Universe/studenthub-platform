@@ -10,5 +10,5 @@ export const workRoute: GatewayRoute = {
   handle: async (ctx) => await handleWork(ctx.request, ctx.response, ctx.login?.work, ctx.login?.web?.origin)
     || await handleStaffPages(ctx.request, ctx.response, ctx.login?.work, ctx.login?.web?.origin)
     || await handleWorkPages(ctx.request, ctx.response, ctx.login?.work, ctx.login?.web?.origin, ctx.login?.work?.storeNames)
-    || handleReviewPages(ctx.request, ctx.response, ctx.login?.work, ctx.login?.web?.origin),
+    || handleReviewPages(ctx.request, ctx.response, ctx.login?.work, ctx.login?.web?.origin, undefined, ctx.login?.exports),
 };
