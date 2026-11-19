@@ -28,6 +28,8 @@ const digest = (value: string) => createHash('sha256').update(value).digest('bas
 /** In-memory twin of PostgresUniverseEmbedStore with an explicit clock (seconds). */
 class MemoryEmbedStore implements UniverseEmbedStore {
   now = Math.floor(Date.now() / 1000);
+  /** Remaining lease seconds readBinding reports, when a test pins it. */
+  remainingOverride: number | undefined;
   readonly instances = new Map<string, { browser: string; expires: number }>();
   readonly refs = new Map<string, string>();
   readonly handoffs = new Map<string, { instance: string; browser: string; status: string; state?: string; session?: string; person?: string; expires: number }>();
@@ -94,7 +96,8 @@ class MemoryEmbedStore implements UniverseEmbedStore {
     if (!b || b.browser !== digest(browser) || b.session !== digest(session) || !this.sessionLive(b.session)) return undefined;
     const live = b.leaseExpires !== undefined && b.leaseExpires > this.now;
     return { personId: b.person, generation: b.generation, locked: this.locked.has(b.person),
-      ...(live ? { lease: { hostSubjectDigest: b.leaseSubject!, expiresAt: new Date(b.leaseExpires! * 1000) } } : {}) };
+      ...(live ? { lease: { hostSubjectDigest: b.leaseSubject!, expiresAt: new Date(b.leaseExpires! * 1000),
+        remainingSeconds: this.remainingOverride ?? b.leaseExpires! - this.now } } : {}) };
   }
   async invalidateBinding(instance: string, generation?: number) {
     if (generation !== undefined && this.bindings.get(instance)?.generation !== generation) return;
@@ -529,10 +532,77 @@ test('E2 a store failure while completing sign-in answers 503 and leaves no sess
   const request = h.rig.provider.authorizationRequests.at(-1)!;
   const sessionsBefore = h.rig.sessions.records.size;
   h.store.completeHandoff = async () => { throw new Error('database down'); };
-  const callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
+  const logged: string[] = [];
+  const original = console.error;
+  console.error = (line: unknown) => { logged.push(String(line)); };
+  let callback;
+  try {
+    callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
+  } finally { console.error = original; }
   assert.equal(callback.status, 503);
+  // The outage is logged by route and error class only: no state, code, cookie or message text.
+  assert.deepEqual(logged.map(line => JSON.parse(line)), [{ event: 'universe_embed_unavailable', route: 'GET /login/callback', error: 'Error' }]);
   assert.equal(callback.headers['set-cookie'], undefined);
   assert.equal(h.rig.sessions.records.size, sessionsBefore, 'the new session was removed');
+});
+
+test('E2 profile: a lease that ends between the final read and the response releases no fields', async () => {
+  const h = await harness();
+  h.store.subjects.set(`person-1\u0000${h.rig.config.issuer}`, [SUBJECT]);
+  const { browser } = await signIn(h);
+  assert.equal((await verifyHost(h, browser)).reply.state, 'ready');
+  // The final read sees a live lease with nothing left of it.
+  h.store.remainingOverride = 0;
+  assert.deepEqual(JSON.parse((await browser.api('GET', '/universe/embed/profile')).body), { state: 'needs_universe' });
+  h.store.remainingOverride = undefined;
+  assert.equal(JSON.parse((await browser.api('GET', '/universe/embed/profile')).body).state, 'populated');
+});
+
+test('E2 a paused person gets no embed session', async () => {
+  const h = await harness();
+  Object.assign(h.runtime.login.dependencies, { accessPause: { isPaused: async () => true } });
+  const browser = new Browser(h.server);
+  await browser.go('GET', '/universe/embed', { 'sec-fetch-dest': 'iframe' });
+  await browser.go('POST', '/universe/embed/connect', { origin: EMBED, 'content-type': 'application/x-www-form-urlencoded' }, `t=${browser.token()}`);
+  const request = h.rig.provider.authorizationRequests.at(-1)!;
+  const sessionsBefore = h.rig.sessions.records.size;
+  const callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
+  assert.equal(callback.status, 403);
+  assert.match(callback.body, /access is paused/);
+  assert.equal(callback.headers['set-cookie'], undefined);
+  assert.equal(h.rig.sessions.records.size, sessionsBefore);
+});
+
+test('E2 a pause that lands between the check and the session insert is a pause, not an outage', async () => {
+  const h = await harness();
+  const browser = new Browser(h.server);
+  await browser.go('GET', '/universe/embed', { 'sec-fetch-dest': 'iframe' });
+  await browser.go('POST', '/universe/embed/connect', { origin: EMBED, 'content-type': 'application/x-www-form-urlencoded' }, `t=${browser.token()}`);
+  const request = h.rig.provider.authorizationRequests.at(-1)!;
+  h.rig.sessions.put = async () => { throw Object.assign(new Error('StudentHub access is paused for this person'), { code: '42501' }); };
+  const callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
+  assert.equal(callback.status, 403);
+  assert.match(callback.body, /access is paused/);
+});
+
+test('E2 a failed session insert while completing sign-in answers 503', async () => {
+  const h = await harness();
+  const browser = new Browser(h.server);
+  await browser.go('GET', '/universe/embed', { 'sec-fetch-dest': 'iframe' });
+  await browser.go('POST', '/universe/embed/connect', { origin: EMBED, 'content-type': 'application/x-www-form-urlencoded' }, `t=${browser.token()}`);
+  const request = h.rig.provider.authorizationRequests.at(-1)!;
+  h.rig.sessions.put = async () => { throw new Error('database down'); };
+  const callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
+  assert.equal(callback.status, 503);
+});
+
+test('E2 an oversized identity body is refused and the connection closed', async () => {
+  const h = await harness();
+  h.store.subjects.set(`person-1\u0000${h.rig.config.issuer}`, [SUBJECT]);
+  const { browser } = await signIn(h);
+  const reply = await browser.api('POST', '/universe/embed/identity', { attestation: 'a'.repeat(9000) });
+  assert.deepEqual(JSON.parse(reply.body), { state: 'start_again' });
+  assert.equal(reply.headers.connection, 'close');
 });
 
 test('E2 link and data states come from My profile\'s reader with provenance', async () => {
@@ -584,6 +654,7 @@ test('E2 wiring: absent E2 names keep E1 behaviour; partial or unpinned configur
   await assert.rejects(wireUniverse(full, disabled, reader), /Invalid Universe embed E2 configuration/);
   const wired = await wireUniverse(full, base, reader);
   assert.ok(wired.config?.runtime);
+  assert.ok(wired.config.runtime.login.dependencies.accessPause, 'the embed login checks account pauses');
   await wired.close();
 });
 
@@ -879,6 +950,57 @@ test('E2 script: a visibility change while signing in keeps the waiting message 
   status = 'needs_universe';
   await rig.advance(3_000);
   assert.equal(rig.body.getAttribute('data-state'), 'needs_universe', 'noticed within the quick poll, not the 60 s one');
+});
+
+test('E2 script: an older status reply landing after a newer one changes nothing', async () => {
+  const rig = scriptRig();
+  const releases: Array<(value: unknown) => void> = [];
+  rig.routes.set('GET /universe/embed/status', () => new Promise(resolve => { releases.push(resolve); }));
+  rig.routes.set('POST /universe/embed/challenge', async () => ({ challenge: 'c1' }));
+  await rig.start();
+  for (const fn of rig.ids.connect!.listeners.get('submit') ?? []) fn({});
+  await rig.advance(3_000); // the quick poll overlaps the first status request
+  assert.equal(releases.length, 2);
+  releases[1]!({ state: 'needs_universe' });
+  await rig.settle();
+  assert.equal(rig.posted.length, 1, 'verification started from the newer reply');
+  releases[0]!({ state: 'signed_out' });
+  await rig.settle();
+  assert.equal(rig.body.getAttribute('data-state'), 'needs_universe');
+  rig.routes.set('POST /universe/embed/identity', async () => ({ state: 'ready', leaseSeconds: 100, renewAfterSeconds: 40 }));
+  rig.routes.set('GET /universe/embed/profile', async () => ({ state: 'populated', fields: [{ key: 'displayName', value: 'Synthetic', source: 'imported_snapshot' }] }));
+  await rig.attest();
+  assert.equal(rig.shown(), true, 'the host reply for the newer challenge is still accepted');
+});
+
+test('E2 script: an older challenge\'s timer never clears a newer pending challenge', async () => {
+  const rig = scriptRig();
+  const releases: Array<(value: unknown) => void> = [];
+  let n = 0;
+  rig.routes.set('GET /universe/embed/status', async () => ({ state: 'needs_universe' }));
+  rig.routes.set('POST /universe/embed/challenge', () => new Promise(resolve => { releases.push(resolve); }));
+  rig.routes.set('POST /universe/embed/identity', async () => ({ state: 'ready', leaseSeconds: 100, renewAfterSeconds: 40 }));
+  rig.routes.set('GET /universe/embed/profile', async () => ({ state: 'populated', fields: [{ key: 'displayName', value: 'Synthetic', source: 'imported_snapshot' }] }));
+  await rig.start();
+  await rig.advance(60_000); // the 60 s re-check starts a second challenge in the same generation
+  assert.equal(releases.length, 2);
+  releases[0]!({ challenge: `c${++n}` });
+  await rig.settle();
+  await rig.advance(2_000);
+  releases[1]!({ challenge: `c${++n}` });
+  await rig.settle();
+  await rig.advance(3_500); // past the first challenge's 5 s timer, within the second's
+  await rig.attest();
+  assert.equal(rig.shown(), true, 'the host reply for the newer challenge is accepted');
+});
+
+test('E2 script: while waiting, sign-in can be started again', async () => {
+  const rig = scriptRig();
+  rig.routes.set('GET /universe/embed/status', async () => ({ state: 'signed_out' }));
+  await rig.start();
+  for (const fn of rig.ids.connect!.listeners.get('submit') ?? []) fn({});
+  assert.equal(rig.body.getAttribute('data-state'), 'waiting');
+  assert.equal(rig.ids.connect!.hidden, false);
 });
 
 test('E2 hosts: the embed never shares a hostname with the main app, and the site is never a public suffix', () => {
