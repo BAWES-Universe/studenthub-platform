@@ -25,6 +25,8 @@ export interface WorkHttpServices {
   readonly storesOf?: (orgId: string) => Promise<readonly { readonly id: string; readonly name: string }[]>;
   /** Internal staff time (legacy staff_work_session); absent means those screens answer 503. */
   readonly staffTime?: StaffTimeService;
+  /** Company names for the work exports; absent means the company ID. */
+  readonly companyNames?: (orgIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
   /** Names of people shown in employer and staff lists; absent means a generic label. */
   readonly personNames?: (personIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
 }

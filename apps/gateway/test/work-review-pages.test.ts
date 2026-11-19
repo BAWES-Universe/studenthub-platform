@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { handleReviewPages } from "../src/work/review-pages.js";
 import type { WorkHttpServices } from "../src/work/http.js";
+import type { ExportsHttp } from "../src/exports-http.js";
 
 const SESSION = "s".repeat(43), ORIGIN = "https://studenthub.test.invalid";
 const STORE = "aaaaaaaa-0000-4000-8000-000000000001", OTHER_STORE = "aaaaaaaa-0000-4000-8000-000000000002";
@@ -43,7 +44,7 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   } as unknown as WorkHttpServices;
 }
 
-type Opt = { method?: string; body?: string; origin?: string; cookie?: string | null; contentType?: string; service?: WorkHttpServices | undefined; world?: World };
+type Opt = { method?: string; body?: string; origin?: string; cookie?: string | null; contentType?: string; service?: WorkHttpServices | undefined; world?: World; exports?: ExportsHttp };
 async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
   const req = Readable.from(o.body !== undefined ? [o.body] : []) as Readable & { method?: string; url?: string; headers: Record<string, string> };
   req.method = o.method ?? "GET";
@@ -59,7 +60,7 @@ async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
   res.end = (v) => { if (v !== undefined) res.chunks.push(String(v)); };
   res.destroy = () => {};
   const svc = Object.hasOwn(o, "service") ? o.service : services(calls, o.world);
-  const handled = await handleReviewPages(req as never, res as never, svc, ORIGIN, () => NOW);
+  const handled = await handleReviewPages(req as never, res as never, svc, ORIGIN, () => NOW, o.exports);
   return { handled, status: res.statusCode, headers: res.headers, html: res.chunks.join("") };
 }
 const post = (path: string, body: string, extra: Opt = {}, calls: unknown[][] = []) => request(path, { method: "POST", origin: ORIGIN, body, ...extra }, calls);
@@ -188,4 +189,53 @@ test("WORK_REVIEW A-12 work logs: staff see every company, filter by person, dec
   const decided: unknown[][] = [];
   const done = await post("/work/logs/decide", `back=${encodeURIComponent("/work/logs?person=person-1")}&sessionId=${S1}&action=approve`, {}, decided);
   assert.equal(done.headers.location, "/work/logs?person=person-1&done=decided");
+});
+
+test("WORK_EXPORT the company screen exports these hours in detail or per person; the store screen has no export", async () => {
+  const page = await request("/organization/co/work?from=2026-11-01&to=2026-11-18&status=approved&store=" + STORE);
+  assert.match(page.html, /action="\/organization\/co\/work\/export"/);
+  assert.match(page.html, /name="from" value="2026-11-01"[\s\S]*name="status" value="approved"[\s\S]*name="store" value="aaaaaaaa-0000-4000-8000-000000000001"/);
+  assert.match(page.html, /value="detailed">Export each entry[\s\S]*value="summary">Export totals per person/);
+  assert.doesNotMatch((await request(`/store/${STORE}/time-approvals`)).html, /\/export"/);
+  assert.match((await request("/work/logs")).html, /action="\/work\/logs\/export"[\s\S]*value="history">Export who worked where/);
+});
+
+test("WORK_EXPORT a form post asks the export service for the kind with parsed filters and links the file", async () => {
+  const asked: unknown[][] = [];
+  const exports: ExportsHttp = {
+    request: async () => { throw new Error("not this one"); }, download: async () => null,
+    requestKind: async (...args) => { asked.push(args); return { status: 200, body: { id: "e1", downloadUrl: "/exports/e1", rowCount: 3 } }; },
+  };
+  const ok = await post("/organization/co/work/export", `kind=summary&from=2026-11-01&to=2026-11-18&status=approved&store=${STORE.toUpperCase()}`, { exports });
+  assert.equal(ok.status, 200);
+  assert.match(ok.html, /3 rows exported[\s\S]*href="\/exports\/e1">Download CSV/);
+  assert.deepEqual(asked[0], [SESSION, "work-log-summary", { orgId: "co", from: "2026-11-01", to: "2026-11-18", status: "approved", storeId: STORE }]);
+  assert.equal((await post("/organization/co/work/export", "kind=detailed&from=2026-11-01&to=2026-11-18", { exports })).status, 200);
+  assert.deepEqual(asked[1], [SESSION, "work-log-detailed", { orgId: "co", from: "2026-11-01", to: "2026-11-18" }]);
+  assert.equal((await post("/work/logs/export", "kind=history&from=2026-01-01&to=2026-11-18", { exports })).status, 200);
+  assert.deepEqual(asked[2], [SESSION, "work-assigned-history", { from: "2026-01-01", to: "2026-11-18" }]);
+  // Bad kinds, ranges, statuses and stores never reach the service.
+  for (const [path, body] of [["/organization/co/work/export", "kind=history&from=2026-11-01&to=2026-11-18"], ["/work/logs/export", "kind=summary&from=2026-11-01&to=2026-11-18"],
+    ["/organization/co/work/export", "kind=summary&from=2026-11-18&to=2026-11-01"], ["/organization/co/work/export", "kind=summary&from=2025-01-01&to=2026-11-18"],
+    ["/organization/co/work/export", "kind=summary&from=2026-11-01&to=2026-11-18&status=open"], ["/organization/co/work/export", "kind=summary&from=2026-11-01&to=2026-11-18&store=nope"],
+    ["/organization/co/work/export", "kind=summary&from=2026-11-01&to=2026-11-18&kind=detailed"]]) {
+    assert.equal((await post(path!, body!, { exports })).status, 400, body);
+  }
+  assert.equal(asked.length, 3);
+  // Same origin only, POST only, and a 503 where exports aren't wired.
+  assert.equal((await post("/organization/co/work/export", "kind=summary&from=2026-11-01&to=2026-11-18", { exports, origin: "https://evil.invalid" })).status, 403);
+  assert.equal((await request("/organization/co/work/export", { exports })).status, 405);
+  assert.equal((await post("/organization/co/work/export", "kind=summary&from=2026-11-01&to=2026-11-18")).status, 503);
+  assert.equal(asked.length, 3);
+});
+
+test("WORK_EXPORT the row limit and a refused export are explained", async () => {
+  const answer = (status: 404 | 409): ExportsHttp => ({ request: async () => { throw new Error("no"); }, download: async () => null,
+    requestKind: async () => status === 409 ? { status, body: { error: "row_limit" } } : { status, body: { error: "not_found" } } });
+  const limit = await post("/organization/co/work/export", "kind=detailed&from=2026-11-01&to=2026-11-18", { exports: answer(409) });
+  assert.equal(limit.status, 409);
+  assert.match(limit.html, /over the 10,000 row limit/);
+  const refused = await post("/organization/co/work/export", "kind=detailed&from=2026-11-01&to=2026-11-18", { exports: answer(404) });
+  assert.equal(refused.status, 403);
+  assert.match(refused.html, /can't export these hours/);
 });

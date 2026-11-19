@@ -90,7 +90,9 @@ than `true` or `false` stops startup. `wireWork` reads store managers from the a
 lane (A4, `PostgresAccessStoreManagersStore.managedStores`) on the work pool. Decision notices
 go to the person's feed through the comms lane's `recordWorkSessionDecision` and
 `retractWorkSessionDecision` (`@studenthub/db/comms`), on the decision's own client. A
-notice port given in place of them must have both, or startup stops.
+notice port given in place of them must have both, or startup stops. When the lane is on, the
+main navigation shows "My work" (`nav.work`, `apps/gateway/src/contributions/work.ts`), which
+opens `/work/track`; when it is off the entry is hidden.
 
 A person whose StudentHub access is paused (access lane A6, `PostgresAccessPausesStore.paused`)
 can't be placed: staff placing them, accepting a company's request for them, and
@@ -175,7 +177,7 @@ StudentHub's own staff time their day here (hours are hours). `StaffTimeService`
 
 - Any operator staff member (staff or admin on the operator organization) starts and ends their
   day at `/me/work`, the session part of A-14. A second start the same Kuwait day returns the open
-  session, as legacy did; ending again starts a second session that day. The minutes come from the
+  session, as legacy did; starting again after an end (Start my day) opens a second session that day, and another end without one is refused (`not_working`). The minutes come from the
   stored start and end (legacy stored only the minutes, from the app server's clock).
 - A session left open on an earlier day stays open for good, as in legacy; the staff member's
   end only closes today's.
@@ -192,11 +194,37 @@ no end with the staff record's hours per day; the export takes that from a port 
 until the staff record exists, and the release matrix carries a gate so it is wired before
 cutover. The legacy rows are imported with the cutover lane's importer (M-5).
 
+## Exports (P-1)
+
+The work exports go through the one export service (`packages/exports`), so each is checked
+when it is asked for and again at download, its link works for 15 minutes for the person who
+asked, and every export, refused ones included, is audited. The kinds live in
+`apps/gateway/src/work/exports.ts` and are registered with the service by `wireOps` when the work
+lane is on. Files are CSV; legacy wrote Excel.
+
+| Kind | Legacy | Who | Columns |
+|---|---|---|---|
+| `work-log-detailed` | company `candidate/work-log-detailed-excel` | the company, staff, a store's manager for their stores | Session ID, Person ID, Person, Store ID, Store, Date, Start time, End time, Total time, Total seconds, Note, Status, Via, Created at, Decided at |
+| `work-log-summary` | company `candidate/work-log-excel` | as above | Person ID, Person, Company, Store, Hours, Minutes, Seconds, Approved, Waiting, Rejected |
+| `work-assigned-history` | staff `candidate/export-assigned-history` | operator staff | Person ID, Person, Start date, End date, Company, Store |
+
+- The company export takes the work review screen's filters (dates, status, store), with the
+  same range limit of a year. The buttons are on `/organization/:orgId/work`; staff export who
+  worked where from `/work/logs`. Store screens have no export, as in legacy.
+- Legacy put the summary and one sheet per person in the detailed file; here they are two
+  files. Legacy's summary added every status into one total; that total is kept, with the
+  approved, waiting and rejected parts beside it. Hours still in progress count nowhere.
+  Legacy's bonus column was always 0 and is left out.
+- Times are Kuwait time. Total time keeps legacy's "2 hour 30 minutes 5 seconds", with the
+  seconds beside it.
+- Who worked where lists every placement that overlaps the range. Legacy's currency, name and
+  email filters are not carried over; the file can be filtered after download.
+- Over 10,000 rows is refused; the screen asks for a shorter range.
+
 ## Not yet here
 
 - A-14 (staff my work: standup, leave, expenses and their own sessions); it depends on the P1 and F4 lanes.
 - A session detail page for M-03 (`/store/:storeId/time-approvals/:sessionId`); each session is decided in the queue for now.
-- A "Work" entry in the main navigation. This goes through the shared `apps/gateway/src/contributions` seam and copy keys, as its own small change.
 - Arabic copy for the work screens.
 - A reply box for the person on an appeal: the contract lists `appeals.self.comment`, but W-6 lets only staff post updates, as legacy did. This is to be confirmed with the legacy rules before it is added.
 - The importer run itself (cutover lane, M-5).
