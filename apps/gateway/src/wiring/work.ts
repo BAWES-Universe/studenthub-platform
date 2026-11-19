@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import {
-  PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkPlacementStore, PostgresWorkSessionStore, PostgresWorkStaffTimeStore,
+  PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkPlacementStore, PostgresWorkSessionStore, PostgresWorkStaffTimeStore, PostgresWorkStandupStore,
   type WorkDecisionHooks,
 } from "@studenthub/db/work";
 import {
-  AppealService, DecisionService, HoursViews, PlacementService, SessionService, StaffTimeService, WorkScope,
+  AppealService, DecisionService, HoursViews, PlacementService, SessionService, StaffTimeService, StandupService, WorkScope,
   type GrantsPort, type ManagedStoresPort,
 } from "../../../../packages/work/src/index.js";
 import { PostgresAccessPausesStore, PostgresAccessStoreManagersStore } from "@studenthub/db/access";
@@ -85,6 +85,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
     storesOf: (orgId) => viewStore.storesOf(orgId),
     staffTime: new StaffTimeService({ store: staffTimeStore, grants, newId }),
     staffEmails: (ids) => staffTimeStore.emails(ids),
+    standup: new StandupService({ store: new PostgresWorkStandupStore(pool), grants, newId }),
     ...(ports.staffHoursPerDay ? { staffHoursPerDay: ports.staffHoursPerDay } : {}),
   };
   return {
