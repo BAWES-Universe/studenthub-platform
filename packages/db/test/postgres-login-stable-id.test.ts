@@ -1,3 +1,4 @@
+import { resetPayAwareFixture } from "./helpers/pay-aware-fixture-reset.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { after, before, beforeEach, test } from "node:test";
@@ -18,7 +19,7 @@ before(async () => {
 beforeEach(async () => {
   for (const store of stores) await store.close().catch(() => undefined);
   stores = [];
-  await pool.query("TRUNCATE login_sessions, external_identities, principals CASCADE");
+  await resetPayAwareFixture(pool, "TRUNCATE login_sessions, external_identities, principals CASCADE");
 });
 
 after(async () => {
