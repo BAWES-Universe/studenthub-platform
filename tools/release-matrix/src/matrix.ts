@@ -72,6 +72,7 @@ export const PHASES = ["candidate", "cutover", "retired"] as const;
 export type Phase = (typeof PHASES)[number];
 
 export const RELEASE_PHASE: Readonly<Record<string, Phase>> = {
+  "MOBILE-RETIRE": "cutover",
   "K-6": "cutover",
   "K-7": "cutover",
   "PAY-SHADOW": "cutover",
@@ -116,7 +117,7 @@ export const IMPORT_DOMAINS: Readonly<Record<string, string>> = {
 
 /** Release steps that are not one screen: cutover chain, proofs and the mobile exit. */
 export const RELEASE_STEPS: Readonly<Record<string, string>> = {
-  "K-1": "Legacy read-only switch for the final delta, with rollback",
+  "K-1": "Legacy maintenance mode built (stops writes for the final delta) and its rollback rehearsed",
   "K-4": "Every replacement journey verified end to end on staging",
   "K-5": "Final sync, single-writer cutover and rollback rehearsed",
   "K-6": "Go/no-go with Khalid: parity, safety, window, rollback",
@@ -126,10 +127,41 @@ export const RELEASE_STEPS: Readonly<Record<string, string>> = {
   "X-5": "Main pages measured at legacy volume",
   "PAY-REPLAY": "Twelve-month payroll replay with zero unexplained difference",
   "PAY-SHADOW": "December shadow month with zero unexplained difference",
-  "MOBILE-COMPAT": "Installed mobile builds work against the platform with legacy API retired",
+  "MOBILE-COMPAT": "Installed store builds proven against the platform's mobile API on staging",
+  "MOBILE-RETIRE": "Legacy mobile API retired at cutover, installed store builds still working",
   "REFRESH": "Daily read-only legacy refresh on staging",
+  "STAFF-HOURS-FALLBACK": "Staff time export: a session left without an end shows the staff record's hours per day, as legacy did; the work lane's hoursPerDay port is wired to the staff record, not left blank",
   "SWITCHES": "Lane switches turned on at cutover as legacy stops writing each domain: WORK_LANE_ENABLED=true (with SAFE_WRITE_SIGNING_KEY) when legacy stops writing hours, after the work ports are wired in login-runtime (access managedStores and comms notices)",
 };
+
+/**
+ * The requirement revision of each import domain and release step, as `<section> <id>`;
+ * a row without an entry is at revision 1. Bump it when the requirement itself changes
+ * (SWITCHES gains a mandatory switch, a domain gains a reconciliation): the row's subject
+ * changes, so `seed` reopens its gates and `check` refuses evidence recorded for the old
+ * requirement. Rewording a title without changing what it asks for keeps the revision.
+ */
+export const REQUIREMENT_REVISION: Readonly<Record<string, number>> = {};
+
+export const requirementSubject = (section: "import" | "release", id: string): string =>
+  `requirement r${REQUIREMENT_REVISION[`${section} ${id}`] ?? 1}`;
+
+/** Methods the mobile client uses; any other spelling is a typo, not a route. */
+export const HTTP_METHODS: readonly MobileEndpoint["method"][] = ["GET", "POST", "PATCH", "PUT", "DELETE"];
+
+/**
+ * A source citation's syntax: a normalized repository-relative file path and a line number
+ * from 1. Absolute paths, backslashes, empty segments and `.` or `..` segments are refused.
+ * Citations point into the source repository and revision the inventory records
+ * (`source.repository`, `source.revision`), not into this tree, so this checks the form
+ * only: it cannot tell whether that file or line exists at that revision.
+ */
+export function isSourceLine(source: unknown): boolean {
+  if (typeof source !== "string") return false;
+  const match = /^([^\s:\\]+):([1-9]\d*)$/.exec(source);
+  if (!match) return false;
+  return match[1]!.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
 
 /**
  * What a closed gate must cite. Evidence names an exact head or a run:
@@ -139,12 +171,15 @@ export const RELEASE_STEPS: Readonly<Record<string, string>> = {
  * A waiver names where the decision is recorded:
  *  - `contracts/decisions-<date>.md` (the decision record), or
  *  - `PR #393 comment 6951406632` (a decision agreed on the desk).
- * A string that only looks long enough is not evidence.
+ * A string that only looks long enough is not evidence, and a citation is a whole token:
+ * `PR #512 at 1a2b3c4-rc` or `contracts/decisions-2026-10-27.md.bak` cite nothing. A
+ * citation may still sit inside longer text and end a sentence.
  */
-const PR_AT_HEAD = /\bPR #\d+ at [0-9a-f]{7,40}\b/;
-const RUN_URL = /\brun https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/\d+\b/;
-const PR_COMMENT = /\bPR #\d+ comment \d+\b/;
-const DECISION_RECORD = /\bcontracts\/decisions-[\w-]+\.md\b/;
+const END = String.raw`(?![\w-]|\.\w)`;
+const PR_AT_HEAD = new RegExp(String.raw`(?<![\w#/.-])PR #\d+ at [0-9a-f]{7,40}${END}`);
+const RUN_URL = new RegExp(String.raw`(?<![\w/.-])run https://github\.com/[\w.-]+/[\w.-]+/actions/runs/\d+${END}(?!/)`);
+const PR_COMMENT = new RegExp(String.raw`(?<![\w#/.-])PR #\d+ comment \d+${END}`);
+const DECISION_RECORD = new RegExp(String.raw`(?<![\w/.-])contracts/decisions-[\w-]+\.md${END}`);
 
 export function citesEvidence(text: string): boolean {
   return PR_AT_HEAD.test(text) || RUN_URL.test(text) || PR_COMMENT.test(text);
@@ -172,6 +207,10 @@ function checkGates(section: string, id: string, row: ScreenRow, required: reado
   issues.push(...sameKeys("matrix.gate", `${section} ${id} gate`, Object.keys(row.gates ?? {}), required));
   for (const [gate, value] of Object.entries(row.gates ?? {})) {
     const where = `${section} ${id} gate ${gate}`;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      issues.push({ rule: "matrix.gate.badState", detail: `${where} is not a gate object` });
+      continue;
+    }
     if (value.state === "done") {
       if (typeof value.evidence !== "string" || value.evidence.trim().length === 0) {
         issues.push({ rule: "matrix.gate.doneWithoutEvidence", detail: `${where} is done without evidence` });
@@ -191,14 +230,37 @@ function checkGates(section: string, id: string, row: ScreenRow, required: reado
   return issues;
 }
 
-export function checkInventory(inventory: MobileInventory, contract: ParsedContract): ContractIssue[] {
+/**
+ * Where the inventory was read: an `owner/name` repository and a 7 to 40 hex commit. Every
+ * source citation is relative to this pin.
+ */
+export function checkProvenance(source: unknown): ContractIssue[] {
+  const record = (source ?? {}) as Record<string, unknown>;
   const issues: ContractIssue[] = [];
+  if (typeof record.repository !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(record.repository)) {
+    issues.push({ rule: "mobile.badProvenance", detail: `inventory source.repository '${String(record.repository)}' is not owner/name` });
+  }
+  if (typeof record.revision !== "string" || !/^[0-9a-f]{7,40}$/.test(record.revision)) {
+    issues.push({ rule: "mobile.badProvenance", detail: `inventory source.revision '${String(record.revision)}' is not a 7 to 40 hex commit` });
+  }
+  return issues;
+}
+
+export function checkInventory(inventory: MobileInventory, contract: ParsedContract): ContractIssue[] {
+  const issues: ContractIssue[] = [...checkProvenance(inventory.source)];
   const seen = new Set<string>();
   for (const endpoint of inventory.endpoints) {
     const key = mobileKey(endpoint);
     if (seen.has(key)) issues.push({ rule: "mobile.duplicate", detail: `${key} is listed twice` });
     seen.add(key);
-    if (!endpoint.sources?.length) issues.push({ rule: "mobile.noSource", detail: `${key} cites no source line` });
+    if (!HTTP_METHODS.includes(endpoint.method)) issues.push({ rule: "mobile.badMethod", detail: `${key} has method '${endpoint.method}'` });
+    if (!Array.isArray(endpoint.sources) || endpoint.sources.length === 0) {
+      issues.push({ rule: "mobile.noSource", detail: `${key} cites no source line` });
+    } else {
+      for (const source of endpoint.sources) {
+        if (!isSourceLine(source)) issues.push({ rule: "mobile.badSource", detail: `${key} cites '${String(source)}', not a normalized repository-relative path:line` });
+      }
+    }
     const target = contract.targets.get(endpoint.target);
     if (!target) {
       issues.push({ rule: "mobile.unknownTarget", detail: `${key} maps to unknown ${endpoint.target}` });
@@ -225,6 +287,8 @@ export function expectedSubjects(contract: ParsedContract, inventory: MobileInve
   const out = new Map<string, string>();
   for (const target of contract.targets.values()) out.set(`${target.kind} ${target.id}`, target.route);
   for (const endpoint of inventory.endpoints) out.set(`mobile ${mobileKey(endpoint)}`, mobileSubject(endpoint));
+  for (const id of Object.keys(IMPORT_DOMAINS)) out.set(`import ${id}`, requirementSubject("import", id));
+  for (const id of Object.keys(RELEASE_STEPS)) out.set(`release ${id}`, requirementSubject("release", id));
   return out;
 }
 
@@ -283,7 +347,7 @@ export function blockers(matrix: Matrix, inventory: MobileInventory, phase: Phas
     for (const [id, row] of Object.entries(rows)) {
       for (const [gate, value] of Object.entries(row.gates)) {
         const at = phaseOf(section, id);
-        if (value.state === "open" && PHASES.indexOf(at) <= upTo) list.push({ section, id, lane: row.lane, gate, phase: at });
+        if (value?.state === "open" && PHASES.indexOf(at) <= upTo) list.push({ section, id, lane: row.lane, gate, phase: at });
       }
     }
   }
