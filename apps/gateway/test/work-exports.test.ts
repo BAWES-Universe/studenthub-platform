@@ -96,6 +96,36 @@ test("WORK_EXPORT detailed: over 10,000 sessions is refused without reading ever
   assert.equal(calls.length, 1 + Math.ceil((EXPORT_ROW_CAP + 1) / 100));
 });
 
+test("WORK_EXPORT assigned history: over 10,000 placements is refused page by page, without reading every page", async () => {
+  const total = EXPORT_ROW_CAP + 250, size = 100;
+  let pages = 0, named = 0;
+  const placements = { history: async (_actor: string, _range: unknown, after: { n: number } | null) => {
+    pages++;
+    const start = after?.n ?? 0;
+    const rows = Array.from({ length: Math.min(size, total - start) }, (_, i) => ({ id: id(start + i + 1), personId: "p1", orgId: "co", storeId: STORE, startDate: "2026-01-01", endDate: null }));
+    return { rows, next: start + size < total ? { n: start + size } : null };
+  } };
+  const service = new ExportService(new Memory(), workExportKinds({ placements, personNames: async (ids: readonly string[]) => { named = Math.max(named, ids.length); return new Map(); } } as never));
+  assert.deepEqual(await service.request("staff", "work-assigned-history", { from: "2026-01-01", to: "2026-11-18" }), { ok: false, reason: "row_limit" });
+  // One authorisation call plus the pages up to one row past the cap; names are looked up a page at a time.
+  assert.equal(pages, 1 + Math.ceil((EXPORT_ROW_CAP + 1) / size));
+  assert.ok(named <= size);
+});
+
+test("WORK_EXPORT staff hours: keeps per-person totals only, and over 10,000 staff members is refused without reading every page", async () => {
+  const total = EXPORT_ROW_CAP + 250, size = 100;
+  let pages = 0;
+  const staffTime = { days: async (_actor: string, _from: string, _to: string, options: { after?: { n: number } | null }) => {
+    pages++;
+    const start = options.after?.n ?? 0;
+    const days = Array.from({ length: Math.min(size, total - start) }, (_, i) => ({ staffId: `s-${start + i}`, workDate: "2026-11-18", minutes: 60, sessions: 1, open: false, firstStart: "2026-11-18T05:00:00.000Z", lastEnd: "2026-11-18T06:00:00.000Z" }));
+    return { kind: "days", days, next: start + size < total ? { n: start + size } : null };
+  } };
+  const service = new ExportService(new Memory(), [staffHoursExport({ staffTime } as never) as never]);
+  assert.deepEqual(await service.request("admin", "work-staff-sessions", { from: "2026-11-01", to: "2026-11-18" }), { ok: false, reason: "row_limit" });
+  assert.equal(pages, 1 + Math.ceil((EXPORT_ROW_CAP + 1) / size));
+});
+
 test("WORK_EXPORT summary: hours per person and store with the status split; open hours count nowhere", async () => {
   const world: World = { allowed: new Set(["owner"]), sessions: [
     session(1, { durationSeconds: 3600 }), session(2, { status: "pending", durationSeconds: 1800 }), session(3, { status: "rejected", durationSeconds: 65 }),

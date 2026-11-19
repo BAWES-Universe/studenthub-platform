@@ -184,19 +184,21 @@ export function assignedHistoryExport(services: WorkHttpServices): ExportKind<As
       return parsed !== undefined && (await services.placements.history(actor, parsed)) !== undefined;
     },
     async *rows(actor, f) {
-      const all = [];
-      let after = null;
+      // Page by page, so a long history is never held whole; one row past the cap
+      // is enough for the export service to refuse the file.
+      let after = null, count = 0;
       for (;;) {
         const page = await services.placements.history(actor, { from: f.from, to: f.to }, after);
         if (!page) throw new Error("export authorization changed");
-        all.push(...page.rows);
-        // One past the cap is enough for the export service to refuse the file.
-        if (!page.next || all.length > EXPORT_ROW_CAP) break;
+        const [people, stores, companies] = await Promise.all([names(services.personNames, page.rows.map((a) => a.personId)), names(services.storeNames, page.rows.map((a) => a.storeId)),
+          names(services.companyNames, page.rows.map((a) => a.orgId))]);
+        for (const a of page.rows) {
+          yield [a.personId, people.get(a.personId) ?? "", a.startDate, a.endDate ?? "", companies.get(a.orgId) ?? a.orgId, stores.get(a.storeId) ?? ""];
+          if (++count > EXPORT_ROW_CAP) return;
+        }
+        if (!page.next) return;
         after = page.next;
       }
-      const [people, stores, companies] = await Promise.all([names(services.personNames, all.map((a) => a.personId)), names(services.storeNames, all.map((a) => a.storeId)),
-        names(services.companyNames, all.map((a) => a.orgId))]);
-      for (const a of all) yield [a.personId, people.get(a.personId) ?? "", a.startDate, a.endDate ?? "", companies.get(a.orgId) ?? a.orgId, stores.get(a.storeId) ?? ""];
     },
   };
 }
@@ -221,14 +223,24 @@ export function staffHoursQuery(query: URLSearchParams): StaffHoursExportFilters
   return (q && staffHoursFilters({ from: q.from, to: q.to, ...(q.staff !== undefined ? { staffId: q.staff } : {}) })) ?? null;
 }
 
-async function staffDays(services: WorkHttpServices, actor: string, f: StaffHoursExportFilters) {
-  const all = [];
+/**
+ * Closed minutes and days not ended, per staff member, read page by page: only
+ * the per-person totals are kept, and reading stops once there are more people
+ * than the export can hold.
+ */
+async function staffTotals(services: WorkHttpServices, actor: string, f: StaffHoursExportFilters) {
+  const totals = new Map<string, { minutes: number; open: number }>();
   let after = null;
   for (;;) {
     const page = await services.staffTime!.days(actor, f.from, f.to, { ...(f.staffId ? { staffId: f.staffId } : {}), after });
     if (page.kind !== "days") return undefined;
-    all.push(...page.days);
-    if (!page.next) return all;
+    for (const d of page.days) {
+      const t = totals.get(d.staffId) ?? { minutes: 0, open: 0 };
+      t.minutes += d.minutes;
+      if (d.open) t.open++;
+      totals.set(d.staffId, t);
+    }
+    if (!page.next || totals.size > EXPORT_ROW_CAP) return totals;
     after = page.next;
   }
 }
@@ -253,15 +265,16 @@ export function staffHoursExport(services: WorkHttpServices): ExportKind<StaffHo
       return page.kind === "days";
     },
     async *rows(actor, f) {
-      const days = await staffDays(services, actor, f);
-      if (!days) throw new Error("export authorization changed");
-      const ids = [...new Set(days.map((d) => d.staffId))];
+      const totals = await staffTotals(services, actor, f);
+      if (!totals) throw new Error("export authorization changed");
+      // Past the cap the file is refused; the rows themselves don't matter then.
+      if (totals.size > EXPORT_ROW_CAP) { for (const id of [...totals.keys()].slice(0, EXPORT_ROW_CAP + 1)) yield [id]; return; }
+      const ids = [...totals.keys()];
       const [people, emails, perDay] = await Promise.all([names(services.personNames, ids), names(services.staffEmails, ids),
         ids.length && services.staffHoursPerDay ? services.staffHoursPerDay(ids) : new Map<string, number>()]);
-      const minutes = new Map<string, number>();
-      for (const d of days) minutes.set(d.staffId, (minutes.get(d.staffId) ?? 0) + d.minutes + (d.open ? Math.round((perDay.get(d.staffId) ?? 0) * 60) : 0));
       for (const id of ids.sort((a, b) => (people.get(a) ?? "").localeCompare(people.get(b) ?? "") || a.localeCompare(b))) {
-        const total = minutes.get(id) ?? 0;
+        const t = totals.get(id)!;
+        const total = t.minutes + t.open * Math.round((perDay.get(id) ?? 0) * 60);
         yield [id, people.get(id) ?? "", emails.get(id) ?? "", total, (total / 60).toFixed(2), f.from, f.to];
       }
     },

@@ -221,7 +221,10 @@ from `/exports/<id>` under the kind's name. Files are CSV; legacy wrote Excel.
   seconds beside it.
 - Who worked where lists every placement that overlaps the range. Legacy's currency, name and
   email filters are not carried over; the file can be filtered after download.
-- Over 10,000 rows is refused; the screen asks for a shorter range.
+- Over 10,000 rows is refused; the screen asks for a shorter range. Every work export reads
+  page by page and stops one row past the cap: the detailed and who-worked-where files never
+  hold more than that, and the summary and staff hours files keep only per-person totals
+  (staff hours stops once there are more than 10,000 staff members; a range is at most 366 days).
 - Staff hours: legacy counted a session with no end as the staff record's hours per day. That
   comes from the `staffHoursPerDay` port (`wireWork` option), absent until the staff record
   exists; while it is absent a day not ended adds nothing. The release matrix gates cutover on
