@@ -27,6 +27,14 @@ CREATE TABLE id_card_events (
 CREATE INDEX id_card_events_person_idx ON id_card_events(person_principal_id, at DESC);
 
 CREATE FUNCTION id_card_events_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN RAISE EXCEPTION 'id_card_events is append-only'; END $$;
+BEGIN RAISE EXCEPTION 'id_card_events is append-only' USING ERRCODE='55000'; END $$;
 CREATE TRIGGER id_card_events_no_change BEFORE UPDATE OR DELETE ON id_card_events
  FOR EACH ROW EXECUTE FUNCTION id_card_events_append_only();
+-- TRUNCATE skips row triggers, so it is refused by statement triggers on both tables:
+-- truncating id_cards with CASCADE would otherwise take the events with it.
+CREATE TRIGGER id_card_events_no_truncate BEFORE TRUNCATE ON id_card_events
+ FOR EACH STATEMENT EXECUTE FUNCTION id_card_events_append_only();
+CREATE FUNCTION id_cards_retained() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'id_cards rows are retained' USING ERRCODE='55000'; END $$;
+CREATE TRIGGER id_cards_no_truncate BEFORE TRUNCATE ON id_cards
+ FOR EACH STATEMENT EXECUTE FUNCTION id_cards_retained();

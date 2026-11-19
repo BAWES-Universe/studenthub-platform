@@ -56,6 +56,13 @@ test("REPORTS_ID_CARDS a batch is between 1 and the cap, each person once, with 
   assert.deepEqual(await service.write("staff", "issue", Array.from({ length: ID_CARD_BATCH_MAX }, (_, i) => `p${i}`)), { status: "ok", count: ID_CARD_BATCH_MAX, expiresOn: "2027-02-20" });
 });
 
+test("REPORTS_ID_CARDS the batch is taken before authorization; changing the array afterwards changes nothing", async () => {
+  const store = new Store(), people = ["a", "b"];
+  const service = new IdCardsService(store, { async isStaff() { people.push("c", "c"); people[0] = "bad id"; return true; } }, () => new Date("2026-11-19T06:00:00Z"));
+  assert.deepEqual(await service.write("staff", "issue", people), { status: "ok", count: 2, expiresOn: "2027-02-19" });
+  assert.deepEqual(store.writes[0]!.people, ["a", "b"]);
+});
+
 test("REPORTS_ID_CARDS lists page by fifty and trim the name search", async () => {
   const { store, service } = rig();
   assert.deepEqual(await service.list("staff", "expired", "  alia  ", 3), { rows: [], total: 0, today: "2026-11-20" });

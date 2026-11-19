@@ -81,9 +81,11 @@ export class IdCardsService {
 
   /** Staff issue (or re-issue) or renew cards for a batch of people, valid three months from today. */
   async write(viewer: string, action: IdCardAction, people: readonly string[]): Promise<IdCardWriteResult> {
+    // The batch is copied before the first await, so a caller cannot change it after authorization.
+    const batch = [...people];
     if (!(await this.#authority.isStaff(viewer))) return { status: "not_found" };
-    const unique = [...new Set(people)];
-    if ((action !== "issue" && action !== "renew") || unique.length === 0 || unique.length > ID_CARD_BATCH_MAX || unique.length !== people.length || unique.some(p => !PERSON.test(p))) return { status: "invalid" };
+    const unique = [...new Set(batch)];
+    if ((action !== "issue" && action !== "renew") || unique.length === 0 || unique.length > ID_CARD_BATCH_MAX || unique.length !== batch.length || unique.some(p => !PERSON.test(p))) return { status: "invalid" };
     const today = kuwaitDay(this.#now()), expiresOn = addMonths(today, ID_CARD_VALID_MONTHS);
     const refusals = await this.#store.write(action, unique, today, expiresOn, viewer);
     return refusals.length ? { status: "refused", refusals } : { status: "ok", count: unique.length, expiresOn };

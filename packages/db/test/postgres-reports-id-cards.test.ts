@@ -73,8 +73,13 @@ test("REPORTS_ID_CARDS_PG issue, reissue and renew write the card and one event 
     "SELECT person_principal_id, kind, to_char(expires_on,'YYYY-MM-DD') expires_on, actor_principal_id FROM id_card_events WHERE person_principal_id = ANY($1) ORDER BY id", [[a, b]]);
   assert.deepEqual(events.rows.map(r => [r.person_principal_id, r.kind, r.expires_on, r.actor_principal_id]),
     [[a, "issued", "2027-02-19", creator], [b, "issued", "2027-02-19", creator], [a, "renewed", "2027-06-01", creator], [b, "reissued", "2027-02-28", creator]]);
-  await assert.rejects(pool.query("UPDATE id_card_events SET kind='issued' WHERE person_principal_id=$1", [a]), /append-only/);
-  await assert.rejects(pool.query("DELETE FROM id_card_events WHERE person_principal_id=$1", [a]), /append-only/);
+  for (const sql of ["UPDATE id_card_events SET kind='issued'", "DELETE FROM id_card_events", "TRUNCATE id_card_events", "TRUNCATE id_card_events CASCADE"])
+    await assert.rejects(pool.query(sql), /append-only/, sql);
+  await assert.rejects(pool.query("TRUNCATE id_cards CASCADE"), /id_cards rows are retained|append-only/, "CASCADE would take the events with it");
+  await assert.rejects(pool.query("TRUNCATE id_cards"), /cannot truncate a table referenced in a foreign key|id_cards rows are retained/);
+  assert.equal((await pool.query("SELECT tgname FROM pg_trigger WHERE tgname = ANY($1) AND tgtype & 32 <> 0", [["id_cards_no_truncate", "id_card_events_no_truncate"]])).rowCount, 2, "both are TRUNCATE statement triggers");
+  await assert.rejects(pool.query("DELETE FROM id_cards WHERE person_principal_id=$1", [a]), /foreign key/, "a card with events cannot be deleted");
+  assert.equal((await pool.query("SELECT 1 FROM id_card_events WHERE person_principal_id = ANY($1)", [[a, b]])).rowCount, 4, "every refused statement left the history in place");
 });
 
 test("REPORTS_ID_CARDS_PG the person's card shows the store running today, else the next one, and the legacy employee ID", async () => {
