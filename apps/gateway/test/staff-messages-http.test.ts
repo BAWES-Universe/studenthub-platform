@@ -144,9 +144,11 @@ test("COMMS_STAFF_SEND_HTTP the production login runtime carries the staff send 
     OIDC_AUTHORIZATION_URL: "https://identity.test.invalid/authorize", OIDC_TOKEN_URL: "https://identity.test.invalid/token",
     OIDC_JWKS_URL: "https://identity.test.invalid/jwks", LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.test.invalid/profile",
   })!;
-  const staffMessages = (runtime.application as { staffMessages?: { isStaff: unknown; send: unknown; deliveryLog?: unknown } }).staffMessages;
+  const staffMessages = (runtime.application as { staffMessages?: { isStaff: unknown; send: unknown; deliveryLog?: unknown; morningSummary?: { today: unknown; subscribe: unknown } } }).staffMessages;
   assert.equal(typeof staffMessages?.isStaff, "function");
   assert.equal(typeof staffMessages?.send, "function");
   assert.equal(typeof staffMessages?.deliveryLog, "function");
+  assert.equal(typeof staffMessages?.morningSummary?.today, "function");
+  assert.equal(typeof staffMessages?.morningSummary?.subscribe, "function");
   await runtime.close();
 });

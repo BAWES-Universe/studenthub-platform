@@ -4,8 +4,8 @@ import { EMAIL_CLASSES, EMAIL_TEMPLATES, EMAIL_VOLUME_THRESHOLD, EmailOutboxServ
   type ClaimedEmail, type EmailFailureCode, type EmailOutboxStore, type EmailVolumeCrossing, type EmailVolumeStore } from "../src/index.js";
 
 test("COMMS_EMAIL_CLASSES the class table says which classes are transactional", () => {
-  assert.deepEqual([...EMAIL_CLASSES], ["account.notice", "civil_id.result"]);
-  assert.deepEqual(EMAIL_CLASSES.map(c => [c, EMAIL_TEMPLATES[c].required]), [["account.notice", false], ["civil_id.result", true]]);
+  assert.deepEqual([...EMAIL_CLASSES], ["account.notice", "civil_id.result", "staff.morning_summary"]);
+  assert.deepEqual(EMAIL_CLASSES.map(c => [c, EMAIL_TEMPLATES[c].required]), [["account.notice", false], ["civil_id.result", true], ["staff.morning_summary", false]]);
 });
 
 test("COMMS_EMAIL_CIVIL_ID_RESULT parameters are closed and follow the staff decision rule", () => {
