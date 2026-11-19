@@ -18,10 +18,11 @@ import {
   type AssignmentRequest, type EmployerDecisionView, type HoursCursor, type HoursRange, type SessionStatus, type WorkSession,
 } from "../../../../packages/work/src/index.js";
 import type { WorkHttpServices } from "./http.js";
-import { clock, duration, esc, longDate, notice, plain, redirect, sessionCookie, STATUS_LABEL, write } from "./pages.js";
+import { clock, duration, esc, FormTooLarge, longDate, notice, plain, redirect, sessionCookie, STATUS_LABEL, tooLarge, write } from "./pages.js";
 import { pageDocument } from "../web-ui.js";
 
-const FORM_LIMIT = 32 * 1024;
+// A decision note (2,000 characters) and reason (255) at up to 12 encoded bytes each, plus up to 200 session ids.
+const FORM_LIMIT = 64 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const LOGS = /^\/work\/logs(\/decide)?$/;
 const ORG = /^\/organization\/([A-Za-z0-9._:-]{1,256})\/work(\/decide)?$/;
@@ -54,13 +55,14 @@ const REQUEST_STATUS: Readonly<Record<string, string>> = { pending: "Waiting for
 
 /** Reads a same-origin form; only `repeated` keys may appear more than once. */
 async function readFields(req: IncomingMessage, allowed: readonly string[], repeated: readonly string[] = []): Promise<Map<string, string[]> | undefined> {
-  if (req.headers["content-type"] !== "application/x-www-form-urlencoded" || Number(req.headers["content-length"]) > FORM_LIMIT) { req.resume(); return undefined; }
+  if (req.headers["content-type"] !== "application/x-www-form-urlencoded") { req.resume(); return undefined; }
+  if (Number(req.headers["content-length"]) > FORM_LIMIT) { req.resume(); throw new FormTooLarge(); }
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     const bytes = Buffer.from(chunk as Uint8Array);
     size += bytes.length;
-    if (size > FORM_LIMIT) { req.resume(); return undefined; }
+    if (size > FORM_LIMIT) { req.resume(); throw new FormTooLarge(); }
     chunks.push(bytes);
   }
   const out = new Map<string, string[]>();
@@ -263,8 +265,8 @@ export async function handleReviewPages(req: IncomingMessage, res: ServerRespons
     const html = await renderReview(services, actor, place, f, { kind: "error", text: DECIDE_REFUSALS[result.code] ?? DECIDE_REFUSALS.invalid_input! });
     if (!html) { denied(); return true; }
     write(res, result.code === "forbidden" ? 403 : result.code === "invalid_input" || result.code === "too_many" ? 400 : 409, html);
-  } catch {
-    if (!res.headersSent) write(res, ...plain(503, "Work is unavailable", "Something went wrong. Try again in a moment.")); else res.destroy();
+  } catch (error) {
+    if (!res.headersSent) write(res, ...(tooLarge(error) ?? plain(503, "Work is unavailable", "Something went wrong. Try again in a moment."))); else res.destroy();
   }
   return true;
 }

@@ -105,7 +105,8 @@ export interface SessionStore {
 
 export type SessionRefusal =
   | "invalid_input" | "location_required" | "not_assigned" | "already_working" | "not_working"
-  | "overlaps_session" | "end_before_start" | "in_future" | "outside_assignment" | "session_not_found" | "not_deleted" | "already_deleted";
+  | "overlaps_session" | "end_before_start" | "in_future" | "outside_assignment" | "session_not_found" | "not_deleted" | "already_deleted"
+  | "session_changed";
 
 export type SessionOutcome = { readonly kind: "started" | "stopped" | "added"; readonly session: WorkSession } | { readonly kind: "discarded" } | { readonly kind: "refused"; readonly code: SessionRefusal };
 
@@ -177,12 +178,17 @@ export class SessionService {
     });
   }
 
-  /** Stop keeps the start location and records the stop location separately (fixes WK-F2). */
-  async stop(personId: string, location: Location | undefined): Promise<SessionOutcome> {
+  /**
+   * Stop keeps the start location and records the stop location separately (fixes WK-F2).
+   * `sessionId` is the open session the caller showed: a stale screen can't stop a newer one.
+   */
+  async stop(personId: string, sessionId: unknown, location: Location | undefined): Promise<SessionOutcome> {
+    if (!isUuid(sessionId)) return { kind: "refused", code: "invalid_input" };
     if (!location) return { kind: "refused", code: "location_required" };
     return this.#store.transaction(async (tx): Promise<SessionOutcome> => {
       const open = await tx.lockOpen(personId);
       if (!open) return { kind: "refused", code: "not_working" };
+      if (open.id !== sessionId.toLowerCase()) return { kind: "refused", code: "session_changed" };
       const now = this.#now();
       const endedAt = now.getTime() < Date.parse(open.startedAt) ? new Date(open.startedAt) : now;
       const session = await tx.close(open.id, endedAt, location);
@@ -191,11 +197,13 @@ export class SessionService {
     });
   }
 
-  /** Throws away the open session (legacy hard-deleted it; here it is soft-deleted). */
-  async discard(personId: string): Promise<SessionOutcome> {
+  /** Throws away the open session the caller showed (legacy hard-deleted it; here it is soft-deleted). */
+  async discard(personId: string, sessionId: unknown): Promise<SessionOutcome> {
+    if (!isUuid(sessionId)) return { kind: "refused", code: "invalid_input" };
     return this.#store.transaction(async (tx): Promise<SessionOutcome> => {
       const open = await tx.lockOpen(personId);
       if (!open) return { kind: "refused", code: "not_working" };
+      if (open.id !== sessionId.toLowerCase()) return { kind: "refused", code: "session_changed" };
       await tx.softDelete(open.id, personId, "discarded by the person");
       await tx.event(sessionEvent("session.discarded", open, personId));
       return { kind: "discarded" };

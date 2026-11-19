@@ -37,19 +37,25 @@ class Memory implements DecisionStore, HoursViewStore {
   events: WorkEvent[] = [];
   notices: DecisionNotice[] = [];
   replaced = new Set<string>();
-  async organizationAncestors(orgId: string) { return ANCESTORS[orgId]; }
+  inTransaction = false;
+  /** Pool reads made while a transaction holds its client (the pool-starvation hazard). */
+  poolReadsInTransaction = 0;
+  lockedDays: string[] = [];
+  async organizationAncestors(orgId: string) { if (this.inTransaction) this.poolReadsInTransaction++; return ANCESTORS[orgId]; }
   async transaction<T>(work: (tx: DecisionTransaction) => Promise<T>): Promise<T> {
     const snap = { s: [...this.sessions], d: [...this.decisionsList], e: [...this.events], n: [...this.notices] };
     const tx: DecisionTransaction = {
       lockSessions: async (ids) => this.sessions.filter((s) => ids.includes(s.id)),
-      lockDay: async (day) => this.sessions.filter((s) => s.personId === day.personId && s.storeId === day.storeId && s.workDate === day.workDate && s.endedAt !== null && s.deletedAt === null && !this.replaced.has(s.id)),
+      organizationAncestors: async (orgId) => ANCESTORS[orgId],
+      lockDay: async (day) => (this.lockedDays.push(`${day.storeId}|${day.workDate}`), this.sessions).filter((s) => s.personId === day.personId && s.storeId === day.storeId && s.workDate === day.workDate && s.endedAt !== null && s.deletedAt === null && !this.replaced.has(s.id)),
       isReplaced: async (id) => this.replaced.has(id),
       insertDecision: async (d) => { this.decisionsList.push(d); },
       setStatus: async (ids, status, decisionId) => { this.sessions = this.sessions.map((s) => ids.includes(s.id) ? { ...s, status, decisionId } : s); },
       event: async (e) => { this.events.push(e); },
       notify: async (n) => { this.notices.push(n); },
     };
-    try { return await work(tx); } catch (e) { this.sessions = snap.s; this.decisionsList = snap.d; this.events = snap.e; this.notices = snap.n; throw e; }
+    this.inTransaction = true;
+    try { return await work(tx); } catch (e) { this.sessions = snap.s; this.decisionsList = snap.d; this.events = snap.e; this.notices = snap.n; throw e; } finally { this.inTransaction = false; }
   }
   #match(f: Omit<SessionFilter, "after" | "limit">) {
     return this.sessions.filter((s) => s.deletedAt === null && !this.replaced.has(s.id) && (!f.personId || s.personId === f.personId)
@@ -87,6 +93,10 @@ test("W4_PARSE decisions: reason up to 255, rating 1 to 5, public flag", () => {
   assert.equal(parseDecision({ decision: "approve", reason: "x".repeat(256) }), undefined);
   assert.equal(parseDecision({ decision: "maybe" as never }), undefined);
   assert.equal(parseDecision({ decision: "approve", notePublic: "yes" }), undefined);
+  // Only a boolean or a form string: no coercion of arrays or objects.
+  assert.equal(parseDecision({ decision: "approve", notePublic: ["true"] }), undefined);
+  assert.equal(parseDecision({ decision: "approve", notePublic: { toString: 1 } }), undefined);
+  assert.equal(parseDecision({ decision: "approve", notePublic: true })?.notePublic, true);
 });
 
 test("W4_SESSION a company approves its own closed session; one decision row and one event", async () => {
@@ -161,6 +171,18 @@ test("W4_DAY bulk days roll back together when one day is missing or out of scop
   assert.deepEqual(await svc.decideDays("owner", [{ ...good, extra: 1 }], { decision: "approve" }), { kind: "refused", code: "invalid_input" });
   assert.equal(store.decisionsList.length, 0);
   assert.equal(store.sessions[0]?.status, "pending");
+});
+
+test("W4_DAY days lock in one stable order and the scope reads no second pool client inside the transaction", async () => {
+  const { store, svc } = setup();
+  store.sessions.push(session({ workDate: "2026-11-17" }), session());
+  const day = (workDate: string) => ({ personId: "person", storeId: STORE_A, workDate });
+  const out = await svc.decideDays("owner", [day("2026-11-18"), day("2026-11-17")], { decision: "approve" });
+  assert.deepEqual(out.kind === "decided" && out.decisions.map((d) => d.workDate), ["2026-11-18", "2026-11-17"]);
+  assert.deepEqual(store.lockedDays, [`${STORE_A}|2026-11-17`, `${STORE_A}|2026-11-18`]);
+  assert.equal((await svc.decideSessions("owner", [store.sessions[0]!.id], { decision: "reject" })).kind, "decided");
+  assert.equal((await svc.undo("owner", store.sessions[0]!.id)).kind, "decided");
+  assert.equal(store.poolReadsInTransaction, 0);
 });
 
 test("W4_DAY the same day named twice is decided once", async () => {
@@ -253,6 +275,11 @@ test("W5_VIEWS each viewer sees only their scope; totals split by status across 
   assert.equal("rows" in manager && manager.rows.every((r) => r.session.storeId === STORE_A), true);
   assert.deepEqual(await views.company("manager", "company", range, { storeId: STORE_B }), { kind: "refused", code: "forbidden" });
   assert.deepEqual(await views.all("owner", range), { kind: "refused", code: "forbidden" });
+  // The A-13 correction form looks one session up by id, for operator staff only.
+  assert.equal((await views.staffSession("staff", other.workDate, other.id.toUpperCase()))?.session.id, other.id);
+  for (const [actor, date, id] of [["owner", other.workDate, other.id], ["staff", "2026-11-01", other.id], ["staff", "nope", other.id], ["staff", other.workDate, "x"]] as const) {
+    assert.equal(await views.staffSession(actor, date, id), undefined, `${actor} ${date} ${id}`);
+  }
   const all = await views.all("staff", range);
   assert.equal("rows" in all && all.rows.length, 5);
   // A group owner's sub-companies are in reach only through a subtree grant; a self-scoped one sees the group alone.

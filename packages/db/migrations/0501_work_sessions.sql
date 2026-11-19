@@ -54,7 +54,9 @@ CREATE TABLE work_sessions (
    AND (ended_at IS NULL OR (end_latitude IS NOT NULL AND end_longitude IS NOT NULL)))),
  CHECK ((start_latitude IS NULL) = (start_longitude IS NULL) AND (end_latitude IS NULL) = (end_longitude IS NULL)),
  CHECK ((source = 'correction') = (corrects_session_id IS NOT NULL)),
- CHECK (source IN ('timer') OR ended_at IS NOT NULL)
+ CHECK (source IN ('timer') OR ended_at IS NOT NULL),
+ -- A running timer is never decided: it stays pending until it ends.
+ CHECK (ended_at IS NOT NULL OR status = 'pending')
 );
 CREATE UNIQUE INDEX work_sessions_one_open ON work_sessions(person_principal_id) WHERE ended_at IS NULL AND deleted_at IS NULL;
 CREATE UNIQUE INDEX work_sessions_one_live_correction ON work_sessions(corrects_session_id) WHERE corrects_session_id IS NOT NULL AND deleted_at IS NULL;
@@ -89,6 +91,12 @@ BEGIN
  IF TG_OP = 'UPDATE' AND NEW.status <> OLD.status AND NEW.ended_at IS NULL THEN
   RAISE EXCEPTION 'work session: an open session cannot be decided' USING ERRCODE = '23514';
  END IF;
+ -- Each chain of corrections has one session in force: a session whose own
+ -- correction is live can't be deleted, or the one it replaced would count again.
+ IF TG_OP = 'UPDATE' AND NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM work_sessions c WHERE c.corrects_session_id = NEW.id AND c.deleted_at IS NULL) THEN
+  RAISE EXCEPTION 'work session: a session with a live correction cannot be deleted' USING ERRCODE = '23514';
+ END IF;
  -- FOR SHARE: a session insert and a placement end-date change serialize on the
  -- assignment row, so neither can commit a session outside the period.
  SELECT person_principal_id, org_id, store_id, start_date, end_date INTO a FROM work_assignments WHERE id = NEW.assignment_id FOR SHARE;
@@ -114,6 +122,20 @@ CREATE TRIGGER work_sessions_enforce BEFORE INSERT OR UPDATE ON work_sessions FO
 CREATE FUNCTION refuse_work_session_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'work sessions are soft-deleted, never removed' USING ERRCODE = '23514'; END $$;
 CREATE TRIGGER work_sessions_no_delete BEFORE DELETE ON work_sessions FOR EACH ROW EXECUTE FUNCTION refuse_work_session_delete();
+
+-- A placement's end date never moves before a session recorded on it (imported
+-- legacy rows keep whatever dates legacy gave them, as on insert). The UPDATE
+-- holds the assignment row, and a session insert takes it FOR SHARE, so the two
+-- serialize.
+CREATE FUNCTION keep_work_sessions_in_period() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.end_date IS NOT NULL AND (OLD.end_date IS NULL OR NEW.end_date < OLD.end_date)
+    AND EXISTS (SELECT 1 FROM work_sessions s WHERE s.assignment_id = NEW.id AND s.deleted_at IS NULL AND s.source <> 'import' AND s.work_date > NEW.end_date) THEN
+  RAISE EXCEPTION 'work assignment: a session is recorded after the new end date' USING ERRCODE = '23514';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER work_assignments_keep_sessions BEFORE UPDATE OF end_date ON work_assignments FOR EACH ROW EXECUTE FUNCTION keep_work_sessions_in_period();
 
 -- W-7 day totals, derived on read from sessions in force. Approved, pending and
 -- rejected time are separate (legacy summed them together); open sessions count

@@ -23,7 +23,8 @@ export interface WorkAppealUpdateRecord {
 export interface WorkAppealTransaction {
   lockSession(id: string): Promise<WorkSessionRecord | undefined>;
   isReplaced(sessionId: string): Promise<boolean>;
-  hasOpenAppeal(sessionId: string): Promise<boolean>;
+  hasOpenAppeal(sessionId: string, exceptAppealId?: string): Promise<boolean>;
+  organizationAncestors(orgId: string): Promise<readonly string[] | undefined>;
   assignment(id: string): Promise<WorkAssignmentRecord | undefined>;
   insertSession(s: NewWorkSessionRecord): Promise<WorkSessionRecord>;
   insertDecision(d: WorkDecisionRecord): Promise<void>;
@@ -61,8 +62,10 @@ function appealTransaction(client: PoolClient, hooks: WorkDecisionHooks): WorkAp
       return rows[0] ? workSessionFromRow(rows[0]) : undefined;
     },
     isReplaced: async (id) => !(await sessionInForce(client, id)),
-    async hasOpenAppeal(sessionId) {
-      const { rows } = await client.query<{ open: boolean }>("SELECT EXISTS (SELECT 1 FROM work_appeals WHERE session_id = $1 AND status <> 'resolved') AS open", [sessionId]);
+    organizationAncestors: (orgId) => ancestorsOf(client, orgId),
+    async hasOpenAppeal(sessionId, exceptAppealId) {
+      const { rows } = await client.query<{ open: boolean }>(
+        "SELECT EXISTS (SELECT 1 FROM work_appeals WHERE session_id = $1 AND status <> 'resolved' AND id IS DISTINCT FROM $2::uuid) AS open", [sessionId, exceptAppealId ?? null]);
       return rows[0]?.open === true;
     },
     async assignment(id) {
@@ -137,8 +140,10 @@ export class PostgresWorkAppealStore {
      WHERE ($1::text IS NULL OR a.person_principal_id = $1) AND ($2::text[] IS NULL OR a.org_id IN (SELECT id FROM tree))
        AND ($3::text IS NULL OR a.status = $3)
        AND ($4::date IS NULL OR (a.created_at AT TIME ZONE 'Asia/Kuwait')::date BETWEEN $4::date AND $5::date)
-       AND ($6::timestamptz IS NULL OR (a.created_at, a.id) < ($6::timestamptz, $7::uuid))
-     ORDER BY a.created_at DESC, a.id DESC LIMIT $8`,
+       -- The cursor carries milliseconds (what JSON and the page link hold), so order and compare on the
+       -- millisecond value too; two appeals in the same millisecond still page in id order, none skipped.
+       AND ($6::timestamptz IS NULL OR (date_trunc('milliseconds', a.created_at), a.id) < ($6::timestamptz, $7::uuid))
+     ORDER BY date_trunc('milliseconds', a.created_at) DESC, a.id DESC LIMIT $8`,
     [f.personId ?? null, f.orgIds ? [...f.orgIds] : null, f.status ?? null, f.range?.from ?? null, f.range?.to ?? null,
       f.after?.createdAt ?? null, f.after?.id ?? null, Math.min(Math.max(f.limit, 1), 200), f.includeSubtree === true]);
     return Object.freeze(rows.map(appealFromRow));

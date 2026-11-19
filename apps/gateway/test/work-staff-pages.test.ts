@@ -38,7 +38,14 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
       addMissing: out("addMissing", { kind: "entered", session: session(), decision: {} }),
       correct: out("correct", { kind: "entered", session: session(), decision: {} }),
     },
-    views: { all: async (...args: unknown[]) => { calls.push(["all", ...args]); return world.rows === null ? { kind: "refused", code: "forbidden" } : { rows: (world.rows ?? [{ session: session(), decision: null }]), totals: {}, next: null }; } },
+    views: {
+      all: async (...args: unknown[]) => { calls.push(["all", ...args]); return world.rows === null ? { kind: "refused", code: "forbidden" } : { rows: (world.rows ?? [{ session: session(), decision: null }]), totals: {}, next: null }; },
+      staffSession: async (...args: unknown[]) => {
+        calls.push(["staffSession", ...args]);
+        const rows = (world.rows === null ? [] : world.rows ?? [{ session: session(), decision: null }]) as { session: { id: string; workDate: string } }[];
+        return rows.find((r) => r.session.id === args[2] && r.session.workDate === args[1]);
+      },
+    },
     storeNames: async (ids: readonly string[]) => new Map(ids.map((id) => [id, "Avenues <Mall>"])),
     storesOf: async () => [{ id: STORE, name: "Avenues <Mall>" }],
     personNames: async (ids: readonly string[]) => new Map(ids.map((id) => [id, "Sara <S>"])),
@@ -160,6 +167,13 @@ test("WORK_STAFF A-13 appeals: staff list, replies, status, added time and corre
   assert.match(refused.html, /step="0.001" name="startedAt" value="2026-11-18T09:00:00"/, "the correction form starts from the session's Kuwait times");
   const own = await post(`/work/appeals/${APPEAL}/status`, "status=resolved", { world: { outcome: { kind: "refused", code: "appeal_not_found" }, detail: { ...detail, appeal: { ...appeal, personId: "staff" } } } });
   assert.equal(own.status, 404);
+  // A refused correction naming the actor's own appeal gets no staff view either.
+  const ownCorrection = await post("/work/corrections", `sessionId=${S1}&appealId=${APPEAL}&startedAt=2026-11-18T09%3A00&endedAt=2026-11-18T21%3A00&reason=x`,
+    { world: { outcome: { kind: "refused", code: "session_not_found" }, detail: { ...detail, appeal: { ...appeal, personId: "staff" } } } });
+  assert.equal(ownCorrection.status, 404);
+  assert.doesNotMatch(ownCorrection.html, /Reply to the person/);
+  // The missing-time form keeps what staff typed after a refusal.
+  assert.match(refused.html, /action="\/work\/appeals\/[^"]+\/missing-time"><label>Started<input type="datetime-local" step="0.001" name="startedAt" value="2026-11-18T17:00"/);
 
   const corrected: unknown[][] = [];
   const c = await post("/work/corrections", `sessionId=${S1}&appealId=${APPEAL}&startedAt=2026-11-18T09%3A00&endedAt=2026-11-18T21%3A00&reason=store+log`, {}, corrected);
@@ -179,7 +193,8 @@ test("WORK_STAFF A-13 corrections from the work logs: the form finds the session
   const calls: unknown[][] = [];
   const form = await request(`/work/corrections/new?session=${S1}&date=2026-11-18`, {}, calls);
   assert.equal(form.status, 200);
-  assert.deepEqual(calls[0], ["all", "staff", { from: "2026-11-18", to: "2026-11-18" }, { after: null }]);
+  // One lookup by id, wherever the session falls in the day's pages.
+  assert.deepEqual(calls[0], ["staffSession", "staff", "2026-11-18", S1]);
   assert.match(form.html, /name="reason" required/);
   assert.match(form.html, /value="2026-11-18T11:30:00"/);
   assert.equal((await request(`/work/corrections/new?session=${S1}&date=2026-11-18`, { world: { rows: null } })).status, 404);
@@ -191,4 +206,10 @@ test("WORK_STAFF A-13 corrections from the work logs: the form finds the session
   const noReason = await post("/work/corrections", `sessionId=${S1}&date=2026-11-18&startedAt=2026-11-18T09%3A00&endedAt=2026-11-18T12%3A00&reason=`, { world: { outcome: { kind: "refused", code: "invalid_input" } } });
   assert.equal(noReason.status, 400);
   assert.match(noReason.html, /Correct hours/);
+  // A refused correction keeps what staff typed, escaped.
+  const overlap = await post("/work/corrections", `sessionId=${S1}&date=2026-11-18&startedAt=2026-11-18T09%3A15&endedAt=2026-11-18T12%3A00&reason=%3Cb%3Elog&note=see+sheet`,
+    { world: { outcome: { kind: "refused", code: "overlaps_session" } } });
+  assert.match(overlap.html, /name="startedAt" value="2026-11-18T09:15"/);
+  assert.match(overlap.html, /name="reason" required maxlength="255" value="&lt;b&gt;log"/);
+  assert.match(overlap.html, /<textarea name="note" maxlength="1000">see sheet<\/textarea>/);
 });

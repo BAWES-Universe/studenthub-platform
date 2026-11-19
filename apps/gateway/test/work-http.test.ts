@@ -65,14 +65,16 @@ test("WORK_HTTP the signed-in person is the actor; writes need same origin, JSON
   assert.equal((await request("/api/work/sessions/discard", { method: "POST", origin: ORIGIN, body: "[1]" })).status, 400);
   assert.equal((await request("/api/work/sessions/discard", { method: "POST", origin: ORIGIN, body: "{" })).status, 400);
   const calls: unknown[][] = [];
-  const out = await post("/api/work/sessions/discard", { personId: "someone-else" }, {}, calls);
-  assert.deepEqual([out.status, calls], [200, [["discard", "person"]]]);
+  const out = await post("/api/work/sessions/discard", { personId: "someone-else", sessionId: ID }, {}, calls);
+  assert.deepEqual([out.status, calls], [200, [["discard", "person", ID]]]);
   assert.equal(out.headers["cache-control"], "no-store");
 });
 
 test("WORK_HTTP refusals map to 400, 403, 404 and 409 and keep extra detail", async () => {
   assert.deepEqual([(await post("/api/work/sessions/start", {})).status, (await post("/api/work/sessions/start", {})).json], [400, { error: "location_required" }]);
-  assert.equal((await post("/api/work/sessions/stop", { latitude: 1, longitude: 1 })).status, 409);
+  const stopCalls: unknown[][] = [];
+  assert.equal((await post("/api/work/sessions/stop", { sessionId: ID, latitude: 1, longitude: 1 }, {}, stopCalls)).status, 409);
+  assert.deepEqual(stopCalls, [["stop", "person", ID, { latitude: 1, longitude: 1 }]]);
   assert.equal((await post("/api/work/placements", { personId: "p", storeId: ID })).status, 403);
   assert.deepEqual((await post("/api/work/decisions/sessions", { sessionIds: [ID, ID], decision: "approve" })).json, { error: "session_not_found", index: 1 });
   assert.equal((await post("/api/work/decisions/sessions", { sessionIds: "x" })).status, 400);

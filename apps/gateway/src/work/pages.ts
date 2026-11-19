@@ -20,6 +20,22 @@ export type StoreNames = (storeIds: readonly string[]) => Promise<ReadonlyMap<st
 
 const TIME_ZONE = "Asia/Kuwait";
 const FORM_LIMIT = 8 * 1024;
+/**
+ * Byte limits for forms that carry long text: a character can take up to 12
+ * bytes once UTF-8 and form encoded (%XX per byte), so each limit covers its
+ * fields' character limits plus the short fields.
+ */
+export const FORM_LIMITS = { appeal: 2000 * 12 + 2048, reply: (255 + 5000) * 12 + 1024, entry: (255 + 1000) * 12 + 2048 } as const;
+
+/** A form body over its route's byte limit; the page answers 413. */
+export class FormTooLarge extends Error {
+  constructor() { super("form body too large"); }
+}
+
+/** The 413 page, or undefined when the error is not a size refusal. */
+export function tooLarge(error: unknown): readonly [number, string] | undefined {
+  return error instanceof FormTooLarge ? plain(413, "Too long", "What you sent is too long. Shorten it and try again.") : undefined;
+}
 const HISTORY_PAGE_CAP = 20;
 
 export const esc = (value: string) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -28,6 +44,7 @@ const REFUSALS: Readonly<Record<string, string>> = {
   location_required: "We need your location to clock in or out. Allow location for this site and try again.",
   not_assigned: "You aren't placed at a store today, so there is nothing to clock in to.",
   already_working: "You are already clocked in.",
+  session_changed: "Your hours changed in another tab or device. Here they are now; try again if you still need to.",
   not_working: "You aren't clocked in right now.",
   overlaps_session: "That time overlaps hours you already logged.",
   end_before_start: "The end time must be after the start time.",
@@ -72,14 +89,15 @@ export function sessionCookie(header: string | undefined): string | undefined {
   }
   return undefined;
 }
-export async function readForm(req: IncomingMessage, allowed: readonly string[]): Promise<Record<string, string> | undefined> {
-  if (req.headers["content-type"] !== "application/x-www-form-urlencoded" || Number(req.headers["content-length"]) > FORM_LIMIT) { req.resume(); return undefined; }
+export async function readForm(req: IncomingMessage, allowed: readonly string[], limit: number = FORM_LIMIT): Promise<Record<string, string> | undefined> {
+  if (req.headers["content-type"] !== "application/x-www-form-urlencoded") { req.resume(); return undefined; }
+  if (Number(req.headers["content-length"]) > limit) { req.resume(); throw new FormTooLarge(); }
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req.iterator({ destroyOnReturn: false })) {
     const bytes = Buffer.from(chunk as Uint8Array);
     size += bytes.length;
-    if (size > FORM_LIMIT) { req.resume(); return undefined; }
+    if (size > limit) { req.resume(); throw new FormTooLarge(); }
     chunks.push(bytes);
   }
   const out: Record<string, string> = {};
@@ -118,8 +136,8 @@ export const plain = (status: number, title: string, message: string) => [status
 // The only script: fill the location fields of a form marked data-location, then submit it.
 const LOCATION_JS = `document.querySelectorAll("form[data-location]").forEach(function(f){f.addEventListener("submit",function(e){if(f.dataset.located)return;e.preventDefault();var s=document.getElementById("location-status");if(!navigator.geolocation){s.textContent="This browser can't share your location.";return}s.textContent="Getting your location...";navigator.geolocation.getCurrentPosition(function(p){f.elements.latitude.value=String(p.coords.latitude);f.elements.longitude.value=String(p.coords.longitude);f.dataset.located="1";f.submit()},function(){s.textContent="We couldn't get your location. Allow location for this site and try again."},{enableHighAccuracy:true,timeout:20000,maximumAge:0})})})`;
 
-const locationForm = (action: string, label: string) =>
-  `<form method="post" action="${action}" data-location><input type="hidden" name="latitude"><input type="hidden" name="longitude"><button type="submit">${esc(label)}</button></form>`;
+const locationForm = (action: string, label: string, sessionId?: string) =>
+  `<form method="post" action="${action}" data-location>${sessionId ? `<input type="hidden" name="sessionId" value="${sessionId}">` : ""}<input type="hidden" name="latitude"><input type="hidden" name="longitude"><button type="submit">${esc(label)}</button></form>`;
 
 const manualForm = `<section class="p-card" aria-labelledby="manual-heading"><h2 id="manual-heading">Forgot to clock in?</h2><p>Log the time yourself. It is marked as entered late and still needs approval. Times are Kuwait time.</p>
 <form method="post" action="/work/track/manual"><label>Started<input type="datetime-local" name="startedAt" required></label><label>Ended<input type="datetime-local" name="endedAt" required></label><label>Note (optional)<textarea name="note" maxlength="1000"></textarea></label><button type="submit">Add hours</button></form></section>`;
@@ -135,8 +153,8 @@ export async function renderTrack(services: WorkHttpServices, names: StoreNames 
   if (open) {
     const where = await storeName(names, open.storeId);
     const elapsed = duration((now.getTime() - new Date(open.startedAt).getTime()) / 1000);
-    main = `<section class="p-card" aria-labelledby="now-heading"><h2 id="now-heading">You're clocked in</h2><p>Since ${clock(open.startedAt)} at ${esc(where)} (${elapsed} so far).</p>${locationForm("/work/track/stop", "Clock out")}
-<form method="post" action="/work/track/discard"><p>Clocked in by mistake? Discarding removes this session; it will not count.</p><button type="submit">Discard this session</button></form></section>`;
+    main = `<section class="p-card" aria-labelledby="now-heading"><h2 id="now-heading">You're clocked in</h2><p>Since ${clock(open.startedAt)} at ${esc(where)} (${elapsed} so far).</p>${locationForm("/work/track/stop", "Clock out", open.id)}
+<form method="post" action="/work/track/discard"><input type="hidden" name="sessionId" value="${open.id}"><p>Clocked in by mistake? Discarding removes this session; it will not count.</p><button type="submit">Discard this session</button></form></section>`;
   } else if (assignment) {
     const where = await storeName(names, assignment.storeId);
     main = `<section class="p-card" aria-labelledby="now-heading"><h2 id="now-heading">Not clocked in</h2><p>You're placed at ${esc(where)} today.</p>${locationForm("/work/track/start", "Clock in")}</section>`;
@@ -364,10 +382,15 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
       if ("kind" in detail) { write(res, ...plain(404, "Appeal not found", "This appeal isn't yours or doesn't exist.")); return true; }
       // The service shows an appeal to its owner and to staff of its company; staff get the A-13 view.
       if (detail.appeal.personId !== person) { write(res, 200, await renderStaffAppeal(services, detail, staffDone(url.searchParams.get("done")))); return true; }
-      // Opening the appeal reads its replies (legacy marked them read from the app).
-      for (const u of detail.updates) if (u.readAt === null && u.authorId !== person) await services.appeals.markRead(person, u.id);
       const done = url.searchParams.get("done");
-      write(res, 200, await renderAppeal(services, names, person, detail, done && APPEAL_DONE[done] ? APPEAL_DONE[done]! : null));
+      // Render first, so replies are only marked read once the page that shows them is ready.
+      const html = await renderAppeal(services, names, person, detail, done && APPEAL_DONE[done] ? APPEAL_DONE[done]! : null);
+      write(res, 200, html);
+      // Opening the appeal reads its replies (legacy marked them read from the app). A failed
+      // receipt leaves the reply new for next time; it never replaces the page already sent.
+      for (const u of detail.updates) {
+        if (u.readAt === null && u.authorId !== person) await services.appeals.markRead(person, u.id).catch(() => undefined);
+      }
       return true;
     }
     const writable = (track && path !== "/work/track") || path === "/work/appeals";
@@ -375,7 +398,7 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
     if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); write(res, ...plain(403, "Request refused", "We could not verify this request.")); return true; }
 
     if (path === "/work/appeals") {
-      const form = await readForm(req, ["sessionId", "date", "reason"]);
+      const form = await readForm(req, ["sessionId", "date", "reason"], FORM_LIMITS.appeal);
       const date = form?.date ?? "";
       if (!form || !parseRange(date, date)) { write(res, ...plain(400, "Appeal not sent", "Open the day in History and try again.")); return true; }
       const raised = await services.appeals.raise(person, form.sessionId, form.reason);
@@ -388,22 +411,23 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
     }
 
     const action = path.slice("/work/track/".length);
-    const form = await readForm(req, action === "manual" ? ["startedAt", "endedAt", "note"] : action === "discard" ? [] : ["latitude", "longitude"]);
+    const form = await readForm(req, action === "manual" ? ["startedAt", "endedAt", "note"] : action === "discard" ? ["sessionId"] : action === "stop" ? ["sessionId", "latitude", "longitude"] : ["latitude", "longitude"],
+      action === "manual" ? FORM_LIMITS.entry : undefined);
     let result: SessionOutcome;
     if (!form) result = { kind: "refused", code: "invalid_input" };
     else if (action === "start") result = await services.sessions.start(person, parseLocation(form.latitude, form.longitude));
-    else if (action === "stop") result = await services.sessions.stop(person, parseLocation(form.latitude, form.longitude));
-    else if (action === "discard") result = await services.sessions.discard(person);
+    else if (action === "stop") result = await services.sessions.stop(person, form.sessionId, parseLocation(form.latitude, form.longitude));
+    else if (action === "discard") result = await services.sessions.discard(person, form.sessionId);
     else {
       const startedAt = kuwaitInstant(form.startedAt), endedAt = kuwaitInstant(form.endedAt);
       result = startedAt && endedAt ? await services.sessions.addManual(person, { startedAt, endedAt, ...(form.note ? { note: form.note } : {}) }) : { kind: "refused", code: "invalid_input" };
     }
     if (result.kind !== "refused") { redirect(res, `/work/track?done=${result.kind}`); return true; }
-    const status = result.code === "already_working" || result.code === "not_working" || result.code === "overlaps_session" ? 409 : 400;
+    const status = result.code === "already_working" || result.code === "not_working" || result.code === "overlaps_session" || result.code === "session_changed" ? 409 : 400;
     const page = await renderTrack(services, names, person, { kind: "error", text: REFUSALS[result.code] ?? REFUSALS.invalid_input! }, now());
     write(res, status, page.html, page.nonce);
-  } catch {
-    if (!res.headersSent) write(res, ...plain(503, "Work is unavailable", "Something went wrong. Try again in a moment.")); else res.destroy();
+  } catch (error) {
+    if (!res.headersSent) write(res, ...(tooLarge(error) ?? plain(503, "Work is unavailable", "Something went wrong. Try again in a moment."))); else res.destroy();
   }
   return true;
 }

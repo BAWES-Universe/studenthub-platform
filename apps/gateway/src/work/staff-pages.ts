@@ -17,7 +17,7 @@ import {
 } from "../../../../packages/work/src/index.js";
 import { pageDocument } from "../web-ui.js";
 import type { WorkHttpServices } from "./http.js";
-import { clock, duration, esc, kuwaitInstant, longDate, notice, plain, readForm, redirect, sessionCookie, STATUS_LABEL, write } from "./pages.js";
+import { clock, duration, esc, FORM_LIMITS, kuwaitInstant, longDate, notice, plain, readForm, redirect, sessionCookie, STATUS_LABEL, tooLarge, write } from "./pages.js";
 
 const ORG_ID = /^[A-Za-z0-9._:-]{1,256}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -41,6 +41,7 @@ const REFUSALS: Readonly<Record<string, string>> = {
   contract_not_applicable: "That pay contract doesn't apply to this placement.",
   end_before_start: "The end must be after the start.",
   open_session: "The person is clocked in there. They need to clock out before the placement ends.",
+  sessions_after_end: "Hours are recorded after that date. Choose a later end date, or remove those hours first.",
   assignment_not_found: "That placement no longer exists.",
   request_not_found: "That request no longer exists.",
   request_not_pending: "That request was already answered.",
@@ -136,7 +137,8 @@ export async function renderStaffAppeals(services: WorkHttpServices, actor: stri
 }
 
 /** A-13 detail for staff; the service has already checked the actor may see this appeal. */
-export async function renderStaffAppeal(services: WorkHttpServices, detail: AppealDetail, m: { kind: "success" | "error"; text: string } | null): Promise<string> {
+export async function renderStaffAppeal(services: WorkHttpServices, detail: AppealDetail, m: { kind: "success" | "error"; text: string } | null,
+  refill: { readonly form: "correct" | "missing"; readonly values: EntryValues } | null = null): Promise<string> {
   const { appeal, session, updates, entries } = detail;
   const people = await names(services, [appeal.personId, ...updates.map((u) => u.authorId).filter((id): id is string => id !== null)]);
   const where = services.storeNames ? (await services.storeNames([session.storeId])).get(session.storeId) ?? "A store" : "A store";
@@ -147,34 +149,39 @@ export async function renderStaffAppeal(services: WorkHttpServices, detail: Appe
     : `<ul class="p-stack">${updates.map((u) => `<li class="p-card">${u.title ? `<h3>${esc(u.title)}</h3>` : ""}<p>${esc(u.detail)}</p><p>${esc(shortDate(u.createdAt))}${u.authorId ? ` · ${esc(people.get(u.authorId) ?? "Staff")}` : ""}${u.readAt ? " · Read" : ""}</p></li>`).join("")}</ul>`;
   const reply = `<form method="post" action="${base}/reply"><label>Title (optional)<input name="title" maxlength="255"></label><label>Reply to the person<textarea name="detail" required maxlength="5000"></textarea></label><button type="submit">Send reply</button></form>`;
   const status = `<form method="post" action="${base}/status"><label>Status<select name="status">${APPEAL_STATUSES.map((s) => `<option value="${s}"${s === appeal.status ? " selected" : ""}>${APPEAL_STATUS[s]}</option>`).join("")}</select></label><button type="submit">Save status</button></form>`;
-  const times = (start: string, end: string) => `<label>Started<input type="datetime-local" step="0.001" name="startedAt" value="${start}" required></label><label>Ended<input type="datetime-local" step="0.001" name="endedAt" value="${end}" required></label><label>Reason (required)<input name="reason" required maxlength="255"></label><label>Note (optional)<textarea name="note" maxlength="1000"></textarea></label>`;
+  const fixValues = refill?.form === "correct" ? refill.values : {}, missingValues = refill?.form === "missing" ? refill.values : {};
   const fixes = session.endedAt === null ? "" : `<section class="p-card" aria-labelledby="fix-heading"><h2 id="fix-heading">Fix the hours</h2><p>Times are Kuwait time. A correction replaces the appealed entry in every total and in pay; the original stays on record. Both are approved by you.</p>
-<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${session.id}"><input type="hidden" name="appealId" value="${appeal.id}">${times(localValue(session.startedAt), localValue(session.endedAt))}<button type="submit">Correct these hours</button></form>
-<form method="post" action="${base}/missing-time">${times("", "")}<button type="submit">Add missing time</button></form></section>`;
+<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${session.id}"><input type="hidden" name="appealId" value="${appeal.id}">${entryFields(fixValues.startedAt ?? localValue(session.startedAt), fixValues.endedAt ?? localValue(session.endedAt), fixValues)}<button type="submit">Correct these hours</button></form>
+<form method="post" action="${base}/missing-time">${entryFields(missingValues.startedAt ?? "", missingValues.endedAt ?? "", missingValues)}<button type="submit">Add missing time</button></form></section>`;
   return staffShell("Appeal", "appeals", `${message(m)}${head}${done}<section class="p-card" aria-labelledby="replies-heading"><h2 id="replies-heading">Replies</h2>${replies}${reply}${status}</section>${fixes}<nav class="p-card"><a href="${appealList(appeal.orgId)}">All appeals</a></nav>`, appeal.orgId);
 }
 
+/** Values a refused form sends back, so staff fix one field instead of retyping the rest. */
+export interface EntryValues { readonly startedAt?: string; readonly endedAt?: string; readonly reason?: string; readonly note?: string }
+
 /** A-13 correction form for one session; `undefined` when the actor can't see it or it can't be corrected. */
-export async function renderCorrection(services: WorkHttpServices, actor: string, sessionId: string, date: string, m: { kind: "success" | "error"; text: string } | null): Promise<string | undefined> {
-  const range = parseRange(date, date);
-  if (!range || !UUID.test(sessionId)) return undefined;
-  let after = null;
-  for (let pages = 0; pages < 20; pages++) {
-    const page = await services.views.all(actor, range, { after });
-    if ("kind" in page) return undefined;
-    const row = page.rows.find((r) => r.session.id === sessionId);
-    if (row) {
-      const s = row.session;
-      if (s.endedAt === null) return undefined;
-      const who = (await names(services, [s.personId])).get(s.personId) ?? s.personId;
-      return staffShell("Correct hours", "logs", `${message(m)}<section class="p-card"><h2>${esc(who)}</h2><p>${esc(sessionTime(s))} · ${esc(STATUS_LABEL[s.status] ?? s.status)}</p><p>Times are Kuwait time. The correction replaces this entry in every total and in pay, approved by you; the original stays on record.</p>
-<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${s.id}"><input type="hidden" name="date" value="${date}"><label>Started<input type="datetime-local" step="0.001" name="startedAt" value="${localValue(s.startedAt)}" required></label><label>Ended<input type="datetime-local" step="0.001" name="endedAt" value="${localValue(s.endedAt)}" required></label>
-<label>Reason (required)<input name="reason" required maxlength="255"></label><label>Note (optional)<textarea name="note" maxlength="1000"></textarea></label><button type="submit">Save correction</button></form></section>`);
-    }
-    if (!page.next) return undefined;
-    after = page.next;
-  }
-  return undefined;
+export async function renderCorrection(services: WorkHttpServices, actor: string, sessionId: string, date: string, m: { kind: "success" | "error"; text: string } | null,
+  values: EntryValues = {}): Promise<string | undefined> {
+  if (!parseRange(date, date) || !UUID.test(sessionId)) return undefined;
+  // One indexed lookup by id, wherever the session falls in the day's pages.
+  const row = await services.views.staffSession(actor, date, sessionId);
+  const s = row?.session;
+  if (!s || s.endedAt === null) return undefined;
+  const who = (await names(services, [s.personId])).get(s.personId) ?? s.personId;
+  return staffShell("Correct hours", "logs", `${message(m)}<section class="p-card"><h2>${esc(who)}</h2><p>${esc(sessionTime(s))} · ${esc(STATUS_LABEL[s.status] ?? s.status)}</p><p>Times are Kuwait time. The correction replaces this entry in every total and in pay, approved by you; the original stays on record.</p>
+<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${s.id}"><input type="hidden" name="date" value="${date}">${entryFields(values.startedAt ?? localValue(s.startedAt), values.endedAt ?? localValue(s.endedAt), values)}<button type="submit">Save correction</button></form></section>`);
+}
+
+/** The time, reason and note fields of a correction or missing-time form, refilled from `values`. */
+function entryFields(start: string, end: string, values: EntryValues): string {
+  return `<label>Started<input type="datetime-local" step="0.001" name="startedAt" value="${esc(start)}" required></label><label>Ended<input type="datetime-local" step="0.001" name="endedAt" value="${esc(end)}" required></label><label>Reason (required)<input name="reason" required maxlength="255" value="${esc(values.reason ?? "")}"></label><label>Note (optional)<textarea name="note" maxlength="1000">${esc(values.note ?? "")}</textarea></label>`;
+}
+
+/** The submitted entry fields, kept as typed (escaped when rendered). */
+function entryValues(form: Record<string, string> | undefined): EntryValues {
+  if (!form) return {};
+  return { ...(form.startedAt !== undefined ? { startedAt: form.startedAt } : {}), ...(form.endedAt !== undefined ? { endedAt: form.endedAt } : {}),
+    ...(form.reason !== undefined ? { reason: form.reason } : {}), ...(form.note !== undefined ? { note: form.note } : {}) };
 }
 
 /**
@@ -254,12 +261,12 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
       if (result.kind !== "refused") { redirect(res, `/work/assignments?org=${encodeURIComponent(org)}&done=${result.kind}`); return true; }
       const html = await renderAssignments(services, actor, org, refusal(result.code ?? "invalid_input"));
       if (!html) { denied(); return true; }
-      write(res, result.code === "forbidden" ? 403 : result.code && /overlaps|ambiguous|open_session|not_pending/.test(result.code) ? 409 : 400, html);
+      write(res, result.code === "forbidden" ? 403 : result.code && /overlaps|ambiguous|open_session|sessions_after_end|not_pending/.test(result.code) ? 409 : 400, html);
       return true;
     }
 
     if (corrections) {
-      const form = await readForm(req, ["sessionId", "appealId", "date", "startedAt", "endedAt", "reason", "note"]);
+      const form = await readForm(req, ["sessionId", "appealId", "date", "startedAt", "endedAt", "reason", "note"], FORM_LIMITS.entry);
       const sessionId = form?.sessionId?.toLowerCase() ?? "";
       const result = form ? await services.appeals.correct(actor, sessionId, {
         startedAt: kuwaitInstant(form.startedAt), endedAt: kuwaitInstant(form.endedAt), reason: form.reason, ...(form.note ? { note: form.note } : {}),
@@ -269,17 +276,22 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
         redirect(res, form?.appealId && UUID.test(form.appealId.toLowerCase()) ? `/work/appeals/${form.appealId.toLowerCase()}?done=entered` : "/work/corrections?done=entered");
         return true;
       }
+      const values = entryValues(form);
       if (form?.appealId && UUID.test(form.appealId.toLowerCase())) {
         const detail = await services.appeals.detail(actor, form.appealId.toLowerCase());
-        if (!("kind" in detail)) { write(res, result.code === "session_not_found" ? 404 : 400, await renderStaffAppeal(services, detail, refusal(result.code))); return true; }
+        // The appellant may read their appeal, but only staff get the staff view.
+        if ("kind" in detail || detail.appeal.personId === actor) { write(res, ...plain(404, "Appeal not found", "This appeal doesn't exist or isn't in a company you look after.")); return true; }
+        write(res, result.code === "session_not_found" ? 404 : 400, await renderStaffAppeal(services, detail, refusal(result.code), { form: "correct", values }));
+        return true;
       }
-      const html = form?.date ? await renderCorrection(services, actor, sessionId, form.date, refusal(result.code)) : undefined;
+      const html = form?.date ? await renderCorrection(services, actor, sessionId, form.date, refusal(result.code), values) : undefined;
       if (html) write(res, 400, html); else write(res, ...plain(result.code === "session_not_found" ? 404 : 400, "Not saved", REFUSALS[result.code] ?? REFUSALS.invalid_input!));
       return true;
     }
 
     const appealId = appealPost![1]!, action = appealPost![2]!;
-    const form = await readForm(req, action === "reply" ? ["title", "detail"] : action === "status" ? ["status"] : ["startedAt", "endedAt", "reason", "note"]);
+    const form = await readForm(req, action === "reply" ? ["title", "detail"] : action === "status" ? ["status"] : ["startedAt", "endedAt", "reason", "note"],
+      action === "reply" ? FORM_LIMITS.reply : action === "status" ? undefined : FORM_LIMITS.entry);
     let result: { kind: string; code?: string };
     if (!form) result = { kind: "refused", code: "invalid_input" };
     else if (action === "reply") result = await services.appeals.postUpdate(actor, appealId, { ...(form.title ? { title: form.title } : {}), detail: form.detail });
@@ -288,9 +300,10 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
     if (result.kind !== "refused") { redirect(res, `/work/appeals/${appealId}?done=${result.kind}`); return true; }
     const detail = await services.appeals.detail(actor, appealId);
     if ("kind" in detail || detail.appeal.personId === actor) { write(res, ...plain(404, "Appeal not found", "This appeal doesn't exist or isn't in a company you look after.")); return true; }
-    write(res, result.code === "forbidden" ? 403 : 400, await renderStaffAppeal(services, detail, refusal(result.code ?? "invalid_input")));
-  } catch {
-    if (!res.headersSent) write(res, ...plain(503, "Work is unavailable", "Something went wrong. Try again in a moment.")); else res.destroy();
+    write(res, result.code === "forbidden" ? 403 : 400, await renderStaffAppeal(services, detail, refusal(result.code ?? "invalid_input"),
+      action === "missing-time" ? { form: "missing", values: entryValues(form) } : null));
+  } catch (error) {
+    if (!res.headersSent) write(res, ...(tooLarge(error) ?? plain(503, "Work is unavailable", "Something went wrong. Try again in a moment."))); else res.destroy();
   }
   return true;
 }

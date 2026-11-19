@@ -40,7 +40,7 @@ company `StoreController` and `StoreAssignmentRequestController`, candidate
 | A person could read note, rating, reason and is_public through `expand` | The person sees outcome, reason, and the note only when public; never the rating | Leak defect |
 | Date range strings went raw into SQL | Dates parsed and bound; at most a year per request | SQL injection |
 | Company list scoped by a request parameter or the person's current store | Scope from the signed-in actor only; sub-companies are included only for a subtree grant (a self-scoped owner or staff sees that company alone) | Scoping defect |
-| A person could appeal any session id | Only their own ended, rejected session that is in force (not deleted, not replaced by a correction), with one open appeal at a time; the service and the database both refuse the rest (imported legacy appeals keep their legacy state) | Ownership and state defect |
+| A person could appeal any session id | Only their own ended, rejected session that is in force (not deleted, not replaced by a correction), with one open appeal at a time (reopening a resolved appeal is refused while another is open); the service and the database both refuse the rest (imported legacy appeals keep their legacy state) | Ownership and state defect |
 | Mark-read on an appeal update had no owner check | Only the appellant marks their updates read | Ownership defect |
 | Appeal status took any integer | Four named states (submitted, awaiting review, in progress, resolved) | Bad-input defect |
 | Staff add-hour wrote an extra approved row beside the original, so both counted | `correct` replaces the session (original kept, out of every total and out of pay); `addMissing` adds time never logged, linked to the appeal; both staff-only with a reason and an approval decision by that staff member | Double-count defect; D-WK3 |
@@ -67,8 +67,15 @@ current store (legacy dropped hours at an earlier store in the same month).
 `PostgresWorkPayableSource` (`@studenthub/db/work`) is the Postgres source: one
 input per assignment with any session in force in the period, approved sessions
 listed with their decision and `changedAt`, corrections in place of their
-originals. The pay lane dedupes on `sessionId` and re-reads sessions whose
-`changedAt` is after its run.
+originals. Use `payableInputs` to discover the payable work of a period, and
+dedupe on `sessionId`. For anything already paid, keep each paid session's
+`lineageRootId` and call `lineage(rootIds)` before the next run: it resolves the
+whole chain to the one session in force today, wherever its date now falls. A
+reread of the old period alone can't show a change, because a paid November
+session corrected into December returns from neither November's nor (for the
+original) December's `payableInputs`. Reconcile replacements, rejections and
+discards from the resolved chain (`inForce` is null when the chain was
+discarded), not from `changedAt` on a reread.
 
 ## Gateway API
 
@@ -90,6 +97,10 @@ legacy stays the writer of hours.
 | Person | `GET /api/work/today`, `POST /api/work/sessions/{start,stop,discard,manual}`, `GET /api/work/hours/mine`, `GET /api/work/placements/mine`, `POST /api/work/appeals`, `GET /api/work/appeals/mine`, `GET /api/work/appeals/:id`, `POST /api/work/appeal-updates/:id/read` |
 | Company, store manager | `GET /api/work/hours/company/:orgId`, `GET /api/work/placements/company/:orgId`, `GET /api/work/placement-requests/company/:orgId`, `POST /api/work/placement-requests`, `POST /api/work/decisions/{sessions,days}`, `POST /api/work/sessions/:id/undo` |
 | Staff | `POST /api/work/placements`, `POST /api/work/placements/:id/end-date`, `POST /api/work/placement-requests/:id/{accept,reject,cancel}`, `GET /api/work/hours/all`, `GET /api/work/appeals`, `POST /api/work/appeals/:id/{updates,status,missing-time}`, `POST /api/work/sessions/:id/correct` |
+
+Stop and discard name the open session they act on (`sessionId`, the id `today` returned). If another tab or device has
+since stopped it and started a new one, they answer 409 `session_changed` and change nothing. A placement's end date
+can't move before hours recorded on it (409 `sessions_after_end`, also refused by the database).
 
 ## Legacy import mapping and reconciliation (M-5, W-7)
 

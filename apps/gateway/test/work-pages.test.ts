@@ -20,7 +20,7 @@ function appeal(over: Record<string, unknown> = {}) {
   return { id: APPEAL_ID, sessionId: session().id, personId: "person", orgId: "co", storeId: STORE, reason: "I stayed until 9 <pm>", status: "in_progress",
     createdAt: "2026-11-18T19:00:00.000Z", updatedAt: "x", ...over };
 }
-interface World { placements?: unknown[]; open?: unknown; assignment?: unknown; rows?: unknown[]; outcome?: unknown; appeals?: unknown[]; detail?: unknown; raised?: unknown; pages?: unknown[][] }
+interface World { failRead?: boolean; placements?: unknown[]; open?: unknown; assignment?: unknown; rows?: unknown[]; outcome?: unknown; appeals?: unknown[]; detail?: unknown; raised?: unknown; pages?: unknown[][] }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const rows = world.rows ?? [];
   const totals = { approvedSeconds: 3600, pendingSeconds: 9000, rejectedSeconds: 0, open: 0 };
@@ -43,7 +43,7 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
     appeals: {
       mine: async (...args: unknown[]) => { calls.push(["appealsMine", ...args]); return world.appeals ?? []; },
       detail: async (...args: unknown[]) => { calls.push(["detail", ...args]); return world.detail ?? { kind: "refused", code: "appeal_not_found" }; },
-      markRead: async (...args: unknown[]) => { calls.push(["markRead", ...args]); return { kind: "read" }; },
+      markRead: async (...args: unknown[]) => { calls.push(["markRead", ...args]); if (world.failRead) throw new Error("receipt store down"); return { kind: "read" }; },
       raise: async (...args: unknown[]) => { calls.push(["raise", ...args]); return world.raised ?? { kind: "raised", appeal: appeal() }; },
     },
     storeNames: async (ids: readonly string[]) => new Map(ids.map((id) => [id, "Avenues <Mall>"])),
@@ -87,7 +87,8 @@ test("WORK_PAGES Track shows the right state, and the only script runs under the
   assert.equal(open.status, 200);
   assert.match(open.html, /You're clocked in/);
   assert.match(open.html, /Since 09:00 at Avenues &lt;Mall&gt; \(3h 30m so far\)/);
-  assert.match(open.html, /action="\/work\/track\/stop" data-location/);
+  assert.match(open.html, /action="\/work\/track\/stop" data-location><input type="hidden" name="sessionId" value="bbbbbbbb-/);
+  assert.match(open.html, /action="\/work\/track\/discard"><input type="hidden" name="sessionId" value="bbbbbbbb-/);
   const nonce = /script-src 'nonce-([A-Za-z0-9_-]+)'/.exec(open.headers["content-security-policy"]!)?.[1];
   assert.ok(nonce);
   assert.equal(open.html.split("<script").length - 1, 1);
@@ -113,10 +114,14 @@ test("WORK_PAGES writes need the same origin and a form; the person comes from t
   const started = await post("/work/track/start", "latitude=29.3&longitude=47.9", {}, calls);
   assert.deepEqual([started.status, started.headers.location], [303, "/work/track?done=started"]);
   assert.deepEqual(calls[0], ["start", "person", { latitude: 29.3, longitude: 47.9 }]);
-  await post("/work/track/stop", "latitude=&longitude=", {}, calls);
-  assert.deepEqual(calls[1], ["stop", "person", undefined]);
-  await post("/work/track/discard", "", {}, calls);
-  assert.deepEqual(calls[2], ["discard", "person"]);
+  // Stop and discard name the session the page showed, so a stale tab can't act on a newer one.
+  await post("/work/track/stop", `sessionId=${STORE}&latitude=&longitude=`, {}, calls);
+  assert.deepEqual(calls[1], ["stop", "person", STORE, undefined]);
+  await post("/work/track/discard", `sessionId=${STORE}`, {}, calls);
+  assert.deepEqual(calls[2], ["discard", "person", STORE]);
+  const changed = await post("/work/track/discard", `sessionId=${STORE}`, { world: { outcome: { kind: "refused", code: "session_changed" } } });
+  assert.equal(changed.status, 409);
+  assert.match(changed.html, /changed in another tab or device/);
 });
 
 test("WORK_PAGES refusals re-render Track with a plain message; manual times are Kuwait time", async () => {
@@ -203,6 +208,10 @@ test("WORK_PAGES appeals: raised from a day's closed session, listed, and opened
   const raised = await post("/work/appeals", `sessionId=${closed.id}&date=2026-11-18&reason=late`, {}, calls);
   assert.deepEqual([raised.status, raised.headers.location, calls[0]], [303, `/work/appeals/${APPEAL_ID}?done=raised`, ["raise", "person", closed.id, "late"]]);
   assert.equal((await post("/work/appeals", `sessionId=${closed.id}&date=2026-11-18&reason=late`, { origin: "https://evil.invalid" })).status, 403);
+  // A long reason in a two-byte script fits the appeal form's byte limit; a body past it gets 413.
+  const longReason = encodeURIComponent("ع".repeat(2000));
+  assert.equal((await post("/work/appeals", `sessionId=${closed.id}&date=2026-11-18&reason=${longReason}`)).status, 303);
+  assert.equal((await post("/work/appeals", `sessionId=${closed.id}&date=2026-11-18&reason=${"x".repeat(30000)}`)).status, 413);
   const empty = await post("/work/appeals", `sessionId=${closed.id}&date=2026-11-18&reason=`, { world: { rows: [{ session: closed, decision: null }], raised: { kind: "refused", code: "invalid_input" } } });
   assert.deepEqual([empty.status, /Tell us what is wrong/.test(empty.html)], [400, true]);
 
@@ -222,6 +231,10 @@ test("WORK_PAGES appeals: raised from a day's closed session, listed, and opened
   assert.match(opened.html, /Corrected to Wednesday, 18 November 2026, 09:00 to 21:00 \(12h\)/);
   assert.match(opened.html, /<h3>Checking<\/h3><p>Looking at the store log<\/p><p>Thursday, 19 November 2026 · New<\/p>/);
   assert.deepEqual(seen.filter((c) => c[0] === "markRead"), [["markRead", "person", unread.id]]);
+  // A failed read receipt never replaces the page: the reply is shown and stays new for next time.
+  const failed = await request(`/work/appeals/${APPEAL_ID}`, { world: { detail, failRead: true } });
+  assert.equal(failed.status, 200);
+  assert.match(failed.html, /Looking at the store log<\/p><p>Thursday, 19 November 2026 · New/);
   // The service only returns someone else's appeal to staff of its company; they get the staff view, and nothing is marked read.
   const staffSeen: unknown[][] = [];
   const staffView = await request(`/work/appeals/${APPEAL_ID}`, { world: { detail: { ...detail, appeal: appeal({ personId: "someone" }) } } }, staffSeen);

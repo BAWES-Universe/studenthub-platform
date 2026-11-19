@@ -30,8 +30,8 @@ type Json = { readonly status: number; readonly body: unknown };
 const ok = (body: unknown): Json => ({ status: 200, body });
 const NOT_FOUND = /(^|_)not_found$/;
 const CONFLICT = new Set(["overlaps_assignment", "ambiguous_contract", "contract_not_applicable", "request_not_pending", "duplicate_request", "open_session",
-  "recruit_card_reused", "already_working", "not_working", "overlaps_session", "session_open", "session_replaced", "session_not_rejected", "appeal_open", "not_decided", "not_deleted", "already_deleted",
-  "outside_assignment", "not_assigned", "store_removed"]);
+  "recruit_card_reused", "already_working", "not_working", "overlaps_session", "session_open", "session_replaced", "session_changed", "session_not_rejected", "appeal_open", "not_decided", "not_deleted", "already_deleted",
+  "outside_assignment", "not_assigned", "store_removed", "sessions_after_end"]);
 function refusal(code: string, extra: Record<string, unknown> = {}): Json {
   const status = code === "forbidden" ? 403 : NOT_FOUND.test(code) ? 404 : CONFLICT.has(code) ? 409 : 400;
   return { status, body: { error: code, ...extra } };
@@ -141,8 +141,8 @@ const ROUTES: readonly Route[] = [
   // W-3 clock in and out.
   { method: "GET", pattern: /^\/api\/work\/today$/, handle: async (p, _i, s) => ok(await s.sessions.today(p)) },
   { method: "POST", pattern: /^\/api\/work\/sessions\/start$/, handle: async (p, { body }, s) => outcome(await s.sessions.start(p, parseLocation(body.latitude, body.longitude))) },
-  { method: "POST", pattern: /^\/api\/work\/sessions\/stop$/, handle: async (p, { body }, s) => outcome(await s.sessions.stop(p, parseLocation(body.latitude, body.longitude))) },
-  { method: "POST", pattern: /^\/api\/work\/sessions\/discard$/, handle: async (p, _i, s) => outcome(await s.sessions.discard(p)) },
+  { method: "POST", pattern: /^\/api\/work\/sessions\/stop$/, handle: async (p, { body }, s) => outcome(await s.sessions.stop(p, body.sessionId, parseLocation(body.latitude, body.longitude))) },
+  { method: "POST", pattern: /^\/api\/work\/sessions\/discard$/, handle: async (p, { body }, s) => outcome(await s.sessions.discard(p, body.sessionId)) },
   { method: "POST", pattern: /^\/api\/work\/sessions\/manual$/, handle: async (p, { body }, s) => outcome(await s.sessions.addManual(p, { startedAt: body.startedAt, endedAt: body.endedAt, note: body.note })) },
   // W-4 decisions.
   { method: "POST", pattern: /^\/api\/work\/decisions\/sessions$/, handle: async (p, { body }, s) =>

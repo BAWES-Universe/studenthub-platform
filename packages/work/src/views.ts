@@ -152,6 +152,13 @@ export class HoursViews {
       ...(options.after ? { after: options.after } : {}), limit: PAGE_SIZE }, employerDecisionView);
   }
 
+  /** One session in force on `date`, by id, for operator staff (the A-13 correction form); undefined otherwise. */
+  async staffSession(actorId: string, date: IsoDate, sessionId: string): Promise<HoursRow<EmployerDecisionView> | undefined> {
+    if (!isIsoDate(date) || !isUuid(sessionId) || !(await this.#scope.isOperatorStaff(actorId))) return undefined;
+    const page = await this.#page({ sessionIds: [sessionId.toLowerCase()], range: { from: date, to: date }, limit: 1 }, employerDecisionView);
+    return page.rows[0];
+  }
+
   async #page<D>(filter: SessionFilter, view: (d: WorkDecision) => D): Promise<HoursPage<D>> {
     const sessions = await this.#store.listSessions({ ...filter, limit: filter.limit + 1 });
     const pageRows = sessions.slice(0, filter.limit);

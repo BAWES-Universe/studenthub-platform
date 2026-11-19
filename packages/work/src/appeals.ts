@@ -61,8 +61,10 @@ export interface AppealTransaction {
   lockSession(id: string): Promise<WorkSession | undefined>;
   /** Whether a live correction replaces the session. */
   isReplaced(sessionId: string): Promise<boolean>;
-  /** Whether the session has an appeal that is not resolved yet. */
-  hasOpenAppeal(sessionId: string): Promise<boolean>;
+  /** Organization ancestors read on this transaction's client, nearest first; undefined when unknown. */
+  organizationAncestors(orgId: string): Promise<readonly string[] | undefined>;
+  /** Whether the session has an appeal that is not resolved yet, other than `exceptAppealId`. */
+  hasOpenAppeal(sessionId: string, exceptAppealId?: string): Promise<boolean>;
   assignment(id: string): Promise<Assignment | undefined>;
   /** Raises a SessionConflict("overlap") when the entry overlaps a session in force. */
   insertSession(session: NewSession): Promise<WorkSession>;
@@ -181,6 +183,11 @@ export class AppealService {
   async setStatus(actorId: string, appealId: unknown, status: unknown): Promise<{ readonly kind: "updated"; readonly appeal: WorkAppeal } | Refused> {
     if (!isUuid(appealId) || !APPEAL_STATUSES.includes(status as AppealStatus)) return { kind: "refused", code: "invalid_input" };
     return this.#withAppeal(actorId, appealId, async (tx, appeal) => {
+      // Reopening a resolved appeal must not leave two open appeals on the same hours.
+      if (appeal.status === "resolved" && status !== "resolved") {
+        await tx.lockSession(appeal.sessionId);
+        if (await tx.hasOpenAppeal(appeal.sessionId, appeal.id)) return { kind: "refused", code: "appeal_open" };
+      }
       const updated = await tx.setAppealStatus(appeal.id, status as AppealStatus);
       await tx.event(appealEvent("appeal.status_changed", updated, actorId, { from: appeal.status, to: updated.status }));
       return { kind: "updated", appeal: updated };
@@ -204,16 +211,15 @@ export class AppealService {
     if (!isUuid(sessionId) || "code" in parsed) return { kind: "refused", code: "code" in parsed ? parsed.code : "invalid_input" };
     const appealId = input.appealId === undefined || input.appealId === null ? null : isUuid(input.appealId) ? input.appealId.toLowerCase() : undefined;
     if (appealId === undefined) return { kind: "refused", code: "invalid_input" };
-    return this.#store.transaction(async (tx): Promise<CorrectionOutcome> => {
+    return this.#staffTransaction(actorId, async (tx, scope): Promise<CorrectionOutcome> => {
+      // Appeal before session, the same order as addMissing, so the two can't deadlock.
+      const appeal = appealId !== null ? await tx.lockAppeal(appealId) : undefined;
       const original = await tx.lockSession(sessionId.toLowerCase());
-      if (!original || original.deletedAt !== null || !(await this.#scope.isStaff(actorId, original.orgId))) return { kind: "refused", code: "session_not_found" };
+      if (!original || original.deletedAt !== null || !(await scope.isStaff(actorId, original.orgId))) return { kind: "refused", code: "session_not_found" };
       if (original.endedAt === null) return { kind: "refused", code: "session_open" };
       if (await tx.isReplaced(original.id)) return { kind: "refused", code: "session_replaced" };
-      if (appealId !== null) {
-        const appeal = await tx.lockAppeal(appealId);
-        // The appeal must be about this person at this company, or one company could attach its correction to another's appeal.
-        if (!appeal || appeal.personId !== original.personId || appeal.orgId !== original.orgId) return { kind: "refused", code: "appeal_not_found" };
-      }
+      // The appeal must be about this person at this company, or one company could attach its correction to another's appeal.
+      if (appealId !== null && (!appeal || appeal.personId !== original.personId || appeal.orgId !== original.orgId)) return { kind: "refused", code: "appeal_not_found" };
       return this.#enter(tx, actorId, original, parsed, original.id, appealId);
     });
   }
@@ -271,11 +277,17 @@ export class AppealService {
   }
 
   async #withAppeal<T>(actorId: string, appealId: string, work: (tx: AppealTransaction, appeal: WorkAppeal) => Promise<T | Refused>): Promise<T | Refused> {
-    return this.#store.transaction(async (tx) => {
+    return this.#staffTransaction(actorId, async (tx, scope) => {
       const appeal = await tx.lockAppeal(appealId.toLowerCase());
-      if (!appeal || !(await this.#scope.isStaff(actorId, appeal.orgId))) return { kind: "refused", code: "appeal_not_found" } as const;
+      if (!appeal || !(await scope.isStaff(actorId, appeal.orgId))) return { kind: "refused", code: "appeal_not_found" } as const;
       return work(tx, appeal);
     });
+  }
+
+  /** Staff grants are read before the transaction; ancestry is read on its client, so it never needs a second pool client. */
+  async #staffTransaction<T>(actorId: string, work: (tx: AppealTransaction, scope: WorkScope) => Promise<T>): Promise<T> {
+    const scopeFor = await this.#scope.forActor(actorId);
+    return this.#store.transaction((tx) => work(tx, scopeFor((orgId) => tx.organizationAncestors(orgId))));
   }
 }
 

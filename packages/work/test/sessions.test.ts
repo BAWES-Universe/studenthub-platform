@@ -58,7 +58,7 @@ class MemorySessions implements SessionStore {
 function service(now: { value: Date }) {
   const store = new MemorySessions();
   let ids = 0;
-  return { store, svc: new SessionService({ store, newId: () => `s-${++ids}`, now: () => now.value }) };
+  return { store, svc: new SessionService({ store, newId: () => `5e55e55e-0000-4000-8000-${String(++ids).padStart(12, "0")}`, now: () => now.value }) };
 }
 
 test("W3_LOCATION coordinates are required, range-checked and rounded to six places", () => {
@@ -89,8 +89,9 @@ test("W3_CLOCK start then stop: server time, both locations kept (WK-F2 regressi
   const started = await svc.start("person", HERE);
   assert.equal(started.kind, "started");
   assert.equal(started.kind === "started" && started.session.workDate, "2026-11-18");
+  const openId = started.kind === "started" ? started.session.id : "";
   now.value = new Date("2026-11-18T09:25:09.900Z");
-  const stopped = await svc.stop("person", THERE);
+  const stopped = await svc.stop("person", openId, THERE);
   assert.equal(stopped.kind, "stopped");
   const s = stopped.kind === "stopped" ? stopped.session : undefined;
   assert.deepEqual(s?.startLocation, HERE);
@@ -108,8 +109,10 @@ test("W3_CLOCK start needs a location, a placement today and no open session", a
   assert.equal((await svc.start("person", HERE)).kind, "started");
   assert.deepEqual(await svc.start("person", HERE), { kind: "refused", code: "already_working" });
   assert.equal(store.sessions.length, 1);
+  // The placement ends on 30 November: the person placed until then can't clock in on 1 December.
+  assert.equal((await svc.discard("person", store.sessions[0]!.id)).kind, "discarded");
   now.value = new Date("2026-12-01T06:00:00Z");
-  assert.deepEqual(await svc.start("stranger", HERE), { kind: "refused", code: "not_assigned" });
+  assert.deepEqual(await svc.start("person", HERE), { kind: "refused", code: "not_assigned" });
 });
 
 test("W3_CLOCK a parallel start that loses the race is refused, not a second open session", async () => {
@@ -124,21 +127,30 @@ test("W3_CLOCK a parallel start that loses the race is refused, not a second ope
 test("W3_CLOCK stop needs an open session and a location; discard soft-deletes it", async () => {
   const now = { value: new Date("2026-11-18T06:00:00Z") };
   const { store, svc } = service(now);
-  assert.deepEqual(await svc.stop("person", THERE), { kind: "refused", code: "not_working" });
-  await svc.start("person", HERE);
-  assert.deepEqual(await svc.stop("person", undefined), { kind: "refused", code: "location_required" });
-  assert.deepEqual(await svc.discard("person"), { kind: "discarded" });
+  const OTHER = "eeeeeeee-0000-4000-8000-000000000009";
+  assert.deepEqual(await svc.stop("person", OTHER, THERE), { kind: "refused", code: "not_working" });
+  const first = await svc.start("person", HERE);
+  const id = first.kind === "started" ? first.session.id : "";
+  assert.deepEqual(await svc.stop("person", id, undefined), { kind: "refused", code: "location_required" });
+  assert.deepEqual(await svc.stop("person", "not-a-uuid", THERE), { kind: "refused", code: "invalid_input" });
+  assert.deepEqual(await svc.discard("person", undefined), { kind: "refused", code: "invalid_input" });
+  // A stale screen names a session that is no longer the open one: nothing changes.
+  assert.deepEqual(await svc.stop("person", OTHER, THERE), { kind: "refused", code: "session_changed" });
+  assert.deepEqual(await svc.discard("person", OTHER), { kind: "refused", code: "session_changed" });
+  assert.equal(store.sessions[0]?.endedAt, null);
+  assert.equal(store.sessions[0]?.deletedAt, null);
+  assert.deepEqual(await svc.discard("person", id.toUpperCase()), { kind: "discarded" });
   assert.equal(store.sessions[0]?.deletedAt, "now");
-  assert.deepEqual(await svc.discard("person"), { kind: "refused", code: "not_working" });
+  assert.deepEqual(await svc.discard("person", id), { kind: "refused", code: "not_working" });
   assert.equal((await svc.start("person", HERE)).kind, "started");
 });
 
 test("W3_MIDNIGHT a session past midnight keeps its start date", async () => {
   const now = { value: new Date("2026-11-18T20:30:00Z") }; // 23:30 Kuwait
   const { svc } = service(now);
-  await svc.start("person", HERE);
+  const late = await svc.start("person", HERE);
   now.value = new Date("2026-11-18T22:00:00Z"); // 01:00 Kuwait, next day
-  const out = await svc.stop("person", THERE);
+  const out = await svc.stop("person", late.kind === "started" ? late.session.id : "", THERE);
   assert.equal(out.kind === "stopped" && out.session.workDate, "2026-11-18");
   assert.equal(kuwaitDate(now.value), "2026-11-19");
 });
@@ -168,7 +180,7 @@ test("W3_TODAY shows the open session and today's placement", async () => {
   const { svc } = service(now);
   assert.deepEqual(await svc.today("person"), { open: null, assignment: ASSIGNMENT });
   await svc.start("person", HERE);
-  assert.equal((await svc.today("person")).open?.id, "s-1");
+  assert.equal((await svc.today("person")).open?.id, "5e55e55e-0000-4000-8000-000000000001");
   assert.deepEqual(await svc.today("stranger"), { open: null, assignment: null });
 });
 

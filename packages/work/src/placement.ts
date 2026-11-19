@@ -95,6 +95,8 @@ export interface PlacementTransaction {
   decideRequest(id: string, status: Exclude<AssignmentRequestStatus, "pending">, actorId: string, reason: string | null): Promise<void>;
   /** Number of the person's sessions still open at this assignment (refuses ending under an open session). */
   openSessionCount(assignmentId: string): Promise<number>;
+  /** Number of sessions recorded at this assignment (not deleted, not imported) dated after `date`. */
+  sessionsAfter(assignmentId: string, date: IsoDate): Promise<number>;
   event(event: WorkEvent): Promise<void>;
 }
 
@@ -141,7 +143,7 @@ export type PlacementRefusal =
   | "invalid_input" | "forbidden" | "person_not_found" | "store_not_found" | "store_removed"
   | "overlaps_assignment" | "ambiguous_contract" | "contract_not_applicable"
   | "request_not_found" | "request_not_pending" | "duplicate_request"
-  | "assignment_not_found" | "end_before_start" | "open_session" | "recruit_card_reused";
+  | "assignment_not_found" | "end_before_start" | "open_session" | "sessions_after_end" | "recruit_card_reused";
 
 export type PlaceOutcome = { readonly kind: "placed"; readonly assignment: Assignment } | { readonly kind: "refused"; readonly code: PlacementRefusal; readonly matchedContractIds?: readonly string[] };
 export type RequestOutcome = { readonly kind: "requested"; readonly request: AssignmentRequest } | { readonly kind: "refused"; readonly code: PlacementRefusal };
@@ -371,6 +373,9 @@ export class PlacementService {
       const today = kuwaitDate(this.#now());
       const ending = endDate !== null && endDate <= today && (current.endDate === null || current.endDate > endDate);
       if (ending && (await tx.openSessionCount(current.id)) > 0) return { kind: "refused", code: "open_session" };
+      // An earlier end date must not leave recorded hours outside the placement (they would stay payable under it).
+      const shortening = endDate !== null && (current.endDate === null || endDate < current.endDate);
+      if (shortening && (await tx.sessionsAfter(current.id, endDate)) > 0) return { kind: "refused", code: "sessions_after_end" };
       try {
         await tx.setEndDate(current.id, endDate);
       } catch (error) {

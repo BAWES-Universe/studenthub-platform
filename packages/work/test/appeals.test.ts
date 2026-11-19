@@ -46,7 +46,8 @@ class Memory implements AppealStore {
     const tx: AppealTransaction = {
       lockSession: async (id) => this.sessions.find((s) => s.id === id),
       isReplaced: async (id) => this.sessions.some((c) => c.correctsSessionId === id && c.deletedAt === null),
-      hasOpenAppeal: async (id) => this.appeals.some((a) => a.sessionId === id && a.status !== "resolved"),
+      organizationAncestors: async (orgId) => ANCESTORS[orgId],
+      hasOpenAppeal: async (id, except) => this.appeals.some((a) => a.sessionId === id && a.status !== "resolved" && a.id !== except),
       assignment: async (id) => id === ASSIGNMENT.id ? ASSIGNMENT : undefined,
       insertSession: async (s) => {
         const start = s.startedAt.getTime(), end = s.endedAt!.getTime();
@@ -128,6 +129,10 @@ test("W6_RAISE only ended, rejected hours in force are appealed, one open appeal
   assert.equal((await svc.setStatus("staff", first.kind === "raised" ? first.appeal.id : "", "resolved")).kind, "updated");
   assert.equal((await svc.raise("person", rejected.id, "still wrong")).kind, "raised");
   assert.equal(store.appeals.length, 2);
+  // Reopening the resolved one would leave two open appeals on the same hours.
+  const firstId = first.kind === "raised" ? first.appeal.id : "";
+  assert.deepEqual(await svc.setStatus("staff", firstId, "in_progress"), { kind: "refused", code: "appeal_open" });
+  assert.equal(store.appeals.find((a) => a.id === firstId)?.status, "resolved");
   assert.deepEqual(store.events.filter((e) => e.kind === "appeal.raised").length, 2);
 });
 

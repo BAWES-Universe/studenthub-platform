@@ -37,6 +37,11 @@ BEGIN
      OR NEW.store_id <> OLD.store_id OR NEW.reason <> OLD.reason OR NEW.legacy_ref IS DISTINCT FROM OLD.legacy_ref OR NEW.created_at <> OLD.created_at THEN
    RAISE EXCEPTION 'work appeal: only the status changes' USING ERRCODE = '23514';
   END IF;
+  -- Reopening a resolved appeal must not leave two open appeals on the same hours.
+  IF OLD.status = 'resolved' AND NEW.status <> 'resolved'
+     AND EXISTS (SELECT 1 FROM work_appeals a WHERE a.session_id = NEW.session_id AND a.status <> 'resolved' AND a.id <> NEW.id) THEN
+   RAISE EXCEPTION 'work appeal: these hours already have an open appeal' USING ERRCODE = '23514';
+  END IF;
   NEW.updated_at := clock_timestamp();
   RETURN NEW;
  END IF;

@@ -65,6 +65,8 @@ export interface DecisionTransaction {
   lockDay(day: DayKey): Promise<readonly WorkSession[]>;
   /** Whether a live correction replaces the session (a replaced session is not decided). */
   isReplaced(sessionId: string): Promise<boolean>;
+  /** Organization ancestors read on this transaction's client, nearest first; undefined when unknown. */
+  organizationAncestors(orgId: string): Promise<readonly string[] | undefined>;
   insertDecision(decision: WorkDecision): Promise<void>;
   setStatus(sessionIds: readonly string[], status: SessionStatus, decisionId: string): Promise<void>;
   event(event: WorkEvent): Promise<void>;
@@ -109,10 +111,15 @@ export function parseDecision(input: DecisionInput): ParsedDecision | undefined 
     if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 5) return undefined;
     rating = value;
   }
-  const notePublic = input.notePublic === true || input.notePublic === "true" || input.notePublic === "on";
-  if (input.notePublic !== undefined && input.notePublic !== null && typeof input.notePublic !== "boolean" && !["true", "false", "on", ""].includes(String(input.notePublic))) return undefined;
+  // Only a boolean or one of the form strings; anything else (an array, an object) is refused before any coercion.
+  const visibility = input.notePublic;
+  if (visibility !== undefined && visibility !== null && typeof visibility !== "boolean" && (typeof visibility !== "string" || !["true", "false", "on", ""].includes(visibility))) return undefined;
+  const notePublic = visibility === true || visibility === "true" || visibility === "on";
   return { status: input.decision === "approve" ? "approved" : "rejected", reason, note, rating, notePublic };
 }
+
+/** A total order over days for row locking. */
+const dayLockKey = (k: DayKey) => `${k.storeId}|${k.personId}|${k.workDate}`;
 
 export function parseDayKey(value: unknown): DayKey | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
@@ -145,6 +152,22 @@ export class WorkScope {
       this.#cache?.set(actorId, entry);
     }
     return entry;
+  }
+
+  /**
+   * Loads the actor's grants and managed stores now, before a transaction, and
+   * returns a maker for a one-operation scope that reads organization ancestry
+   * through `ancestors` (the transaction's own client). A transaction then never
+   * waits for a second pool client while it holds one and row locks.
+   */
+  async forActor(actorId: string): Promise<(ancestors: (orgId: string) => Promise<readonly string[] | undefined>) => WorkScope> {
+    const [grants, managed] = await Promise.all([this.#grants.listGrantsForPrincipal(actorId), this.#managed.managedStores(actorId)]);
+    const entry = { grants, managed: new Set(managed.map((m) => m.storeId)) };
+    return (ancestors) => {
+      const scope = new WorkScope(this.#grants, this.#managed, ancestors, { perOperation: true });
+      scope.#cache!.set(actorId, entry);
+      return scope;
+    };
   }
 
   /** Staff, the company (subtree aware), or the store's own manager. Never a sibling store. */
@@ -210,8 +233,10 @@ export class DecisionService {
     this.#now = options.now ?? (() => new Date());
   }
 
-  #scope(): WorkScope {
-    return new WorkScope(this.#grants, this.#managed, (orgId) => this.#store.organizationAncestors(orgId), { perOperation: true });
+  /** The actor's grants are read before the transaction; ancestry is read on its client (no second pool client). */
+  async #inTransaction<T>(actorId: string, work: (tx: DecisionTransaction, scope: WorkScope) => Promise<T>): Promise<T> {
+    const scopeFor = await new WorkScope(this.#grants, this.#managed, (orgId) => this.#store.organizationAncestors(orgId)).forActor(actorId);
+    return this.#store.transaction((tx) => work(tx, scopeFor((orgId) => tx.organizationAncestors(orgId))));
   }
 
   /**
@@ -224,9 +249,8 @@ export class DecisionService {
     if (!parsed || sessionIds.length === 0 || !sessionIds.every(isUuid)) return { kind: "refused", code: "invalid_input" };
     if (sessionIds.length > MAX_BATCH) return { kind: "refused", code: "too_many" };
     const ids = [...new Set((sessionIds as string[]).map((id) => id.toLowerCase()))];
-    const scope = this.#scope();
     const batchId = ids.length > 1 ? this.#newId() : null;
-    return this.#store.transaction(async (tx): Promise<DecideHoursOutcome> => {
+    return this.#inTransaction(actorId, async (tx, scope): Promise<DecideHoursOutcome> => {
       const sessions = await tx.lockSessions(ids);
       const decisions: WorkDecision[] = [];
       for (const [index, id] of ids.entries()) {
@@ -260,12 +284,16 @@ export class DecisionService {
     // The same day twice would read the same pending sessions twice and decide them twice.
     const keys = [...new Map((parsedKeys as DayKey[]).map((k) => [`${k.personId}|${k.storeId}|${k.workDate}`, k])).values()];
     if (keys.length > MAX_BATCH) return { kind: "refused", code: "too_many" };
-    const scope = this.#scope();
     const batchId = keys.length > 1 ? this.#newId() : null;
-    return this.#store.transaction(async (tx): Promise<DecideHoursOutcome> => {
+    // Lock days in one stable order, so batches [A, B] and [B, A] can't deadlock; results keep the input order.
+    const lockOrder = (keys as DayKey[]).map((key, index) => ({ key, index }))
+      .sort((x, y) => dayLockKey(x.key) < dayLockKey(y.key) ? -1 : dayLockKey(x.key) > dayLockKey(y.key) ? 1 : 0);
+    return this.#inTransaction(actorId, async (tx, scope): Promise<DecideHoursOutcome> => {
+      const locked = new Map<number, readonly WorkSession[]>();
+      for (const { key, index } of lockOrder) locked.set(index, await tx.lockDay(key));
       const planned: { decision: WorkDecision; sessions: readonly WorkSession[] }[] = [];
-      for (const [index, key] of (keys as DayKey[]).entries()) {
-        const sessions = await tx.lockDay(key);
+      for (const [index] of (keys as DayKey[]).entries()) {
+        const sessions = locked.get(index)!;
         const first = sessions[0];
         if (!first || !(await scope.covers(actorId, first.orgId, first.storeId))) return { kind: "refused", code: "day_not_found", index };
         const pending = sessions.filter((s) => s.status === "pending");
@@ -289,8 +317,7 @@ export class DecisionService {
   async undo(actorId: string, sessionId: unknown, reason?: unknown): Promise<DecideHoursOutcome> {
     const why = reason === undefined || reason === null || reason === "" ? null : cleanText(reason, 255);
     if (!isUuid(sessionId) || why === undefined) return { kind: "refused", code: "invalid_input" };
-    const scope = this.#scope();
-    return this.#store.transaction(async (tx): Promise<DecideHoursOutcome> => {
+    return this.#inTransaction(actorId, async (tx, scope): Promise<DecideHoursOutcome> => {
       const [s] = await tx.lockSessions([sessionId.toLowerCase()]);
       if (!s || s.deletedAt !== null || !(await scope.covers(actorId, s.orgId, s.storeId))) return { kind: "refused", code: "session_not_found" };
       if (s.status === "pending") return { kind: "refused", code: "not_decided" };

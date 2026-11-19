@@ -107,6 +107,12 @@ test("WORK_REVIEW M-03 is the store's queue: waiting hours by default, scoped to
   assert.deepEqual(all[0]?.[4], { storeId: STORE, after: null }, "the path's store wins over a query store");
 });
 
+test("WORK_REVIEW a decision form past its byte limit gets 413, and a full note in a two-byte script fits", async () => {
+  const note = encodeURIComponent("ع".repeat(2000));
+  assert.notEqual((await post(`/store/${STORE}/time-approvals/decide`, `back=&decision=reject&note=${note}`)).status, 413);
+  assert.equal((await post(`/store/${STORE}/time-approvals/decide`, `back=&note=${"x".repeat(70 * 1024)}`)).status, 413);
+});
+
 test("WORK_REVIEW decisions: same origin, selected sessions, the decision fields, and back to the same filters", async () => {
   const calls: unknown[][] = [];
   const back = encodeURIComponent("/organization/co/work?from=2026-10-01&to=2026-10-31&status=pending");

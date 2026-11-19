@@ -160,18 +160,24 @@ test("W3_PG clock in and out with both locations; totals split by status; open s
   const { placement, session } = services(now);
   const placed = await placement.place(w.staff, { personId: w.person, storeId: w.store, startDate: "2026-11-01" });
   const assignmentId = placed.kind === "placed" ? placed.assignment.id : "";
-  assert.equal((await session.start(w.person, HERE)).kind, "started");
+  const begun = await session.start(w.person, HERE);
+  assert.equal(begun.kind, "started");
+  const openId = begun.kind === "started" ? begun.session.id : "";
   assert.deepEqual(await session.start(w.person, HERE), { kind: "refused", code: "already_working" });
   assert.deepEqual(await placement.setEndDate(w.staff, assignmentId, "2026-11-18"), { kind: "refused", code: "open_session" });
   const open = await sessions.dayTotals({ personId: w.person, from: "2026-11-18", to: "2026-11-18" });
   assert.equal(open[0]?.openCount, 1);
   assert.equal(open[0]?.pendingSeconds, 0);
   now.value = new Date("2026-11-18T09:25:09.900Z");
-  const stopped = await session.stop(w.person, THERE);
+  assert.deepEqual(await session.stop(w.person, randomUUID(), THERE), { kind: "refused", code: "session_changed" });
+  const stopped = await session.stop(w.person, openId, THERE);
   assert.equal(stopped.kind, "stopped");
   const s = stopped.kind === "stopped" ? stopped.session : undefined;
   assert.deepEqual([s?.startLocation, s?.endLocation, s?.durationSeconds], [HERE, THERE, 12309]);
   assert.deepEqual(await sessions.session(s!.id), s);
+  // The placement can't end before hours recorded on it, in the service or in the database.
+  assert.deepEqual(await placement.setEndDate(w.staff, assignmentId, "2026-11-17"), { kind: "refused", code: "sessions_after_end" });
+  await assert.rejects(pool.query("UPDATE work_assignments SET end_date = '2026-11-17' WHERE id = $1", [assignmentId]), /recorded after the new end date/);
   now.value = new Date("2026-11-18T12:00:00Z");
   const manual = await session.addManual(w.person, { startedAt: "2026-11-18T13:00:00+03:00", endedAt: "2026-11-18T14:00:00+03:00" });
   assert.equal(manual.kind, "added");
@@ -193,23 +199,30 @@ test("W3_PG a clock-in racing a placement end date waits for it and is refused, 
   const placed = await placement.place(w.staff, { personId: w.person, storeId: w.store, startDate: "2026-11-01" });
   const assignmentId = placed.kind === "placed" ? placed.assignment.id : "";
   const ender = await pool.connect();
+  let start: Promise<unknown> | undefined;
+  let committed = false;
   try {
     await ender.query("BEGIN");
     await ender.query("SELECT 1 FROM work_assignments WHERE id = $1 FOR UPDATE", [assignmentId]);
     await ender.query("UPDATE work_assignments SET end_date = '2026-11-18' WHERE id = $1", [assignmentId]);
-    const start = session.start(w.person, HERE);
-    // Wait until the start is actually blocked on the assignment row, then commit the end date.
+    const enderPid = (await ender.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+    start = session.start(w.person, HERE);
+    // Wait until a backend is blocked by this transaction (the clock-in on the assignment row), then commit the end date.
     let blocked = false;
     for (let i = 0; i < 100 && !blocked; i++) {
-      const { rows } = await pool.query("SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.datname = current_database()");
+      const { rows } = await pool.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))", [enderPid]);
       blocked = rows[0].n > 0;
       if (!blocked) await new Promise((resolve) => setTimeout(resolve, 20));
     }
     assert.ok(blocked, "the clock-in never waited on the placement row");
     await ender.query("COMMIT");
+    committed = true;
     assert.deepEqual(await start, { kind: "refused", code: "not_assigned" });
   } finally {
+    // On a failed assertion, roll back before the client goes back to the pool and let the clock-in settle.
+    if (!committed) await ender.query("ROLLBACK").catch(() => undefined);
     ender.release();
+    await start?.catch(() => undefined);
   }
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM work_sessions WHERE assignment_id = $1", [assignmentId])).rows[0].n, 0);
 });
@@ -226,7 +239,10 @@ test("W3_PG the database refuses a second open session, editing a closed one, de
     VALUES($1,$2,$3,$4,$5,'2026-11-18',now() + interval '1 day',1,1,'timer',$3)`, [randomUUID(), a!.id, w.person, w.company, w.store]), { code: "23P01" });
   await assert.rejects(pool.query("UPDATE work_sessions SET status='approved' WHERE id=$1", [id]), /open session cannot be decided/);
   now.value = new Date("2026-11-18T07:00:00Z");
-  await session.stop(w.person, THERE);
+  await session.stop(w.person, id, THERE);
+  // A running timer can't even be inserted as decided (nothing else open or overlapping at 23:00 Kuwait).
+  await assert.rejects(pool.query(`INSERT INTO work_sessions(id,assignment_id,person_principal_id,org_id,store_id,work_date,started_at,start_latitude,start_longitude,source,status,created_by)
+    VALUES($1,$2,$3,$4,$5,'2026-11-18','2026-11-18T20:00:00Z',1,1,'timer','approved',$3)`, [randomUUID(), a!.id, w.person, w.company, w.store]), /work_sessions_check/);
   await assert.rejects(pool.query("UPDATE work_sessions SET ended_at = ended_at + interval '1 hour' WHERE id=$1", [id]), /corrected by a new session/);
   await assert.rejects(pool.query("DELETE FROM work_sessions WHERE id=$1", [id]), /soft-deleted/);
   await assert.rejects(pool.query(`INSERT INTO work_sessions(id,assignment_id,person_principal_id,org_id,store_id,work_date,started_at,ended_at,source,created_by)
@@ -241,7 +257,7 @@ test("W3_PG discard soft-deletes; the discarded time leaves the totals and a new
   const { placement, session } = services(now);
   await placement.place(w.staff, { personId: w.person, storeId: w.store, startDate: "2026-11-01" });
   const started = await session.start(w.person, HERE);
-  assert.deepEqual(await session.discard(w.person), { kind: "discarded" });
+  assert.deepEqual(await session.discard(w.person, started.kind === "started" ? started.session.id : ""), { kind: "discarded" });
   const row = (await pool.query("SELECT deleted_at IS NOT NULL AS gone, deleted_by, delete_reason FROM work_sessions WHERE id=$1", [started.kind === "started" ? started.session.id : ""])).rows[0];
   assert.deepEqual(row, { gone: true, deleted_by: w.person, delete_reason: "discarded by the person" });
   assert.equal((await sessions.dayTotals({ personId: w.person, from: "2026-11-18", to: "2026-11-18" })).length, 0);
@@ -399,6 +415,17 @@ test("W6_PG appeals: own session only, staff answer, the appellant marks read, r
   const openId = started.kind === "started" ? started.session.id : "";
   assert.deepEqual(await appeals.raise(w.person, openId, "running"), { kind: "refused", code: "session_open" });
   await assert.rejects(appealRow(openId), /ended, rejected hours/);
+  // Two appeals in the same millisecond on either side of a page boundary: the second page still holds the older one.
+  const [late, early] = [randomUUID(), randomUUID()];
+  for (const [id, at] of [[late, "2026-01-02T03:04:05.123456Z"], [early, "2026-01-02T03:04:05.123100Z"]] as const) {
+    await pool.query("INSERT INTO work_appeals(id, session_id, person_principal_id, org_id, store_id, reason, legacy_ref, created_at) VALUES($1,$2,$3,$4,$5,'x',$6,$7)",
+      [id, b, w.person, w.company, w.store, `legacy:appeal:${id}`, at]);
+  }
+  const appealStore = new PostgresWorkAppealStore(pool);
+  const range = { from: "2026-01-02", to: "2026-01-02" };
+  const [firstPage] = await appealStore.listAppeals({ personId: w.person, range, limit: 1 });
+  const secondPage = await appealStore.listAppeals({ personId: w.person, range, limit: 1, after: { createdAt: firstPage!.createdAt, id: firstPage!.id } });
+  assert.deepEqual([firstPage!.id, secondPage[0]?.id].sort(), [late, early].sort());
   const appealId = raised.kind === "raised" ? raised.appeal.id : "";
   assert.deepEqual(await appeals.raise(w.owner, a, "not mine"), { kind: "refused", code: "session_not_found" });
   await assert.rejects(pool.query("INSERT INTO work_appeals(id, session_id, person_principal_id, org_id, store_id, reason) VALUES($1,$2,$3,$4,$5,'x')",
@@ -443,6 +470,8 @@ test("W6_PG a staff correction replaces the original in totals and in pay input;
   assert.deepEqual([total?.approvedSeconds, total?.rejectedSeconds, total?.approvedCount], [6 * 3600, 1800, 3]);
   assert.equal((await pool.query("SELECT deleted_at FROM work_sessions WHERE id = $1", [a])).rows[0].deleted_at, null);
   await assert.rejects(pool.query("UPDATE work_sessions SET appeal_id = NULL WHERE id = $1", [correctionId]), /identity fields are fixed/);
+  // The original can't be deleted while its correction is live, or the chain would have two sessions in force.
+  await assert.rejects(pool.query("UPDATE work_sessions SET deleted_at = now(), delete_reason = 'x' WHERE id = $1", [a]), /live correction cannot be deleted/);
   const detail = await appeals.detail(w.person, appealId);
   assert.equal("entries" in detail && detail.entries.length, 2);
 
@@ -487,6 +516,10 @@ test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes ar
   const placement = { legacyRef: `cand:${tag}:A`, personId: w.person, orgId: w.company, storeId: w.store, startDate: "2026-01-01", endDate: null, payContractId: null };
   assert.deepEqual(await imports.importPlacements([placement]), { inserted: 1, unchanged: 0, updated: 0, conflicts: [], refused: [] });
   assert.deepEqual(await imports.importPlacements([placement]), { inserted: 0, unchanged: 1, updated: 0, conflicts: [], refused: [] });
+  // Two batches racing on one new legacy ref: one inserts, the other waits and finds it unchanged; neither rolls back.
+  const raced = { ...placement, legacyRef: `cand:${tag}:R`, personId: w.owner };
+  const results = await Promise.all([imports.importPlacements([raced]), imports.importPlacements([raced])]);
+  assert.deepEqual(results.map((r) => [r.inserted, r.unchanged]).sort(), [[0, 1], [1, 0]]);
   // Legacy later moved the person: the open placement ends (incremental sync).
   assert.equal((await imports.importPlacements([{ ...placement, endDate: "2026-11-30" }])).updated, 1);
   assert.equal((await imports.importPlacements([{ ...placement, endDate: "2026-11-30" }])).unchanged, 1);

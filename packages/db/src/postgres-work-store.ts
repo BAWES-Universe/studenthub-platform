@@ -262,6 +262,7 @@ export interface WorkPlacementTransaction {
   lockRequest(id: string): Promise<WorkAssignmentRequestRecord | undefined>;
   decideRequest(id: string, status: "accepted" | "rejected" | "cancelled", actorId: string, reason: string | null): Promise<void>;
   openSessionCount(assignmentId: string): Promise<number>;
+  sessionsAfter(assignmentId: string, date: IsoDate): Promise<number>;
   event(e: WorkEventRecord): Promise<void>;
 }
 
@@ -300,6 +301,11 @@ function placementTransaction(client: PoolClient): WorkPlacementTransaction {
     },
     async openSessionCount(assignmentId) {
       const { rows } = await client.query<{ n: number }>("SELECT count(*)::int AS n FROM work_sessions WHERE assignment_id = $1 AND ended_at IS NULL AND deleted_at IS NULL", [assignmentId]);
+      return rows[0]?.n ?? 0;
+    },
+    async sessionsAfter(assignmentId, date) {
+      const { rows } = await client.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM work_sessions WHERE assignment_id = $1 AND deleted_at IS NULL AND source <> 'import' AND work_date > $2::date", [assignmentId, date]);
       return rows[0]?.n ?? 0;
     },
     event: (e) => insertEvent(client, e),
@@ -437,6 +443,7 @@ export interface WorkDecisionTransaction {
   lockSessions(ids: readonly string[]): Promise<readonly WorkSessionRecord[]>;
   lockDay(day: { personId: string; storeId: string; workDate: IsoDate }): Promise<readonly WorkSessionRecord[]>;
   isReplaced(sessionId: string): Promise<boolean>;
+  organizationAncestors(orgId: string): Promise<readonly string[] | undefined>;
   insertDecision(d: WorkDecisionRecord): Promise<void>;
   setStatus(sessionIds: readonly string[], status: "pending" | "approved" | "rejected", decisionId: string): Promise<void>;
   event(e: WorkEventRecord): Promise<void>;
@@ -498,6 +505,7 @@ export class PostgresWorkDecisionStore {
         const { rows } = await client.query<{ forced: boolean }>("SELECT work_session_in_force($1::uuid) AS forced", [sessionId]);
         return rows[0]?.forced === false;
       },
+      organizationAncestors: (orgId) => ancestorsOf(client, orgId),
       insertDecision: (d) => insertDecision(client, d),
       setStatus: (sessionIds, status, decisionId) => setSessionStatus(client, sessionIds, status, decisionId),
       event: (e) => insertEvent(client, e),

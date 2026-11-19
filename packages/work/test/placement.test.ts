@@ -25,6 +25,7 @@ class MemoryPlacements implements PlacementStore {
   events: WorkEvent[] = [];
   contractsByPerson = new Map<string, PayContract[]>([["person", [contract("c-1")]]]);
   civil = { present: true, expiry: "2027-01-01" as string | null };
+  sessionDates: string[] = [];
   openSessions = 0;
   async store(id: string) { return this.stores.get(id); }
   async organizationAncestors(orgId: string) { return orgId === "company" ? ["group", "root"] : orgId === "rival" || orgId === "group" ? ["root"] : undefined; }
@@ -71,6 +72,7 @@ class MemoryPlacements implements PlacementStore {
       lockRequest: async (id) => this.requests.find((r) => r.id === id),
       decideRequest: async (id, status, actorId, reason) => { const i = this.requests.findIndex((r) => r.id === id); this.requests[i] = { ...this.requests[i]!, status, decidedBy: actorId, decidedAt: NOW.toISOString(), decisionReason: reason }; },
       openSessionCount: async () => this.openSessions,
+      sessionsAfter: async (_id, date) => this.sessionDates.filter((d) => d > date).length,
       event: async (e) => { this.events.push(e); },
     };
     try { return await work(tx); } catch (error) { this.assignments = snapshot.a; this.requests = snapshot.r; this.events = snapshot.e; throw error; }
@@ -235,8 +237,14 @@ test("W1_END staff end or extend; an open session blocks ending", async () => {
   store.openSessions = 0;
   assert.deepEqual(await svc.setEndDate("staff", id, "2026-11-18"), { kind: "ended", endDate: "2026-11-18" });
   assert.deepEqual(await svc.setEndDate("staff", id, "2026-11-18"), { kind: "unchanged", endDate: "2026-11-18" });
+  // An earlier end date can't strand recorded hours outside the placement; a later one can't strand anything.
+  store.sessionDates = ["2026-11-10"];
+  assert.deepEqual(await svc.setEndDate("staff", id, "2026-11-09"), { kind: "refused", code: "sessions_after_end" });
+  assert.equal(store.assignments.find((a) => a.id === id)?.endDate, "2026-11-18");
+  assert.deepEqual(await svc.setEndDate("staff", id, "2026-11-10"), { kind: "ended", endDate: "2026-11-10" });
+  store.sessionDates = [];
   assert.deepEqual(await svc.setEndDate("staff", id, null), { kind: "extended", endDate: null });
-  assert.deepEqual(store.events.slice(1).map((e) => [e.kind, e.detail.from, e.detail.to]), [["assignment.ended", null, "2026-12-31"], ["assignment.ended", "2026-12-31", "2026-11-18"], ["assignment.extended", "2026-11-18", null]]);
+  assert.deepEqual(store.events.slice(1).map((e) => [e.kind, e.detail.from, e.detail.to]), [["assignment.ended", null, "2026-12-31"], ["assignment.ended", "2026-12-31", "2026-11-18"], ["assignment.ended", "2026-11-18", "2026-11-10"], ["assignment.extended", "2026-11-10", null]]);
 });
 
 test("W1_READ the person sees their places; a company sees its own; another company sees nothing", async () => {

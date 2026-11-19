@@ -67,7 +67,7 @@ export class PostgresWorkImportStore {
   async close(): Promise<void> { await this.#db.close(); }
 
   async importPlacements(rows: readonly WorkImportPlacement[]): Promise<WorkImportResult> {
-    return this.#batch(rows, async (client, row, tally) => {
+    return this.#batch("work_assignments", rows, async (client, row, tally) => {
       const digest = workImportDigest({ ...row, endDate: null });
       const { rows: held } = await client.query<{ id: string; legacy_digest: string; end_date: string | null }>(
         "SELECT id, legacy_digest, to_char(end_date,'YYYY-MM-DD') AS end_date FROM work_assignments WHERE legacy_ref = $1 FOR UPDATE", [row.legacyRef]);
@@ -94,7 +94,7 @@ export class PostgresWorkImportStore {
   }
 
   async importSessions(rows: readonly WorkImportSession[]): Promise<WorkImportResult> {
-    return this.#batch(rows, async (client, row, tally) => {
+    return this.#batch("work_sessions", rows, async (client, row, tally) => {
       const digest = workImportDigest(row);
       const { rows: held } = await client.query<{ legacy_digest: string }>("SELECT legacy_digest FROM work_sessions WHERE legacy_ref = $1", [row.legacyRef]);
       if (held[0]) { this.#same(tally, row.legacyRef, held[0].legacy_digest, digest); return; }
@@ -117,7 +117,7 @@ export class PostgresWorkImportStore {
    * latest decision naming it with its own legacy status.
    */
   async importDecisions(rows: readonly WorkImportDecision[]): Promise<WorkImportResult> {
-    const result = await this.#batch(rows, async (client, row, tally) => {
+    const result = await this.#batch("work_decisions", rows, async (client, row, tally) => {
       const digest = workImportDigest(row);
       const { rows: held } = await client.query<{ legacy_digest: string }>("SELECT legacy_digest FROM work_decisions WHERE legacy_ref = $1", [row.legacyRef]);
       if (held[0]) { this.#same(tally, row.legacyRef, held[0].legacy_digest, digest); return; }
@@ -156,9 +156,14 @@ export class PostgresWorkImportStore {
     if (existing === incoming) tally.unchanged++; else tally.conflicts.push({ legacyRef, existingDigest: existing, incomingDigest: incoming });
   }
 
-  async #batch<R extends { readonly legacyRef: string }>(rows: readonly R[], each: (client: PoolClient, row: R, tally: Tally) => Promise<void>,
+  async #batch<R extends { readonly legacyRef: string }>(table: string, rows: readonly R[], each: (client: PoolClient, row: R, tally: Tally) => Promise<void>,
     after?: (client: PoolClient) => Promise<void>): Promise<WorkImportResult> {
     return this.#db.transaction(async (client) => {
+      // Two batches naming the same legacy_ref would both miss it on lookup and one insert would fail,
+      // rolling back its whole batch. Lock every ref of the batch first, in one global order (so two
+      // batches can't deadlock); a second batch then waits and finds the row as unchanged or a conflict.
+      await client.query(`SELECT pg_advisory_xact_lock(k) FROM (SELECT DISTINCT hashtextextended($1 || ':' || r, 0) AS k FROM unnest($2::text[]) r) t ORDER BY k`,
+        [table, rows.map((r) => r.legacyRef)]);
       const tally = new Tally();
       for (const row of rows) {
         try {
