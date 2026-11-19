@@ -113,7 +113,10 @@ export async function renderStaffTime(services: WorkHttpServices, actor: string,
   const absent = `<section class="p-card" aria-labelledby="inactive-heading"><h2 id="inactive-heading">Not started on ${esc(longDate(inactive.workDate))}</h2>
 <form method="get" action="${ADMIN}" aria-label="Date"><input type="hidden" name="from" value="${esc(from)}"><input type="hidden" name="to" value="${esc(to)}"><label>Date<input type="date" name="inactive" value="${esc(inactive.workDate)}" required></label><button type="submit">Show</button></form>
 ${inactive.staffIds.length ? `<ul>${inactive.staffIds.map((id) => `<li>${who(id)}</li>`).join("")}</ul>` : "<p>Every staff member started that day.</p>"}</section>`;
-  return { status: 200, html: shell("Staff time", `${filter}<section class="p-card">${table}</section>${more}${absent}`) };
+  // The export (legacy download-list-excel) posts to the shared export route with these filters.
+  const exportQuery = new URLSearchParams({ from, to, ...(staffId ? { staff: staffId } : {}) }).toString();
+  const exportForm = `<form method="post" action="/exports/work-staff-sessions?${esc(exportQuery)}" class="p-card" aria-label="Export"><button type="submit">Export staff hours (CSV)</button></form>`;
+  return { status: 200, html: shell("Staff time", `${filter}${exportForm}<section class="p-card">${table}</section>${more}${absent}`) };
 }
 
 /** Handles /work/staff-time; false for any other path. */

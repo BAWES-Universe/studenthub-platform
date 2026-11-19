@@ -18,17 +18,16 @@ import {
   formatCursor, kuwaitDate, parseCursor, parseRange,
   type AssignmentRequest, type EmployerDecisionView, type HoursCursor, type HoursRange, type SessionStatus, type WorkSession,
 } from "../../../../packages/work/src/index.js";
+import { exportQuery, WORK_EXPORT_KINDS } from "./exports.js";
 import type { WorkHttpServices } from "./http.js";
-import type { ExportsHttp } from "../exports-http.js";
-import { assignedHistoryFilters, companyHoursFilters, WORK_EXPORT_KINDS } from "./exports.js";
 import { clock, duration, esc, FormTooLarge, longDate, notice, plain, redirect, sessionCookie, STATUS_LABEL, tooLarge, write } from "./pages.js";
 import { pageDocument } from "../web-ui.js";
 
 // A decision note (2,000 characters) and reason (255) at up to 12 encoded bytes each, plus up to 200 session ids.
 const FORM_LIMIT = 64 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const LOGS = /^\/work\/logs(?:\/(decide|export))?$/;
-const ORG = /^\/organization\/([A-Za-z0-9._:-]{1,256})\/work(?:\/(decide|export))?$/;
+const LOGS = /^\/work\/logs(\/decide)?$/;
+const ORG = /^\/organization\/([A-Za-z0-9._:-]{1,256})\/work(\/decide)?$/;
 const STORE = /^\/store\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(time-approvals|assignment-changes)(?:\/(decide|request|cancel))?$/;
 const STATUSES: readonly SessionStatus[] = ["pending", "approved", "rejected"];
 
@@ -159,35 +158,18 @@ function reviewRow(s: WorkSession, d: EmployerDecisionView | null, people: Reado
 /**
  * The export buttons (P-1): on the company screen, these hours in detail or per
  * person (legacy work-log-detailed-excel and work-log-excel); on the staff work
- * logs, who worked where over the range (legacy export-assigned-history).
- * Store screens have none, as in legacy.
+ * logs, who worked where over the range (legacy export-assigned-history). Each
+ * posts to the shared export route with the screen's filters in its query; the
+ * export service checks who may export. Store screens have none, as in legacy.
  */
 function exportForm(place: Place, f: Filters): string {
   if (place.storeId) return "";
-  const hidden = `<input type="hidden" name="from" value="${f.range.from}"><input type="hidden" name="to" value="${f.range.to}">`;
-  if (place.staff) return `<form method="post" action="${place.base}/export" class="p-card" aria-label="Export">${hidden}<button type="submit" name="kind" value="history">Export who worked where (CSV)</button></form>`;
-  return `<form method="post" action="${place.base}/export" class="p-card" aria-label="Export">${hidden}${f.status ? `<input type="hidden" name="status" value="${f.status}">` : ""}${f.storeId ? `<input type="hidden" name="store" value="${f.storeId}">` : ""}<p>Export these hours as a CSV file.</p><button type="submit" name="kind" value="detailed">Export each entry</button> <button type="submit" name="kind" value="summary">Export totals per person</button></form>`;
-}
-
-/** Runs an export from the screen's form and shows the download link, or why there is none. */
-async function runExport(req: IncomingMessage, res: ServerResponse, exports: ExportsHttp | undefined, sessionId: string | undefined, place: Place): Promise<void> {
-  const fields = await readFields(req, ["kind", "from", "to", "status", "store"]);
-  if (!exports?.requestKind) { write(res, ...plain(503, "Exports are unavailable", "Exports aren't switched on here yet.")); return; }
-  const kind = fields ? one(fields, "kind") : undefined;
-  const from = fields ? one(fields, "from") : undefined, to = fields ? one(fields, "to") : undefined;
-  const request = place.staff
-    ? kind === "history" ? { id: WORK_EXPORT_KINDS.history, filters: assignedHistoryFilters({ from, to }) } : undefined
-    : kind === "detailed" || kind === "summary"
-      ? { id: WORK_EXPORT_KINDS[kind], filters: companyHoursFilters({ orgId: place.orgId, from, to, ...(one(fields!, "status") ? { status: one(fields!, "status") } : {}), ...(one(fields!, "store") ? { storeId: one(fields!, "store") } : {}) }) }
-      : undefined;
-  if (!request?.filters) { write(res, ...plain(400, "Export not valid", "Choose a date range of at most a year, then export again.")); return; }
-  const result = await exports.requestKind(sessionId, request.id, request.filters);
-  const what = place.staff ? "placements" : "rows";
-  const body = result.status === 200
-    ? `<section class="p-card"><p>${result.body.rowCount} ${what} exported. The link works for 15 minutes, for you only.</p><p><a class="p-button" href="${esc(result.body.downloadUrl)}">Download CSV</a></p><p><a href="${place.base}?from=${request.filters.from}&amp;to=${request.filters.to}">Back</a></p></section>`
-    : result.status === 409 ? `<section class="p-card"><p>This export is over the 10,000 row limit. Choose a shorter date range and try again.</p></section>`
-      : `<section class="p-card"><p>You can't export these hours.</p></section>`;
-  write(res, result.status === 200 ? 200 : result.status === 409 ? 409 : 403, reviewShell(result.status === 200 ? "Export ready" : "Export refused", body));
+  const button = (kind: string, query: Record<string, string | undefined>, label: string) =>
+    `<form method="post" action="/exports/${kind}?${esc(exportQuery(query))}"><button type="submit">${label}</button></form>`;
+  const range = { from: f.range.from, to: f.range.to };
+  if (place.staff) return `<section class="p-card" aria-label="Export">${button(WORK_EXPORT_KINDS.history, range, "Export who worked where (CSV)")}</section>`;
+  const company = { orgId: place.orgId, ...range, status: f.status ?? undefined, store: f.storeId ?? undefined };
+  return `<section class="p-card" aria-label="Export"><p>Export these hours as a CSV file.</p>${button(WORK_EXPORT_KINDS.detailed, company, "Export each entry")}${button(WORK_EXPORT_KINDS.summary, company, "Export totals per person")}</section>`;
 }
 
 /** O-11 and M-03; `undefined` when the actor may not see this company or store. */
@@ -238,7 +220,7 @@ export async function renderChanges(services: WorkHttpServices, actor: string, p
  * returns false for any other path.
  */
 export async function handleReviewPages(req: IncomingMessage, res: ServerResponse, services: WorkHttpServices | undefined, origin: string | undefined,
-  now: () => Date = () => new Date(), exports?: ExportsHttp): Promise<boolean> {
+  now: () => Date = () => new Date()): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://invalid");
   const org = ORG.exec(url.pathname), store = STORE.exec(url.pathname), logs = LOGS.exec(url.pathname);
   if (!org && !store && !logs) return false;
@@ -251,10 +233,10 @@ export async function handleReviewPages(req: IncomingMessage, res: ServerRespons
     let place: Place, screen: "review" | "changes", action: string | undefined;
     if (logs) {
       place = { orgId: "", staff: true, base: "/work/logs", title: "Work logs" };
-      screen = "review"; action = logs[1];
+      screen = "review"; action = logs[1] ? "decide" : undefined;
     } else if (org) {
       place = { orgId: org[1]!, base: `/organization/${org[1]!}/work`, title: "Work review" };
-      screen = "review"; action = org[2];
+      screen = "review"; action = org[2] ? "decide" : undefined;
     } else {
       const info = await services.storeInfo!(store![1]!);
       if (!info) { req.resume(); write(res, ...plain(404, "Store not found", "This store doesn't exist.")); return true; }
@@ -281,8 +263,6 @@ export async function handleReviewPages(req: IncomingMessage, res: ServerRespons
     }
     if (req.method !== "POST" || action === undefined) { req.resume(); write(res, ...plain(405, "Not allowed", "This page can't do that.")); return true; }
     if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); write(res, ...plain(403, "Request refused", "We could not verify this request.")); return true; }
-
-    if (action === "export") { await runExport(req, res, exports, sessionId, place); return true; }
 
     if (screen === "changes") {
       const fields = await readFields(req, action === "request" ? ["personId", "note"] : ["requestId"]);

@@ -98,9 +98,10 @@ A person whose StudentHub access is paused (access lane A6, `PostgresAccessPause
 can't be placed: staff placing them, accepting a company's request for them, and
 `placeFromRecruit` are refused with `person_paused` (409). The placement reads the pause inside
 its own transaction after taking the person's access lock, the same advisory lock the pause and
-resume take, so a pause can't commit between the check and the placement. The running gateway doesn't give
-`wireRecruit` the work lane's placement port yet, so until it does the recruit stage answers
-`work_unavailable` (409) for everyone, paused or not. A company asking for them is told the person
+resume take, so a pause can't commit between the check and the placement. When the work lane is on, the gateway gives
+`wireRecruit` the work lane's placement port (`recruitPlacementPort` in `wiring/work.ts`), so the
+recruit stage's "placed" goes through `placeFromRecruit`; while the lane is off the recruit stage
+answers `work_unavailable` (409). A company asking for them is told the person
 isn't found, because a paused person is hidden from employers. Pausing already ends their
 sign-ins and takes their grants, so they can't log hours; hours already logged stay visible to
 their employer and to pay.
@@ -188,11 +189,8 @@ StudentHub's own staff time their day here (hours are hours). `StaffTimeService`
 - The table refuses edits to a closed session, a second open session for the same day, an end
   before the start, and deletes.
 
-Still to come for staff time: the P-1 export (legacy `staff-work-session/download-list-excel`)
-goes in with the other work exports on the shared export route. Legacy filled a session with
-no end with the staff record's hours per day; the export takes that from a port that is blank
-until the staff record exists, and the release matrix carries a gate so it is wired before
-cutover. The legacy rows are imported with the cutover lane's importer (M-5).
+The staff hours export is under Exports below. The legacy rows are imported with the cutover
+lane's importer (M-5).
 
 ## Exports (P-1)
 
@@ -200,13 +198,17 @@ The work exports go through the one export service (`packages/exports`), so each
 when it is asked for and again at download, its link works for 15 minutes for the person who
 asked, and every export, refused ones included, is audited. The kinds live in
 `apps/gateway/src/work/exports.ts` and are registered with the service by `wireOps` when the work
-lane is on. Files are CSV; legacy wrote Excel.
+lane is on (the staff hours kind only where staff time is wired). Each kind has an entry in the
+gateway's `EXPORT_HTTP_KINDS`, which parses its filters strictly from the query string of the
+shared route: the screens' buttons post to `/exports/<kind>?<filters>`, and the file downloads
+from `/exports/<id>` under the kind's name. Files are CSV; legacy wrote Excel.
 
 | Kind | Legacy | Who | Columns |
 |---|---|---|---|
 | `work-log-detailed` | company `candidate/work-log-detailed-excel` | the company, staff, a store's manager for their stores | Session ID, Person ID, Person, Store ID, Store, Date, Start time, End time, Total time, Total seconds, Note, Status, Via, Created at, Decided at |
 | `work-log-summary` | company `candidate/work-log-excel` | as above | Person ID, Person, Company, Store, Hours, Minutes, Seconds, Approved, Waiting, Rejected |
 | `work-assigned-history` | staff `candidate/export-assigned-history` | operator staff | Person ID, Person, Start date, End date, Company, Store |
+| `work-staff-sessions` | staff `staff-work-session/download-list-excel` | operator admins (everyone or one staff member); a staff member, themself | Staff ID, Name, Email, Total minutes, Total hours, From, To |
 
 - The company export takes the work review screen's filters (dates, status, store), with the
   same range limit of a year. The buttons are on `/organization/:orgId/work`; staff export who
@@ -220,6 +222,10 @@ lane is on. Files are CSV; legacy wrote Excel.
 - Who worked where lists every placement that overlaps the range. Legacy's currency, name and
   email filters are not carried over; the file can be filtered after download.
 - Over 10,000 rows is refused; the screen asks for a shorter range.
+- Staff hours: legacy counted a session with no end as the staff record's hours per day. That
+  comes from the `staffHoursPerDay` port (`wireWork` option), absent until the staff record
+  exists; while it is absent a day not ended adds nothing. The release matrix gates cutover on
+  wiring it (the cutover lane's STAFF-HOURS-FALLBACK step). The button is on `/work/staff-time`.
 
 ## Not yet here
 

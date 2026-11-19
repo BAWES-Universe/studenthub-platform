@@ -2,6 +2,7 @@ import type { SessionStore } from "@studenthub/login-contract";
 import type { ExportService } from "../../../packages/exports/src/exports.js";
 import { CATALOGUE_LIST_KINDS } from "../../../packages/exports/src/catalogue-list-export.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
+import { assignedHistoryQuery, companyHoursQuery, staffHoursQuery, WORK_EXPORT_KINDS } from "./work/exports.js";
 
 /**
  * The HTTP side of the export service (contract P-1). `POST /exports/<kind>` asks for an export
@@ -34,6 +35,11 @@ export const EXPORT_HTTP_KINDS: ReadonlyMap<string, ExportsHttpKind> = new Map((
     forRequester: (filters, personId) => filters.accountManager === "me" ? Object.freeze({ ...filters, accountManager: personId }) : filters },
   { id: CATALOGUE_LIST_KINDS.country, filename: "countries.csv", noun: "countries", filters: noFilters },
   { id: CATALOGUE_LIST_KINDS.university, filename: "universities.csv", noun: "universities", filters: noFilters },
+  // Work and hours (W-1 to W-7); registered with the service only when the work lane is on.
+  { id: WORK_EXPORT_KINDS.detailed, filename: "work-log-detailed.csv", noun: "entries", filters: companyHoursQuery },
+  { id: WORK_EXPORT_KINDS.summary, filename: "work-log-summary.csv", noun: "people", filters: companyHoursQuery },
+  { id: WORK_EXPORT_KINDS.history, filename: "assigned-history.csv", noun: "placements", filters: assignedHistoryQuery },
+  { id: WORK_EXPORT_KINDS.staff, filename: "staff-work-sessions.csv", noun: "staff members", filters: staffHoursQuery },
 ] satisfies ExportsHttpKind[]).map(kind => [kind.id, kind]));
 
 const answer=(result:Awaited<ReturnType<ExportService["request"]>>):ExportsHttpResult=>result.ok?{status:200,body:{id:result.id,downloadUrl:result.downloadUrl,rowCount:result.rowCount}}:result.reason==="row_limit"?{status:409,body:{error:"row_limit"}}:{status:404,body:{error:"not_found"}};

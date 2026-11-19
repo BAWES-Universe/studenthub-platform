@@ -4,7 +4,7 @@ import { createAdminJobs } from "../admin-jobs.js";
 import { createAdminOutbox } from "../admin-outbox.js";
 import { createExportsHttp } from "../exports-http.js";
 import { createJobRegistry, writeJobAlert } from "../../../../packages/observability/src/jobs.js";
-import { ExportService } from "../../../../packages/exports/src/exports.js";
+import { ExportService, type ExportKind } from "../../../../packages/exports/src/exports.js";
 import { createCompanyDirectoryExport } from "../../../../packages/exports/src/company-directory-export.js";
 import { createCatalogueListExports } from "../../../../packages/exports/src/catalogue-list-export.js";
 import { PostgresCatalogueListStore } from "@studenthub/db/reports";
@@ -16,7 +16,8 @@ import type { wireOrganizations } from "./organizations.js";
 type Access = ReturnType<typeof wireAccess>["services"];
 type Organizations = ReturnType<typeof wireOrganizations>["services"];
 
-export function wireOps(settings: WiringSettings, access: Access, organizationArea: Organizations): Wired<{
+/** `areaKinds` are export kinds other lanes register with the one service (the work lane's when it is on). */
+export function wireOps(settings: WiringSettings, access: Access, organizationArea: Organizations, areaKinds: readonly ExportKind<never>[] = []): Wired<{
   readonly exports: ReturnType<typeof createExportsHttp>;
   readonly adminJobs: ReturnType<typeof createAdminJobs>;
   readonly adminOutbox: ReturnType<typeof createAdminOutbox>;
@@ -26,7 +27,7 @@ export function wireOps(settings: WiringSettings, access: Access, organizationAr
   const exportsStore=new PostgresExportsStore({connectionString:settings.databaseUrl});
   const catalogueLists=new PostgresCatalogueListStore({connectionString:settings.databaseUrl});
   const listSource={isStaff:async(principalId:string)=>hasOperatorStaffGrant(await access.authzStore.listGrantsForPrincipal(principalId)),list:(type:"country"|"university")=>catalogueLists.list(type)};
-  const exportsService=new ExportService(exportsStore,[createCompanyDirectoryExport(organizationArea.organizations) as never,...createCatalogueListExports(listSource) as never[]]);
+  const exportsService=new ExportService(exportsStore,[createCompanyDirectoryExport(organizationArea.organizations) as never,...createCatalogueListExports(listSource) as never[],...areaKinds]);
   return {
     services: {
       exports:createExportsHttp(access.loginStore.sessions,exportsService),

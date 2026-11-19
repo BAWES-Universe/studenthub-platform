@@ -1,17 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ExportService as BaseService, EXPORT_ROW_CAP, type ExportStore, type StoredExport } from "../../../packages/exports/src/exports.js";
-import { createExportsHttp } from "../src/exports-http.js";
-import { companyHoursFilters, kuwaitTime, spelledDuration, workExportKinds } from "../src/work/exports.js";
+import { EXPORT_HTTP_KINDS } from "../src/exports-http.js";
+import { companyHoursFilters, kuwaitTime, spelledDuration, staffHoursExport, workExportKinds } from "../src/work/exports.js";
 import type { WorkHttpServices } from "../src/work/http.js";
 
 const STORE = "aaaaaaaa-0000-4000-8000-000000000001", STORE2 = "aaaaaaaa-0000-4000-8000-000000000002";
 const id = (n: number) => `bbbbbbbb-0000-4000-8000-${String(n).padStart(12, "0")}`;
-// The service as the gateway serves it: file() is the HTTP layer's, named after the stored kind.
+// file() is the service's download with its kind, as the gateway's GET /exports/<id> uses it.
 class ExportService extends BaseService {
-  readonly #http: ReturnType<typeof createExportsHttp>;
-  constructor(store: Memory, kinds: ConstructorParameters<typeof BaseService>[1]) { super(store, kinds); this.#http = createExportsHttp({ get: async (id: string) => ({ id, personId: id }) } as never, this, store); }
-  file(personId: string, exportId: string) { return this.#http.file!(personId, exportId); }
+  file(personId: string, exportId: string) { return this.downloadFile(personId, exportId); }
 }
 class Memory implements ExportStore { rows = new Map<string, StoredExport>(); async save(r: StoredExport) { this.rows.set(r.id, r); } async find(i: string) { return this.rows.get(i) ?? null; } async cleanExpired() { return 0; } }
 
@@ -130,4 +128,57 @@ test("WORK_EXPORT assigned history: staff only, every page, open ends left blank
   assert.deepEqual(await service.request("staff", "work-assigned-history", { from: "2026-11-18", to: "2026-01-01" }), { ok: false, reason: "not_found" });
   world.staff!.delete("staff");
   assert.equal(await service.file("staff", made.id), null, "download re-checks staff");
+});
+
+test("WORK_EXPORT the export route's work kinds parse their query strictly; bad ones never reach the service", () => {
+  const kind = (id: string) => EXPORT_HTTP_KINDS.get(id)!;
+  const q = (s: string) => new URLSearchParams(s);
+  assert.deepEqual([kind("work-log-detailed").filename, kind("work-log-summary").filename, kind("work-assigned-history").filename], ["work-log-detailed.csv", "work-log-summary.csv", "assigned-history.csv"]);
+  assert.deepEqual(kind("work-log-summary").filters(q(`orgId=co&from=2026-11-01&to=2026-11-18&status=approved&store=${STORE.toUpperCase()}`)),
+    { orgId: "co", from: "2026-11-01", to: "2026-11-18", storeId: STORE, status: "approved" });
+  assert.deepEqual(kind("work-log-detailed").filters(q("orgId=co&from=2026-11-01&to=2026-11-18")), { orgId: "co", from: "2026-11-01", to: "2026-11-18" });
+  assert.deepEqual(kind("work-assigned-history").filters(q("from=2026-01-01&to=2026-11-18")), { from: "2026-01-01", to: "2026-11-18" });
+  for (const bad of ["from=2026-11-01&to=2026-11-18", "orgId=co&from=2026-11-18&to=2026-11-01", "orgId=co&from=2025-01-01&to=2026-11-18", "orgId=co&from=2026-11-01&to=2026-11-18&status=open",
+    "orgId=co&from=2026-11-01&to=2026-11-18&store=nope", "orgId=co&orgId=other&from=2026-11-01&to=2026-11-18", "orgId=co&from=2026-11-01&to=2026-11-18&extra=1"]) {
+    assert.equal(kind("work-log-summary").filters(q(bad)), null, bad);
+  }
+  assert.equal(kind("work-assigned-history").filters(q("from=2026-01-01&to=2026-11-18&orgId=co")), null);
+  assert.equal(kind("work-assigned-history").filters(q("from=2026-11-18")), null);
+});
+
+test("WORK_EXPORT staff hours: minutes per staff member over every page; a day not ended adds the staff record's hours per day, or nothing while that port is absent", async () => {
+  const day = (staffId: string, workDate: string, minutes: number, open = false) => ({ staffId, workDate, minutes, sessions: 1, open, firstStart: `${workDate}T05:00:00.000Z`, lastEnd: open ? null : `${workDate}T09:00:00.000Z` });
+  const pages = [[day("s-2", "2026-11-18", 90), day("s-1", "2026-11-18", 30, true)], [day("s-1", "2026-11-17", 480)]];
+  const calls: unknown[][] = [];
+  const staffTime = { days: async (actor: string, from: string, to: string, options: { staffId?: string; after?: unknown }) => {
+    calls.push([actor, from, to, options]);
+    if (actor !== "admin") return { kind: "refused", code: "forbidden" };
+    const i = options.after ? 1 : 0;
+    return { kind: "days", days: pages[i], next: i === 0 ? { workDate: "2026-11-18", staffId: "s-1" } : null };
+  } };
+  const base = { staffTime, personNames: async (ids: readonly string[]) => new Map(ids.filter((i) => i !== "s-2").map((i) => [i, "Huda"])), staffEmails: async () => new Map([["s-1", "huda@example.invalid"]]) };
+  const without = new ExportService(new Memory(), [staffHoursExport(base as never) as never]);
+  const made = await without.request("admin", "work-staff-sessions", { from: "2026-11-01", to: "2026-11-18" });
+  assert.ok(made.ok);
+  assert.deepEqual(csv((await without.file("admin", made.id))!.bytes), [
+    "Staff ID,Name,Email,Total minutes,Total hours,From,To",
+    "s-2,,,90,1.50,2026-11-01,2026-11-18",
+    "s-1,Huda,huda@example.invalid,510,8.50,2026-11-01,2026-11-18",
+  ]);
+  const withPort = new ExportService(new Memory(), [staffHoursExport({ ...base, staffHoursPerDay: async () => new Map([["s-1", 8]]) } as never) as never]);
+  const again = await withPort.request("admin", "work-staff-sessions", { from: "2026-11-01", to: "2026-11-18", staffId: "s-1" });
+  assert.ok(again.ok);
+  assert.deepEqual(csv((await withPort.file("admin", again.id))!.bytes)[2], "s-1,Huda,huda@example.invalid,990,16.50,2026-11-01,2026-11-18");
+  assert.ok(calls.some((c) => JSON.stringify(c) === JSON.stringify(["admin", "2026-11-01", "2026-11-18", { staffId: "s-1", after: { workDate: "2026-11-18", staffId: "s-1" } }])), "the second page is read for that staff member");
+  // Refused by the service, and bad filters never reach it.
+  assert.deepEqual(await without.request("staff", "work-staff-sessions", { from: "2026-11-01", to: "2026-11-18" }), { ok: false, reason: "not_found" });
+  const before = calls.length;
+  assert.deepEqual(await without.request("admin", "work-staff-sessions", { from: "2026-11-18", to: "2026-11-01" }), { ok: false, reason: "not_found" });
+  assert.equal(calls.length, before);
+  const kind = EXPORT_HTTP_KINDS.get("work-staff-sessions")!;
+  assert.deepEqual(kind.filters(new URLSearchParams("from=2026-11-01&to=2026-11-18&staff=s-1")), { from: "2026-11-01", to: "2026-11-18", staffId: "s-1" });
+  assert.equal(kind.filters(new URLSearchParams("from=2026-11-01&to=2026-11-18&orgId=co")), null);
+  // The kind is offered only where staff time is wired.
+  assert.deepEqual(workExportKinds({} as never).map((k) => k.id), ["work-log-detailed", "work-log-summary", "work-assigned-history"]);
+  assert.deepEqual(workExportKinds({ staffTime } as never).map((k) => k.id).at(-1), "work-staff-sessions");
 });

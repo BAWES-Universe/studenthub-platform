@@ -12,7 +12,7 @@ import { EXPORT_ROW_CAP, type ExportKind } from "../../../../packages/exports/sr
 import { isUuid, parseRange, type EmployerDecisionView, type HoursCursor, type HoursRange, type SessionStatus, type WorkSession } from "../../../../packages/work/src/index.js";
 import type { WorkHttpServices } from "./http.js";
 
-export const WORK_EXPORT_KINDS = { detailed: "work-log-detailed", summary: "work-log-summary", history: "work-assigned-history" } as const;
+export const WORK_EXPORT_KINDS = { detailed: "work-log-detailed", summary: "work-log-summary", history: "work-assigned-history", staff: "work-staff-sessions" } as const;
 
 export interface CompanyHoursExportFilters extends Readonly<Record<string, unknown>> {
   readonly orgId: string;
@@ -55,6 +55,27 @@ export function companyHoursFilters(input: { readonly orgId?: unknown; readonly 
   if (input.status !== undefined && (typeof input.status !== "string" || !STATUSES.includes(input.status))) return undefined;
   return Object.freeze({ orgId: input.orgId, from: range.from, to: range.to,
     ...(input.storeId !== undefined ? { storeId: (input.storeId as string).toLowerCase() } : {}), ...(input.status !== undefined ? { status: input.status as SessionStatus } : {}) });
+}
+
+/** A query string from these values, leaving out the absent ones (for the export buttons). */
+export function exportQuery(values: Readonly<Record<string, string | undefined>>): string {
+  return new URLSearchParams(Object.entries(values).filter((e): e is [string, string] => e[1] !== undefined)).toString();
+}
+
+/** Each named parameter at most once and nothing else, or undefined. */
+function only(query: URLSearchParams, keys: readonly string[]): Readonly<Record<string, string>> | undefined {
+  const out: Record<string, string> = {};
+  for (const [key, value] of query) {
+    if (!keys.includes(key) || key in out) return undefined;
+    out[key] = value;
+  }
+  return out;
+}
+
+/** The company hours export's filters from the export route's query (orgId, from, to, status, store); null refuses. */
+export function companyHoursQuery(query: URLSearchParams): CompanyHoursExportFilters | null {
+  const q = only(query, ["orgId", "from", "to", "status", "store"]);
+  return (q && companyHoursFilters({ orgId: q.orgId, from: q.from, to: q.to, ...(q.store !== undefined ? { storeId: q.store } : {}), ...(q.status !== undefined ? { status: q.status } : {}) })) ?? null;
 }
 
 async function* companyRows(services: WorkHttpServices, actor: string, f: CompanyHoursExportFilters): AsyncGenerator<{ readonly session: WorkSession; readonly decision: EmployerDecisionView | null }> {
@@ -146,6 +167,12 @@ export function assignedHistoryFilters(input: { readonly from?: unknown; readonl
   return range ? Object.freeze({ from: range.from, to: range.to }) : undefined;
 }
 
+/** The who-worked-where export's filters from the export route's query (from, to); null refuses. */
+export function assignedHistoryQuery(query: URLSearchParams): AssignedHistoryExportFilters | null {
+  const q = only(query, ["from", "to"]);
+  return (q && assignedHistoryFilters({ from: q.from, to: q.to })) ?? null;
+}
+
 /** Staff: who worked where. Legacy wrote "Un-Assigned" for a removed store; a placement here always keeps its store. */
 export function assignedHistoryExport(services: WorkHttpServices): ExportKind<AssignedHistoryExportFilters> {
   return {
@@ -173,7 +200,74 @@ export function assignedHistoryExport(services: WorkHttpServices): ExportKind<As
   };
 }
 
+export interface StaffHoursExportFilters extends Readonly<Record<string, unknown>> {
+  readonly from: string;
+  readonly to: string;
+  readonly staffId?: string;
+}
+
+/** The staff hours export's filters; undefined for anything else. */
+export function staffHoursFilters(input: { readonly from?: unknown; readonly to?: unknown; readonly staffId?: unknown }): StaffHoursExportFilters | undefined {
+  const range = parseRange(input.from, input.to);
+  if (!range) return undefined;
+  if (input.staffId !== undefined && (typeof input.staffId !== "string" || !/^[A-Za-z0-9._:@-]{1,256}$/.test(input.staffId))) return undefined;
+  return Object.freeze({ from: range.from, to: range.to, ...(input.staffId !== undefined ? { staffId: input.staffId as string } : {}) });
+}
+
+/** The staff hours export's filters from the export route's query (from, to, staff); null refuses. */
+export function staffHoursQuery(query: URLSearchParams): StaffHoursExportFilters | null {
+  const q = only(query, ["from", "to", "staff"]);
+  return (q && staffHoursFilters({ from: q.from, to: q.to, ...(q.staff !== undefined ? { staffId: q.staff } : {}) })) ?? null;
+}
+
+async function staffDays(services: WorkHttpServices, actor: string, f: StaffHoursExportFilters) {
+  const all = [];
+  let after = null;
+  for (;;) {
+    const page = await services.staffTime!.days(actor, f.from, f.to, { ...(f.staffId ? { staffId: f.staffId } : {}), after });
+    if (page.kind !== "days") return undefined;
+    all.push(...page.days);
+    if (!page.next) return all;
+    after = page.next;
+  }
+}
+
+/**
+ * Internal staff time (legacy staff-work-session/download-list-excel): minutes per
+ * staff member over the range. An admin exports everyone or one staff member; a
+ * staff member who isn't an admin, only themself (the service decides). Legacy
+ * counted a session with no end as the staff record's hours per day; that comes
+ * from `staffHoursPerDay`, and while it is absent a day still in progress adds
+ * nothing (the cutover lane's release gate wires it before cutover).
+ */
+export function staffHoursExport(services: WorkHttpServices): ExportKind<StaffHoursExportFilters> {
+  return {
+    id: WORK_EXPORT_KINDS.staff,
+    filterKeys: ["from", "to", "staffId"],
+    columns: ["Staff ID", "Name", "Email", "Total minutes", "Total hours", "From", "To"],
+    async authorize(actor, f) {
+      const parsed = staffHoursFilters(f);
+      if (!parsed || !services.staffTime) return false;
+      const page = await services.staffTime.days(actor, parsed.from, parsed.to, { ...(parsed.staffId ? { staffId: parsed.staffId } : {}) });
+      return page.kind === "days";
+    },
+    async *rows(actor, f) {
+      const days = await staffDays(services, actor, f);
+      if (!days) throw new Error("export authorization changed");
+      const ids = [...new Set(days.map((d) => d.staffId))];
+      const [people, emails, perDay] = await Promise.all([names(services.personNames, ids), names(services.staffEmails, ids),
+        ids.length && services.staffHoursPerDay ? services.staffHoursPerDay(ids) : new Map<string, number>()]);
+      const minutes = new Map<string, number>();
+      for (const d of days) minutes.set(d.staffId, (minutes.get(d.staffId) ?? 0) + d.minutes + (d.open ? Math.round((perDay.get(d.staffId) ?? 0) * 60) : 0));
+      for (const id of ids.sort((a, b) => (people.get(a) ?? "").localeCompare(people.get(b) ?? "") || a.localeCompare(b))) {
+        const total = minutes.get(id) ?? 0;
+        yield [id, people.get(id) ?? "", emails.get(id) ?? "", total, (total / 60).toFixed(2), f.from, f.to];
+      }
+    },
+  };
+}
+
 /** Every work export kind, for the export service. */
 export function workExportKinds(services: WorkHttpServices): readonly ExportKind<never>[] {
-  return [workLogDetailedExport(services), workLogSummaryExport(services), assignedHistoryExport(services)] as unknown as readonly ExportKind<never>[];
+  return [workLogDetailedExport(services), workLogSummaryExport(services), assignedHistoryExport(services), ...(services.staffTime ? [staffHoursExport(services)] : [])] as unknown as readonly ExportKind<never>[];
 }
