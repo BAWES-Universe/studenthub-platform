@@ -50,6 +50,10 @@
       "types": "./dist/work/index.d.ts",
       "import": "./dist/work/index.js"
     },
+    "./comms": {
+      "types": "./dist/comms/index.d.ts",
+      "import": "./dist/comms/index.js"
+    },
     "./recruit": {
       "types": "./dist/recruit/index.d.ts",
       "import": "./dist/recruit/index.js"
