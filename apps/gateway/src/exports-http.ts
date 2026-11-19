@@ -14,7 +14,7 @@ import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
  */
 export interface ExportsHttpKind {
   readonly id: string;
-  /** Download name, e.g. countries.csv. */
+  /** Download name for a CSV kind, e.g. countries.csv. A kind with its own format names each file itself (ExportKind.serialize). */
   readonly filename: string;
   /** What the rows are, for "<n> <noun> exported.", e.g. companies. */
   readonly noun: string;
@@ -24,7 +24,7 @@ export interface ExportsHttpKind {
   forRequester?(filters: Readonly<Record<string, unknown>>, personId: string): Readonly<Record<string, unknown>>;
 }
 export type ExportsHttpResult={readonly status:200;readonly body:{readonly id:string;readonly downloadUrl:string;readonly rowCount:number}}|{readonly status:404;readonly body:{readonly error:"not_found"}}|{readonly status:409;readonly body:{readonly error:"row_limit"}};
-export interface ExportsHttpFile{readonly bytes:Buffer;readonly filename:string}
+export interface ExportsHttpFile{readonly bytes:Buffer;readonly filename:string;readonly contentType:string}
 export interface ExportsHttp{request(sessionId:string|undefined,kindId:string,filters:Readonly<Record<string,unknown>>):Promise<ExportsHttpResult>;download(sessionId:string|undefined,id:string):Promise<ExportsHttpFile|null>}
 
 /** A kind with no filters: any query parameter refuses the request. */
@@ -39,5 +39,5 @@ export const EXPORT_HTTP_KINDS: ReadonlyMap<string, ExportsHttpKind> = new Map((
 const answer=(result:Awaited<ReturnType<ExportService["request"]>>):ExportsHttpResult=>result.ok?{status:200,body:{id:result.id,downloadUrl:result.downloadUrl,rowCount:result.rowCount}}:result.reason==="row_limit"?{status:409,body:{error:"row_limit"}}:{status:404,body:{error:"not_found"}};
 export function createExportsHttp(sessions:Pick<SessionStore,"get">,service:ExportService):ExportsHttp{return{
  async request(sessionId,kindId,filters){const session=sessionId?await sessions.get(sessionId):undefined;const kind=EXPORT_HTTP_KINDS.get(kindId);if(!session||!kind)return{status:404,body:{error:"not_found"}};return answer(await service.request(session.personId,kind.id,kind.forRequester?.(filters,session.personId)??filters));},
- async download(sessionId,id){const session=sessionId?await sessions.get(sessionId):undefined;const file=session?await service.downloadFile(session.personId,id):null;return file?{bytes:file.bytes,filename:EXPORT_HTTP_KINDS.get(file.kind)?.filename??"export.csv"}:null;}
+ async download(sessionId,id){const session=sessionId?await sessions.get(sessionId):undefined;const file=session?await service.downloadFile(session.personId,id):null;if(!file)return null;return file.file?{bytes:file.bytes,filename:file.file.fileName,contentType:file.file.contentType}:{bytes:file.bytes,filename:EXPORT_HTTP_KINDS.get(file.kind)?.filename??"export.csv",contentType:"text/csv; charset=utf-8"};}
 };}

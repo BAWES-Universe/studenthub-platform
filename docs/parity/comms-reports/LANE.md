@@ -83,3 +83,11 @@ kinds without touching the routes.
   that column has no source. Staff only (operator staff or admin grant). No filters: any query
   parameter refuses the request.
 - **Page.** `GET /workspace/lists` for staff, with the two Export buttons.
+- **A kind's own file format (for pay's bank files).** An `ExportKind` may add
+  `serialize(columns, rows, filters)` returning `{bytes, contentType, fileName}`. Only the
+  kind's whitelisted columns and rows reach it. The service stores the bytes with their type
+  and name (migration 0601: `exports.content_type`, `exports.file_name`, both null for CSV,
+  names limited to letters, digits, `.`, `-` and `_`), and `GET /exports/<id>` serves them
+  byte for byte with that Content-Type and file name. The row and byte caps, the requester
+  binding, the 15-minute expiry, the re-authorization at download and the audit row are the
+  same as for CSV. A pay kind still needs its `EXPORT_HTTP_KINDS` entry for the request route.
