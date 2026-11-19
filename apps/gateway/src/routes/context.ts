@@ -73,6 +73,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly staffView?: import("../access/staff-view.js").StaffViewPorts;
   readonly registrations?: import("../access/company-registration.js").CompanyRegistrationPorts;
   readonly recruitRequestApplications?: RecruitRequestApplications;
+  readonly work?: import("../work/http.js").WorkHttpServices;
   readonly staffMessages?: StaffMessagesHttpService;
 };
 
