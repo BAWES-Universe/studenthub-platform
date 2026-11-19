@@ -12,7 +12,7 @@
 // such gate and the 10-27 rule is "no regressions" (W-1 draft, rule 6).
 
 import { matchContracts, RATE_RESOLUTION_VERSION, RateResolutionError, type PayContract } from "@studenthub/pay-contracts";
-import { cleanText, sqlState, isOperatorRecruiter, isIsoDate, isPrincipalId, isUuid, kuwaitDate, isCompanyFor, isStaffFor, orgReach, STAFF_ROLES, COMPANY_ROLES, OPERATOR_ORG_IDS, type IsoDate, type WorkGrant } from "./common.js";
+import { cleanText, sqlState, isOperatorRecruiter, isOperatorStaff, isIsoDate, isPrincipalId, isUuid, kuwaitDate, isCompanyFor, isStaffFor, orgReach, STAFF_ROLES, COMPANY_ROLES, OPERATOR_ORG_IDS, type IsoDate, type WorkGrant } from "./common.js";
 
 export const PLACEMENT_WARNINGS = ["civil_id_missing", "civil_id_expires_before_start", "no_pay_contract"] as const;
 export type PlacementWarning = typeof PLACEMENT_WARNINGS[number];
@@ -108,6 +108,9 @@ export interface PlacementTransaction {
   event(event: WorkEvent): Promise<void>;
 }
 
+export interface AssignmentHistoryCursor { readonly startDate: IsoDate; readonly id: string }
+export const HISTORY_PAGE_SIZE = 500;
+
 export interface PlacementStore {
   store(storeId: string): Promise<StoreFacts | undefined>;
   /** Ancestors of an organization, nearest first; undefined when it doesn't exist. */
@@ -121,6 +124,11 @@ export interface PlacementStore {
   assignmentForRecruitCard(recruitCardId: string): Promise<Assignment | undefined>;
   request(id: string): Promise<AssignmentRequest | undefined>;
   listAssignments(filter: { readonly personId?: string; readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly storeId?: string }): Promise<readonly Assignment[]>;
+  /**
+   * Placements whose dates overlap `from`..`to` (an open end overlaps every later day),
+   * oldest start first, then id; `after` continues from the last row of the previous page.
+   */
+  assignmentHistory(filter: { readonly from: IsoDate; readonly to: IsoDate; readonly after?: AssignmentHistoryCursor; readonly limit: number }): Promise<readonly Assignment[]>;
   /** Newest first, at most 500; `storeIds` narrows to those stores before the limit. */
   listRequests(filter: { readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly storeIds?: readonly string[]; readonly status?: AssignmentRequestStatus }): Promise<readonly AssignmentRequest[]>;
   transaction<T>(work: (tx: PlacementTransaction) => Promise<T>): Promise<T>;
@@ -412,6 +420,22 @@ export class PlacementService {
   /** "Where I work": the person's own placements, newest first. */
   async mine(personId: string): Promise<readonly Assignment[]> {
     return this.#store.listAssignments({ personId });
+  }
+
+  /**
+   * Who worked where (legacy staff export-assigned-history): every placement that
+   * overlaps the range, for operator staff only; undefined for anyone else or a
+   * bad range. Pages of HISTORY_PAGE_SIZE, continued with `next`.
+   */
+  async history(actorId: string, range: { readonly from: IsoDate; readonly to: IsoDate }, after: AssignmentHistoryCursor | null = null):
+    Promise<{ readonly rows: readonly Assignment[]; readonly next: AssignmentHistoryCursor | null } | undefined> {
+    if (!isIsoDate(range.from) || !isIsoDate(range.to) || range.from > range.to) return undefined;
+    if (after !== null && (!isIsoDate(after.startDate) || !isUuid(after.id))) return undefined;
+    if (!isOperatorStaff(await this.#grants.listGrantsForPrincipal(actorId))) return undefined;
+    const rows = await this.#store.assignmentHistory({ from: range.from, to: range.to, ...(after ? { after } : {}), limit: HISTORY_PAGE_SIZE + 1 });
+    const page = rows.slice(0, HISTORY_PAGE_SIZE);
+    const last = page[page.length - 1];
+    return Object.freeze({ rows: Object.freeze(page), next: rows.length > HISTORY_PAGE_SIZE && last ? { startDate: last.startDate, id: last.id } : null });
   }
 
   /**

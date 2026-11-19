@@ -1,4 +1,5 @@
 import type { SheetData } from "write-excel-file/node";
+import { normalizeAbkXlsxZip } from "./abk-xlsx-zip.js";
 import type { AbkWorkbookSpec, AbkXlsxEncoder } from "./abk-workbook.js";
 
 const MAX_CELL_TEXT_UNITS = 32_767;
@@ -61,6 +62,6 @@ export const nativeAbkXlsxEncoder: AbkXlsxEncoder = Object.freeze({
     const sheet = spec.sheetName;
     const rows = toAbkXlsxSheetData(spec);
     const { default: writeExcelFile } = await import("write-excel-file/node");
-    return new Uint8Array(await writeExcelFile(rows, { sheet }).toBuffer());
+    return normalizeAbkXlsxZip(new Uint8Array(await writeExcelFile(rows, { sheet }).toBuffer()));
   },
 });

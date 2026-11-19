@@ -7,7 +7,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { mediaType } from "./media-type.js";
 import {
   isIsoDate, isUuid, parseAppealCursor, parseCursor, parseLocation, parsePlacementInput, parseRange, formatCursor,
-  type AppealService, type DecisionService, type HoursViews, type PlacementService, type SessionService, type SessionStatus,
+  type AppealService, type DecisionService, type HoursViews, type PlacementService, type SessionService, type SessionStatus, type StaffTimeService,
 } from "../../../../packages/work/src/index.js";
 
 export interface WorkHttpServices {
@@ -23,6 +23,18 @@ export interface WorkHttpServices {
   readonly storeInfo?: (storeId: string) => Promise<{ readonly orgId: string; readonly name: string; readonly active: boolean } | undefined>;
   /** A company's active stores, for the staff placement form; absent means a store ID field. */
   readonly storesOf?: (orgId: string) => Promise<readonly { readonly id: string; readonly name: string }[]>;
+  /** Internal staff time (legacy staff_work_session); absent means those screens answer 503. */
+  readonly staffTime?: StaffTimeService;
+  /** Staff email addresses for the staff hours export; absent means none. */
+  readonly staffEmails?: (staffIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
+  /**
+   * Hours per day from each staff record, which legacy counted for a session with
+   * no end. Absent (the default until the staff record exists) means such a day
+   * adds nothing; the release matrix gates cutover on wiring it.
+   */
+  readonly staffHoursPerDay?: (staffIds: readonly string[]) => Promise<ReadonlyMap<string, number>>;
+  /** Company names for the work exports; absent means the company ID. */
+  readonly companyNames?: (orgIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
   /** Names of people shown in employer and staff lists; absent means a generic label. */
   readonly personNames?: (personIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
 }

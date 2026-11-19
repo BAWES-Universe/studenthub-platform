@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { inflateRawSync } from "node:zlib";
 import { ABK_SOURCE_HEADERS, generateAbkWorkbook } from "../../../dist/packages/payroll/src/abk-workbook.js";
@@ -60,4 +61,38 @@ test("native ABK XLSX writer emits ordered headers, explicit identifier text and
     [["A1","s","Debit Account"],["B1","s","Name"],["C1","s","IBAN"],["L1","s","Amount"],
      ["A2","s","00000001"],["B2","s","=1+1"],["C2","s","001234"],["E2","s","007"],["L2","n","11.25"]]);
   assert.doesNotMatch(xml,/<f(?:\s|>)/);
+});
+
+test("native ABK XLSX bytes are identical across clocks and time zones", () => {
+  const encoderUrl = new URL("../../../dist/packages/payroll/src/abk-xlsx-encoder.js", import.meta.url).href;
+  const script = `
+    const fixed = Number(process.env.ABK_FIXTURE_NOW);
+    const RealDate = Date;
+    globalThis.Date = class extends RealDate {
+      constructor(...args) { super(...(args.length ? args : [fixed])); }
+      static now() { return fixed; }
+    };
+    const { nativeAbkXlsxEncoder } = await import(${JSON.stringify(encoderUrl)});
+    const bytes = await nativeAbkXlsxEncoder.encode({
+      sheetName:"Worksheet",
+      rows:[Array(17).fill("Header"),
+        Array.from({length:17}, (_, i) => i === 11 ? 11.250 : "0001")],
+    });
+    process.stdout.write(bytes);
+  `;
+  function encode(tz, now) {
+    return execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      env:{...process.env, TZ:tz, ABK_FIXTURE_NOW:String(now)},
+    });
+  }
+  const first = encode("UTC", Date.UTC(2025, 0, 5, 7));
+  const later = encode("UTC", Date.UTC(2026, 8, 21, 17, 29, 58));
+  const differentZone = encode("Asia/Kuwait", Date.UTC(2025, 0, 5, 7));
+  assert.deepEqual(first, later);
+  assert.deepEqual(first, differentZone);
+  assert.match(fixtureZip(first).get("xl/workbook.xml"), /<sheet\b[^>]*\bname="Worksheet"/);
+  const end = first.length - 22;
+  const entry = first.readUInt32LE(end + 16);
+  assert.equal(first.readUInt32LE(entry + 12), 0x00210000);
+  assert.equal(first.readUInt32LE(first.readUInt32LE(entry + 42) + 10), 0x00210000);
 });

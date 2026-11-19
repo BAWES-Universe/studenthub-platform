@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PayContract } from "@studenthub/pay-contracts";
 import {
-  chooseContract, kuwaitDate, parsePlacementInput, PlacementConflict, placementWarnings, PlacementService,
+  chooseContract, HISTORY_PAGE_SIZE, kuwaitDate, parsePlacementInput, PlacementConflict, placementWarnings, PlacementService,
   type Assignment, type AssignmentRequest, type PlacementStore, type PlacementTransaction, type StoreFacts, type WorkEvent, type WorkGrant,
 } from "../src/index.js";
 
@@ -35,6 +35,11 @@ class MemoryPlacements implements PlacementStore {
   async assignment(id: string) { return this.assignments.find((a) => a.id === id); }
   async request(id: string) { return this.requests.find((r) => r.id === id); }
   async assignmentForRecruitCard(id: string) { return this.assignments.find((a) => a.recruitCardId === id); }
+  async assignmentHistory(filter: { from: string; to: string; after?: { startDate: string; id: string }; limit: number }) {
+    const key = (a: Assignment) => `${a.startDate} ${a.id}`;
+    return this.assignments.filter((a) => a.startDate <= filter.to && (a.endDate === null || a.endDate >= filter.from)
+      && (!filter.after || key(a) > `${filter.after.startDate} ${filter.after.id}`)).sort((x, y) => key(x).localeCompare(key(y))).slice(0, filter.limit);
+  }
   async listAssignments(filter: { personId?: string; orgIds?: readonly string[]; includeSubtree?: boolean; storeId?: string }) {
     const under = async (orgId: string) => filter.includeSubtree === true ? (await this.organizationAncestors(orgId)) ?? [] : [];
     const out = [];
@@ -332,4 +337,28 @@ test("W1_REQUEST_LIST staff, the company and the store's manager list requests; 
   assert.deepEqual(await svc.decideRequest("manager", id, "accept"), { kind: "refused", code: "forbidden" });
   assert.deepEqual(await svc.decideRequest("wrongOrgManager", id, "cancel"), { kind: "refused", code: "forbidden" });
   assert.deepEqual(await svc.decideRequest("manager", id, "cancel"), { kind: "cancelled" });
+});
+
+test("W1_HISTORY operator staff list who worked where over a range, paged; anyone else gets nothing", async () => {
+  const { store, svc } = service();
+  assert.equal((await svc.place("staff", { personId: "person", storeId: STORE, startDate: "2026-01-01", endDate: "2026-03-31" })).kind, "placed");
+  assert.equal((await svc.place("staff", { personId: "person", storeId: STORE, startDate: "2026-04-01" })).kind, "placed");
+  const range = { from: "2026-03-01", to: "2026-03-31" };
+  // Only the first placement overlaps March; an open end overlaps every later day.
+  assert.deepEqual((await svc.history("staff", range))?.rows.map((a) => a.startDate), ["2026-01-01"]);
+  assert.deepEqual((await svc.history("staff", { from: "2026-03-31", to: "2027-01-01" }))?.rows.map((a) => a.startDate), ["2026-01-01", "2026-04-01"]);
+  assert.deepEqual((await svc.history("staff", { from: "2025-01-01", to: "2025-12-31" }))?.rows, []);
+  for (const actor of ["owner", "groupOwner", "candidate", "finance", "recruiter", "manager"]) assert.equal(await svc.history(actor, range), undefined, actor);
+  assert.equal(await svc.history("staff", { from: "2026-04-01", to: "2026-03-01" }), undefined, "a reversed range");
+  assert.equal(await svc.history("staff", { from: "2026-02-30", to: "2026-03-01" }), undefined, "a date that doesn't exist");
+  assert.equal(await svc.history("staff", range, { startDate: "2026-01-01", id: "nope" }), undefined, "a bad cursor");
+  // Paging: HISTORY_PAGE_SIZE rows, then the rest after the cursor.
+  for (let i = 0; i < HISTORY_PAGE_SIZE; i++) store.assignments.push({ ...store.assignments[0]!, id: `10000000-0000-4000-8000-${String(i).padStart(12, "0")}`, startDate: "2026-02-01" });
+  const first = await svc.history("staff", range);
+  assert.equal(first?.rows.length, HISTORY_PAGE_SIZE);
+  assert.ok(first?.next);
+  const second = await svc.history("staff", range, first!.next);
+  assert.equal(second?.rows.length, 1);
+  assert.equal(second?.next, null);
+  assert.equal(new Set([...first!.rows, ...second!.rows].map((a) => a.id)).size, HISTORY_PAGE_SIZE + 1);
 });
