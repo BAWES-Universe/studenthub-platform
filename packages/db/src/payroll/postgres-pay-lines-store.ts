@@ -39,9 +39,16 @@ export class PostgresPayLinesStore {
     return this.write(actorId,transferId,expectedVersion,[line],true);
   }
   private async write(actorId: string, transferId: string, expectedVersion: number, lines: readonly PayLineDraft[], edit: boolean): Promise<number> {
+    return this.transaction(c => this.writeInTransaction(c, actorId, transferId, expectedVersion, lines, edit));
+  }
+  /** Caller owns BEGIN/COMMIT/ROLLBACK; preserves every F1 write check and audit. */
+  async appendLinesInTransaction(c: pg.PoolClient, actorId: string, transferId: string, expectedVersion: number, lines: readonly PayLineDraft[]): Promise<number> {
+    return this.writeInTransaction(c, actorId, transferId, expectedVersion, lines, false);
+  }
+  private async writeInTransaction(c: pg.PoolClient, actorId: string, transferId: string, expectedVersion: number, lines: readonly PayLineDraft[], edit: boolean): Promise<number> {
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || !lines.length) throw new RangeError("invalid_batch");
     lines.forEach(line => this.validateLine(line));
-    return this.transaction(async c => {
+    {
       const t = (await c.query("SELECT *, period_start::text AS start_text, period_end::text AS end_text FROM pay_transfers WHERE id=$1 FOR UPDATE",[transferId])).rows[0];
       if (!t || !await this.mayWrite(c,actorId,t.company_id)) throw Error("not_found");
       if (t.status !== "draft" || t.deleted) throw Error("transfer_not_draft");
@@ -59,6 +66,6 @@ export class PostgresPayLinesStore {
       }
       await c.query("UPDATE pay_transfers SET version=version+1 WHERE id=$1",[transferId]);
       return expectedVersion+1;
-    });
+    }
   }
 }
