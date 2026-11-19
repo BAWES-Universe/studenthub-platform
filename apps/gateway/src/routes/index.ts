@@ -27,6 +27,7 @@ import { handleCivilIdSuggestion } from "../civil-id-suggestion-http.js";
 import { handleArea } from "../area-http.js";
 import { handleStaffMessages } from "../comms/staff-messages-http.js";
 import { handleListExports } from "../reports/list-exports-http.js";
+import { handleIdCards } from "../reports/id-cards-http.js";
 
 const civilIdRoute: GatewayRoute = { name: "civil-id", handle: (ctx) => handleCivilId(ctx.request, ctx.response,
   ctx.login?.civilId, ctx.login?.web?.origin, async (session) => { if (!ctx.login) return undefined;
@@ -46,6 +47,10 @@ const listExportsRoute: GatewayRoute = { name: "list-exports", handle: (ctx) => 
   async (session) => { if (!ctx.login?.staffMessages) return false;
     const result = await ctx.login.profile({ sessionId: session });
     return result.status === 200 && typeof result.body?.personId === "string" ? ctx.login.staffMessages.isStaff(result.body.personId) : false; }) };
+const idCardsRoute: GatewayRoute = { name: "id-cards", handle: (ctx) => handleIdCards(ctx.request, ctx.response,
+  ctx.login?.staffMessages?.idCards, ctx.login?.web?.origin, async (session) => { if (!ctx.login) return undefined;
+    const result = await ctx.login.profile({ sessionId: session });
+    return result.status === 200 && typeof result.body?.personId === "string" ? result.body.personId : undefined; }) };
 const areaRoute: GatewayRoute = { name: "area", handle: (ctx) => handleArea(ctx.request, ctx.response, ctx.login?.area) };
 
 import { workRoute } from "./work.js";
@@ -102,6 +107,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   workRoute,
   staffMessagesRoute,
   listExportsRoute,
+  idCardsRoute,
 ];
 
 export { runRoutes } from "./context.js";
