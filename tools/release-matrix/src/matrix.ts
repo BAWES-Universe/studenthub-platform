@@ -148,8 +148,17 @@ export const requirementSubject = (section: "import" | "release", id: string): s
 /** Methods the mobile client uses; any other spelling is a typo, not a route. */
 export const HTTP_METHODS: readonly MobileEndpoint["method"][] = ["GET", "POST", "PATCH", "PUT", "DELETE"];
 
-/** A source citation: a repository-relative file and a line number. */
-const SOURCE_LINE = /^[^\s:]+:\d+$/;
+/**
+ * A source citation: a normalized repository-relative file path and a line number from 1.
+ * Absolute paths, backslashes, empty segments and `.` or `..` segments are refused, so a
+ * citation cannot point outside the repository or at a line that does not exist.
+ */
+export function isSourceLine(source: unknown): boolean {
+  if (typeof source !== "string") return false;
+  const match = /^([^\s:\\]+):([1-9]\d*)$/.exec(source);
+  if (!match) return false;
+  return match[1]!.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
 
 /**
  * What a closed gate must cite. Evidence names an exact head or a run:
@@ -230,7 +239,7 @@ export function checkInventory(inventory: MobileInventory, contract: ParsedContr
       issues.push({ rule: "mobile.noSource", detail: `${key} cites no source line` });
     } else {
       for (const source of endpoint.sources) {
-        if (typeof source !== "string" || !SOURCE_LINE.test(source)) issues.push({ rule: "mobile.badSource", detail: `${key} cites '${String(source)}', not file:line` });
+        if (!isSourceLine(source)) issues.push({ rule: "mobile.badSource", detail: `${key} cites '${String(source)}', not a repository-relative file:line` });
       }
     }
     const target = contract.targets.get(endpoint.target);

@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { checkContract, idsIn, parseContract } from "../src/contract.js";
 import { CONTRACT_PATH, loadContract, loadInventory, loadMatrix, repoRoot } from "../src/files.js";
-import { blockers, checkInventory, checkMatrix, citesDecision, citesEvidence, GATES, mobileKey, type Matrix, type MobileInventory } from "../src/matrix.js";
+import { blockers, checkInventory, checkMatrix, citesDecision, citesEvidence, GATES, isSourceLine, mobileKey, type Matrix, type MobileInventory } from "../src/matrix.js";
 import { laneForOwner, seedMatrix } from "../src/seed.js";
 import { isEntryPoint, renderReport, seedIfValid } from "../src/cli.js";
 
@@ -276,67 +276,77 @@ test("the inventory refuses a mistyped method and a source that is not file:line
   const [first, ...rest] = real.endpoints;
   const typo: MobileInventory = { ...real, endpoints: [{ ...first!, method: "GTE" as "GET" }, ...rest] };
   assert.deepEqual(rules(checkInventory(typo, contract)), ["mobile.badMethod"]);
-  const blank: MobileInventory = { ...real, endpoints: [{ ...first!, sources: [""] }, ...rest] };
-  assert.deepEqual(rules(checkInventory(blank, contract)), ["mobile.badSource"]);
+  for (const source of ["", "/etc/passwd:1", "src/app.ts:0", "../other/app.ts:3", "src/../app.ts:3", "./src/app.ts:3", "src//app.ts:3", "src\\app.ts:3", "src/app.ts", "src/app.ts:01", "C:/app.ts:3"]) {
+    const bad: MobileInventory = { ...real, endpoints: [{ ...first!, sources: [source] }, ...rest] };
+    assert.deepEqual(rules(checkInventory(bad, contract)), ["mobile.badSource"], source);
+  }
+  for (const source of ["src/app/providers/logged-in/account.service.ts:181", "README.md:1", ".github/workflows/ci.yml:12"]) {
+    assert.equal(isSourceLine(source), true, source);
+  }
   assert.deepEqual(checkInventory(real, contract), []);
 });
 
-test("a ledger row moved into a fenced example no longer counts", () => {
+test("the contract parser refuses, by line, every markdown construct outside the subset it models", () => {
+  const row = "| MOB-B021 | activity | `U-04` |\n";
+  const after6 = (inserted: string) => markdown.replace(/(## 6\.[^\n]*\n)/, `$1\n${inserted}\n`);
+  const cases: [string, string][] = [
+    ["```\n", "code fence"],
+    ["```foo`bar\n", "code fence"],
+    ["````\n", "code fence"],
+    ["~~~\n", "code fence"],
+    ["    text\n", "indented line"],
+    ["\ttext\n", "indented line"],
+    [" ## 3. Example\n", "indented line"],
+    ["- item\n  continued\n", "indented line"],
+    ["<!--\n", "HTML block"],
+    ["<details>\n", "HTML block"],
+    ["text <!-- hidden --> text\n", "inline HTML"],
+    ["text <span hidden>x</span>\n", "inline HTML"],
+    ["> quoted\n", "block quote"],
+    ["Heading\n---\n", "setext underline or thematic break"],
+    ["Heading\n===\n", "setext underline or thematic break"],
+    [`text\n${row}`, "pipe row outside a table"],
+    [`| a | b |\n| -- | x |\n`, "pipe row outside a table"],
+    [`| a | b |\n|---|---|---|\n`, "pipe row outside a table"],
+    [`text\n| a | b |\n|---|---|\n`, "pipe row outside a table"],
+  ];
+  for (const [inserted, reason] of cases) {
+    const issues = checkContract(parseContract(after6(inserted)));
+    assert.deepEqual(rules(issues), ["contract.markdown.unsupported"], inserted);
+    assert.ok(issues.every((issue) => issue.detail.endsWith(`: ${reason}`)), `${inserted}: ${issues.map((i) => i.detail).join("; ")}`);
+  }
+  // Code spans are text, so a `<` inside one is not HTML.
+  assert.deepEqual(checkContract(parseContract(after6("Text with `a <b> c` in it.\n"))), []);
+});
+
+test("a table row the parser cannot read the way GFM renders it is refused, and its ordinal is a gap", () => {
   const row = "| MOB-B021 | activity | `U-04` |\n";
   assert.ok(markdown.includes(row));
-  const fenced = markdown.replace(row, "").replace(/(## 6\.[^\n]*\n)/, `$1\n\`\`\`\n${row}\`\`\`\n`);
-  assert.notEqual(fenced, markdown);
-  const issues = checkContract(parseContract(fenced));
-  assert.deepEqual(rules(issues), ["contract.partition.gap"]);
-  assert.match(issues[0]!.detail, /MOB-B021/);
-});
-
-test("a fence closes only on its own marker, at least as long, with nothing after it", () => {
-  const row = "| MOB-B021 | activity | `U-04` |\n";
-  const fenceAround = (inner: string) => markdown.replace(row, "").replace(/(## 6\.[^\n]*\n)/, `$1\n${inner}`);
-  // A shorter run, the other marker, or a run with text after it all stay inside the block.
-  for (const inner of [`\`\`\`\`\n\`\`\`\n${row}\`\`\`\`\n`, `~~~\n\`\`\`\n${row}~~~\n`, `\`\`\`\n\`\`\` js\n${row}\`\`\`\n`]) {
-    const issues = checkContract(parseContract(fenceAround(inner)));
-    assert.deepEqual(rules(issues), ["contract.partition.gap"], inner);
-    assert.match(issues[0]!.detail, /MOB-B021/);
+  const variants: [string, string][] = [
+    ["| MOB-B021 | activity | `U-04` | extra |\n", "table row with 4 cells in a 3-column table"],
+    ["| MOB-B021 | act\\|ivity | `U-04` |\n", "escaped pipe in a table row"],
+    ["   | MOB-B021 | activity | `U-04` |\n", "indented line"],
+  ];
+  for (const [replacement, reason] of variants) {
+    const issues = checkContract(parseContract(markdown.replace(row, replacement)));
+    assert.deepEqual(rules(issues), ["contract.markdown.unsupported", "contract.partition.gap"], replacement);
+    assert.ok(issues.some((issue) => issue.detail.endsWith(`: ${reason}`)), replacement);
   }
+  // Text straight after a table row would render as another row, so it is refused.
+  const trailing = checkContract(parseContract(markdown.replace(row, `${row}trailing text\n`)));
+  assert.deepEqual(rules(trailing), ["contract.markdown.unsupported"]);
+  assert.match(trailing[0]!.detail, /text inside a table$/);
 });
 
-test("a heading or a partition total inside a fenced example changes nothing", () => {
-  const heading = markdown.replace(/(## 6\.[^\n]*\n)/, "$1\n```\n## 3. Example\n```\n");
-  assert.notEqual(heading, markdown);
-  assert.deepEqual(checkContract(parseContract(heading)), []);
+test("nothing inside a refused construct can hide a row: a duplicate after a fake fence is still caught", () => {
+  const row = "| MOB-B021 | activity | `U-04` |\n";
+  // ```foo`bar is not a fence in CommonMark; a parser that opened one here would skip the
+  // duplicate table that follows.
+  const fake = markdown.replace(/(## 6\.[^\n]*\n)/, `$1\n\`\`\`foo\`bar\n\n| Key | Group | Targets |\n|---|---|---|\n${row}\n`);
+  assert.deepEqual(rules(checkContract(parseContract(fake))), ["contract.markdown.unsupported", "contract.partition.duplicate"]);
+  // A partition total written inside a fake example is refused with its fence lines.
   const total = "```\nThese ranges are a complete, gap-free partition: MOB 1–70.\n```\n\n" + markdown;
-  assert.deepEqual(parseContract(total).declaredTotals, parseContract(markdown).declaredTotals);
-  assert.deepEqual(checkContract(parseContract(total)), []);
-});
-
-test("indentation follows CommonMark: four columns is code, not a fence, heading or row", () => {
-  const row = "| MOB-B021 | activity | `U-04` |\n";
-  const after6 = (inner: string) => markdown.replace(/(## 6\.[^\n]*\n)/, `$1\n${inner}`);
-  // A four-space fence opens nothing, so a duplicate row after it is still seen.
-  const duplicated = after6(`    \`\`\`\n\n${row}`);
-  assert.deepEqual(rules(checkContract(parseContract(duplicated))), ["contract.partition.duplicate"]);
-  assert.deepEqual(rules(checkContract(parseContract(after6("\t~~~\n\n" + row)))), ["contract.partition.duplicate"]);
-  // Up to three spaces still opens one, and the row inside it does not count.
-  const moved = markdown.replace(row, "");
-  const fenced = moved.replace(/(## 6\.[^\n]*\n)/, `$1\n   \`\`\`\n${row}   \`\`\`\n`);
-  assert.deepEqual(rules(checkContract(parseContract(fenced))), ["contract.partition.gap"]);
-  // A row indented four columns is code and does not count; a heading indented three still does.
-  const coded = moved.replace(/(## 6\.[^\n]*\n)/, `$1\n    ${row}`);
-  assert.deepEqual(rules(checkContract(parseContract(coded))), ["contract.partition.gap"]);
-  assert.deepEqual(checkContract(parseContract(markdown.replace(/^## 6\./m, "   ## 6."))), []);
-});
-
-test("a ledger row inside an HTML comment does not count", () => {
-  const row = "| MOB-B021 | activity | `U-04` |\n";
-  const moved = markdown.replace(row, "");
-  for (const inner of [`<!--\n${row}-->\n`, `<!-- hidden\n${row}still hidden -->\n`]) {
-    const issues = checkContract(parseContract(moved.replace(/(## 6\.[^\n]*\n)/, `$1\n${inner}`)));
-    assert.deepEqual(rules(issues), ["contract.partition.gap"], inner);
-  }
-  // A one-line comment hides only itself.
-  assert.deepEqual(checkContract(parseContract(markdown.replace(/(## 6\.[^\n]*\n)/, "$1\n<!-- note -->\n"))), []);
+  assert.ok(rules(checkContract(parseContract(total))).includes("contract.markdown.unsupported"));
 });
 
 test("an appendix total declared twice is reported, not silently replaced", () => {
