@@ -8,7 +8,7 @@ import {
   AppealService, DecisionService, HoursViews, PlacementService, SessionService, WorkScope,
   type GrantsPort, type ManagedStoresPort,
 } from "../../../../packages/work/src/index.js";
-import { PostgresAccessStoreManagersStore } from "@studenthub/db/access";
+import { PostgresAccessPausesStore, PostgresAccessStoreManagersStore } from "@studenthub/db/access";
 import { recordWorkSessionDecision, retractWorkSessionDecision } from "@studenthub/db/comms";
 import type { WorkHttpServices } from "../work/http.js";
 import type { wireAccess } from "./access.js";
@@ -32,6 +32,8 @@ export interface WorkWiringPorts {
   readonly enabled?: boolean;
   /** Store managers; defaults to the access lane's `PostgresAccessStoreManagersStore` (A4). */
   readonly managedStores?: ManagedStoresPort;
+  /** Who is paused (access lane A6); defaults to the access lane's `PostgresAccessPausesStore` on the work pool. */
+  readonly paused?: (personIds: readonly string[]) => Promise<ReadonlySet<string>>;
   /** Decision notices to the person; defaults to the comms lane's feed producers (`@studenthub/db/comms`). */
   readonly notices?: WorkDecisionHooks;
 }
@@ -40,7 +42,7 @@ export interface WorkWiringPorts {
  * Work and hours (W-1 to W-7). Needs both the cutover switch and the safe-write
  * signing key; otherwise nothing is built and /api/work and the /work screens
  * answer 503, so legacy stays the only writer of hours until cutover. Store
- * managers come from the access lane (A4) and decision notices from the comms lane's
+ * managers (A4) and paused people (A6) come from the access lane, and decision notices from the comms lane's
  * feed producers, each on the work pool unless a port is given.
  */
 export function wireWork(settings: WiringSettings, access: Access, ports: WorkWiringPorts = {}): Wired<{ readonly work?: WorkHttpServices }> {
@@ -54,6 +56,10 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
   const grants: GrantsPort = access.authzStore;
   // Store managers come from the access lane (A4) on the work pool unless a port is given.
   const managed: ManagedStoresPort = ports.managedStores ?? new PostgresAccessStoreManagersStore({ pool });
+  // Paused people (A6): a company asking for one is told the person isn't found. Placement itself
+  // reads the pause inside its own transaction, under the lock the pause takes.
+  const pauses = ports.paused ? undefined : new PostgresAccessPausesStore({ pool });
+  const paused = ports.paused ?? ((personIds: readonly string[]) => pauses!.paused(personIds));
   const placementStore = new PostgresWorkPlacementStore(pool);
   const sessionStore = new PostgresWorkSessionStore(pool);
   const decisionStore = new PostgresWorkDecisionStore(pool, notices);
@@ -63,7 +69,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
   const newId = () => randomUUID();
   const work: WorkHttpServices = {
     personFor: async (sessionId) => (await access.loginStore.sessions.get(sessionId))?.personId,
-    placements: new PlacementService({ store: placementStore, grants, newId, managedStores: (actorId) => managed.managedStores(actorId) }),
+    placements: new PlacementService({ store: placementStore, grants, newId, managedStores: (actorId) => managed.managedStores(actorId), paused }),
     sessions: new SessionService({ store: sessionStore, newId }),
     decisions: new DecisionService({ store: decisionStore, grants, managedStores: managed, newId }),
     views: new HoursViews(viewStore, scope, (actorId) => managed.managedStores(actorId)),
