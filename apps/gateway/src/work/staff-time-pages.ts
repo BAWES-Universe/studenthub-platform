@@ -34,7 +34,8 @@ export async function renderMine(services: WorkHttpServices, actor: string, mess
   const open = today.sessions.find((s) => s.endedAt === null);
   const closed = today.sessions.filter((s) => s.endedAt !== null).reduce((sum, s) => sum + (s.minutes ?? 0), 0);
   const from = new Date(Date.parse(`${today.workDate}T00:00:00Z`) - 29 * 86_400_000).toISOString().slice(0, 10);
-  const recent = await services.staffTime!.days(actor, from, today.workDate);
+  // Their own days only: an admin's unfiltered list would be everyone's.
+  const recent = await services.staffTime!.days(actor, from, today.workDate, { staffId: actor });
   const action = open
     ? `<form method="post" action="/me/work/end"><p>You started at ${esc(clock(open.startedAt))}.</p><button class="p-button" type="submit">End my day</button></form>`
     : `<form method="post" action="/me/work/start"><button class="p-button" type="submit">Start my day</button></form>`;

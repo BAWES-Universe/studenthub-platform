@@ -63,7 +63,7 @@ test("STAFF_TIME_PAGES /me/work shows today and the last 30 days, and starts or 
   assert.equal(idle.status, 200);
   assert.match(idle.html, /Wednesday, 18 November 2026[\s\S]*08:00 to 10:05 \(2h 05m\)[\s\S]*Today so far: 2h 05m\.[\s\S]*action="\/me\/work\/start"/);
   assert.match(idle.html, /Last 30 days[\s\S]*Tuesday, 17 November 2026: 8h 00m/);
-  assert.deepEqual(calls.find((c) => c[0] === "days"), ["days", "actor", "2026-10-20", "2026-11-18"]);
+  assert.deepEqual(calls.find((c) => c[0] === "days"), ["days", "actor", "2026-10-20", "2026-11-18", { staffId: "actor" }]);
   const working = await request("/me/work", { world: { open: true } });
   assert.match(working.html, /action="\/me\/work\/end"><p>You started at 11:00\.<\/p>/);
   assert.match(working.html, /plus the session in progress/);
