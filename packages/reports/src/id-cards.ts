@@ -12,6 +12,11 @@
  * A batch issue or renewal is all or nothing, as in legacy: if any person in it cannot get a
  * card, nothing is written and every refusal is returned.
  */
+import { idCardsPdf, type IdCardFace } from "./id-card-pdf.js";
+import { readImage } from "./pdf.js";
+import type { IdCardVerifier } from "./id-card-verify.js";
+import { qrModules } from "./qr.js";
+
 export const ID_CARD_VALID_MONTHS = 3;
 export const ID_CARD_BATCH_MAX = 100;
 export const ID_CARD_PAGE_SIZE = 50;
@@ -39,10 +44,19 @@ export interface IdCardsStore {
    */
   write(action: IdCardAction, people: readonly string[], today: string, expiresOn: string, actor: string): Promise<readonly { readonly personId: string; readonly code: IdCardRefusal }[]>;
   card(personId: string, today: string): Promise<OwnIdCard | undefined>;
+  /** The public verification page's facts for a card number; undefined when there is no such card. */
+  verify(cardNumber: number, today: string): Promise<{ readonly name: string | null; readonly company: string | null; readonly expiresOn: string; readonly assigned: boolean } | undefined>;
   /** How many assigned people have no card, and how many have an expired one, for the morning summary. */
   counts(today: string): Promise<{ readonly needs: number; readonly expired: number }>;
 }
 export interface IdCardsAuthority { isStaff(principalId: string): Promise<boolean> }
+/** The person's current personal photo for a card `viewerId` is printing (the read is audited against the viewer); null when they have none. */
+export interface IdCardPhotoSource { read(personId: string, viewerId: string): Promise<{ readonly bytes: Buffer; readonly mime: string } | null> }
+
+/** What the public page shows for a scanned card. Never the civil ID number or the phone (finding F10). */
+export type IdCardCheck =
+  | { readonly status: "unknown" }
+  | { readonly status: "checked"; readonly name: string | null; readonly company: string | null; readonly validUntil: string; readonly valid: boolean; readonly reason: "expired" | "not_assigned" | null };
 
 export type IdCardWriteResult =
   | { readonly status: "ok"; readonly count: number; readonly expiresOn: string }
@@ -68,8 +82,11 @@ export function addMonths(day: string, months: number): string {
 }
 
 export class IdCardsService {
-  readonly #store: IdCardsStore; readonly #authority: IdCardsAuthority; readonly #now: () => Date;
-  constructor(store: IdCardsStore, authority: IdCardsAuthority, now: () => Date = () => new Date()) { this.#store = store; this.#authority = authority; this.#now = now; }
+  readonly #store: IdCardsStore; readonly #authority: IdCardsAuthority; readonly #now: () => Date; readonly #photos: IdCardPhotoSource | undefined; readonly #verifier: IdCardVerifier | undefined;
+  /** Without a `verifier` the cards print without a QR code and every verification link is unknown. */
+  constructor(store: IdCardsStore, authority: IdCardsAuthority, now: () => Date = () => new Date(), photos?: IdCardPhotoSource, verifier?: IdCardVerifier) {
+    this.#store = store; this.#authority = authority; this.#now = now; this.#photos = photos; this.#verifier = verifier;
+  }
 
   /** A staff list; undefined for anyone who is not StudentHub staff. */
   async list(viewer: string, view: IdCardView, name: string | null, page: number): Promise<{ readonly rows: readonly IdCardListRow[]; readonly total: number; readonly today: string } | undefined> {
@@ -95,6 +112,48 @@ export class IdCardsService {
   async own(personId: string): Promise<(OwnIdCard & { readonly valid: boolean }) | undefined> {
     const today = kuwaitDay(this.#now()), card = await this.#store.card(personId, today);
     return card && { ...card, valid: card.expiresOn >= today };
+  }
+
+  /** The person's own card as a PDF, or undefined when they have none. `origin` is the site the QR code links to. */
+  async ownPdf(personId: string, origin?: string): Promise<Buffer | undefined> {
+    const card = await this.#store.card(personId, kuwaitDay(this.#now()));
+    return card && idCardsPdf([await this.#face(personId, card, personId, origin)]);
+  }
+
+  /** Staff print a batch of cards as one PDF, in the order given; every person must have a card. */
+  async staffPdf(viewer: string, people: readonly string[], origin?: string): Promise<{ readonly status: "ok"; readonly pdf: Buffer } | { readonly status: "refused"; readonly refusals: readonly { readonly personId: string; readonly code: "no_card" }[] } | { readonly status: "invalid" } | { readonly status: "not_found" }> {
+    const batch = [...people]; // copied before the first await, as in write
+    if (!(await this.#authority.isStaff(viewer))) return { status: "not_found" };
+    if (batch.length === 0 || batch.length > ID_CARD_BATCH_MAX || new Set(batch).size !== batch.length || batch.some(p => !PERSON.test(p))) return { status: "invalid" };
+    const today = kuwaitDay(this.#now()), cards = await Promise.all(batch.map(p => this.#store.card(p, today)));
+    const missing = batch.filter((_, i) => !cards[i]);
+    if (missing.length) return { status: "refused", refusals: missing.map(personId => ({ personId, code: "no_card" as const })) };
+    // Photos are read one at a time: a file-backed document store takes an exclusive lock per read.
+    const faces: IdCardFace[] = [];
+    for (const [i, p] of batch.entries()) faces.push(await this.#face(p, cards[i]!, viewer, origin));
+    return { status: "ok", pdf: idCardsPdf(faces) };
+  }
+
+  async #face(personId: string, card: OwnIdCard, viewerId: string, origin: string | undefined): Promise<IdCardFace> {
+    // Only reached after the caller is authorized (the person's own card, or staff). A photo that cannot be read or placed leaves the plain circle; the card still prints.
+    const photo = await this.#photos?.read(personId, viewerId).catch(() => null);
+    const qr = this.#verifier && origin ? qrModules(this.#verifier.url(origin, card.cardNumber, card.expiresOn)) : null;
+    return { name: card.name, employeeId: card.employeeId, cardNumber: card.cardNumber, expiresOn: card.expiresOn, placement: card.placement, photo: photo ? readImage(photo.bytes, photo.mime) : null, qr };
+  }
+
+  /**
+   * The public check behind the QR code. Valid while the printed date has not passed, the card
+   * has not expired, and its holder is still assigned to a store. Anything not signed by this
+   * server is unknown, the same as a card number that does not exist.
+   */
+  async check(token: string): Promise<IdCardCheck> {
+    const read = this.#verifier?.read(token);
+    if (!read) return { status: "unknown" };
+    const today = kuwaitDay(this.#now()), card = await this.#store.verify(read.cardNumber, today);
+    if (!card) return { status: "unknown" };
+    const validUntil = read.validUntil < card.expiresOn ? read.validUntil : card.expiresOn;
+    const reason = validUntil < today ? "expired" : !card.assigned ? "not_assigned" : null;
+    return { status: "checked", name: card.name, company: card.company, validUntil, valid: reason === null, reason };
   }
 
   counts(at: Date): Promise<{ readonly needs: number; readonly expired: number }> { return this.#store.counts(kuwaitDay(at)); }
