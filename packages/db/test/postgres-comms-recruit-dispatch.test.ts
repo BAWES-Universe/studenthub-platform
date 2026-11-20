@@ -106,3 +106,41 @@ test("COMMS_RECRUIT_DISPATCH_PG the email delivery job dispatches first, so the 
   assert.equal((await pool.query("SELECT state FROM email_outbox WHERE idempotency_key=$1", [`recruit.invitation:${inv2}`])).rows[0].state, "suppressed");
   assert.equal((await pool.query("SELECT count(*)::int n FROM notifications WHERE recipient_principal_id=$1 AND kind='recruit.invitation.sent'", [quiet])).rows[0].n, 1);
 });
+
+test("COMMS_RECRUIT_DISPATCH_PG every delivery attempt rechecks the invitation: withdrawn before the claim, or answered before a retry, sends nothing", async () => {
+  await drain();
+  await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
+  const req = await request("Stale Co", "Clerk");
+  const outboxStore = new PostgresEmailOutboxStore({ pool }), port = new FakeEmailPort();
+  const service = new EmailOutboxService(outboxStore, port, true, true);
+  const state = async (inv: string) => (await pool.query("SELECT state FROM email_outbox WHERE idempotency_key=$1", [`recruit.invitation:${inv}`])).rows[0]?.state;
+  // Queued, then withdrawn before any worker claims it.
+  const pulled = await principal("pulled"), inv1 = await invitation(req.id, pulled, "sent");
+  await outbox("invitation.sent", pulled, req.id, inv1);
+  await dispatcher.dispatch(1000, new Date());
+  assert.equal(await state(inv1), "pending");
+  await pool.query("UPDATE recruit_invitations SET status='withdrawn', answered_at=now() WHERE id=$1", [inv1]);
+  await service.processDue(100, new Date());
+  assert.equal(await state(inv1), "suppressed");
+  // Queued, the first attempt fails and is retried, and the person accepts in between.
+  const answered = await principal("answered"), inv2 = await invitation(req.id, answered, "sent");
+  await outbox("invitation.sent", answered, req.id, inv2);
+  await dispatcher.dispatch(1000, new Date());
+  port.result = { ok: false, code: "provider_timeout", safeToRetry: true };
+  await service.processDue(100, new Date()).catch(() => undefined);
+  assert.equal(await state(inv2), "pending", "waiting for a retry");
+  await pool.query("UPDATE recruit_invitations SET status='accepted', answered_at=now() WHERE id=$1", [inv2]);
+  port.result = { ok: true };
+  const tried = port.sent.length;
+  await service.processDue(100, new Date(Date.now() + 3_600_000));
+  assert.equal(await state(inv2), "suppressed");
+  assert.equal(port.sent.filter(m => m.to === `${pulled}@example.invalid`).length, 0, "the withdrawn invitation was never sent");
+  assert.equal(port.sent.slice(tried).filter(m => m.to === `${answered}@example.invalid`).length, 0, "the answered invitation is not retried");
+  // Still open at the claim: it is sent.
+  const open = await principal("open"), inv3 = await invitation(req.id, open, "sent");
+  await outbox("invitation.sent", open, req.id, inv3);
+  await dispatcher.dispatch(1000, new Date());
+  await pool.query("UPDATE recruit_invitations SET status='seen' WHERE id=$1", [inv3]);
+  await service.processDue(100, new Date(Date.now() + 3_600_000));
+  assert.equal(await state(inv3), "sent");
+});

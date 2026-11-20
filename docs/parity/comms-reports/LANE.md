@@ -207,7 +207,9 @@ request application change, in the same transaction, and leaves delivery to this
 - A sent invitation that is still open when dispatched is also emailed: class
   `recruit.invitation` (optional, so a person can switch it off), subject legacy's "You’re
   invited to apply for a job opening", naming the position and company. One email per
-  invitation (`recruit.invitation:<invitation id>`). Legacy's email carried a tracking pixel
+  invitation (`recruit.invitation:<invitation id>`). Every delivery attempt rechecks the invitation, like the
+  morning summary's recipients: one withdrawn or answered after it was queued, even between a
+  failed attempt and its retry, is suppressed rather than sent. Legacy's email carried a tracking pixel
   (`invitations/log/<uuid>`); this one does not, and "seen" stays the person's own action.
 - Legacy's mobile push for an invitation stays with the legacy API (C-7).
 - An event email is queued when the event happens, like the civil ID result email: a worker that
