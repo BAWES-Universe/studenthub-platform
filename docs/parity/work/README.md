@@ -175,6 +175,35 @@ longer holds. ID coverage and content are kept apart: `covered` counts the legac
 extra. Issues and results carry legacy ids, rule codes and numbers only, never row
 text, and importing sends nothing (no notices, outbox rows or emails).
 
+#### M-5 rules on record
+
+1. **Writer clock.** Legacy wrote these stamps with MySQL `NOW()` in the connection's session
+   zone (stand-up answers) or `created_at`/`updated_at` behaviours, for all rows since
+   `m221215_072607_attendance` (15 Dec 2022). The app sets Asia/Kuwait, but that does not prove
+   the session zone of the writer. The mapper reads every stamp as Asia/Kuwait wall time
+   (UTC+3, no DST). That is an assumption until the legacy connection's `time_zone` is read
+   from the mirror (read-only) and recorded with the interval it covers.
+2. **Day.** `work_date` is the Asia/Kuwait calendar day of the instant, never the UTC date (a
+   Kuwait `2026-11-20 00:01:00` stays on 20 Nov and is stored as `2026-11-19T21:01:00Z`). Under a
+   Kuwait writer clock this equals the legacy stored day. The literal legacy value is not kept
+   apart from the instant; if the clock proves to be another zone, the mapper converts from
+   that zone and the stored-day grouping is re-checked before any write.
+3. **Unknown history holds.** Until rule 1 is proven, the M-5 import gate stays open: runs are
+   dry runs, nothing is written. Rows whose content can't be accepted are held by ref
+   (`unknown_digest`, conflicts) and the table is never `clean` while any is held.
+4. **Answer shapes.** The prompt comes from `daily_standup_answer.question`, the copy legacy
+   kept, never the current question row. A null, blank, NUL-holding or over-255 prompt is
+   `bad_text:question`; a null, blank (spaces, tabs, newlines only), NUL-holding or
+   over-4,000-character answer is `bad_text:answer`; an answer whose question was not imported
+   is `no_question`. Each is reported by legacy id, not imported, and counted as `skipped`
+   (explained), never cut, filled in or dropped silently. Repeats on a day are separate rows.
+5. **Two open sessions for one person and day.** Within a snapshot ends are applied first, so
+   a session legacy closed and a new one it opened both load. Two still open is a real
+   exception: the second is refused as `open_twice` by its own ref, counted as `skipped`, and the
+   first keeps its ref; neither is ended or merged. Minutes: when `updated_at` disagrees with
+   the stored `total_minutes`, the stored minutes win (what legacy showed and exported) and
+   the row is reported as `minutes_mismatch`; no end is invented for an open session.
+
 ## Screens: Track, History and Appeals (C-11 to C-13)
 
 `apps/gateway/src/work/pages.ts` serves `/work/track`, `/work/history[/:date]` and `/work/appeals[/:id]`. The pages are rendered on the server with the shared page shell and profile card styles, and they call the same services as the JSON API.
