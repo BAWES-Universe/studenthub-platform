@@ -70,6 +70,10 @@ export interface AppealTransaction {
   insertSession(session: NewSession): Promise<WorkSession>;
   insertDecision(decision: WorkDecision): Promise<void>;
   setStatus(sessionIds: readonly string[], status: "approved", decisionId: string): Promise<void>;
+  /** Takes a session out of force, keeping the row with who and why. */
+  softDeleteSession(id: string, actorId: string, reason: string): Promise<void>;
+  /** Puts a removed session back; raises SessionConflict("overlap") when it would overlap one in force. */
+  restoreSession(id: string): Promise<void>;
   insertAppeal(appeal: Omit<WorkAppeal, "createdAt" | "updatedAt">): Promise<WorkAppeal>;
   lockAppeal(id: string): Promise<WorkAppeal | undefined>;
   setAppealStatus(id: string, status: AppealStatus): Promise<WorkAppeal>;
@@ -89,7 +93,8 @@ export interface AppealStore {
 }
 
 export type AppealRefusal = "invalid_input" | "forbidden" | "session_not_found" | "appeal_not_found" | "update_not_found" | "session_open"
-  | "session_replaced" | "session_not_rejected" | "appeal_open" | "end_before_start" | "in_future" | "outside_assignment" | "overlaps_session";
+  | "session_replaced" | "session_not_rejected" | "appeal_open" | "end_before_start" | "in_future" | "outside_assignment" | "overlaps_session"
+  | "already_deleted" | "not_deleted";
 export type Refused = { readonly kind: "refused"; readonly code: AppealRefusal };
 
 export interface AppealServiceOptions {
@@ -234,6 +239,53 @@ export class AppealService {
     });
   }
 
+  /**
+   * Staff take a closed session out of every total (legacy staff delete-session
+   * and delete-day, which hard-deleted the rows). The row stays with who removed
+   * it and why, and can be restored. A session replaced by a correction is
+   * refused (remove the correction, and the original counts again); so is one
+   * still in progress (the person discards that themselves).
+   */
+  async remove(actorId: string, sessionId: unknown, reason: unknown): Promise<RemovalOutcome> {
+    const why = text(reason, 255);
+    if (!isUuid(sessionId) || !why) return { kind: "refused", code: "invalid_input" };
+    return this.#staffTransaction(actorId, async (tx, scope): Promise<RemovalOutcome> => {
+      const session = await tx.lockSession(sessionId.toLowerCase());
+      if (!session || !(await scope.isStaff(actorId, session.orgId))) return { kind: "refused", code: "session_not_found" };
+      if (session.deletedAt !== null) return { kind: "refused", code: "already_deleted" };
+      if (session.endedAt === null) return { kind: "refused", code: "session_open" };
+      if (await tx.isReplaced(session.id)) return { kind: "refused", code: "session_replaced" };
+      await tx.softDeleteSession(session.id, actorId, why);
+      await tx.event(sessionEvent("session.deleted", session, actorId, { reason: why }));
+      return { kind: "removed", sessionId: session.id };
+    });
+  }
+
+  /**
+   * Staff put a removed session back in force. A session the person discarded
+   * while it was in progress can't come back (it never ended), nor a correction
+   * whose original has been corrected again since, nor one that would overlap
+   * hours now in force.
+   */
+  async restore(actorId: string, sessionId: unknown): Promise<RemovalOutcome> {
+    if (!isUuid(sessionId)) return { kind: "refused", code: "invalid_input" };
+    return this.#staffTransaction(actorId, async (tx, scope): Promise<RemovalOutcome> => {
+      const session = await tx.lockSession(sessionId.toLowerCase());
+      if (!session || !(await scope.isStaff(actorId, session.orgId))) return { kind: "refused", code: "session_not_found" };
+      if (session.deletedAt === null) return { kind: "refused", code: "not_deleted" };
+      if (session.endedAt === null) return { kind: "refused", code: "session_open" };
+      if (session.correctsSessionId !== null && (await tx.isReplaced(session.correctsSessionId))) return { kind: "refused", code: "session_replaced" };
+      try {
+        await tx.restoreSession(session.id);
+      } catch (error) {
+        if (sessionConflict(error) === "overlap") return { kind: "refused", code: "overlaps_session" };
+        throw error;
+      }
+      await tx.event(sessionEvent("session.restored", session, actorId));
+      return { kind: "restored", sessionId: session.id };
+    });
+  }
+
   #parseEntry(input: Omit<CorrectionInput, "appealId">): ParsedEntry | { readonly code: AppealRefusal } {
     const startedAt = parseInstant(input.startedAt), endedAt = parseInstant(input.endedAt);
     const reason = text(input.reason, 255), note = text(input.note, 1000);
@@ -289,6 +341,8 @@ export class AppealService {
     return this.#store.transaction((tx) => work(tx, scopeFor((orgId) => tx.organizationAncestors(orgId))));
   }
 }
+
+export type RemovalOutcome = { readonly kind: "removed" | "restored"; readonly sessionId: string } | Refused;
 
 export interface CorrectionInput {
   readonly startedAt: unknown;

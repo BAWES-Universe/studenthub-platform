@@ -21,15 +21,20 @@ const ROWS = [
   { session: session({ id: S2, status: "rejected", source: "manual" }), decision: { outcome: "rejected", reason: "late <again>", note: "private word", notePublic: false, rating: 2, decidedBy: "manager", decidedAt: "2026-11-18T10:00:00.000Z" } },
   { session: session({ id: S3, endedAt: null, durationSeconds: null }), decision: null },
 ];
-interface World { language?: "en" | "ar"; rows?: unknown[]; entry?: unknown | null; viewRefused?: boolean; decided?: unknown; requests?: unknown[] | null; requestOutcome?: unknown }
+interface World { language?: "en" | "ar"; rows?: unknown[]; entry?: unknown | null; staffEntry?: unknown | null; removal?: unknown; restored?: unknown; viewRefused?: boolean; decided?: unknown; requests?: unknown[] | null; requestOutcome?: unknown }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const decided = world.decided ?? { kind: "decided", decisions: [], changed: 1 };
   return {
     personFor: async (id: string) => id === SESSION ? "actor" : undefined,
     language: async (personId: string) => personId === "actor" ? world.language : undefined,
     views: { all: async (...args: unknown[]) => { calls.push(["all", ...args]); return world.viewRefused ? { kind: "refused", code: "forbidden" } : { rows: world.rows ?? ROWS, totals: { approvedSeconds: 0, pendingSeconds: 0, rejectedSeconds: 0, open: 0 }, next: null }; },
+      staffSession: async (...args: unknown[]) => { calls.push(["staffSession", ...args]); return world.staffEntry === null ? undefined : world.staffEntry ?? ROWS[1]; },
       storeSession: async (...args: unknown[]) => { calls.push(["storeSession", ...args]); return world.entry === null ? undefined : world.entry ?? ROWS[1]; },
       company: async (...args: unknown[]) => { calls.push(["company", ...args]); return world.viewRefused ? { kind: "refused", code: "forbidden" } : { rows: world.rows ?? ROWS, totals: { approvedSeconds: 0, pendingSeconds: 9000, rejectedSeconds: 9000, open: 1 }, next: null }; } },
+    appeals: {
+      remove: async (...args: unknown[]) => { calls.push(["remove", ...args]); return world.removal ?? { kind: "removed", sessionId: S2 }; },
+      restore: async (...args: unknown[]) => { calls.push(["restore", ...args]); return world.restored ?? { kind: "restored", sessionId: S2 }; },
+    },
     decisions: {
       decideSessions: async (...args: unknown[]) => { calls.push(["decideSessions", ...args]); return decided; },
       undo: async (...args: unknown[]) => { calls.push(["undo", ...args]); return decided; },
@@ -301,4 +306,57 @@ test("WORK_REVIEW M-03 entry page in Arabic", async () => {
   assert.match(page.html, />موافقة<\/button> <button type="submit" name="action" value="reject">رفض<\/button>/);
   assert.match(page.html, />العودة إلى اعتماد الساعات</);
   assert.match((await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, { world: { entry: null }, acceptLanguage: "ar" })).html, /الساعات غير موجودة/);
+});
+
+test("WORK_REVIEW staff remove closed hours from the work logs with a reason, and can put them back", async () => {
+  // Each closed entry on the staff logs links to its removal page; a company's screen and open hours don't.
+  const logs = await request("/work/logs");
+  assert.match(logs.html, new RegExp(`<a href="/work/logs/remove\\?session=${S1}&amp;date=2026-11-18">Remove these hours</a>`));
+  assert.doesNotMatch(logs.html, new RegExp(`remove\\?session=${S3}`));
+  assert.doesNotMatch((await request("/organization/co/work")).html, /Remove these hours/);
+
+  const calls: unknown[][] = [];
+  const page = await request(`/work/logs/remove?session=${S2}&date=2026-11-18`, {}, calls);
+  assert.equal(page.status, 200);
+  assert.deepEqual(calls[0], ["staffSession", "actor", "2026-11-18", S2]);
+  assert.match(page.html, /<title>Remove hours/);
+  assert.match(page.html, new RegExp(`<form method="post" action="/work/logs/remove" class="p-card">[\\s\\S]*name="sessionId" value="${S2}"><input type="hidden" name="date" value="2026-11-18">[\\s\\S]*<input name="reason" required maxlength="255">`));
+  assert.equal((await request(`/work/logs/remove?session=${S2}&date=2026-11-18`, { world: { staffEntry: null } })).status, 404);
+  assert.equal((await request(`/work/logs/remove?session=${S3}&date=2026-11-18`, { world: { staffEntry: ROWS[2] } })).status, 404, "open hours have no removal page");
+
+  const removed: unknown[][] = [];
+  assert.equal((await post("/work/logs/remove", `sessionId=${S2}&date=2026-11-18&reason=x`, { origin: "https://evil.invalid" }, removed)).status, 403);
+  assert.equal((await post("/work/logs/remove", `sessionId=${S2}&date=2026-11-18&reason=x&back=/x`, {}, removed)).status, 400);
+  const done = await post("/work/logs/remove", `sessionId=${S2}&date=2026-11-18&reason=logged+twice`, {}, removed);
+  assert.deepEqual([done.status, done.headers.location], [303, `/work/logs?done=removed&restore=${S2}`]);
+  assert.deepEqual(removed.filter((c) => c[0] === "remove"), [["remove", "actor", S2, "logged twice"]]);
+  const refused = await post("/work/logs/remove", `sessionId=${S2}&date=2026-11-18&reason=`, { world: { removal: { kind: "refused", code: "invalid_input" } } });
+  assert.equal(refused.status, 400);
+  assert.match(refused.html, /Give a reason of up to 255 characters\./);
+  assert.match(refused.html, /action="\/work\/logs\/remove"/, "the form again");
+  const gone = await post("/work/logs/remove", `sessionId=${S2}&date=2026-11-18&reason=x`, { world: { removal: { kind: "refused", code: "already_deleted" }, staffEntry: null } });
+  assert.deepEqual([gone.status, /already removed/.test(gone.html)], [409, true]);
+
+  // The notice puts them back with one press; a broken id shows no button.
+  const after = await request(`/work/logs?done=removed&restore=${S2}`);
+  assert.match(after.html, /The hours were removed\./);
+  assert.match(after.html, new RegExp(`<form method="post" action="/work/logs/restore" class="p-card"><input type="hidden" name="sessionId" value="${S2}"><button type="submit">Put them back</button></form>`));
+  assert.doesNotMatch((await request("/work/logs?done=removed&restore=nope")).html, /\/work\/logs\/restore/);
+  assert.doesNotMatch((await request(`/organization/co/work?done=removed&restore=${S2}`)).html, /\/work\/logs\/restore/);
+  const restoring: unknown[][] = [];
+  const back = await post("/work/logs/restore", `sessionId=${S2}`, {}, restoring);
+  assert.deepEqual([back.headers.location, restoring], ["/work/logs?done=restored", [["restore", "actor", S2]]]);
+  const overlap = await post("/work/logs/restore", `sessionId=${S2}`, { world: { restored: { kind: "refused", code: "overlaps_session" } } });
+  assert.deepEqual([overlap.status, /overlap hours now in force/.test(overlap.html)], [409, true]);
+  assert.equal((await request("/work/logs/restore")).status, 405);
+  // A store or company path has no removal.
+  assert.equal((await request(`/store/${STORE}/time-approvals/remove`)).handled, false);
+});
+
+test("WORK_REVIEW staff removal in Arabic", async () => {
+  const page = await request(`/work/logs/remove?session=${S2}&date=2026-11-18`, { world: { language: "ar" } });
+  assert.match(page.html, /<html lang="ar" dir="rtl">/);
+  assert.match(page.html, /<title>حذف ساعات/);
+  assert.match(page.html, />حذف<\/button>/);
+  assert.match((await request(`/work/logs?done=removed&restore=${S2}`, { world: { language: "ar" } })).html, /تم حذف الساعات\.[\s\S]*>إعادتها<\/button>/);
 });
