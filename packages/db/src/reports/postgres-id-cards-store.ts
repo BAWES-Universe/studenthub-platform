@@ -109,4 +109,10 @@ export class PostgresIdCardsStore {
     const r = (await this.#pool.query<{ needs: number; expired: number }>(`SELECT ${idCardNeedsCount("$1")} AS needs, ${idCardExpiredCount("$1")} AS expired`, [today])).rows[0]!;
     return { needs: r.needs, expired: r.expired };
   }
+
+  /** The audit row for one ID card photo read (migration 0603): who printed whose card, and which photo version went into it. */
+  async recordPhotoRender(view: { viewerPrincipalId: string; subjectPrincipalId: string; kind: "id_card_render"; documentType: "personal-photo"; documentVersion: string }): Promise<void> {
+    await this.#pool.query(`INSERT INTO staff_person_views(viewer_principal_id, subject_principal_id, kind, document_type, document_version) VALUES ($1::text, $2::text, $3::text, $4::text, $5::uuid)`,
+      [view.viewerPrincipalId, view.subjectPrincipalId, view.kind, view.documentType, view.documentVersion]);
+  }
 }

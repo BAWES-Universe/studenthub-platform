@@ -348,7 +348,7 @@ export function createRuntimeLoginFromEnv(
   });
   const notificationStore=PostgresNotificationsStore.connect({connectionString:value("DATABASE_URL")});
   const notifications=createNotificationsHttp(application,new NotificationsService(notificationStore,notificationStore,access.services.authzStore));
-  const staffMessages=wireStaffMessages({connectionString:value("DATABASE_URL"),authzStore:access.services.authzStore});
+  const staffMessages=wireStaffMessages({connectionString:value("DATABASE_URL"),authzStore:access.services.authzStore,env});
   const runtimeApplication={
       ...application,
       ...organizationArea.services.application,

@@ -46,8 +46,8 @@ export interface IdCardsStore {
   counts(today: string): Promise<{ readonly needs: number; readonly expired: number }>;
 }
 export interface IdCardsAuthority { isStaff(principalId: string): Promise<boolean> }
-/** The person's current personal photo, when the documents area offers a server-side read; null when they have none. */
-export interface IdCardPhotoSource { read(personId: string): Promise<{ readonly bytes: Buffer; readonly mime: string } | null> }
+/** The person's current personal photo for a card `viewerId` is printing (the read is audited against the viewer); null when they have none. */
+export interface IdCardPhotoSource { read(personId: string, viewerId: string): Promise<{ readonly bytes: Buffer; readonly mime: string } | null> }
 
 export type IdCardWriteResult =
   | { readonly status: "ok"; readonly count: number; readonly expiresOn: string }
@@ -105,7 +105,7 @@ export class IdCardsService {
   /** The person's own card as a PDF, or undefined when they have none. */
   async ownPdf(personId: string): Promise<Buffer | undefined> {
     const card = await this.#store.card(personId, kuwaitDay(this.#now()));
-    return card && idCardsPdf([await this.#face(personId, card)]);
+    return card && idCardsPdf([await this.#face(personId, card, personId)]);
   }
 
   /** Staff print a batch of cards as one PDF, in the order given; every person must have a card. */
@@ -116,12 +116,12 @@ export class IdCardsService {
     const today = kuwaitDay(this.#now()), cards = await Promise.all(batch.map(p => this.#store.card(p, today)));
     const missing = batch.filter((_, i) => !cards[i]);
     if (missing.length) return { status: "refused", refusals: missing.map(personId => ({ personId, code: "no_card" as const })) };
-    return { status: "ok", pdf: idCardsPdf(await Promise.all(batch.map((p, i) => this.#face(p, cards[i]!)))) };
+    return { status: "ok", pdf: idCardsPdf(await Promise.all(batch.map((p, i) => this.#face(p, cards[i]!, viewer)))) };
   }
 
-  async #face(personId: string, card: OwnIdCard): Promise<IdCardFace> {
-    // A photo that cannot be read or placed leaves the plain circle; the card still prints.
-    const photo = await this.#photos?.read(personId).catch(() => null);
+  async #face(personId: string, card: OwnIdCard, viewerId: string): Promise<IdCardFace> {
+    // Only reached after the caller is authorized (the person's own card, or staff). A photo that cannot be read or placed leaves the plain circle; the card still prints.
+    const photo = await this.#photos?.read(personId, viewerId).catch(() => null);
     return { name: card.name, employeeId: card.employeeId, cardNumber: card.cardNumber, expiresOn: card.expiresOn, placement: card.placement, photo: photo ? readImage(photo.bytes, photo.mime) : null };
   }
 
