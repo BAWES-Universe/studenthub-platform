@@ -18,11 +18,12 @@ function session(over: Record<string, unknown> = {}) {
 const appeal = { id: APPEAL, sessionId: S1, personId: "person-1", orgId: "co", storeId: STORE, reason: "I stayed <late>", status: "submitted", createdAt: "2026-11-18T19:00:00.000Z", updatedAt: "x" };
 const detail = { appeal, session: session(), updates: [], entries: [] };
 
-interface World { placements?: unknown[] | null; requests?: unknown[] | null; outcome?: unknown; appeals?: unknown; detail?: unknown; rows?: unknown[] | null }
+interface World { language?: "en" | "ar"; placements?: unknown[] | null; requests?: unknown[] | null; outcome?: unknown; appeals?: unknown; detail?: unknown; rows?: unknown[] | null }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const out = (name: string, fallback: unknown) => async (...args: unknown[]) => { calls.push([name, ...args]); return world.outcome ?? fallback; };
   return {
     personFor: async (id: string) => id === SESSION ? "staff" : undefined,
+    language: async (personId: string) => personId === "staff" ? world.language : undefined,
     placements: {
       forOrganization: async (...args: unknown[]) => { calls.push(["forOrganization", ...args]); return world.placements === null ? undefined : world.placements ?? []; },
       requestsFor: async (...args: unknown[]) => { calls.push(["requestsFor", ...args]); return world.requests === null ? undefined : world.requests ?? []; },
@@ -52,7 +53,7 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   } as unknown as WorkHttpServices;
 }
 
-type Opt = { method?: string; body?: string; origin?: string; cookie?: string | null; service?: WorkHttpServices | undefined; world?: World };
+type Opt = { acceptLanguage?: string; method?: string; body?: string; origin?: string; cookie?: string | null; service?: WorkHttpServices | undefined; world?: World };
 async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
   const req = Readable.from(o.body !== undefined ? [o.body] : []) as Readable & { method?: string; url?: string; headers: Record<string, string> };
   req.method = o.method ?? "GET";
@@ -60,7 +61,7 @@ async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
   req.headers = {
     ...(o.cookie === null ? {} : { cookie: `__Host-studenthub_session=${o.cookie ?? SESSION}` }),
     ...(o.body !== undefined ? { "content-type": "application/x-www-form-urlencoded", "content-length": String(Buffer.byteLength(o.body)) } : {}),
-    ...(o.origin ? { origin: o.origin } : {}),
+    ...(o.origin ? { origin: o.origin } : {}), ...(o.acceptLanguage ? { "accept-language": o.acceptLanguage } : {}),
   };
   const res = new EventEmitter() as EventEmitter & { statusCode: number; headersSent: boolean; headers: Record<string, string>; chunks: string[]; writeHead(s: number, h: Record<string, string>): void; end(v?: unknown): void; destroy(): void };
   res.statusCode = 0; res.headers = {}; res.chunks = []; res.headersSent = false;
@@ -216,4 +217,24 @@ test("WORK_STAFF A-13 corrections from the work logs: the form finds the session
   assert.match(overlap.html, /name="startedAt" value="2026-11-18T09:15"/);
   assert.match(overlap.html, /name="reason" required maxlength="255" value="&lt;b&gt;log"/);
   assert.match(overlap.html, /<textarea name="note" maxlength="1000">see sheet<\/textarea>/);
+});
+
+test("WORK_STAFF in Arabic: the staff member's saved language, else the browser's; placements, appeals and refusals", async () => {
+  const placements = [{ id: PLACEMENT, personId: "person-1", orgId: "co", storeId: STORE, startDate: "2026-01-01", endDate: null, warnings: ["civil_id_missing"], source: "request" }];
+  const requests = [{ id: REQ, personId: "person-2", orgId: "co", storeId: STORE, status: "pending", note: "weekends", requestedBy: "owner", requestedAt: "2026-11-17T08:00:00.000Z" }];
+  const page = await request("/work/assignments?org=co", { world: { language: "ar", placements, requests } });
+  assert.match(page.html, /<html lang="ar" dir="rtl">/);
+  assert.match(page.html, /<nav class="p-card" aria-label="عمل الموظفين"><a href="\/work\/assignments" aria-current="page">التعيينات<\/a> · <a href="\/work\/logs">سجلات العمل<\/a>/);
+  assert.match(page.html, /طُلب في الثلاثاء، 17 نوفمبر 2026 · بالانتظار<\/p><p>ملاحظته: weekends<\/p>/);
+  assert.match(page.html, /من الخميس، 1 يناير 2026، بدون تاريخ انتهاء · <strong>حالي<\/strong> · بطلب من الشركة<\/p><p>للمراجعة: لا توجد بطاقة مدنية في الملف<\/p>/);
+  assert.match(page.html, /<button type="submit" name="decision" value="accept">القبول والتعيين<\/button>/);
+  const list = await request("/work/appeals?as=staff", { world: { language: "ar" } });
+  assert.match(list.html, /Sara &lt;S&gt;<\/a>، قُدّم في الأربعاء، 18 نوفمبر 2026: <strong>جديد<\/strong>\./);
+  const refused = await post(`/work/appeals/${APPEAL}/missing-time`, "startedAt=&endedAt=&reason=&note=", { world: { language: "ar", outcome: { kind: "refused", code: "overlaps_session" } } });
+  assert.match(refused.html, /<p>هذه الأوقات تتداخل مع ساعات أخرى لهذا الشخص\.<\/p>/);
+  assert.match(refused.html, /قُدّم في الأربعاء، 18 نوفمبر 2026 بشأن الأربعاء، 18 نوفمبر 2026، 09:00 إلى 11:30 \(2 س 30 د\) في Avenues &lt;Mall&gt; \(مرفوضة\)\./);
+  assert.match(refused.html, /<button type="submit">إضافة وقت ناقص<\/button>/);
+  // A saved English preference wins over an Arabic browser; signed out follows the browser.
+  assert.match((await request("/work/assignments", { world: { language: "en" }, acceptLanguage: "ar" })).html, /Open a company/);
+  assert.match((await request("/work/assignments", { cookie: null, acceptLanguage: "ar" })).html, /<h1>تسجيل الدخول<\/h1><p>سجّل الدخول للمتابعة\.<\/p>/);
 });

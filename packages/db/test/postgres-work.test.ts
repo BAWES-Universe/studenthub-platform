@@ -439,6 +439,11 @@ test("W5_PG views: the person sees no rating or private note; another company se
   assert.equal((await views.mineSession(w.person, day, b))?.decision?.note, "public note");
   assert.equal(await views.mineSession(w.owner, day, b), undefined);
   assert.equal(await views.mineSession(w.person, "2026-11-01", b), undefined);
+  // The M-03 entry page binds the session id with the company, the store and the day.
+  assert.equal((await views.storeSession(w.owner, w.company, w.store, day, b))?.decision?.note, "public note");
+  for (const [actor, org, store, date] of [[w.rivalOwner, w.company, w.store, day], [w.owner, w.company, w.rivalStore, day], [w.owner, w.company, w.store, "2026-11-01"], [w.person, w.company, w.store, day]] as const) {
+    assert.equal(await views.storeSession(actor, org, store, date, b), undefined, `${actor} ${store} ${date}`);
+  }
   const company = await views.company(w.owner, w.company, range);
   assert.equal("rows" in company && company.rows.find((r) => r.session.id === a)?.decision?.rating, 4);
   assert.deepEqual(await views.company(w.rivalOwner, w.company, range), { kind: "refused", code: "forbidden" });
@@ -459,6 +464,10 @@ test("W5_PG views: the person sees no rating or private note; another company se
   await pool.query("UPDATE principals SET display_name = 'Sara' WHERE id = $1", [w.person]);
   assert.deepEqual([...await viewStore.personNames([w.person, w.owner, "nobody"])], [[w.person, "Sara"]]);
   assert.equal((await viewStore.personNames([])).size, 0);
+  // The person's chosen language, for the work screens.
+  assert.equal(await viewStore.language(w.person), undefined);
+  await pool.query("INSERT INTO person_preferences(principal_id, language) VALUES($1, 'ar')", [w.person]);
+  assert.equal(await viewStore.language(w.person), "ar");
   assert.deepEqual(await viewStore.storesOf(w.company), [{ id: w.store, name: "Avenues" }]);
   assert.deepEqual(await viewStore.storesOf("no-such-company"), []);
   const first = await viewStore.listSessions({ personId: w.person, range, limit: 2 });

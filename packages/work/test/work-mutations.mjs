@@ -16,15 +16,22 @@ const staffTime = "packages/work/src/staff-time.js", staffTimeSuite = "packages/
 const staffTimePages = "apps/gateway/src/work/staff-time-pages.js", staffTimePagesSuite = "apps/gateway/test/work-staff-time-pages.test.js";
 const standup = "packages/work/src/standup.js", standupSuite = "packages/work/test/standup.test.js";
 const standupPages = "apps/gateway/src/work/standup-pages.js", standupPagesSuite = "apps/gateway/test/work-standup-pages.test.js";
+const copyFile = "apps/gateway/src/work/copy.js", teamCopyFile = "apps/gateway/src/work/team-copy.js";
 const exportsFile = "apps/gateway/src/work/exports.js", exportsSuite = "apps/gateway/test/work-exports.test.js";
 const mutations = [
+  ["the person's screens follow their saved language", "c = await workCopyFor(services.language, person, req);", "c = await workCopyFor(undefined, person, req);", "WORK_PAGES in Arabic", pages, pagesSuite],
+  ["company and store screens follow the actor's saved language", "c = await workCopyFor(services.language, actor, req);", "c = await workCopyFor(undefined, actor, req);", "WORK_REVIEW in Arabic", review, reviewSuite],
+  ["staff screens follow the staff member's saved language", "c = await workCopyFor(services.language, actor, req);", "c = await workCopyFor(undefined, actor, req);", "WORK_STAFF in Arabic", staffPages, staffSuite],
+  ["/me/work follows the staff member's saved language", "t.staffTime.signInMine, c));\n            return true;\n        }\n        c = await workCopyFor(services.language, actor, req);", "t.staffTime.signInMine, c));\n            return true;\n        }\n        c = await workCopyFor(undefined, actor, req);", "STAFF_TIME_PAGES in Arabic", staffTimePages, staffTimePagesSuite],
+  ["the stand-up admin page follows the admin's saved language", "c = await workCopyFor(services.language, actor, req);", "c = await workCopyFor(undefined, actor, req);", "STANDUP_PAGES in Arabic", standupPages, standupPagesSuite],
+  ["without a saved language, the browser's Arabic is used", 'return first?.tag.startsWith("ar") ? "ar" : "en";', 'return "en";', "WORK_PAGES in Arabic", copyFile, pagesSuite],
   ["stand-up answers are operator staff only", "async #staff(actorId) { return isOperatorStaff(await this.#grants.listGrantsForPrincipal(actorId)); }", "async #staff(actorId) { return true; }", "STANDUP", standup, standupSuite],
   ["stand-up questions are operator admins only", "async #admin(actorId) { return isOperatorAdmin(await this.#grants.listGrantsForPrincipal(actorId)); }", "async #admin(actorId) { return true; }", "STANDUP", standup, standupSuite],
   ["today lists only their own answers", "staffId: actorId, limit: STANDUP_ANSWER_PAGE_SIZE }", "limit: STANDUP_ANSWER_PAGE_SIZE }", "STANDUP", standup, standupSuite],
   ["a question is answered once a day", 'return refused("already_answered");', "return { kind: \"answered\", workDate };", "STANDUP", standup, standupSuite],
   ["an answer needs the day in progress", 'if (result === "not_working")', "if (false)", "STANDUP", standup, standupSuite],
   ["an answer must be the next question", 'if (result === "out_of_order")', "if (false)", "STANDUP", standup, standupSuite],
-  ["a refused answer says why on /me/work", '    not_working: "Start your day to answer the stand-up.",', "", "STANDUP_PAGES", standupPages, standupPagesSuite],
+  ["a refused answer says why on /me/work", 'not_working: () => "Start your day to answer the stand-up.",', "", "STANDUP_PAGES", teamCopyFile, standupPagesSuite],
   ["unanswered leaves out who answered", "!answered.has(id)", "true", "STANDUP", standup, standupSuite],
   ["stand-up answers page", "next: rows.length > STANDUP_ANSWER_PAGE_SIZE && last ?", "next: false ?", "STANDUP", standup, standupSuite],
   ["the question is asked only while the day is in progress", "const ask = !dayInProgress ?", "const ask = false ?", "STANDUP_PAGES", standupPages, standupPagesSuite],
@@ -35,7 +42,7 @@ const mutations = [
   ["inactive list is for admins", "if (!(await this.#admin(actorId)))\n            return refused(\"forbidden\");\n        const [everyone", "const [everyone", "STAFF_TIME_INACTIVE", staffTime, staffTimeSuite],
   ["inactive leaves out who started", "!active.has(id)", "true", "STAFF_TIME_INACTIVE", staffTime, staffTimeSuite],
   ["/me/work lists only their own days", "today.workDate, { staffId: actor })", "today.workDate)", "STAFF_TIME_PAGES", staffTimePages, staffTimePagesSuite],
-  ["start and end need the same origin", "if (req.headers.origin !== origin || req.headers[\"sec-fetch-site\"] === \"cross-site\") {\n            req.resume();\n            write(res, ...plain(403, \"Request refused\"", "if (false) {\n            req.resume();\n            write(res, ...plain(403, \"Request refused\"", "STAFF_TIME_PAGES", staffTimePages, staffTimePagesSuite],
+  ["start and end need the same origin", 'if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {', "if (false) {", "STAFF_TIME_PAGES", staffTimePages, staffTimePagesSuite],
   ["history is operator staff only", "if (!isOperatorStaff(await this.#grants.listGrantsForPrincipal(actorId)))", "if (false)", "W1_HISTORY", placement, placementSuite],
   ["history refuses a reversed range", "|| range.from > range.to)", ")", "W1_HISTORY", placement, placementSuite],
   ["history pages", "next: rows.length > HISTORY_PAGE_SIZE && last ?", "next: false ?", "W1_HISTORY", placement, placementSuite],
@@ -83,7 +90,7 @@ const mutations = [
   ["manual times are Kuwait time", ":00+03:00`", ":00Z`", "WORK_PAGES", pages, pagesSuite],
   ["screen script needs the nonce", "`; script-src 'nonce-${nonce}'`", "`; script-src 'unsafe-inline'`", "WORK_PAGES", pages, pagesSuite],
   ["someone else's appeal gets the staff view, not the person's", "if (detail.appeal.personId !== person) {", "if (false) {", "WORK_PAGES", pages, pagesSuite],
-  ["review posts return to their own screen", "(value === place.base || value.startsWith(`${place.base}?`))", "true", "WORK_REVIEW", review, reviewSuite],
+  ["review posts return to their own screen", "if (value === place.base || value.startsWith(`${place.base}?`))", "if (true)", "WORK_REVIEW", review, reviewSuite],
   ["review refuses cross-origin posts", 'if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {', 'if (false) {', "WORK_REVIEW", review, reviewSuite],
   ["open hours can't be selected", 'const box = open ? "" :', 'const box = false ? "" :', "WORK_REVIEW", review, reviewSuite],
   ["only staff correct hours from the logs", "const correct = staff && !open ?", "const correct = !open ?", "WORK_REVIEW", review, reviewSuite],
@@ -104,6 +111,9 @@ const mutations = [
   ["days lock in one order", ".sort((x, y) => dayLockKey(x.key) < dayLockKey(y.key) ? -1 : dayLockKey(x.key) > dayLockKey(y.key) ? 1 : 0)", ".sort(() => 0)", "W4_DAY", decisions, decisionSuite],
   ["ancestry read on the transaction client", "scopeFor((orgId) => tx.organizationAncestors(orgId))", "scopeFor((orgId) => this.#store.organizationAncestors(orgId))", "W4_DAY", decisions, decisionSuite],
   ["correction lookup is staff only", "if (!isIsoDate(date) || !isUuid(sessionId) || !(await this.#scope.isOperatorStaff(actorId)))", "if (!isIsoDate(date) || !isUuid(sessionId))", "W5_VIEWS", views, decisionSuite],
+  ["an entry page needs the store in the actor's scope", "if (!(await this.#scope.covers(actorId, orgId, store)))", "if (false)", "W5_VIEWS", views, decisionSuite],
+  ["an entry page reads that store only", "storeIds: [store], sessionIds: [sessionId.toLowerCase()],", "sessionIds: [sessionId.toLowerCase()],", "W5_VIEWS", views, decisionSuite],
+  ["a decision goes back only to an entry on this store's page", "return back.startsWith(`${place.base}/${id}?`) && url.pathname", "return url.pathname", "WORK_REVIEW M-03 entry page: a decision goes back", review, reviewSuite],
   ["private note hidden", "note: d.notePublic ? d.note : null", "note: d.note", "W5_PRIVATE", views, decisionSuite],
   ["stable paging cursor", "next: sessions.length > filter.limit && last ? { workDate: last.workDate, id: last.id } : null", "next: null", "W5_PAGING", views, decisionSuite],
 ];
