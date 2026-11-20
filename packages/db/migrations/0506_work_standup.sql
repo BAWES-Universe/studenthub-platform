@@ -52,6 +52,6 @@ CREATE FUNCTION refuse_work_standup_question_delete() RETURNS trigger LANGUAGE p
 BEGIN RAISE EXCEPTION 'stand-up questions are retired, never removed' USING ERRCODE = '23514'; END $$;
 CREATE TRIGGER work_standup_questions_no_delete BEFORE DELETE ON work_standup_questions FOR EACH ROW EXECUTE FUNCTION refuse_work_standup_question_delete();
 CREATE FUNCTION refuse_work_standup_truncate() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN RAISE EXCEPTION 'stand-up questions and answers are never removed' USING ERRCODE = '23514'; END $$;
+BEGIN RAISE EXCEPTION 'stand-up questions and answers are append-only and never removed' USING ERRCODE = '23514'; END $$;
 CREATE TRIGGER work_standup_answers_no_truncate BEFORE TRUNCATE ON work_standup_answers FOR EACH STATEMENT EXECUTE FUNCTION refuse_work_standup_truncate();
 CREATE TRIGGER work_standup_questions_no_truncate BEFORE TRUNCATE ON work_standup_questions FOR EACH STATEMENT EXECUTE FUNCTION refuse_work_standup_truncate();

@@ -113,7 +113,7 @@ test("STANDUP_PG answers page by staff then time; answers are never edited or re
 });
 
 test("STANDUP_PG neither table can be emptied by TRUNCATE, directly or by a CASCADE from a parent", async () => {
-  const refused = /stand-up questions and answers are never removed/;
+  const refused = /stand-up questions and answers are append-only and never removed/;
   for (const statement of ["TRUNCATE work_standup_answers", "TRUNCATE work_standup_questions CASCADE", "TRUNCATE work_standup_answers, work_standup_questions",
     "TRUNCATE principals CASCADE"]) {
     const client = await pool.connect();
