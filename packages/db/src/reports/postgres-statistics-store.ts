@@ -42,7 +42,7 @@ const OVERVIEW = `SELECT
   (SELECT count(*)::int FROM ${KWD_REQUESTS} WHERE r.status <> 'draft' AND COALESCE(t.value, 'KWD') = 'KWD') AS requests,
   (SELECT count(*)::int FROM ${KWD_REQUESTS} WHERE (r.status = 'filled' OR (r.status = 'closed' AND r.close_reason = 'fulfilled')) AND COALESCE(t.value, 'KWD') = 'KWD') AS "requestsDelivered"`;
 
-// $1 operator org ids, $2 first day of the oldest month, $3 the Asia/Kuwait day. Each organization rolls up to its
+// $1 operator org ids, $2 first day of the oldest month, $3 the Asia/Kuwait day, $4 the months asked for (only those are counted). Each organization rolls up to its
 // top-level company: the ancestor whose parent is an operator organization (or none). Deleted top-level companies are
 // left out; a deleted sub-company's placements stay in its live parent's history, as legacy counts them by parent_company_id.
 const TOP = `WITH RECURSIVE up(org_id, at, parent, depth) AS (
@@ -55,7 +55,7 @@ const TOP = `WITH RECURSIVE up(org_id, at, parent, depth) AS (
 const FIRING_COMPANIES = `${TOP} SELECT id AS "orgId", name FROM companies`;
 const FIRINGS = `${TOP} SELECT t.company_id AS "orgId", to_char(a.end_date, 'YYYY-MM') AS month, count(*)::int AS total
   FROM work_assignments a JOIN top t ON t.org_id = a.org_id JOIN companies c ON c.id = t.company_id
-  WHERE a.end_date >= $2::date AND a.end_date <= $3::date GROUP BY 1, 2`;
+  WHERE a.end_date >= $2::date AND a.end_date <= $3::date AND to_char(a.end_date, 'YYYY-MM') = ANY($4::text[]) GROUP BY 1, 2`;
 
 export class PostgresStatisticsStore {
   readonly #pool: pg.Pool; readonly #owns: boolean; readonly #summary: PostgresMorningSummaryStore;
@@ -102,7 +102,7 @@ export class PostgresStatisticsStore {
     try {
       await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
       const companies = (await c.query<{ orgId: string; name: string }>(FIRING_COMPANIES, [this.#operators])).rows;
-      const counts = (await c.query<{ orgId: string; month: string; total: number }>(`${FIRINGS}`, [this.#operators, from, day])).rows;
+      const counts = (await c.query<{ orgId: string; month: string; total: number }>(FIRINGS, [this.#operators, from, day, months])).rows;
       await c.query("COMMIT");
       return { companies, counts };
     } catch (error) { await c.query("ROLLBACK").catch(() => undefined); throw error; }

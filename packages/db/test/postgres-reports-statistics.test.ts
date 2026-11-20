@@ -189,6 +189,7 @@ test("REPORTS_STATISTICS_PG firings: placements ended per top-level company and 
   await place(parent, "2025-01-01", "2026-01-15");
   await place(parent, "2024-01-01", "2025-11-30"); // before the 12 months
   await place(parent, "2026-01-01", null); // still running
+  await place(parent, "2026-03-01", "2026-06-10");
   await place(gone, "2026-01-01", "2026-11-02");
   await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [gone, `test:${randomUUID()}`]);
   // A deleted sub-company's ended placements stay in its live parent's history, as legacy's parent_company_id count keeps them.
@@ -203,7 +204,10 @@ test("REPORTS_STATISTICS_PG firings: placements ended per top-level company and 
   const { companies, counts } = await scoped.firings(DAY, months);
   const ours = new Set([op, parent, sub, gone, goneSub]);
   assert.deepEqual(companies.filter(c => ours.has(c.orgId)), [{ orgId: parent, name: "Parent Co" }], "not the operator, not the sub-company, not a deleted company");
-  assert.deepEqual(counts.filter(c => ours.has(c.orgId)).sort((a, b) => a.month.localeCompare(b.month)), [{ orgId: parent, month: "2026-01", total: 1 }, { orgId: parent, month: "2026-11", total: 3 }]);
+  assert.deepEqual(counts.filter(c => ours.has(c.orgId)).sort((a, b) => a.month.localeCompare(b.month)), [{ orgId: parent, month: "2026-01", total: 1 }, { orgId: parent, month: "2026-06", total: 1 }, { orgId: parent, month: "2026-11", total: 3 }]);
+  const gaps = await scoped.firings(DAY, ["2026-11", "2026-01"]);
+  assert.deepEqual(gaps.counts.filter(c => ours.has(c.orgId)).sort((a, b) => a.month.localeCompare(b.month)), [{ orgId: parent, month: "2026-01", total: 1 }, { orgId: parent, month: "2026-11", total: 3 }],
+    "only the months asked for, not every month between them");
   await assert.rejects(scoped.firings(DAY, []), RangeError);
   await assert.rejects(scoped.firings(DAY, ["2026-1"]), RangeError);
 });
