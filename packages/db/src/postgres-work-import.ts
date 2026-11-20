@@ -68,6 +68,18 @@ export interface StaffImportReconciliation {
   readonly skipped: readonly string[];
   /** Imported rows whose ref the legacy list no longer holds. */
   readonly extra: readonly string[];
+  /** ID coverage: legacy refs that have an imported row, whatever its content. */
+  readonly covered: number;
+  /**
+   * Covered refs whose content is not accepted: the run held them (a digest
+   * conflict or `unknown_digest`, passed as `heldRefs`), or the row's digest
+   * is unknown here (imported before 0508), whatever the run passed.
+   */
+  readonly held: readonly string[];
+  /** Covered refs whose content is accepted: `covered` minus `held`. */
+  readonly verified: number;
+  /** Every legacy ref imported and content-accepted, none skipped, missing or extra. */
+  readonly clean: boolean;
 }
 
 /** sha256 of canonical JSON (keys sorted at every level). */
@@ -264,19 +276,29 @@ export class PostgresWorkImportStore {
    * Reconciliation for one table: the legacy refs the importer read against
    * the rows imported here, by legacy ref only. `reportedRefs` are the rows
    * the run reported or refused (mapper issues, `refused`), so a skipped row
-   * reads as explained and only an unexplained one as missing.
+   * reads as explained and only an unexplained one as missing. ID coverage
+   * and content are kept apart: `heldRefs` are the rows the run held on
+   * content (`conflicts`, and `unknown_digest` refusals); a covered row that
+   * is held never counts as verified, and the table is clean only when
+   * nothing is held, skipped, missing or extra.
    */
-  async reconcileStaffImport(table: StaffImportTable, legacyRefs: readonly string[], reportedRefs: readonly string[] = []): Promise<StaffImportReconciliation> {
+  async reconcileStaffImport(table: StaffImportTable, legacyRefs: readonly string[], reportedRefs: readonly string[] = [], heldRefs: readonly string[] = []): Promise<StaffImportReconciliation> {
     if (!STAFF_IMPORT_TABLES.includes(table)) throw new TypeError("unknown staff import table");
-    const { rows } = await this.#db.pool.query<{ legacy_ref: string }>(`SELECT legacy_ref FROM ${table} WHERE legacy_ref IS NOT NULL ORDER BY legacy_ref`);
+    const { rows } = await this.#db.pool.query<{ legacy_ref: string; unknown: boolean }>(
+      `SELECT legacy_ref, legacy_digest IS NULL AS unknown FROM ${table} WHERE legacy_ref IS NOT NULL ORDER BY legacy_ref`);
     const here = new Set(rows.map((r) => r.legacy_ref));
-    const there = new Set(legacyRefs), reported = new Set(reportedRefs);
+    const unknown = new Set(rows.filter((r) => r.unknown).map((r) => r.legacy_ref));
+    const there = new Set(legacyRefs), reported = new Set(reportedRefs), heldByRun = new Set(heldRefs);
     const absent = [...there].filter((r) => !here.has(r)).sort();
+    const covered = [...there].filter((r) => here.has(r)).sort();
+    const held = covered.filter((r) => heldByRun.has(r) || unknown.has(r));
+    const missing = absent.filter((r) => !reported.has(r)), skipped = absent.filter((r) => reported.has(r));
+    const extra = [...here].filter((r) => !there.has(r)).sort();
     return Object.freeze({
       table, legacy: there.size, imported: here.size,
-      missing: Object.freeze(absent.filter((r) => !reported.has(r))),
-      skipped: Object.freeze(absent.filter((r) => reported.has(r))),
-      extra: Object.freeze([...here].filter((r) => !there.has(r)).sort()),
+      missing: Object.freeze(missing), skipped: Object.freeze(skipped), extra: Object.freeze(extra),
+      covered: covered.length, held: Object.freeze(held), verified: covered.length - held.length,
+      clean: held.length === 0 && absent.length === 0 && extra.length === 0,
     });
   }
 

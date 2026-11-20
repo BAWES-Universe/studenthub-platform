@@ -161,11 +161,15 @@ keep working, a timer can still end an open one, and a re-run refuses each of th
 `unknown_digest` without comparing or overwriting it. Rows imported from 0508 on must carry
 their digest. Within a batch, ends are applied
 before new open sessions, and each staff member's day is locked with the refs, so two
-batches can't deadlock. `reconcileStaffImport(table, legacyRefs, reportedRefs)` gives each table's reconciliation by legacy reference only: the legacy and
+batches can't deadlock. `reconcileStaffImport(table, legacyRefs, reportedRefs, heldRefs)` gives each table's reconciliation by legacy reference only: the legacy and
 imported counts, the legacy refs with no imported row (split into `skipped`, the refs the
 run passes in `reportedRefs` because it reported or refused them, and `missing`, the
 unexplained ones; without `reportedRefs` every absent ref is `missing`), and imported refs legacy no
-longer holds. Issues and results carry legacy ids, rule codes and numbers only, never row
+longer holds. ID coverage and content are kept apart: `covered` counts the legacy refs that have a row,
+`held` lists the covered refs whose content is not accepted (the run's conflicts and
+`unknown_digest` refusals passed as `heldRefs`, plus any row whose digest is unknown here),
+`verified` is the rest, and `clean` is true only when nothing is held, skipped, missing or
+extra. Issues and results carry legacy ids, rule codes and numbers only, never row
 text, and importing sends nothing (no notices, outbox rows or emails).
 
 ## Screens: Track, History and Appeals (C-11 to C-13)

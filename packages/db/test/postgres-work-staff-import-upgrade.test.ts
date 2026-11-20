@@ -16,18 +16,25 @@ const url = process.env.DATABASE_URL;
 const MIGRATIONS = fileURLToPath(new URL("../migrations/", import.meta.resolve("@studenthub/db")));
 let admin: pg.Pool;
 let pool: pg.Pool;
+const schemas: { schema: string; pool: pg.Pool }[] = [];
+/** A scratch schema of its own, dropped after the file. */
+async function scratch(): Promise<pg.Pool> {
+  const schema = `work_staff_upgrade_${randomUUID().replaceAll("-", "")}`;
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const p = new pg.Pool({ connectionString: url, options: `-c search_path=${schema} -c statement_timeout=8000` });
+  schemas.push({ schema, pool: p });
+  return p;
+}
 let schema: string;
 
 before(async () => {
   assert.ok(url, "DATABASE_URL must point to a disposable scratch PostgreSQL database");
   admin = new pg.Pool({ connectionString: url });
-  schema = `work_staff_upgrade_${randomUUID().replaceAll("-", "")}`;
-  await admin.query(`CREATE SCHEMA ${schema}`);
-  pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema} -c statement_timeout=8000` });
+  pool = await scratch();
+  schema = schemas[0]!.schema;
 });
 after(async () => {
-  await pool?.end();
-  if (schema) await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+  for (const s of schemas) { await s.pool.end(); await admin.query(`DROP SCHEMA ${s.schema} CASCADE`); }
   await admin?.end();
 });
 
@@ -86,5 +93,32 @@ test("STAFF_IMPORT_UPGRADE 0508 applies over rows imported before it; their dige
   const fresh = { legacyRef: "answer_new", staffPrincipalId: staff, questionLegacyRef: "question_old", question: "Plan?", answer: "Visit", workDate: "2031-05-02", createdAt: "2031-05-02T05:30:00.000Z" };
   assert.equal((await imports.importStandupAnswers([fresh])).inserted, 1);
   assert.equal((await imports.importStandupAnswers([fresh])).unchanged, 1);
-  assert.equal((await imports.importStandupAnswers([{ ...fresh, answer: "Other" }])).conflicts.length, 1);
+  const conflict = await imports.importStandupAnswers([{ ...fresh, answer: "Other" }]);
+  assert.equal(conflict.conflicts.length, 1);
+
+  // Reconciliation keeps ID coverage apart from content: the unknown row (held here, not passed by the run),
+  // the real conflict (passed by the run) and an exact replay are all covered, but only the replay is verified.
+  const replay = { ...fresh, legacyRef: "answer_replay" };
+  assert.equal((await imports.importStandupAnswers([replay])).inserted, 1);
+  assert.equal((await imports.importStandupAnswers([replay])).unchanged, 1);
+  const recon = await imports.reconcileStaffImport("work_standup_answers", ["answer_old", "answer_new", "answer_replay", "answer_refused", "answer_gap"],
+    ["answer_refused"], conflict.conflicts.map((c) => c.legacyRef));
+  assert.deepEqual({ ...recon }, { table: "work_standup_answers", legacy: 5, imported: 3, missing: ["answer_gap"], skipped: ["answer_refused"], extra: [],
+    covered: 3, held: ["answer_new", "answer_old"], verified: 1, clean: false });
+});
+
+test("STAFF_IMPORT_RECONCILE a table is clean only when every legacy ref is imported and content-accepted", async () => {
+  const fresh = await scratch();
+  await runMigrations(fresh);
+  const imports = new PostgresWorkImportStore(fresh);
+  const q = (legacyRef: string, question: string) => ({ legacyRef, question, createdAt: "2031-05-01T05:00:00.000Z", updatedAt: "2031-05-01T05:00:00.000Z" });
+  assert.equal((await imports.importStandupQuestions([q("question_a", "Plan?"), q("question_b", "Blockers?")])).inserted, 2);
+  const ok = await imports.reconcileStaffImport("work_standup_questions", ["question_a", "question_b"]);
+  assert.deepEqual([ok.covered, ok.held, ok.verified, ok.clean], [2, [], 2, true]);
+  // One content hold, one explained skip, one gap or one extra each spoil it.
+  const again = await imports.importStandupQuestions([q("question_a", "Plan today?")]);
+  assert.equal((await imports.reconcileStaffImport("work_standup_questions", ["question_a", "question_b"], [], again.conflicts.map((c) => c.legacyRef))).clean, false);
+  assert.equal((await imports.reconcileStaffImport("work_standup_questions", ["question_a", "question_b", "question_c"], ["question_c"])).clean, false);
+  assert.equal((await imports.reconcileStaffImport("work_standup_questions", ["question_a", "question_b", "question_c"])).clean, false);
+  assert.equal((await imports.reconcileStaffImport("work_standup_questions", ["question_a"])).clean, false);
 });
