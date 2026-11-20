@@ -104,14 +104,14 @@ test("permission denial and act-as expose no membership details and mutate nothi
   for (const actingAs of [false, true]) {
     const store = new MemoryStore(); store.allowed = actingAs; store.unassigned = ["private-person"];
     const before = structuredClone(store.data);
-    assert.deepEqual(await new TransferLifecycleService(store, clock).transition({ ...actor, actingAs }, "transfer-1", "lock"), { kind: "refused", code: "forbidden" });
+    assert.deepEqual(await new TransferLifecycleService(store, clock).transition({ ...actor, actingAs }, "transfer-1", "lock"), { kind: "refused", code: actingAs ? "forbidden" : "not_found" });
     assert.deepEqual(store.data, before);
   }
 });
 test("admin revert/unlock must be authorized as separate capabilities", async () => {
   for (const action of ["admin_revert", "admin_unlock"] as const) {
     const store = new MemoryStore("payment_sent");
-    assert.deepEqual(await new TransferLifecycleService(store, clock).transition(actor, "transfer-1", action), { kind: "refused", code: "forbidden" });
+    assert.deepEqual(await new TransferLifecycleService(store, clock).transition(actor, "transfer-1", action), { kind: "refused", code: "not_found" });
     assert.equal(store.data.transfer.status, "payment_sent");
   }
 });
@@ -155,4 +155,20 @@ test("unknown command and empty identifiers refuse without touching state", asyn
     assert.deepEqual(await service.transition(actor, id!, action as TransferAction), { kind: "refused", code: "invalid_input" });
   }
   assert.equal(store.data.history.length, 0);
+});
+
+test("an authorized command retains its original identity while awaiting a transaction", async () => {
+  const input = { ...actor };
+  const backing = new MemoryStore("draft");
+  const delayed: TransferLifecycleStore = {
+    async transaction<T>(work: (tx: TransferLifecycleTransaction) => Promise<T>): Promise<T> {
+      await Promise.resolve();
+      return backing.transaction(work);
+    },
+  };
+  const operation = new TransferLifecycleService(delayed, clock).transition(input, "transfer-1", "lock");
+  input.principalId = "later-local-edit";
+  const result = await operation;
+  assert.equal(result.kind, "changed");
+  assert.equal(backing.data.history[0]?.actorId, actor.principalId);
 });

@@ -138,8 +138,8 @@ test("F3_PG authorized admin unlock preserves the company and records each exact
     assert.equal((await s.transition(actor, id, "admin_unlock")).kind, "changed");
     const transfer = (await pool.query("SELECT company_id,status,version FROM pay_transfers WHERE id=$1", [id])).rows[0];
     assert.deepEqual(transfer, { company_id: company, status: "draft", version: previous.version + 1 });
-    const witness = (await pool.query("SELECT from_status,to_status,unlock_source_version FROM pay_transfer_lifecycle_history WHERE transfer_id=$1 AND action='admin_unlock' ORDER BY id DESC LIMIT 1", [id])).rows[0];
-    assert.deepEqual(witness, { from_status: from, to_status: "draft", unlock_source_version: previous.version });
+    const witness = (await pool.query("SELECT from_status,to_status,source_version FROM pay_transfer_lifecycle_history WHERE transfer_id=$1 AND action='admin_unlock' ORDER BY id DESC LIMIT 1", [id])).rows[0];
+    assert.deepEqual(witness, { from_status: from, to_status: "draft", source_version: previous.version });
   }
   assert.equal((await snapshot(id)).effects.length, 1, "relock preserves the synthetic effect identity");
 });
@@ -162,7 +162,7 @@ test("F3_PG received date, complete guard, history immutable and relock reuse", 
 test("F3_PG denied policy and absent current membership have no effects", async () => {
   const id = await draft(), original = await snapshot(id);
   const denied = new TransferLifecycleService(new PostgresTransferLifecycleStore(a, { ...policy, authorize: async () => false }, effects()), clock);
-  assert.deepEqual(await denied.transition(actor, id, "lock"), { kind: "refused", code: "forbidden" });
+  assert.deepEqual(await denied.transition(actor, id, "lock"), { kind: "refused", code: "not_found" });
   assert.deepEqual(await snapshot(id), original);
   await pool.query("UPDATE work_assignments SET end_date='2026-11-18' WHERE person_principal_id=$1", [person]);
   try {
@@ -195,4 +195,21 @@ test("F3_PG F5 same-client paid mutation and reopening commit or roll back toget
     assert.equal((await pool.query("SELECT paid FROM pay_transfer_lines WHERE transfer_id=$1", [id])).rows[0].paid, fail);
   }
   assert.equal((await snapshot(id)).transfer.status, "distributing");
+});
+
+test("F3_PG ordinary cancel, administrative revert and soft delete keep exact audit versions", async () => {
+  const s = service(a, effects());
+  for (const actions of [["cancel", "delete"], ["lock", "payment_sent", "admin_revert", "delete"]] as const) {
+    const id = await draft();
+    const startVersion = (await snapshot(id)).transfer.version;
+    for (const action of actions) assert.equal((await s.transition(actor, id, action)).kind, "changed");
+    const versioned = await pool.query(
+      "SELECT action,source_version,deleted FROM pay_transfer_lifecycle_history WHERE transfer_id=$1 ORDER BY id", [id]);
+    assert.deepEqual(versioned.rows, actions.map((action, index) => ({
+      action, source_version: startVersion + index, deleted: action === "delete",
+    })));
+    const end = (await snapshot(id)).transfer;
+    assert.equal(end.deleted, true);
+    assert.equal(end.version, startVersion + actions.length);
+  }
 });

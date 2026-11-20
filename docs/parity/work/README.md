@@ -29,6 +29,7 @@ company `StoreController` and `StoreAssignmentRequestController`, candidate
 | Open session check only at the current store | One open session per person everywhere (unique index plus overlap trigger) | Second-store defect, double-tap race |
 | `total_time` from a BEFORE UPDATE trigger, negative or null on manual insert | Generated `duration_seconds`, whole seconds truncated like `TIMESTAMPDIFF(SECOND)`; end before start refused | Bad-input defect |
 | Discard and staff delete were hard deletes | Soft delete with who and why; restore possible | W-7 contract |
+| Rows could be wiped with a delete or a `TRUNCATE` | Placements, sessions, decisions, appeals, appeal updates, staff time and the event log refuse `DELETE`, and every one of those tables refuses `TRUNCATE`, directly or by a `CASCADE` from `principals` or `organizations` | Audit; history is never lost |
 | Day totals stored on `candidate_working_date`, rejected time inside `total_time`, day status = last session's status, two repair crons | `work_day_totals` view: approved, pending and rejected seconds and counts, open count; nothing stored, nothing to repair | WK-F3/F4 crons retired; drift impossible by construction |
 | A session past midnight is dated by its start | Same, in Asia/Kuwait | Parity |
 | Save and bulk-save decided any company's sessions (no ownership check) | Every decision is scoped: staff above the company, the company's owners and recruiters (subtree aware), or a store manager for their own store only | Ownership defect |
@@ -177,7 +178,7 @@ StudentHub's own staff time their day here (hours are hours). `StaffTimeService`
 (`packages/work/src/staff-time.ts`) over `work_staff_sessions` (migration 0505):
 
 - Any operator staff member (staff or admin on the operator organization) starts and ends their
-  day at `/me/work`, the session part of A-14. A second start the same Kuwait day returns the open
+  day at `/me/work`, the session part of A-14 (the stand-up is below). A second start the same Kuwait day returns the open
   session, as legacy did; starting again after an end (Start my day) opens a second session that day, and another end without one is refused (`not_working`). The minutes come from the
   stored start and end (legacy stored only the minutes, from the app server's clock).
 - A session left open on an earlier day stays open for good, as in legacy; the staff member's
@@ -191,6 +192,36 @@ StudentHub's own staff time their day here (hours are hours). `StaffTimeService`
 
 The staff hours export is under Exports below. The legacy rows are imported with the cutover
 lane's importer (M-5).
+
+## Daily stand-up (legacy daily_standup_question / daily_standup_answer)
+
+The stand-up part of A-14. `StandupService` (`packages/work/src/standup.ts`) over
+`work_standup_questions` and `work_standup_answers` (migration 0506):
+
+- While their day is in progress, `/me/work` asks an operator staff member the next question they
+  haven't answered today, one at a time, as legacy's staff home did beside the session timer. Their
+  answers today are listed under it. A question is answered once per staff member and Kuwait day;
+  a second answer, or two at once, is refused (`already_answered`). Answers are 1 to 4,000
+  characters.
+- Both rules hold for an answer posted straight to `/me/work/standup`, not only for the form: with
+  no staff session in progress today the answer is refused (`not_working`), and an answer to any
+  question but the next one is refused (`out_of_order`). The store checks both in the answer's own
+  transaction, holding the session and the question `FOR SHARE`, so the day can't end and the
+  question can't be retired under it.
+- Operator admins keep the questions at `/work/staff-time`'s "Stand-up" link (`/work/standup`):
+  add, reword, stop asking. Questions are asked in the order they were added; legacy had no order.
+  Legacy deleted a question; here it is retired, so its answers stay. Rewording keeps the wording
+  each answer was given to.
+- The same page lists the answers on a date, by staff member (one staff member optional, 100 a
+  page), and the operator staff who answered nothing that day (legacy list-inactive).
+- The tables refuse edits and deletes of answers, deletes of questions, and an empty answer.
+  Imported answers (`source = 'import'`, `legacy_ref`) may repeat a question on a day, as legacy
+  allowed; answers given here may not.
+
+Legacy's emailed stand-up report (`standupReport`) was switched off in its cron and is not ported.
+The legacy rows (`daily_standup_question` → `work_standup_questions.legacy_ref`,
+`daily_standup_answer` → `work_standup_answers` with `source = 'import'`) are for the cutover
+lane's importer.
 
 ## Exports (P-1)
 
@@ -232,7 +263,7 @@ from `/exports/<id>` under the kind's name. Files are CSV; legacy wrote Excel.
 
 ## Not yet here
 
-- A-14 (staff my work: standup, leave, expenses and their own sessions); it depends on the P1 and F4 lanes.
+- The rest of A-14 (staff leave and expenses); it depends on the pay lane's settlement (P1, F4).
 - A session detail page for M-03 (`/store/:storeId/time-approvals/:sessionId`); each session is decided in the queue for now.
 - Arabic copy for the work screens.
 - A reply box for the person on an appeal: the contract lists `appeals.self.comment`, but W-6 lets only staff post updates, as legacy did. This is to be confirmed with the legacy rules before it is added.

@@ -89,7 +89,9 @@ export class TransferLifecycleService {
     if (!actor?.principalId?.trim() || !transferId?.trim() || !Object.hasOwn(targets, action)) {
       return { kind: "refused", code: "invalid_input" };
     }
-    return this.store.transaction((tx) => this.transitionInTransaction(tx, actor, transferId, action));
+    const identity = Object.freeze({ principalId: actor.principalId, actingAs: actor.actingAs });
+    if (identity.actingAs !== false) return { kind: "refused", code: "forbidden" };
+    return this.store.transaction((tx) => this.transitionInTransaction(tx, identity, transferId, action));
   }
 
   /** F-5 can reuse its existing transaction after updating a paid flag. */
@@ -97,11 +99,12 @@ export class TransferLifecycleService {
       if (!actor?.principalId?.trim() || !transferId?.trim() || !Object.hasOwn(targets, action)) {
         return { kind: "refused", code: "invalid_input" };
       }
-      if (actor.actingAs !== false) return { kind: "refused", code: "forbidden" };
+      const identity = Object.freeze({ principalId: actor.principalId, actingAs: actor.actingAs });
+      if (identity.actingAs !== false) return { kind: "refused", code: "forbidden" };
       const transfer = await tx.lockTransfer(transferId);
       if (!transfer || transfer.deleted) return { kind: "refused", code: "not_found" };
       // Permission is checked before disclosing transition or person details.
-      if (!await tx.authorize(actor, transfer, action)) return { kind: "refused", code: "forbidden" };
+      if (!await tx.authorize(identity, transfer, action)) return { kind: "refused", code: "not_found" };
       const to = transferTransition(transfer.status, action);
       if (to === undefined) return { kind: "refused", code: "invalid_transition" };
       if (action === "lock") {
@@ -117,16 +120,15 @@ export class TransferLifecycleService {
       }
       const instant = this.now();
       const change: LifecycleChange = {
-        transferId: transfer.id, actorId: actor.principalId, action,
+        transferId: transfer.id, actorId: identity.principalId, action,
         from: transfer.status, to, deleted: action === "delete", occurredAt: instant.toISOString(),
       };
       if (action === "lock") await tx.ensureChildrenAndInvoices(transfer.id);
       if (action === "payment_received") await tx.markInvoicesPaid(transfer.id);
-      // The DB guard recognizes only an unlock witness written in this transaction.
-      if (action === "admin_unlock") await tx.appendHistory(change);
+      // Record the exact source state/version in the same transaction before updating.
+      await tx.appendHistory(change);
       if (action === "delete") await tx.softDeleteGroup(transfer.id);
       else await tx.setState(transfer.id, to, action === "payment_received" ? paymentReceivedDate(instant) : undefined);
-      if (action !== "admin_unlock") await tx.appendHistory(change);
       return { kind: "changed", change };
   }
 }

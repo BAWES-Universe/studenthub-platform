@@ -32,6 +32,7 @@ No permission matrix is guessed. No default/no-op billing adapter is supplied.
   after a real unpaid change. Do not nest the outer `transition` transaction.
 - Access: authorize every command in its transaction, company-scoped; map admin
   revert/unlock separately. Trusted actor must explicitly have `actingAs:false`.
+  Scoped denial is returned as not found; forbidden is reserved for act-as.
   Session authentication, fresh grants and verified role mapping remain adapter
   obligations. Do not wire this to an unchecked public endpoint.
 - Audit: appendHistory and all cascade/invoice/state writes commit together;
@@ -39,7 +40,7 @@ No permission matrix is guessed. No default/no-op billing adapter is supplied.
 
 ## Proven locally / not yet proven
 
-68 synthetic tests: all 54 state/action pairs, permission and act-as denial,
+69 synthetic tests: all 54 state/action pairs, permission and act-as denial,
 current membership, paid guards, Kuwait date boundary, injected late rollback
 and retry, serialized double lock, relock identity preservation, delete/receipt
 rollback. The serial in-memory transactional double proves orchestration calls
@@ -63,11 +64,12 @@ Root package/wiring remains integrator-owned. Only the F-3 migration 0562 is use
 F3 now adds `packages/db/src/payroll/postgres-transfer-lifecycle-store.ts` and
 `0562_pay_transfer_lifecycle.sql`. The adapter locks the actual F1 parent row,
 updates its optimistic version, stores Kuwait receipt date, and appends immutable
-history in the same transaction. An authorized admin unlock records its witness
-before changing state, binding the same transfer, source state/version and DB
-transaction. The guard rejects company reassignment independently and limits
-the unlock update to status and version; the witness is not a replacement for
-Access policy or a boundary against a role allowed to forge history. No child/invoice schema is invented. Missing
+history in the same transaction. Each authorized lifecycle change records its
+witness before changing state, binding the same transfer, source state/version
+and DB transaction. The database checks the same transition matrix, retains audit
+rows, rejects company reassignment and restoration, and restricts the mutation to
+its lifecycle fields. The witness is not a replacement for Access policy or a
+boundary against a role allowed to forge history. No child/invoice schema is invented. Missing
 billing effects explicitly throw `pay_lifecycle_billing_unavailable`; lock,
 payment-received and deletion cannot report false success without that adapter.
 Access/current-membership policy is mandatory and transaction-bound. Its eventual
@@ -75,7 +77,9 @@ production implementation must preserve current membership consistently (includi
 appropriate locks against concurrent assignment changes), not merely copy the
 synthetic test policy. Administrative capability mapping remains unwired.
 
-Disposable PostgreSQL 17.11: **8/8 passed**, no skips. Exact F1 0550 and production
+Prior revision, disposable PostgreSQL 17.11: **8/8 passed**, no skips.
+Re-run hosted PostgreSQL on the revised witness/retention change before review.
+Exact F1 0550 and production
 F1 line writer used, all main migrations applied on a new empty local database.
 Two separately named clients were observed BOTH waiting on database locks before
 release: one transition, one refusal, one history/effect row. F1 append was also
