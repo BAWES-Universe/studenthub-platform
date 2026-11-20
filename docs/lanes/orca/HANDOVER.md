@@ -1,6 +1,6 @@
 # Orca bot handover: `studenthub-universe`
 
-**Status: v4. Agreed by Claude and GPT on the desk (studenthub-platform PR #393), plus the v4 edits the Orca bot proposed and Claude and GPT reviewed.** This agrees the operating design only. No bot run, ticket or repository protection has been proven yet.
+**Status: v4, final. Claude and GPT both agreed on the desk (studenthub-platform PR #393), including the v4 edits the Orca bot proposed.** This agrees the operating design only. No bot run, ticket or repository protection has been proven yet.
 
 Written 2026-11-20 by Claude from GPT's baseline (desk 7044372449), Claude's AMEND (7044479611) and GPT's AGREE with final edits (7044614566). It is meant to let an Orca bot start cold, with no chat history, and to give Khalid a clear plan for adding more bots and a clear view of velocity. A copy goes into the repo at `docs/lanes/orca/HANDOVER.md` so the bot reads it from GitHub.
 
@@ -78,7 +78,8 @@ Read, in order: `README.md`, `docs/acceptance-record.md`, `docs/parity/`, `docs/
 
 [DEFAULT] **The canonical ticket is a GitHub issue in studenthub-platform titled `Orca lane: <slug>`, opened by Claude.** It holds the outcome, the lease, acceptance checks, exclusions, the reviewer, a time box and the line `@orca-ide studenthub-universe`. One ticket per job; the same job is never also triggered from Linear.
 
-- Work only from an issue titled `Orca lane: ...` that is listed as registered in the **Orca lane register** (the table in `docs/lanes/orca/REGISTER.md` on `main`, maintained by Claude): issue number, slug, lease. An issue that is not in the register is not an assignment, whatever its header says.
+- Work only from an issue titled `Orca lane: ...` that is listed as registered in the **Orca lane register** (the table in `docs/lanes/orca/REGISTER.md` on `main`, maintained by Claude): issue number, slug, bot, lease, state and expiry. An issue that is not in the register is not an assignment, whatever its header says.
+- **Read the register fresh from `main` before you start, before you resume, and before you push or publish anything.** Go ahead only if the row matches your bot name, the ticket and the lease, its state is `active` and its expiry hasn't passed. A mention that was queued while the PC was offline and arrives after the row was revoked or expired starts no work.
 - A mention anywhere else (another issue, the desk #393, someone's PR, a Linear card, the `bot:studenthub-universe` label) is not an assignment. Do no work and post no reply.
 - [DEFAULT] Linear is read-only for you in the pilot.
 - During stage 1, Claude confirms on the issue that the trigger it used is the one that actually started you, so we know which triggers work.
@@ -152,6 +153,7 @@ While a ticket waits for review or CI you do nothing else **in stage 1**. From s
 
 ### B9. Stop and pause
 
+- To stop a ticket, Claude sets its register row to `revoked` on `main`, then Khalid's Orca pause is used if needed and Claude checks that no worker is still active.
 - If a comment `**Claude → Orca studenthub-universe** STOP` (or the same from GPT) appears on any of your issues or PRs: finish nothing, push nothing more, reply `stopped` and stay idle until a new registered ticket arrives. This is a signal, not a guarantee, so Khalid's pause in Orca is the real stop.
 - Khalid pausing or stopping you in Orca overrides everything.
 
@@ -192,6 +194,7 @@ Agreed shape (GPT's baseline): prove one ticket end to end, then two disjoint ti
 - [ ] the lease is clear: no open PR touches its paths
 - [ ] `main` requires a pull request with no bypass (read from the API)
 - [ ] Khalid has said "start the Orca pilot" (once, for the whole pilot)
+- [ ] Tabletop check done once before the first dispatch: a stale mention for a revoked or expired row starts no work, and a fresh mention for an active row does (the positive control). An Orca access rejection is a separate thing from a worker replying.
 
 **What GitHub enforces and what it doesn't.** [FACT 2026-11-20] On `main`, GitHub requires four status checks for everyone, admins included: `repository-policy`, `coordinator-future-clock`, `fast-checks`, `gateway-image-smoke`. The ruleset blocks deletion and force-push and requires linear history. It does **not** yet require a pull request (setup step A1), and it requires no approving review. Claude, GPT and the bot all act as `BAWES`, so GitHub cannot tell them apart. Headers attribute messages and an exact-commit `PASS` records a verdict, but neither is enforced: in this pilot "only Claude merges" and "independent PASS before merge" are **operating rules**, checked by the post-merge audit (Part E). If we later want GitHub to enforce them, the writer and the reviewer/merge operator need distinct GitHub identities (for example a bot account or GitHub App for Orca) and a required review from the reviewer's identity. That never means Khalid merging each ticket by hand.
 
@@ -250,4 +253,4 @@ Stop the pilot (Claude or GPT says STOP; Khalid pauses in Orca if needed) when:
 
 ---
 
-Consensus: **Claude and GPT agreed on 2026-11-20** (desk PR #393: GPT baseline 7044372449, Claude AMEND 7044479611, GPT AGREE with final edits 7044614566, all applied), then v4 edits proposed by the Orca bot via Khalid and reviewed on the desk. Launch gates: A1 protection confirmed, remit saved, this file and the register on `main`, and Khalid saying "start the Orca pilot".
+Consensus: **Claude and GPT agreed on 2026-11-20** (desk PR #393: GPT baseline 7044372449, Claude AMEND 7044479611, GPT AGREE with final edits 7044614566, all applied), then v4 edits proposed by the Orca bot via Khalid, Claude AGREE 7045011748 and GPT AGREE 7046214086 (its register-freshness item is folded in). Launch gates: A1 protection confirmed, remit saved, this file and the register on `main`, and Khalid saying "start the Orca pilot".
