@@ -123,8 +123,13 @@ test("REPORTS_ID_CARDS_PG an assignment end being written while a card is issued
   try {
     await other.query("BEGIN");
     await other.query("UPDATE work_assignments SET end_date = '2026-11-18' WHERE person_principal_id = $1", [p]);
+    const updater = (await other.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
     const pending = store.write("issue", [p], DAY, "2027-02-19", creator);
-    await new Promise(r => setTimeout(r, 200));
+    // Commit only once the issue is seen waiting on the updater's row lock; without the share lock it never waits and this fails.
+    for (let deadline = Date.now() + 5000; ; await new Promise(r => setTimeout(r, 20))) {
+      if ((await pool.query("SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))", [updater])).rowCount) break;
+      if (Date.now() > deadline) assert.fail("issuing a card never waited for the assignment being ended");
+    }
     await other.query("COMMIT");
     assert.deepEqual(await pending, [{ personId: p, code: "not_assigned" }]);
   } finally { other.release(); }
