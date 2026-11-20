@@ -1,6 +1,7 @@
 // Internal staff time screens (legacy staff_work_session):
-// - /me/work: a staff member starts and ends their day (the session part of
-//   A-14; the stand-up, leave and expenses there are other lanes');
+// - /me/work: a staff member starts and ends their day and answers the
+//   stand-up (standup-pages.ts) while it is in progress (the session and
+//   stand-up parts of A-14; leave and expenses wait on the pay lane);
 // - /work/staff-time: operator admins see every staff member's days over a
 //   range and who has not started on a date (legacy admin list and
 //   list-inactive).
@@ -12,8 +13,9 @@ import { kuwaitDate, type StaffDay, type StaffDayCursor, type StaffSession } fro
 import type { WorkHttpServices } from "./http.js";
 import { clock, esc, longDate, notice, plain, readForm, redirect, sessionCookie, tooLarge, write } from "./pages.js";
 import { pageDocument } from "../web-ui.js";
+import { standupCard, STANDUP_FORM_LIMIT, STANDUP_PAGE, STANDUP_REFUSED } from "./standup-pages.js";
 
-const MINE = /^\/me\/work(?:\/(start|end))?$/;
+const MINE = /^\/me\/work(?:\/(start|end|standup))?$/;
 const ADMIN = "/work/staff-time";
 
 /** Legacy showed minutes and hours to three places; "2h 05m" reads better and keeps the minutes. */
@@ -43,11 +45,12 @@ export async function renderMine(services: WorkHttpServices, actor: string, mess
   const days = recent.kind === "days" && recent.days.length
     ? `<ul>${recent.days.map((d) => `<li>${esc(longDate(d.workDate))}: ${d.open && d.sessions === 1 ? "not ended" : minutesText(d.minutes)}${d.open && d.sessions > 1 ? ", one session not ended" : ""}</li>`).join("")}</ul>`
     : `<p>No days in the last 30 days.</p>`;
+  const standup = await standupCard(services, actor, open !== undefined);
   return shell("My work day", `${message ? notice(message.kind, message.text) : ""}<section class="p-card" aria-labelledby="today-heading"><h2 id="today-heading">${esc(longDate(today.workDate))}</h2>${list}${action}</section>
-<section class="p-card" aria-labelledby="recent-heading"><h2 id="recent-heading">Last 30 days</h2>${days}</section>`);
+${standup}<section class="p-card" aria-labelledby="recent-heading"><h2 id="recent-heading">Last 30 days</h2>${days}</section>`);
 }
 
-const DONE: Readonly<Record<string, string>> = { started: "Your day has started.", ended: "Your day has ended." };
+const DONE: Readonly<Record<string, string>> = { started: "Your day has started.", ended: "Your day has ended.", answered: "Answer saved." };
 
 /** Handles /me/work and /me/work/{start,end}; false for any other path. */
 export async function handleMyWorkPages(req: IncomingMessage, res: ServerResponse, services: WorkHttpServices | undefined, origin: string | undefined): Promise<boolean> {
@@ -69,6 +72,17 @@ export async function handleMyWorkPages(req: IncomingMessage, res: ServerRespons
     }
     if (req.method !== "POST" || action === undefined) { req.resume(); write(res, ...plain(405, "Not allowed", "This page can't do that.")); return true; }
     if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); write(res, ...plain(403, "Request refused", "We could not verify this request.")); return true; }
+    if (action === "standup") {
+      if (!services.standup) { req.resume(); write(res, ...plain(503, "Work is unavailable", "The stand-up isn't switched on here yet.")); return true; }
+      const form = await readForm(req, ["question", "answer"], STANDUP_FORM_LIMIT);
+      if (!form) { write(res, ...plain(400, "Request not valid", "That form isn't one this page sends.")); return true; }
+      const answered = await services.standup.answer(actor, form.question, form.answer);
+      if (answered.kind === "answered") { redirect(res, "/me/work?done=answered"); return true; }
+      if (answered.code === "forbidden") { forbidden(); return true; }
+      const html = await renderMine(services, actor, { kind: "error", text: STANDUP_REFUSED[answered.code] ?? "That answer wasn't saved." });
+      if (html) write(res, answered.code === "invalid_input" ? 400 : 409, html); else forbidden();
+      return true;
+    }
     if (!(await readForm(req, [], 1024))) { write(res, ...plain(400, "Request not valid", "This form sends nothing.")); return true; }
     const result = action === "start" ? await services.staffTime.start(actor) : await services.staffTime.end(actor);
     if (result.kind === "started" || result.kind === "ended") { redirect(res, `/me/work?done=${result.kind}`); return true; }
@@ -116,7 +130,8 @@ ${inactive.staffIds.length ? `<ul>${inactive.staffIds.map((id) => `<li>${who(id)
   // The export (legacy download-list-excel) posts to the shared export route with these filters.
   const exportQuery = new URLSearchParams({ from, to, ...(staffId ? { staff: staffId } : {}) }).toString();
   const exportForm = `<form method="post" action="/exports/work-staff-sessions?${esc(exportQuery)}" class="p-card" aria-label="Export"><button type="submit">Export staff hours (CSV)</button></form>`;
-  return { status: 200, html: shell("Staff time", `${filter}${exportForm}<section class="p-card">${table}</section>${more}${absent}`) };
+  const standup = services.standup ? `<nav class="p-card"><a href="${STANDUP_PAGE}?date=${esc(inactive.workDate)}">Stand-up questions and answers</a></nav>` : "";
+  return { status: 200, html: shell("Staff time", `${filter}${exportForm}<section class="p-card">${table}</section>${more}${absent}${standup}`) };
 }
 
 /** Handles /work/staff-time; false for any other path. */
