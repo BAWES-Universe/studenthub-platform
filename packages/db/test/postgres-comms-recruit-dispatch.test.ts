@@ -222,25 +222,30 @@ test("COMMS_RECRUIT_DISPATCH_PG a failed dispatch writes nothing, delivery still
   assert.deepEqual(port.sent.map(m => m.to), [`${other}@example.invalid`, `${person}@example.invalid`]);
 });
 
-test("COMMS_RECRUIT_DISPATCH_PG behind a backlog larger than one delivery batch, the invitation email is delayed to a later run, never dropped or doubled", async () => {
+test("COMMS_RECRUIT_DISPATCH_PG behind a backlog of older mail larger than one delivery batch, the invitation email waits its turn and goes out on the next run, exactly once", async () => {
   await drain();
   await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
-  const req = await request("Backlog Co", "Clerk"), backlog: string[] = [];
-  for (let i = 0; i < 40; i++) {
-    const who = await principal(`backlog${i}`), inv = await invitation(req.id, who, "sent");
-    await pool.query("INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key) VALUES('recruit.invitation', $1, $2::jsonb, $3)",
-      [who, JSON.stringify({ position: "Clerk", company: "Backlog Co" }), `recruit.invitation:${inv}`]);
+  // 25 older due emails of another class share the queue: exactly one default batch.
+  const backlog: string[] = [];
+  for (let i = 0; i < 25; i++) {
+    const who = await principal(`backlog${i}`);
+    await pool.query(`INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key, next_attempt_at)
+      VALUES('account.notice', $1, $2::jsonb, $3, now() - interval '1 hour' + make_interval(secs => $4::int))`,
+      [who, JSON.stringify({ heading: "Notice", message: "Older mail." }), `rd-backlog:${who}`, i]);
     backlog.push(`${who}@example.invalid`);
   }
-  const person = await principal("behind"), inv = await invitation(req.id, person, "sent");
+  const req = await request("Backlog Co", "Clerk"), person = await principal("behind"), inv = await invitation(req.id, person, "sent");
   await outbox("invitation.sent", person, req.id, inv);
   const port = new FakeEmailPort(), run = workerRun(port), mine = `${person}@example.invalid`;
-  const ours = () => port.sent.filter(m => m.to === mine || backlog.includes(m.to)).length;
+  const state = async () => (await pool.query("SELECT state FROM email_outbox WHERE idempotency_key=$1", [`recruit.invitation:${inv}`])).rows[0]?.state;
   await run();
-  assert.ok(port.sent.length <= 25 && ours() < 41, "one run delivers at most one default batch");
-  assert.ok(["pending", "sent"].includes((await pool.query("SELECT state FROM email_outbox WHERE idempotency_key=$1", [`recruit.invitation:${inv}`])).rows[0]?.state), "queued in the first run");
-  for (let runs = 1; runs < 5 && ours() < 41; runs++) await run();
-  assert.equal(ours(), 41, "every queued email went out");
-  assert.equal(port.sent.filter(m => m.to === mine).length, 1, "the invitation email was sent exactly once");
-  assert.equal(new Set(port.sent.filter(m => backlog.includes(m.to)).map(m => m.to)).size, 40);
+  assert.deepEqual(port.sent.filter(m => backlog.includes(m.to)).map(m => m.to).sort(), [...backlog].sort(), "run 1 delivers the older batch");
+  assert.equal(await state(), "pending", "run 1 queued the invitation email behind it");
+  assert.equal(port.sent.filter(m => m.to === mine).length, 0, "and did not send it ahead of older mail");
+  await run();
+  assert.equal(await state(), "sent");
+  assert.equal(port.sent.filter(m => m.to === mine).length, 1, "run 2 sends it, once");
+  await run();
+  assert.equal(port.sent.filter(m => m.to === mine).length, 1, "and never again");
+  assert.equal(port.sent.filter(m => backlog.includes(m.to)).length, 25, "the older mail went out once each");
 });
