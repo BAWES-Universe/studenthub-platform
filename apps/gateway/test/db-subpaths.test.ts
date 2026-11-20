@@ -50,7 +50,7 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
   // Reports is subpath-only too (reports lane, migrations 0600 to 0649).
   assert.deepEqual(manifest.exports["./reports"], { types: "./dist/reports/index.d.ts", import: "./dist/reports/index.js" });
   const reports = await moduleFor("@studenthub/db/reports");
-  assert.deepEqual(Object.keys(reports).sort(), ["PostgresCatalogueListStore", "PostgresIdCardsStore", "PostgresMorningSummaryStore", "PostgresStatisticsStore", "idCardAssigned", "idCardExpiredCount", "idCardNeedsCount"]);
+  assert.deepEqual(Object.keys(reports).sort(), ["PostgresCatalogueListStore", "PostgresFiringSpikeStore", "PostgresIdCardsStore", "PostgresMorningSummaryStore", "PostgresStatisticsStore", "idCardAssigned", "idCardExpiredCount", "idCardNeedsCount"]);
   // Universe embed is subpath-only too (E2): the root golden stays unchanged.
   assert.deepEqual(manifest.exports["./universe"], {
     types: "./dist/universe/index.d.ts", import: "./dist/universe/index.js",

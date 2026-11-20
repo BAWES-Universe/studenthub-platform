@@ -60,7 +60,7 @@ function formPage(path: string): string {
   return `<main><h1>Message this person</h1><p>They will see it in their notifications.</p><form method="post" action="${esc(path)}"><input type="hidden" name="send_key" value="${randomUUID()}"><fieldset><legend>What to send</legend><label><input type="radio" name="kind" value="profile_photo_request" required> Ask for a profile photo</label><label><input type="radio" name="kind" value="civil_id_request"> Ask for their civil ID</label><label><input type="radio" name="kind" value="message"> Send a message</label></fieldset><label>Message (only for "Send a message", up to ${STAFF_MESSAGE_BODY_MAX} characters) <textarea name="body" maxlength="${STAFF_MESSAGE_BODY_MAX}"></textarea></label><button type="submit">Send</button></form></main>`;
 }
 
-const CLASS_LABELS: Record<string, string> = { "account.notice": "Account notice", "civil_id.result": "Civil ID result", "staff.morning_summary": "Morning summary" };
+const CLASS_LABELS: Record<string, string> = { "account.notice": "Account notice", "civil_id.result": "Civil ID result", "staff.morning_summary": "Morning summary", "staff.firing_spike": "Firing spike" };
 const STATE_LABELS: Record<string, string> = { pending: "Waiting to send", sending: "Sending", sent: "Sent", failed: "Not delivered", not_sent: "Not sent", suppressed: "Switched off by the person" };
 const iso = (d: Date | null) => d ? d.toISOString() : null;
 
