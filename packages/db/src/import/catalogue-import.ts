@@ -92,6 +92,9 @@ export class PostgresCatalogueImportStore {
     let broken = false;
     try {
       await client.query("BEGIN");
+      // One import batch at a time: without this, two runs could both find no map row for the
+      // same legacy id, and the one that commits second would misreport the row as refused.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('legacy-import:catalogue', 0))");
       for (const row of rows) {
         await client.query("SAVEPOINT catalogue_import");
         try {

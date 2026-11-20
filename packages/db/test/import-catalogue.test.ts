@@ -161,3 +161,16 @@ test("adoption takes only unmapped active items: a deleted row and a second lega
   assert.equal(map.get(`${run}1`), existing);
   assert.equal(map.has(`${run}2`), false);
 });
+
+test("two import runs at once are serialized: one inserts, the other finds the rows unchanged", async () => {
+  const run = tag();
+  const { items } = mapLegacyCatalogue("tag", Array.from({ length: 20 }, (_, i) => ({ tag_id: `${run}${String(i).padStart(2, "0")}`, tag: `${run} n${i}` })));
+  const other = new PostgresCatalogueImportStore({ connectionString: URL }, ACTOR);
+  try {
+    const [a, b] = await Promise.all([store.importItems(items, NOW), other.importItems(items, NOW)]);
+    assert.deepEqual([a.refused, b.refused], [[], []]);
+    assert.deepEqual([a.inserted + b.inserted, a.unchanged + b.unchanged], [20, 20]);
+  } finally {
+    await other.close();
+  }
+});
