@@ -2,26 +2,35 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test, { type TestContext } from "node:test";
-import { IdCardsService } from "../../../packages/reports/src/index.js";
-import type { IdCardAction, IdCardsStore, IdCardView } from "../../../packages/reports/src/index.js";
-import { handleIdCards } from "../src/reports/id-cards-http.js";
+import { randomUUID } from "node:crypto";
+import { cleanJpeg, IdCardsService, IdCardVerifier } from "../../../packages/reports/src/index.js";
+import { JPEG_WITH_GPS } from "../../../packages/reports/test/jpeg-fixtures.js";
+import type { IdCardAction, IdCardPhotoSource, IdCardsStore, IdCardView } from "../../../packages/reports/src/index.js";
+import type { DocumentState, DocumentStore } from "../../../packages/private-documents/src/index.js";
+import { personalPhotoSource, publicPersonalPhotoSource, type PersonalPhotoAuditPort } from "../../../packages/private-documents/src/personal-photo-source.js";
+import { handleIdCards, publicCheckLimit, PUBLIC_CHECK_LIMIT, type IdCardsHttpService } from "../src/reports/id-cards-http.js";
+import { idCardVerifyKey, wireStaffMessages } from "../src/comms/wiring.js";
+import { blockListOf, parseTrustedProxies } from "../../../packages/access/src/index.js";
+import type { IncomingMessage } from "node:http";
 
 const ORIGIN = "https://studenthub.example", STAFF = "staff-1", PERSON = "person-1";
 
-async function rig(t: TestContext) {
+async function rig(t: TestContext, photos?: IdCardPhotoSource) {
   const writes: { action: IdCardAction; people: readonly string[] }[] = [];
-  let refuse: { personId: string; code: "not_assigned" }[] = [];
+  let refuse: { personId: string; code: "not_assigned" }[] = [], assigned = true;
+  const verifier = new IdCardVerifier(Buffer.alloc(32, 9));
   const store: IdCardsStore = {
     async list(view: IdCardView) {
-      return view === "needs" ? { total: 1, rows: [{ personId: "p-<1>", name: "Alia <b>Badr</b>", employeeId: "C00042", cardNumber: null, expiresOn: null, placement: { company: "Sultan Center", store: "Avenues" } }] } : { total: 0, rows: [] };
+      return view === "needs" ? { total: 1, rows: [{ personId: "p-<1>", name: "Alia <b>Badr</b>", employeeId: "C00042", cardNumber: null, expiresOn: null, placement: { company: "Sultan Center", store: "Avenues" } }] } : view === "issued" ? { total: 1, rows: [{ personId: PERSON, name: "Alia Badr", employeeId: "C00042", cardNumber: 17, expiresOn: "2099-01-01", placement: { company: "Sultan Center", store: "Avenues" } }] } : { total: 0, rows: [] };
     },
     async write(action, people) { if (refuse.length) return refuse; writes.push({ action, people }); return []; },
     async card(person) { return person === PERSON ? { name: "Alia Badr", arabicName: "علياء بدر", employeeId: "C00042", cardNumber: 17, expiresOn: "2099-01-01", issuedAt: new Date("2026-11-19T00:00:00Z"), placement: { company: "Sultan Center", store: "Avenues" } } : undefined; },
     async counts() { return { needs: 0, expired: 0 }; },
+    async verify(n) { return n === 17 ? { personId: PERSON, name: "Alia <b>Badr</b>", company: "Sultan Center", expiresOn: "2099-01-01", assigned } : undefined; },
   };
   const authority = { async isStaff(id: string) { return id === STAFF; } };
-  const service = new IdCardsService(store, authority);
-  const http = { isStaff: authority.isStaff, list: service.list.bind(service), write: service.write.bind(service), own: service.own.bind(service) };
+  const service = new IdCardsService(store, authority, undefined, photos, verifier);
+  const http = { isStaff: authority.isStaff, list: service.list.bind(service), write: service.write.bind(service), own: service.own.bind(service), ownPdf: service.ownPdf.bind(service), staffPdf: service.staffPdf.bind(service), check: service.check.bind(service) };
   const server = createServer(async (req, res) => {
     if (!await handleIdCards(req, res, http, ORIGIN, async s => s === "s-staff" ? STAFF : s === "s-person" ? PERSON : s === "s-other" ? "other" : undefined)) { res.writeHead(418); res.end(); }
   });
@@ -31,7 +40,7 @@ async function rig(t: TestContext) {
   const get = (path: string, session?: string, accept = "application/json") => fetch(base + path, { headers: { ...(session ? { cookie: `__Host-studenthub_session=${session}` } : {}), accept } });
   const post = (body: string, session = "s-staff", headers: Record<string, string> = {}, method = "POST") => fetch(base + "/workspace/id-cards", { method, redirect: "manual",
     headers: { cookie: `__Host-studenthub_session=${session}`, origin: ORIGIN, "content-type": "application/x-www-form-urlencoded", accept: "application/json", ...headers }, body });
-  return { get, post, writes, base, refuseWith(r: typeof refuse) { refuse = r; } };
+  return { get, post, writes, base, verifier, refuseWith(r: typeof refuse) { refuse = r; }, leave() { assigned = false; } };
 }
 
 test("REPORTS_ID_CARDS_HTTP only staff reach the staff page; everyone else gets the same not found for every method", async (t) => {
@@ -62,6 +71,9 @@ test("REPORTS_ID_CARDS_HTTP staff see who needs a card, escaped, and a form to i
   assert.match(html, /Sultan Center, Avenues/);
   assert.match(html, /<button type="submit" name="action" value="issue">Issue cards<\/button>/);
   assert.match(await (await x.get("/workspace/id-cards?view=expired", "s-staff", "text/html")).text(), /No assigned person has an expired card/);
+  const issued = await (await x.get("/workspace/id-cards?view=issued", "s-staff", "text/html")).text();
+  assert.match(issued, /<button type="submit" name="action" value="renew">Renew cards<\/button> <button type="submit" name="action" value="issue">Re-issue cards<\/button>/, "people with a card can be renewed or re-issued");
+  assert.doesNotMatch(html, /Re-issue/, "the needs list only issues");
   for (const bad of ["?view=all", "?page=0", "?page=x", `?name=${"a".repeat(101)}`]) assert.equal((await x.get(`/workspace/id-cards${bad}`, "s-staff")).status, 400, bad);
 });
 
@@ -100,4 +112,220 @@ test("REPORTS_ID_CARDS_HTTP a person sees their own card, a note when they have 
   assert.match(await (await x.get("/profile/id-card", "s-other", "text/html")).text(), /You do not have a StudentHub ID card yet/);
   assert.equal((await x.get("/profile/id-card")).status, 401);
   assert.equal((await fetch(x.base + "/profile/id-card", { method: "POST", headers: { cookie: "__Host-studenthub_session=s-person" } })).status, 405);
+});
+
+test("REPORTS_ID_CARDS_PDF_HTTP the person downloads their card; staff print a batch; others get not found", async (t) => {
+  const x = await rig(t);
+  const own = await x.get("/profile/id-card.pdf", "s-person", "*/*");
+  assert.equal(own.status, 200);
+  assert.equal(own.headers.get("content-type"), "application/pdf");
+  assert.equal(own.headers.get("content-disposition"), 'attachment; filename="studenthub-id-card.pdf"');
+  assert.equal(own.headers.get("cache-control"), "no-store");
+  assert.ok(Buffer.from(await own.arrayBuffer()).subarray(0, 5).equals(Buffer.from("%PDF-")));
+  assert.equal((await x.get("/profile/id-card.pdf", "s-other")).status, 404, "no card, no PDF");
+  assert.equal((await x.get("/profile/id-card.pdf")).status, 401);
+  assert.match(await (await x.get("/profile/id-card", "s-person", "text/html")).text(), /href="\/profile\/id-card\.pdf"/);
+
+  const print = await x.get(`/workspace/id-cards/print?person=${PERSON}`, "s-staff", "*/*");
+  assert.equal(print.status, 200); assert.equal(print.headers.get("content-type"), "application/pdf");
+  assert.equal(print.headers.get("content-disposition"), 'attachment; filename="id-cards.pdf"');
+  assert.deepEqual(await (await x.get(`/workspace/id-cards/print?person=${PERSON}&person=nobody`, "s-staff")).json(), { status: "refused", refusals: [{ personId: "nobody", code: "no_card" }] });
+  for (const bad of ["", "?person=a&person=a", "?person=a&other=1"]) assert.equal((await x.get(`/workspace/id-cards/print${bad}`, "s-staff")).status, 400, bad);
+  for (const session of [undefined, "s-person"]) {
+    const res = await x.get(`/workspace/id-cards/print?person=${PERSON}`, session);
+    assert.equal(res.status, 404); assert.deepEqual(await res.json(), { status: "not_found" });
+  }
+  assert.equal((await fetch(`${x.base}/workspace/id-cards/print?person=${PERSON}`, { method: "POST", headers: { cookie: "__Host-studenthub_session=s-person" } })).status, 404, "non-staff: not found for any method");
+  assert.equal((await fetch(`${x.base}/workspace/id-cards/print?person=${PERSON}`, { method: "POST", headers: { cookie: "__Host-studenthub_session=s-staff" } })).status, 405);
+  const saved = await (await x.post(`action=issue&person=${PERSON}`, "s-staff", { accept: "text/html" })).text();
+  assert.match(saved, new RegExp(`href="/workspace/id-cards/print\\?person=${PERSON}"`));
+});
+
+test("REPORTS_ID_CARDS_PHOTO_HTTP a real card render reads the photo once and audits it, for the person and for staff; refused callers read nothing", async (t) => {
+  // A real personal-photo source over an in-memory document store: the same path production wires.
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x4a, 0x46, 0xff, 0xc0, 0x00, 17, 8, 0x00, 0x20, 0x00, 0x30, 3, ...Array(9).fill(0x11), 0xff, 0xda, 0x00, 0x02, 0xff, 0xd9]);
+  const version = randomUUID();
+  const docs = [{ id: randomUUID(), version, type: "personal-photo", mime: "image/jpeg", size: jpeg.length, scope: { orgId: "org", personId: PERSON }, acl: "private", data: jpeg.toString("base64") }];
+  let reads = 0;
+  const documents = { async transaction<T>(fn: (state: DocumentState) => Promise<T>) { reads++; return fn({ format: 1, documents: structuredClone(docs), retired: [] } as unknown as DocumentState); } } as DocumentStore;
+  const views: Parameters<PersonalPhotoAuditPort["recordView"]>[0][] = [];
+  const x = await rig(t, personalPhotoSource({ store: documents, orgId: "org", audit: { async recordView(v) { views.push(v); } } }));
+  const row = (viewer: string) => ({ viewerPrincipalId: viewer, subjectPrincipalId: PERSON, kind: "id_card_render", documentType: "personal-photo", documentVersion: version });
+  const hasPhoto = async (res: Response) => /\/Subtype \/Image/.test(Buffer.from(await res.arrayBuffer()).toString("latin1"));
+
+  const own = await x.get("/profile/id-card.pdf", "s-person", "*/*");
+  assert.equal(own.status, 200); assert.equal(await hasPhoto(own), true, "the photo is on the person's own card");
+  assert.deepEqual(views, [row(PERSON)], "one audit row, the person as viewer");
+  const print = await x.get(`/workspace/id-cards/print?person=${PERSON}`, "s-staff", "*/*");
+  assert.equal(print.status, 200); assert.equal(await hasPhoto(print), true, "the photo is on the staff print");
+  assert.deepEqual(views, [row(PERSON), row(STAFF)], "one more audit row, the staff member as viewer");
+  assert.equal(reads, 2);
+
+  // Not staff, not signed in, no card, or a refused batch: no photo read and no audit row.
+  for (const [path, session] of [[`/workspace/id-cards/print?person=${PERSON}`, "s-person"], [`/workspace/id-cards/print?person=${PERSON}`, "s-other"], [`/workspace/id-cards/print?person=${PERSON}`, undefined],
+    ["/profile/id-card.pdf", "s-other"], ["/profile/id-card.pdf", undefined], [`/workspace/id-cards/print?person=${PERSON}&person=nobody`, "s-staff"]] as const)
+    assert.notEqual((await x.get(path, session, "*/*")).status, 200, `${path} ${session}`);
+  assert.equal(reads, 2, "refused callers never reach the document store");
+  assert.equal(views.length, 2, "and write no audit rows");
+});
+
+test("REPORTS_ID_CARD_VERIFY_HTTP the QR link opens a public page with name, company and validity only, in English and Arabic", async (t) => {
+  const x = await rig(t), token = x.verifier.token(17, "2099-01-01");
+  for (const session of [undefined, "s-person", "s-bogus"]) {
+    const page = await x.get(`/v/${token}`, session, "text/html");
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get("cache-control"), "no-store"); assert.equal(page.headers.get("x-robots-tag"), "noindex, nofollow");
+    const html = await page.text();
+    assert.match(html, /Valid ID card/); assert.match(html, /بطاقة سارية/); assert.match(html, /Alia &lt;b&gt;Badr&lt;\/b&gt;/); assert.match(html, /Sultan Center/); assert.match(html, /2099-01-01/);
+    assert.doesNotMatch(html, /C00042|Avenues|علياء/, "no employee ID, store or anything else from the card");
+  }
+  const json = await x.get(`/v/${token}`);
+  assert.deepEqual(await json.json(), { status: "ok", name: "Alia <b>Badr</b>", company: "Sultan Center", validUntil: "2099-01-01", valid: true, reason: null, photo: null });
+  assert.equal(json.headers.get("referrer-policy"), "no-referrer");
+  x.leave();
+  assert.match(await (await x.get(`/v/${token}`, undefined, "text/html")).text(), /Not valid[\s\S]*no longer works through StudentHub/);
+  const sig = token.split(".")[2]!;
+  for (const bad of [`/v/18.20990101.${sig}`, `/v/17.20990102.${sig}`, "/v/", "/v/x", `/v/${token}/more`, `/v/${"1".repeat(90)}`]) {
+    const res = await x.get(bad, undefined, "text/html");
+    assert.equal(res.status, 404, bad); assert.match(await res.text(), /Card not found/);
+    assert.equal(res.headers.get("x-robots-tag"), "noindex, nofollow");
+  }
+  assert.deepEqual(await (await x.get(`/v/18.20990101.${sig}`)).json(), { status: "not_found" });
+  assert.equal((await fetch(`${x.base}/v/${token}`, { method: "POST" })).status, 405);
+});
+
+test("REPORTS_ID_CARD_VERIFY_HTTP printed cards carry the QR code for the site's own origin", async (t) => {
+  const x = await rig(t);
+  const own = Buffer.from(await (await x.get("/profile/id-card.pdf", "s-person", "*/*")).arrayBuffer()).toString("latin1");
+  assert.match(own, /Scan to check this card/);
+  const batch = Buffer.from(await (await x.get(`/workspace/id-cards/print?person=${PERSON}`, "s-staff", "*/*")).arrayBuffer()).toString("latin1");
+  assert.match(batch, /Scan to check this card/);
+});
+
+test("REPORTS_ID_CARD_VERIFY_HTTP the key comes from ID_CARD_VERIFY_KEY as canonical base64 for 32 bytes; unset means no QR", () => {
+  assert.equal(idCardVerifyKey({}), undefined);
+  const raw = Buffer.alloc(32, 5).toString("base64");
+  assert.deepEqual(idCardVerifyKey({ ID_CARD_VERIFY_KEY: raw }), Buffer.alloc(32, 5));
+  for (const bad of ["", Buffer.alloc(31).toString("base64"), Buffer.alloc(33).toString("base64"), raw.replace(/=$/, ""), ` ${raw}`])
+    assert.throws(() => idCardVerifyKey({ ID_CARD_VERIFY_KEY: bad }), /ID_CARD_VERIFY_KEY/, JSON.stringify(bad));
+});
+
+async function serve(t: TestContext, http: IdCardsHttpService) {
+  const server = createServer(async (req, res) => { if (!await handleIdCards(req, res, http, ORIGIN, async () => undefined)) { res.writeHead(418); res.end(); } });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>(r => server.close(() => r())));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+test("REPORTS_ID_CARD_VERIFY_LIMIT the wired public check is limited per client address before any card is looked up", async (t) => {
+  // The pool points nowhere: a check that got past the limit would fail its lookup and show not found.
+  const key = Buffer.alloc(32, 3), env = { ID_CARD_VERIFY_KEY: key.toString("base64"), GATEWAY_TRUSTED_PROXIES: "127.0.0.1" };
+  const wired = wireStaffMessages({ connectionString: "postgres://nobody@127.0.0.1:9/none", authzStore: { async listGrantsForPrincipal() { return []; } }, env, idCardVerifyKey: key });
+  t.after(() => wired.close());
+  assert.ok(wired.http.idCards?.publicLimit, "the key turns the limit on");
+  let lookups = 0;
+  const check = wired.http.idCards!.check!;
+  const base = await serve(t, { ...wired.http.idCards!, check: token => { lookups += 1; return check(token); } });
+  const token = new IdCardVerifier(key).token(5, "2099-01-01");
+  const from = (address: string, accept = "application/json") => fetch(`${base}/v/${token}`, { headers: { "x-forwarded-for": address, accept } });
+  for (let i = 0; i < PUBLIC_CHECK_LIMIT.max; i += 1) assert.equal((await from("203.0.113.7")).status, 404, `check ${i + 1} goes through`);
+  const limited = await from("203.0.113.7");
+  assert.equal(limited.status, 429); assert.deepEqual(await limited.json(), { status: "rate_limited" });
+  assert.ok(Number(limited.headers.get("retry-after")) >= 1); assert.equal(limited.headers.get("cache-control"), "no-store"); assert.equal(limited.headers.get("referrer-policy"), "no-referrer");
+  const page = await from("203.0.113.7", "text/html");
+  assert.equal(page.status, 429); assert.match(await page.text(), /Please slow down[\s\S]*حاول مرة أخرى/);
+  assert.equal(lookups, PUBLIC_CHECK_LIMIT.max, "a limited request never reaches the card lookup");
+  assert.equal((await from("203.0.113.8")).status, 404, "another address has its own count");
+  const unset = wireStaffMessages({ connectionString: "postgres://nobody@127.0.0.1:9/none", authzStore: { async listGrantsForPrincipal() { return []; } }, env: {} });
+  t.after(() => unset.close());
+  assert.equal(unset.http.idCards?.publicLimit, undefined, "no key, no QR, nothing to limit");
+});
+
+test("REPORTS_ID_CARD_VERIFY_LIMIT counts per address in a fixed window, trusts forwarded hops only behind a trusted proxy, and keeps a bounded table", () => {
+  let now = 0;
+  const req = (peer: string, forwarded?: string) => ({ socket: { remoteAddress: peer }, headers: forwarded ? { "x-forwarded-for": forwarded } : {} }) as unknown as IncomingMessage;
+  const direct = publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies("")), max: 2, windowSeconds: 60, nowMs: () => now });
+  assert.equal(direct.hit(req("198.51.100.1", "203.0.113.1")), undefined);
+  assert.equal(direct.hit(req("198.51.100.1", "203.0.113.2")), undefined);
+  assert.equal(direct.hit(req("198.51.100.1", "203.0.113.3")), 60, "an untrusted peer can't spread its count over made-up forwarded addresses");
+  now = 59_500; assert.equal(direct.hit(req("198.51.100.1")), 1);
+  now = 60_000; assert.equal(direct.hit(req("198.51.100.1")), undefined, "a new window starts the count again");
+  const proxied = publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies("10.0.0.0/8")), max: 1, nowMs: () => now });
+  assert.equal(proxied.hit(req("10.0.0.5", "203.0.113.9, 10.0.0.4")), undefined);
+  assert.equal(proxied.hit(req("10.0.0.6", "203.0.113.9")), 60, "the same client behind another proxy shares one count");
+  assert.equal(proxied.hit(req("10.0.0.5", "203.0.113.10")), undefined);
+  const small = publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies("")), max: 1, addresses: 2, nowMs: () => now });
+  for (const a of ["192.0.2.1", "192.0.2.2", "192.0.2.3"]) assert.equal(small.hit(req(a)), undefined);
+  assert.equal(small.hit(req("192.0.2.3")), 60, "the newest address is still counted");
+  assert.equal(small.hit(req("192.0.2.1")), undefined, "the oldest was dropped to keep the table at its bound");
+});
+
+test("REPORTS_ID_CARD_PUBLIC_PHOTO_HTTP a valid card's page shows the photo through a one-minute link; the photo has no EXIF and every refusal is the same empty 404", async (t) => {
+  const verifier = new IdCardVerifier(Buffer.alloc(32, 4));
+  let assigned = true, nowMs = Date.parse("2026-11-19T06:00:00Z");
+  const reads: { personId: string; view: { cardNumber: number; clientHash: string } }[] = [];
+  const store: IdCardsStore = {
+    async list() { return { total: 0, rows: [] }; }, async write() { return []; }, async card() { return undefined; }, async counts() { return { needs: 0, expired: 0 }; },
+    async verify(n) { return n === 17 ? { personId: PERSON, name: "Alia Badr", company: "Sultan Center", expiresOn: "2099-01-01", assigned } : undefined; },
+  };
+  const service = new IdCardsService(store, { async isStaff() { return false; } }, () => new Date(nowMs), undefined, verifier,
+    { async read(personId, view) { reads.push({ personId, view }); return { bytes: JPEG_WITH_GPS.prog, mime: "image/jpeg" }; } });
+  const limit = publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies("127.0.0.1")), key: Buffer.alloc(32, 1), max: 9 });
+  const base = await serve(t, { isStaff: async () => false, list: async () => undefined, write: async () => ({ status: "not_found" }), own: async () => undefined, ownPdf: async () => undefined,
+    staffPdf: async () => ({ status: "not_found" }), check: token => service.check(token), publicPhoto: (token, key, client) => service.publicPhoto(token, key, client), publicLimit: limit });
+  const token = verifier.token(17, "2099-01-01"), headers = { "x-forwarded-for": "203.0.113.20" };
+  const page = await (await fetch(`${base}/v/${token}`, { headers: { ...headers, accept: "text/html" } })).text();
+  const src = /<img src="([^"]+)" alt="Photo of the card holder/.exec(page)?.[1]?.replace(/&amp;/g, "&");
+  assert.ok(src?.startsWith(`/v/${token}/photo?k=`), "the page links the photo with its key");
+  const json = await (await fetch(`${base}/v/${token}`, { headers })).json() as { photo: string };
+  assert.match(json.photo, new RegExp(`^/v/${token.replace(/\./g, "\\.")}/photo\\?k=`));
+
+  const photo = await fetch(base + src!, { headers });
+  assert.equal(photo.status, 200);
+  const bytes = Buffer.from(await photo.arrayBuffer());
+  assert.ok(bytes.equals(cleanJpeg(JPEG_WITH_GPS.prog)!), "the rebuilt JPEG, not the upload");
+  assert.ok(!bytes.includes("SECRETPLACE") && !bytes.includes("Exif"), "no EXIF or GPS on the public route");
+  assert.equal(photo.headers.get("content-type"), "image/jpeg");
+  for (const [name, value] of [["cache-control", "no-store"], ["referrer-policy", "no-referrer"], ["x-content-type-options", "nosniff"], ["cross-origin-resource-policy", "same-origin"], ["x-robots-tag", "noindex, nofollow"]])
+    assert.equal(photo.headers.get(name), value, name);
+  assert.deepEqual(reads, [{ personId: PERSON, view: { cardNumber: 17, clientHash: limit.client({ socket: { remoteAddress: "127.0.0.1" }, headers } as unknown as IncomingMessage) } }],
+    "recorded once, against the hashed client address behind the trusted proxy");
+
+  const key = new URL(base + src!).searchParams.get("k")!;
+  const refusals = [`/v/${token}/photo`, `/v/${token}/photo?k=x`, `/v/18.20990101.${token.split(".")[2]}/photo?k=${key}`, `/v/${verifier.token(17, "2098-01-01")}/photo?k=${key}`];
+  const empty = async (path: string) => { const r = await fetch(base + path, { headers }); return [r.status, r.headers.get("content-type"), (await r.arrayBuffer()).byteLength, r.headers.get("cache-control")]; };
+  for (const path of refusals) assert.deepEqual(await empty(path), [404, null, 0, "no-store"], path);
+  assigned = false;
+  assert.deepEqual(await empty(src!), [404, null, 0, "no-store"], "a revoked card answers exactly as an unknown one");
+  assigned = true; nowMs += 60_000;
+  assert.deepEqual(await empty(src!), [404, null, 0, "no-store"], "a stale key too");
+  assert.equal(reads.length, 1, "no refusal read the photo");
+  const limited = await fetch(base + src!, { headers });
+  assert.equal(limited.status, 429, "the page and its photo share the address's count");
+});
+
+test("REPORTS_ID_CARD_PUBLIC_PHOTO_HTTP the public photo source records the read before returning bytes, and returns none when the record fails", async () => {
+  const version = randomUUID(), photo = JPEG_WITH_GPS.gray;
+  const docs = [{ id: randomUUID(), version, type: "personal-photo", mime: "image/jpeg", size: photo.length, scope: { orgId: "org", personId: PERSON }, acl: "private", data: photo.toString("base64") }];
+  const documents = { async transaction<T>(fn: (state: DocumentState) => Promise<T>) { return fn({ format: 1, documents: structuredClone(docs), retired: [] } as unknown as DocumentState); } } as DocumentStore;
+  const views: unknown[] = [];
+  const source = publicPersonalPhotoSource({ store: documents, orgId: "org", audit: { async recordPublicView(v) { views.push(v); } } });
+  assert.equal((await source.read(PERSON, { cardNumber: 17, clientHash: "c".repeat(22) }))?.version, version);
+  assert.deepEqual(views, [{ cardNumber: 17, subjectPrincipalId: PERSON, documentVersion: version, clientHash: "c".repeat(22) }]);
+  assert.equal(await source.read("someone-else", { cardNumber: 17, clientHash: "c".repeat(22) }), null, "no photo, no record");
+  assert.equal(views.length, 1);
+  const failing = publicPersonalPhotoSource({ store: documents, orgId: "org", audit: { async recordPublicView() { throw new Error("db down"); } } });
+  await assert.rejects(failing.read(PERSON, { cardNumber: 17, clientHash: "c".repeat(22) }), /db down/, "no bytes without the record");
+});
+
+test("REPORTS_ID_CARD_VERIFY_LIMIT a verify key without GATEWAY_TRUSTED_PROXIES warns once at start", async () => {
+  const key = Buffer.alloc(32, 3), warnings: string[] = [], authzStore = { async listGrantsForPrincipal() { return []; } };
+  const wire = (env: NodeJS.ProcessEnv, withKey = true) => wireStaffMessages({ connectionString: "postgres://nobody@127.0.0.1:9/none", authzStore, env, ...(withKey ? { idCardVerifyKey: key } : {}), warn: line => warnings.push(line) });
+  await wire({}).close();
+  assert.equal(warnings.length, 1); assert.match(warnings[0]!, /id_card_verify_no_trusted_proxies/);
+  await wire({ GATEWAY_TRUSTED_PROXIES: " " }).close();
+  assert.equal(warnings.length, 2, "blank counts as unset");
+  await wire({ GATEWAY_TRUSTED_PROXIES: "10.0.0.0/8" }).close();
+  await wire({}, false).close();
+  assert.equal(warnings.length, 2, "no warning with proxies set, or without a key (no public check)");
 });

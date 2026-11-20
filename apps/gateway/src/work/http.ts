@@ -7,7 +7,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { mediaType } from "./media-type.js";
 import {
   isIsoDate, isUuid, parseAppealCursor, parseCursor, parseLocation, parsePlacementInput, parseRange, formatCursor,
-  type AppealService, type DecisionService, type HoursViews, type PlacementService, type SessionService, type SessionStatus, type StaffTimeService,
+  type AppealService, type DecisionService, type HoursViews, type PlacementService, type SessionService, type SessionStatus, type StaffTimeService, type StandupService,
 } from "../../../../packages/work/src/index.js";
 
 export interface WorkHttpServices {
@@ -25,6 +25,8 @@ export interface WorkHttpServices {
   readonly storesOf?: (orgId: string) => Promise<readonly { readonly id: string; readonly name: string }[]>;
   /** Internal staff time (legacy staff_work_session); absent means those screens answer 503. */
   readonly staffTime?: StaffTimeService;
+  /** The daily stand-up (legacy daily_standup_question/answer); absent means its parts of the staff screens are left out. */
+  readonly standup?: StandupService;
   /** Staff email addresses for the staff hours export; absent means none. */
   readonly staffEmails?: (staffIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
   /**

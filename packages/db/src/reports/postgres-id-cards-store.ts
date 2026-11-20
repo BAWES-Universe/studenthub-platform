@@ -33,6 +33,8 @@ const PLACEMENT = (person: string, day: string) => `LEFT JOIN LATERAL (
    WHERE a.person_principal_id = ${person} AND (a.end_date IS NULL OR a.end_date >= ${day}::date)
    ORDER BY (a.start_date <= ${day}::date) DESC, CASE WHEN a.start_date <= ${day}::date THEN a.start_date END DESC, a.start_date, a.id LIMIT 1) placement ON true`;
 const NAME = "coalesce(pp.display_name, p.display_name)::text";
+// The company as the card and certificate print it: its English trading name, else its name.
+const COMPANY = "coalesce(op.name_en, o.name)::text";
 // Legacy's employee ID: C and the candidate id, padded to five digits (lpad alone would cut longer ids).
 const EMPLOYEE = "CASE WHEN l.legacy_candidate_id IS NULL THEN NULL WHEN length(l.legacy_candidate_id) < 5 THEN 'C' || lpad(l.legacy_candidate_id, 5, '0') ELSE 'C' || l.legacy_candidate_id END";
 
@@ -74,6 +76,9 @@ export class PostgresIdCardsStore {
       await c.query("BEGIN");
       // Lock the people's cards (and the rows they would insert) so two staff writing the same person queue up.
       for (const person of [...people].sort()) await c.query("SELECT pg_advisory_xact_lock(hashtextextended('id_card:' || $1, 0))", [person]);
+      // Share-lock the people's assignments before checking them: an end date being written now is
+      // waited for and then seen, and none can be written until this card commits.
+      await c.query("SELECT 1 FROM work_assignments WHERE person_principal_id = ANY($1::text[]) ORDER BY id FOR SHARE", [people]);
       const checked = await c.query<{ person_id: string; known: boolean; assigned: boolean; has_card: boolean }>(`SELECT x AS person_id, EXISTS (SELECT 1 FROM principals p WHERE p.id = x) AS known,
           ${idCardAssigned("x", "$2")} AS assigned, EXISTS (SELECT 1 FROM id_cards c WHERE c.person_principal_id = x) AS has_card
          FROM unnest($1::text[]) WITH ORDINALITY AS t(x, n) ORDER BY n`, [people, today]);
@@ -101,9 +106,57 @@ export class PostgresIdCardsStore {
     return r && { name: r.name, arabicName: r.arabic_name, employeeId: r.employee_id, cardNumber: Number(r.card_number), expiresOn: r.expires_on, issuedAt: r.issued_at, placement: placement(r) };
   }
 
+  /** What the public verification page may show for a card number: name, current company, expiry, and whether the holder is still assigned. */
+  async verify(cardNumber: number, today: string): Promise<{ personId: string; name: string | null; company: string | null; expiresOn: string; assigned: boolean } | undefined> {
+    if (!DAY.test(today) || !Number.isSafeInteger(cardNumber) || cardNumber < 1) throw new RangeError("invalid card");
+    const r = (await this.#pool.query<{ person_id: string; name: string | null; company: string | null; expires_on: string; assigned: boolean }>(`SELECT c.person_principal_id AS person_id, ${NAME} AS name, placement.company,
+        to_char(c.expires_on, 'YYYY-MM-DD') AS expires_on, ${idCardAssigned("c.person_principal_id", "$2")} AS assigned
+       FROM id_cards c JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = p.id
+       ${PLACEMENT("p.id", "$2")} WHERE c.card_number = $1`, [cardNumber, today])).rows[0];
+    return r && { personId: r.person_id, name: r.name, company: r.company, expiresOn: r.expires_on, assigned: r.assigned };
+  }
+
   async counts(today: string): Promise<{ needs: number; expired: number }> {
     if (!DAY.test(today)) throw new RangeError("invalid day");
     const r = (await this.#pool.query<{ needs: number; expired: number }>(`SELECT ${idCardNeedsCount("$1")} AS needs, ${idCardExpiredCount("$1")} AS expired`, [today])).rows[0]!;
     return { needs: r.needs, expired: r.expired };
+  }
+
+  /** The audit row for one ID card photo read (migration 0603): who printed whose card, and which photo version went into it. */
+  async recordPhotoRender(view: { viewerPrincipalId: string; subjectPrincipalId: string; kind: "id_card_render"; documentType: "personal-photo"; documentVersion: string }): Promise<void> {
+    await this.#pool.query(`INSERT INTO staff_person_views(viewer_principal_id, subject_principal_id, kind, document_type, document_version) VALUES ($1::text, $2::text, $3::text, $4::text, $5::uuid)`,
+      [view.viewerPrincipalId, view.subjectPrincipalId, view.kind, view.documentType, view.documentVersion]);
+  }
+
+  /** Records one public read of a card holder's photo (id_card_public_views); the photo is sent only after this succeeds. */
+  async recordPublicPhotoView(view: { cardNumber: number; subjectPrincipalId: string; documentVersion: string; clientHash: string }): Promise<void> {
+    await this.#pool.query(`INSERT INTO id_card_public_views(card_number, subject_principal_id, document_type, document_version, client_hash) VALUES ($1::bigint, $2::text, 'personal-photo', $3::uuid, $4::text)`,
+      [view.cardNumber, view.subjectPrincipalId, view.documentVersion, view.clientHash]);
+  }
+
+  /**
+   * S8 experience certificates: the person's store assignments that started on or before
+   * `today`, latest first, with company and store names; undefined when the person does not exist.
+   */
+  async workHistory(personId: string, today: string): Promise<{ name: string | null; rows: { assignmentId: string; company: string; store: string; startDate: string; endDate: string | null }[] } | undefined> {
+    if (!DAY.test(today)) throw new RangeError("invalid day");
+    const person = (await this.#pool.query<{ name: string | null }>(`SELECT ${NAME} AS name FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id = p.id WHERE p.id = $1`, [personId])).rows[0];
+    if (!person) return undefined;
+    const rows = (await this.#pool.query<{ id: string; company: string; store: string; start_date: string; end_date: string | null }>(`SELECT a.id::text, ${COMPANY} AS company, s.name::text AS store,
+        to_char(a.start_date, 'YYYY-MM-DD') AS start_date, to_char(a.end_date, 'YYYY-MM-DD') AS end_date
+       FROM work_assignments a JOIN organizations o ON o.id = a.org_id LEFT JOIN organization_profiles op ON op.org_id = a.org_id JOIN organization_stores s ON s.id = a.store_id
+      WHERE a.person_principal_id = $1 AND a.start_date <= $2::date ORDER BY a.start_date DESC, a.id`, [personId, today])).rows;
+    return { name: person.name, rows: rows.map(r => ({ assignmentId: r.id, company: r.company, store: r.store, startDate: r.start_date, endDate: r.end_date })) };
+  }
+
+  /** One assignment for its certificate: whose it is, their name, company, store and dates. */
+  async assignment(assignmentId: string): Promise<{ personId: string; name: string | null; assignmentId: string; company: string; store: string; startDate: string; endDate: string | null } | undefined> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(assignmentId)) throw new RangeError("invalid assignment");
+    const r = (await this.#pool.query<{ person_id: string; name: string | null; company: string; store: string; start_date: string; end_date: string | null }>(`SELECT a.person_principal_id AS person_id, ${NAME} AS name, ${COMPANY} AS company, s.name::text AS store,
+        to_char(a.start_date, 'YYYY-MM-DD') AS start_date, to_char(a.end_date, 'YYYY-MM-DD') AS end_date
+       FROM work_assignments a JOIN principals p ON p.id = a.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = p.id
+       JOIN organizations o ON o.id = a.org_id LEFT JOIN organization_profiles op ON op.org_id = a.org_id JOIN organization_stores s ON s.id = a.store_id
+      WHERE a.id = $1::uuid`, [assignmentId])).rows[0];
+    return r && { personId: r.person_id, name: r.name, assignmentId, company: r.company, store: r.store, startDate: r.start_date, endDate: r.end_date };
   }
 }

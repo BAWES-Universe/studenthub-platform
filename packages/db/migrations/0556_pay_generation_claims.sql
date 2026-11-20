@@ -47,6 +47,9 @@ BEGIN RAISE EXCEPTION 'generation records are retained' USING ERRCODE='55000'; E
 CREATE TRIGGER pay_generation_claims_immutable BEFORE UPDATE OR DELETE ON pay_generation_claims FOR EACH ROW EXECUTE FUNCTION pay_generation_immutable();
 CREATE TRIGGER pay_generation_roots_immutable BEFORE UPDATE OR DELETE ON pay_generation_roots FOR EACH ROW EXECUTE FUNCTION pay_generation_immutable();
 CREATE TRIGGER pay_generation_receipts_immutable BEFORE UPDATE OR DELETE ON pay_generation_receipts FOR EACH ROW EXECUTE FUNCTION pay_generation_immutable();
+CREATE TRIGGER pay_generation_claims_no_truncate BEFORE TRUNCATE ON pay_generation_claims FOR EACH STATEMENT EXECUTE FUNCTION pay_generation_immutable();
+CREATE TRIGGER pay_generation_roots_no_truncate BEFORE TRUNCATE ON pay_generation_roots FOR EACH STATEMENT EXECUTE FUNCTION pay_generation_immutable();
+CREATE TRIGGER pay_generation_receipts_no_truncate BEFORE TRUNCATE ON pay_generation_receipts FOR EACH STATEMENT EXECUTE FUNCTION pay_generation_immutable();
 CREATE FUNCTION pay_generation_period_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  -- Header updates already lock the same parent row as pay-line writes.

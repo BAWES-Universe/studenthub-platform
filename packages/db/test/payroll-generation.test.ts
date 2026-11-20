@@ -30,6 +30,19 @@ before(async()=>{
  assert.deepEqual(ledger.rows.map(row=>row.version),["0550_pay_transfer_lines","0556_pay_generation_claims"],"F1/F2 migrations must be applied through the normal ledger");
 });
 after(()=>pool.end());
+test("F2_PG all retained generation tables have the enabled statement-level truncation guard", async()=>{
+ const tables=["pay_generation_claims","pay_generation_receipts","pay_generation_roots"];
+ const {rows}=await pool.query<{table_name:string}>(`
+   SELECT c.relname AS table_name FROM pg_trigger t
+   JOIN pg_class c ON c.oid=t.tgrelid
+   WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY($1::text[])
+     AND t.tgname=c.relname||'_no_truncate' AND NOT t.tgisinternal
+     AND t.tgenabled='O' AND t.tgtype=34
+     AND t.tgfoid='public.pay_generation_immutable()'::regprocedure
+   ORDER BY c.relname
+ `,[tables]);
+ assert.deepEqual(rows.map(row=>row.table_name),tables);
+});
 async function fixture(){
  const person=randomUUID(),actor=randomUUID(),company=randomUUID(),storeId=randomUUID();
  await pool.query("INSERT INTO organizations(id,name) VALUES($1,'synthetic')",[company]);for(const id of [person,actor])await pool.query("INSERT INTO principals(id) VALUES($1)",[id]);
@@ -42,10 +55,16 @@ async function fixture(){
  return {person,actor,writer,transfer,batch,policy,deny:()=>{allowed=false;}};
 }
 const command=(actor:string,transferId:string)=>({actorId:actor,transferId,expectedVersion:0,batchKey:"batch",expectedRevision:"r1"});
-test("F2_PG same batch concurrent retry commits once, replays after lock, reauthorizes",async()=>{
+test("F2_PG same batch concurrent retry commits once, returns original receipt, reauthorizes",async()=>{
  const f=await fixture(),id=await f.transfer(),b=f.batch();let builds=0;const store=new PostgresGenerationStore(pool,f.policy,validatePayLine,async()=>{builds++;return b;});
  const out=await Promise.all([commitGeneration(store,command(f.actor,id)),commitGeneration(store,command(f.actor,id))]);assert.deepEqual(out.map(r=>r.kind).sort(),["committed","replayed"]);assert.equal(builds,1);
- await pool.query("UPDATE pay_transfers SET status='locked' WHERE id=$1",[id]);assert.equal((await commitGeneration(store,command(f.actor,id))).kind,"replayed");f.deny();await assert.rejects(commitGeneration(store,command(f.actor,id)),/not_found/);
+ // Do not forge a state transition in a fixture. A locked replay belongs in a
+ // combined acceptance test that transitions the transfer using the lifecycle API.
+ const replay=await commitGeneration(store,command(f.actor,id));
+ assert.equal(replay.kind,"replayed");
+ assert.deepEqual(replay.receipt,out.find(r=>r.kind==="committed")?.receipt);
+ assert.equal(builds,1);
+ f.deny();await assert.rejects(commitGeneration(store,command(f.actor,id)),/not_found/);
 });
 test("F2_PG distinct transfers cannot claim same person contract period",async()=>{
  const f=await fixture(),a=await f.transfer(),b=await f.transfer();const store=new PostgresGenerationStore(pool,f.policy,validatePayLine,async()=>f.batch());
