@@ -69,7 +69,9 @@ function gates(names: readonly string[], previous?: Gates): Gates {
 function row(lane: string, names: readonly string[], previous?: ScreenRow, subject?: string): ScreenRow {
   if (subject === undefined) return { lane: previous?.lane ?? lane, gates: gates(names, previous?.gates) };
   const same = previous?.subject === subject;
-  return { lane: previous?.lane ?? lane, subject, gates: gates(names, same ? previous?.gates : undefined) };
+  // Where a screen is served is evidence too: it follows the subject like the gates do.
+  const served = same && previous?.served !== undefined ? { served: previous.served } : {};
+  return { lane: previous?.lane ?? lane, subject, ...served, gates: gates(names, same ? previous?.gates : undefined) };
 }
 
 const RELEASE_LANE: Readonly<Record<string, string>> = {
