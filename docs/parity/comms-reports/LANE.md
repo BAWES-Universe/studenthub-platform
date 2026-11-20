@@ -66,7 +66,7 @@ The audit of every legacy download is in the project's `contracts/exports-audit.
 builds the reports lane's part of family 1 and makes the export seam general, so other lanes add
 kinds without touching the routes.
 
-- **How to add an export kind (any lane).** Two additions, nothing else:
+- **How to add an export kind (any lane).** Three additions in one PR:
   1. An `ExportKind` in your package (`packages/<lane>/...` or `packages/exports/src/`): its id,
      its closed `filterKeys`, its `columns` (the row whitelist), `authorize` and `rows`. Register
      it in `apps/gateway/src/wiring/ops.ts`, in the `ExportService` kind list. `authorize` is the
@@ -75,6 +75,11 @@ kinds without touching the routes.
      turns the query string into the kind's filters or null (refused before the service is
      reached), `filename` names the download, `noun` names the rows on the result page, and
      optional `forRequester` resolves filters such as account manager "me".
+  3. The legacy download it replaces, in `LEGACY_DOWNLOADS`
+     (`apps/gateway/test/legacy-exports-coverage.test.ts`): change that row from `owedBy` to
+     `kind: "<your kind id>"` (or add a row if it replaces something the audit missed, with the
+     count), and record the same in the project's `contracts/exports-audit.md`. The coverage
+     test fails while an offered kind names no legacy download.
   The page's button is a form that posts to `/exports/<kind id>?<filters>`. `GET /exports/<id>`
   serves every kind under its own file name.
 - **Kinds `catalogue-country` and `catalogue-university`.** Every active catalogue entry of
