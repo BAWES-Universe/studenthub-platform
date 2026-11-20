@@ -4,7 +4,7 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
-import { PostgresWorkImportStore } from "@studenthub/db/work";
+import { PostgresWorkImportStore, PostgresWorkStaffTimeStore, PostgresWorkStandupStore } from "@studenthub/db/work";
 import { mapLegacyStaffSession, mapLegacyStandupAnswer, mapLegacyStandupQuestion } from "../../work/src/index.js";
 
 const URL = process.env.DATABASE_URL ?? "";
@@ -136,4 +136,49 @@ test("STAFF_IMPORT_PG stand-up questions then answers: repeats on a day kept, mi
     // Imported questions are asked like any other: stop asking this one, so other suites see only their own.
     await pool.query("UPDATE work_standup_questions SET retired_at = clock_timestamp() WHERE legacy_ref = $1 AND retired_at IS NULL", [q.legacyRef]);
   }
+});
+
+test("STAFF_IMPORT_PG an imported question edited or retired here is a conflict on replay, never unchanged or verified", async () => {
+  const standup = new PostgresWorkStandupStore(pool);
+  const tag = randomUUID().slice(0, 8);
+  const row = (n: string) => ({ legacyRef: `question_${tag}-${n}`, question: `Question ${n}?`, createdAt: "2031-04-01T05:00:00.000Z", updatedAt: "2031-04-01T05:00:00.000Z" });
+  const [kept, edited, retired] = [row("kept"), row("edited"), row("retired")];
+  try {
+    assert.deepEqual(await imports.importStandupQuestions([kept, edited, retired]), { ...empty, inserted: 3 });
+    const id = async (ref: string) => (await pool.query("SELECT id FROM work_standup_questions WHERE legacy_ref = $1", [ref])).rows[0].id as string;
+    assert.ok(await standup.editQuestion(await id(edited.legacyRef), "Question edited here?"));
+    assert.ok(await standup.retireQuestion(await id(retired.legacyRef)));
+    // The same legacy rows again: only the untouched one is unchanged; the stored rows are left as they are.
+    const replay = await imports.importStandupQuestions([kept, edited, retired]);
+    assert.deepEqual([replay.unchanged, replay.updated, replay.inserted, replay.conflicts.map((c) => c.legacyRef).sort()], [1, 0, 0, [edited.legacyRef, retired.legacyRef].sort()]);
+    for (const c of replay.conflicts) assert.notEqual(c.existingDigest, c.incomingDigest);
+    assert.equal((await pool.query("SELECT question FROM work_standup_questions WHERE legacy_ref = $1", [edited.legacyRef])).rows[0].question, "Question edited here?");
+    // Text changed with the update stamp left alone (outside the store) is caught by the text itself.
+    const quiet = row("quiet");
+    assert.equal((await imports.importStandupQuestions([quiet])).inserted, 1);
+    await pool.query("UPDATE work_standup_questions SET question = 'Changed quietly?' WHERE legacy_ref = $1", [quiet.legacyRef]);
+    assert.equal((await imports.importStandupQuestions([quiet])).conflicts.length, 1);
+    const recon = await imports.reconcileStaffImport("work_standup_questions", [kept.legacyRef, edited.legacyRef, retired.legacyRef], [], replay.conflicts.map((c) => c.legacyRef));
+    assert.deepEqual([recon.covered, recon.held, recon.verified, recon.clean], [3, [edited.legacyRef, retired.legacyRef].sort(), 1, false]);
+  } finally {
+    await pool.query("UPDATE work_standup_questions SET retired_at = clock_timestamp() WHERE legacy_ref LIKE $1 AND retired_at IS NULL", [`question_${tag}-%`]);
+  }
+});
+
+test("STAFF_IMPORT_PG a session the timer ended here is never reopened or moved by a stale legacy replay", async () => {
+  const staff = await principal("h");
+  const timer = new PostgresWorkStaffTimeStore(pool);
+  const open = { legacyRef: `work_session_${randomUUID().slice(0, 8)}`, staffPrincipalId: staff, workDate: "2031-06-01", startedAt: "2031-06-01T05:00:00.000Z", endedAt: null };
+  assert.deepEqual(await imports.importStaffSessions([open]), { ...empty, inserted: 1 });
+  const id = (await pool.query("SELECT id FROM work_staff_sessions WHERE legacy_ref = $1", [open.legacyRef])).rows[0].id as string;
+  // Platform owns the close from here: the timer ends the imported open session.
+  assert.ok(await timer.end(id, new Date("2031-06-01T07:00:00.000Z")));
+  // Legacy still showing it open, or ending it at another time, is a conflict; the timer's end stays.
+  for (const stale of [open, { ...open, endedAt: "2031-06-01T09:00:00.000Z" }]) {
+    const r = await imports.importStaffSessions([stale]);
+    assert.deepEqual([r.unchanged, r.updated, r.conflicts.length], [0, 0, 1]);
+  }
+  // Legacy agreeing with the timer's end is unchanged.
+  assert.deepEqual(await imports.importStaffSessions([{ ...open, endedAt: "2031-06-01T07:00:00.000Z" }]), { ...empty, unchanged: 1 });
+  assert.equal((await pool.query("SELECT ended_at FROM work_staff_sessions WHERE id = $1", [id])).rows[0].ended_at.toISOString(), "2031-06-01T07:00:00.000Z");
 });

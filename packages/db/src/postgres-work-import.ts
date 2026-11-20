@@ -243,9 +243,23 @@ export class PostgresWorkImportStore {
   async importStandupQuestions(rows: readonly WorkImportStandupQuestion[]): Promise<WorkImportResult> {
     return this.#batch("work_standup_questions", rows, async (client, row, tally) => {
       const digest = workImportDigest(row);
-      const { rows: held } = await client.query<{ legacy_digest: string | null }>("SELECT legacy_digest FROM work_standup_questions WHERE legacy_ref = $1", [row.legacyRef]);
-      if (held[0]?.legacy_digest === null) { tally.refused.push({ legacyRef: row.legacyRef, code: "unknown_digest" }); return; }
-      if (held[0]) { this.#same(tally, row.legacyRef, held[0].legacy_digest, digest); return; }
+      const { rows: held } = await client.query<{ legacy_digest: string | null; question: string; created_at: Date; updated_at: Date; retired_at: Date | null }>(
+        "SELECT legacy_digest, question, created_at, updated_at, retired_at FROM work_standup_questions WHERE legacy_ref = $1", [row.legacyRef]);
+      const stored = held[0];
+      if (stored?.legacy_digest === null) { tally.refused.push({ legacyRef: row.legacyRef, code: "unknown_digest" }); return; }
+      if (stored) {
+        if (stored.legacy_digest !== digest) { this.#same(tally, row.legacyRef, stored.legacy_digest, digest); return; }
+        // Imported questions stay editable and retirable here, so the frozen digest alone can't say the
+        // row still reads as legacy: the stored content is compared too, and a row edited or retired
+        // since is a conflict (reported with the digest of what is stored now), never counted unchanged.
+        const same = stored.question === row.question && stored.retired_at === null
+          && stored.created_at.getTime() === new Date(row.createdAt).getTime() && stored.updated_at.getTime() === new Date(row.updatedAt).getTime();
+        if (same) { tally.unchanged++; return; }
+        const now = { legacyRef: row.legacyRef, question: stored.question, createdAt: stored.created_at.toISOString(), updatedAt: stored.updated_at.toISOString(),
+          ...(stored.retired_at ? { retiredAt: stored.retired_at.toISOString() } : {}) };
+        tally.conflicts.push({ legacyRef: row.legacyRef, existingDigest: workImportDigest(now), incomingDigest: digest });
+        return;
+      }
       await guarded(client, () => client.query(`INSERT INTO work_standup_questions(id, question, created_at, updated_at, legacy_ref, legacy_digest)
         VALUES($1,$2,$3,$4,$5,$6)`, [randomUUID(), row.question, row.createdAt, row.updatedAt, row.legacyRef, digest]));
       tally.inserted++;

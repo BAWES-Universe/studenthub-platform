@@ -155,7 +155,10 @@ reported by the importer, not passed on.
 answers) and `importStandupAnswers` follow the contract above, with the digest stored in
 `legacy_digest` (migration 0508). A session imported open that legacy has since ended gets
 its end once (counted as updated); any other change is a conflict. The import key of a
-staff session or question can't be changed afterwards. Rows that already had a
+staff session or question can't be changed afterwards. Imported questions stay editable and retirable here, so a replay compares the stored question
+too: one edited or retired since import is a conflict, never unchanged. A session the timer
+ended here is never reopened or moved by a later legacy replay (a conflict); legacy agreeing
+with that end is unchanged. Rows that already had a
 `legacy_ref` before 0508 keep a NULL digest (unknown: nothing is made up for them); they
 keep working, a timer can still end an open one, and a re-run refuses each of them as
 `unknown_digest` without comparing or overwriting it. Rows imported from 0508 on must carry

@@ -71,3 +71,14 @@ test("LEGACY_STANDUP answers keep the question as it read and the Kuwait day of 
   assert.deepEqual(code({ question: "Plan\u0000?" }), ["bad_text:question"]);
   assert.deepEqual(code({ created_at: null }), ["bad_time:created_at"]);
 });
+
+test("LEGACY_STANDUP a Kuwait 00:01 stamp stays on its Kuwait day, though its UTC date is the day before", () => {
+  // Legacy stamps are read as Asia/Kuwait wall time (UTC+3, no DST); the day is never the UTC date.
+  const a = mapLegacyStandupAnswer(answer({ created_at: "2026-11-20 00:01:00" })).answer!;
+  assert.deepEqual([a.workDate, a.createdAt.toISOString()], ["2026-11-20", "2026-11-19T21:01:00.000Z"]);
+  const s = mapLegacyStaffSession(session({ created_at: "2026-11-20 00:01:00", total_minutes: null })).session!;
+  assert.deepEqual([s.workDate, s.startedAt.toISOString()], ["2026-11-20", "2026-11-19T21:01:00.000Z"]);
+  // Two legacy answers to one question on one day stay two rows (each keeps its own ref).
+  const twice = [answer({ answer_uuid: "answer_a" }), answer({ answer_uuid: "answer_b" })].map((r) => mapLegacyStandupAnswer(r).answer!);
+  assert.deepEqual(twice.map((x) => [x.legacyRef, x.workDate]), [["answer_a", "2026-11-19"], ["answer_b", "2026-11-19"]]);
+});
