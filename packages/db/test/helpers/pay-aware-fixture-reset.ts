@@ -43,6 +43,16 @@ const guards = [
   ["id_cards", "id_cards_no_truncate"],
   ["id_card_events", "id_card_events_no_truncate"],
   ["id_card_public_views", "id_card_public_views_no_truncate"],
+  // A principals or organizations reset cascades into the work lane's history.
+  ["work_standup_answers", "work_standup_answers_no_truncate"],
+  ["work_standup_questions", "work_standup_questions_no_truncate"],
+  ["work_assignments", "work_assignments_no_truncate"],
+  ["work_events", "work_events_no_truncate"],
+  ["work_sessions", "work_sessions_no_truncate"],
+  ["work_decisions", "work_decisions_no_truncate"],
+  ["work_appeals", "work_appeals_no_truncate"],
+  ["work_appeal_updates", "work_appeal_updates_no_truncate"],
+  ["work_staff_sessions", "work_staff_sessions_no_truncate"],
 ] as const;
 
 export async function resetPayAwareFixture(pool: pg.Pool, statement: string): Promise<void> {
