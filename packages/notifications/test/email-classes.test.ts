@@ -4,8 +4,8 @@ import { EMAIL_CLASSES, EMAIL_TEMPLATES, EMAIL_VOLUME_THRESHOLD, EmailOutboxServ
   type ClaimedEmail, type EmailFailureCode, type EmailOutboxStore, type EmailVolumeCrossing, type EmailVolumeStore } from "../src/index.js";
 
 test("COMMS_EMAIL_CLASSES the class table says which classes are transactional", () => {
-  assert.deepEqual([...EMAIL_CLASSES], ["account.notice", "civil_id.result", "staff.morning_summary"]);
-  assert.deepEqual(EMAIL_CLASSES.map(c => [c, EMAIL_TEMPLATES[c].required]), [["account.notice", false], ["civil_id.result", true], ["staff.morning_summary", false]]);
+  assert.deepEqual([...EMAIL_CLASSES], ["account.notice", "civil_id.result", "staff.morning_summary", "staff.firing_spike"]);
+  assert.deepEqual(EMAIL_CLASSES.map(c => [c, EMAIL_TEMPLATES[c].required]), [["account.notice", false], ["civil_id.result", true], ["staff.morning_summary", false], ["staff.firing_spike", false]]);
 });
 
 test("COMMS_EMAIL_CIVIL_ID_RESULT parameters are closed and follow the staff decision rule", () => {
@@ -113,4 +113,17 @@ test("COMMS_EMAIL_VOLUME a level whose alert fails stays due and is raised by th
   await deliverAndCheckVolume(async () => 0, store, c => { alerts.push(c.level); }, () => at);
   await deliverAndCheckVolume(async () => 0, store, c => { alerts.push(c.level); }, () => at);
   assert.deepEqual(alerts, [1, 2]);
+});
+
+test("COMMS_EMAIL_CLASSES the firing spike email takes a closed shape whose level matches its counts", () => {
+  const ok = { company: "Acme", month: "2026-11", level: "danger" as "warning" | "danger", total: 3, twelveMonthTotal: 12 };
+  assert.deepEqual(validateTemplateParameters("staff.firing_spike", ok), ok);
+  assert.doesNotThrow(() => validateTemplateParameters("staff.firing_spike", { ...ok, level: "warning", total: 2 }));
+  for (const bad of [{ ...ok, level: "warning" }, { ...ok, total: 1 }, { ...ok, total: 0, twelveMonthTotal: 0 }, { ...ok, twelveMonthTotal: 2 }, { ...ok, month: "2026-13" },
+    { ...ok, company: "" }, { ...ok, company: "x".repeat(201) }, { ...ok, company: "A\nB" }, { ...ok, extra: 1 }, { ...ok, total: 2.5 }])
+    assert.throws(() => validateTemplateParameters("staff.firing_spike", bad), TypeError, JSON.stringify(bad));
+  const mail = EMAIL_TEMPLATES["staff.firing_spike"].render(ok);
+  assert.equal(mail.subject, "Firing spike for Acme");
+  assert.match(mail.body, /^Acme: 3 placements ended in November 2026 so far, more than twice its 12-month average of 1 a month\./);
+  assert.match(EMAIL_TEMPLATES["staff.firing_spike"].render({ ...ok, level: "warning", total: 1, twelveMonthTotal: 7 }).body, /1 placement ended .* more than its 12-month average of 0\.58 a month/);
 });

@@ -4,9 +4,9 @@ import type { AuthzStore } from "@studenthub/contracts";
 import { PostgresStaffMessagesStore } from "@studenthub/db/comms";
 import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { PostgresWorkStaffTimeStore } from "@studenthub/db/work";
-import { PostgresIdCardsStore, PostgresMorningSummaryStore, PostgresStatisticsStore } from "@studenthub/db/reports";
+import { PostgresFiringSpikeStore, PostgresIdCardsStore, PostgresMorningSummaryStore, PostgresStatisticsStore } from "@studenthub/db/reports";
 import { DEFAULT_OPERATOR_ORG_IDS, type OrganizationDirectory } from "@studenthub/organizations";
-import { CertificatesService, IdCardsService, IdCardVerifier, MorningSummaryService, StatisticsService, type IdCardPhotoSource, type StatisticsCompanies, type IdCardPublicPhotoSource } from "../../../../packages/reports/src/index.js";
+import { CertificatesService, IdCardsService, IdCardVerifier, MorningSummaryService, StatisticsService, FiringHitMapService, type IdCardPhotoSource, type StatisticsCompanies, type IdCardPublicPhotoSource } from "../../../../packages/reports/src/index.js";
 import { openPersonalPhotoSourceFromEnv } from "../../../../packages/private-documents/src/personal-photo-source.js";
 import { StaffMessagesService } from "../../../../packages/comms/src/staff-messages.js";
 import { blockListOf, parseTrustedProxies } from "../../../../packages/access/src/index.js";
@@ -78,14 +78,16 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
   const certificates = new CertificatesService(cards, authority);
   const companies = options.organizations && directoryCompanyCounts(options.organizations);
   // Staff time is the work lane's: read through its exported store, never its table.
-  const statistics = new StatisticsService(new PostgresStatisticsStore({ pool }), authority, undefined, { companies, staffTime: new PostgresWorkStaffTimeStore(pool) });
+  const statisticsStore = new PostgresStatisticsStore({ pool, operatorOrgIds: DEFAULT_OPERATOR_ORG_IDS });
+  const statistics = new StatisticsService(statisticsStore, authority, undefined, { companies, staffTime: new PostgresWorkStaffTimeStore(pool) });
+  const firings = new FiringHitMapService(statisticsStore, authority, undefined, new PostgresFiringSpikeStore({ pool, operatorOrgIds: DEFAULT_OPERATOR_ORG_IDS }));
   return { http: { isStaff: authority.isStaff, send: (sender, input) => service.send(sender, input),
     deliveryLog: (person, offset, limit) => emails.deliveryLog(person, offset, limit),
     morningSummary: { today: viewer => summary.today(viewer), subscribe: (viewer, on) => summary.subscribe(viewer, on) },
     idCards: { isStaff: authority.isStaff, list: (viewer, view, name, page) => idCards.list(viewer, view, name, page), write: (viewer, action, people) => idCards.write(viewer, action, people), own: person => idCards.own(person),
       ownPdf: (person, origin) => idCards.ownPdf(person, origin), staffPdf: (viewer, people, origin) => idCards.staffPdf(viewer, people, origin), check: token => idCards.check(token),
       certificates: { own: person => certificates.own(person), staffList: (viewer, person) => certificates.staffList(viewer, person), pdf: (viewer, assignment) => certificates.pdf(viewer, assignment) },
-      statistics: { page: viewer => statistics.page(viewer) }, publicPhoto: (token, key, client) => idCards.publicPhoto(token, key, client),
+      statistics: { page: viewer => statistics.page(viewer), firingHitMap: viewer => firings.page(viewer), firingSpikeEmail: (viewer, on) => firings.subscribe(viewer, on) }, publicPhoto: (token, key, client) => idCards.publicPhoto(token, key, client),
       // The public check is limited per client address, read behind the same trusted proxies as the abuse gate.
       publicLimit: options.idCardVerifyKey && env ? publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies(env.GATEWAY_TRUSTED_PROXIES)),
         // A key derived from the verification key, so the recorded client hash is the same across gateway processes and restarts.
