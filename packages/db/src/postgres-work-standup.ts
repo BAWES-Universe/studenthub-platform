@@ -77,7 +77,11 @@ export class PostgresWorkStandupStore {
         `SELECT q.id FROM work_standup_questions q
          WHERE q.retired_at IS NULL AND NOT EXISTS (SELECT 1 FROM work_standup_answers x WHERE x.question_id = q.id AND x.staff_principal_id = $1 AND x.work_date = $2::date)
          ORDER BY q.created_at, q.id LIMIT 1`, [a.staffId, a.workDate]);
-      if (next.rows[0]?.id !== a.questionId) return "out_of_order";
+      if (next.rows[0]?.id !== a.questionId) {
+        // A parallel answer to this same question may have committed since the check above.
+        const since = await client.query("SELECT 1 FROM work_standup_answers WHERE staff_principal_id = $1 AND question_id = $2 AND work_date = $3::date LIMIT 1", [a.staffId, a.questionId, a.workDate]);
+        return since.rowCount ? "exists" : "out_of_order";
+      }
       // The question's wording is copied from the question still asked, in the same statement.
       const { rowCount } = await client.query(
         `INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source)

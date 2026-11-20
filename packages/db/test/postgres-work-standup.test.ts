@@ -120,6 +120,12 @@ test("STANDUP_PG neither table can be emptied by TRUNCATE, directly or by a CASC
     try {
       // In a transaction that is rolled back, so a statement that wrongly ran wipes nothing.
       await client.query("BEGIN");
+      // Other tables' TRUNCATE guards (pay, ID cards, ...) are lifted inside this transaction only,
+      // so the refusal seen is the stand-up's whatever order the cascade reaches the tables in.
+      const others = await client.query<{ table: string; trigger: string }>(
+        `SELECT c.relname AS table, t.tgname AS trigger FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+         WHERE NOT t.tgisinternal AND (t.tgtype & 32) <> 0 AND c.relname NOT LIKE 'work_standup_%'`);
+      for (const o of others.rows) await client.query(`ALTER TABLE ${o.table} DISABLE TRIGGER ${o.trigger}`);
       await assert.rejects(client.query(statement), refused, statement);
     } finally {
       await client.query("ROLLBACK");

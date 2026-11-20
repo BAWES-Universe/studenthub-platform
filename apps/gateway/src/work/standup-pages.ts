@@ -52,7 +52,8 @@ export const STANDUP_REFUSED: Readonly<Record<string, string>> = {
   out_of_order: "Answer the stand-up questions one at a time, in order. Here is the next one.",
 };
 
-function cursorText(c: StandupAnswerCursor): string { return `${encodeURIComponent(c.staffId)}~${c.createdAt}~${c.id}`; }
+/** `~` separates the parts; encodeURIComponent leaves a `~` in a staff id as it is, so it is escaped too. */
+function cursorText(c: StandupAnswerCursor): string { return `${encodeURIComponent(c.staffId).replace(/~/g, "%7E")}~${c.createdAt}~${c.id}`; }
 function parseCursorText(value: string | null): StandupAnswerCursor | null | undefined {
   if (value === null || value === "") return null;
   const parts = value.split("~");

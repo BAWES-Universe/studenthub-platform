@@ -10,7 +10,7 @@ const SESSION = "t".repeat(43), ORIGIN = "https://studenthub.test.invalid";
 const NOW = new Date("2026-11-18T09:30:00Z");
 const Q1 = "aaaaaaaa-0000-4000-8000-000000000001", Q2 = "aaaaaaaa-0000-4000-8000-000000000002";
 
-interface World { open?: boolean; notStaff?: boolean; notAdmin?: boolean; next?: boolean; answered?: boolean; answerResult?: unknown; questionResult?: unknown; noStandup?: boolean }
+interface World { nextStaff?: string; open?: boolean; notStaff?: boolean; notAdmin?: boolean; next?: boolean; answered?: boolean; answerResult?: unknown; questionResult?: unknown; noStandup?: boolean }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const refused = (code = "forbidden") => ({ kind: "refused", code });
   const answer = (over: Record<string, unknown> = {}) => ({ id: "cccccccc-0000-4000-8000-000000000001", staffId: "actor", questionId: Q1, question: "Blockers <now>?", answer: "None & done", workDate: "2026-11-18", createdAt: "2026-11-18T06:15:00.000Z", ...over });
@@ -32,7 +32,7 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
       retireQuestion: async (...a: unknown[]) => { calls.push(["retire", ...a]); return world.questionResult ?? { kind: "retired" }; },
       answers: async (...a: unknown[]) => { calls.push(["answers", ...a]); return world.notAdmin ? refused() : (a[1] as string).length !== 10 ? refused("invalid_input")
         : { kind: "answers", workDate: a[1], answers: [answer(), answer({ id: "cccccccc-0000-4000-8000-000000000002", question: "Plans?", answer: "Interviews" }), answer({ staffId: "other", answer: "Calls" })],
-          next: { staffId: "other", createdAt: "2026-11-18T06:15:00.000Z", id: "cccccccc-0000-4000-8000-000000000003" } }; },
+          next: { staffId: world.nextStaff ?? "other", createdAt: "2026-11-18T06:15:00.000Z", id: "cccccccc-0000-4000-8000-000000000003" } }; },
       unanswered: async (...a: unknown[]) => { calls.push(["unanswered", ...a]); return world.notAdmin ? refused() : { kind: "unanswered", workDate: a[1], staffIds: ["nameless"] }; },
     } }),
   } as unknown as WorkHttpServices;
@@ -116,6 +116,13 @@ test("STANDUP_PAGES /work/standup: questions to keep, answers grouped by staff m
   const calls2: unknown[][] = [];
   await request("/work/standup?after=other~2026-11-18T06:15:00.000Z~cccccccc-0000-4000-8000-000000000003", {}, calls2);
   assert.deepEqual(calls2.find((c) => c[0] === "answers"), ["answers", "actor", "2026-11-18", { after: { staffId: "other", createdAt: "2026-11-18T06:15:00.000Z", id: "cccccccc-0000-4000-8000-000000000003" } }]);
+  // A staff id holding the separator still makes a three-part cursor that round-trips.
+  const tilde = await request("/work/standup", { world: { nextStaff: "staff~ops" } });
+  const link = /href="\/work\/standup\?([^"]+)">More answers/.exec(tilde.html)?.[1];
+  assert.ok(link?.includes("after=staff%257Eops%7E2026-11-18T06%3A15%3A00.000Z%7E"), link);
+  const calls3: unknown[][] = [];
+  assert.equal((await request(`/work/standup?${link!.replace(/&amp;/g, "&")}`, {}, calls3)).status, 200);
+  assert.deepEqual((calls3.find((c) => c[0] === "answers")![3] as { after: unknown }).after, { staffId: "staff~ops", createdAt: "2026-11-18T06:15:00.000Z", id: "cccccccc-0000-4000-8000-000000000003" });
   assert.equal((await request("/work/standup?after=broken")).status, 400);
   assert.equal((await request("/work/standup?date=2026-1-1")).status, 400);
   assert.equal((await request("/work/standup", { world: { notAdmin: true } })).status, 403);
