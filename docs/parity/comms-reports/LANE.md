@@ -19,6 +19,7 @@ Slices, in order (one PR each):
 6. **Statistics** (P-3): slice 1 is the staff page `/workspace/statistics`: legacy staff dashboard counters as a registry (shared counters use the morning summary's queries; pay-backed ones show "not available") and the hiring figures from legacy admin (hired, retained after a year, retention ratio, invitations, recruitment yield). Slice 2 adds the overview from legacy admin's list: candidates, assigned today, suggestions, requests sent and delivered (KWD, like active requests), active and all companies through the organizations directory as the viewer, and today's staff attendance through the work lane's `PostgresWorkStaffTimeStore` (no SQL on its table). Unapproved candidates, payable candidates, transfers, staff salary and staff leave show "not available"; "universities to fix" has no equivalent (the catalogue keeps one name). Slice 3 is the firing hit map (`/workspace/statistics/firings`, legacy `FiringHitmap`): placements ended per top-level company (sub-companies rolled up, deleted companies left out) in each of the last 12 months, newest first, counted live from `work_assignments` up to today in Kuwait, with legacy's warning (above the 12-month average) and danger (above twice it) marks; slice 4 is the spike email (migration 0605, class `staff.firing_spike`): once a Kuwait day from 08:00 the email delivery job checks the current month, and each company and month that is marked alerts once (legacy's `is_alerted`) to staff who turned the email on on the hit map page (still staff, not paused, rechecked at every delivery attempt, like the morning summary). Legacy sent it to the operations mailbox; the importer should subscribe the people behind that mailbox. Transfers, revenue and the year report follow as the pay lane's sources land.
 7. **Remaining exports onto P-1**: each lane's export button uses the service; this lane checks all seven legacy exports are covered. The check is `apps/gateway/test/legacy-exports-coverage.test.ts`: each of the 17 legacy downloads is mapped to a kind the gateway offers, owed by a named lane, or dropped with evidence, and every offered kind must name the download it replaces.
 8. **Webhooks** only if rows exist.
+9. **Recruit events reach people** (2026-11-20, from the parity sweep below): the recruit lane's outbox becomes feed items and the job invitation email.
 
 Dependencies: slices 1 and 2 need nothing from other lanes. Slice 3 needs the access lane's reset flow. Slices 4 to 7 consume recruit, work and pay data.
 
@@ -175,3 +176,121 @@ Planned PRs, in order (migrations 0602 to 0609):
 
 Legacy cards carry over through `id_cards.legacy_ref` (the legacy row id); the importer owns
 that copy.
+
+## Slice 9: recruit events reach people (2026-11-20)
+
+Recruit writes a `recruit_outbox` row with every invitation, interview, job application and
+request application change, in the same transaction, and leaves delivery to this lane
+(migrations 0453 to 0458). Until now nothing read it: an invited person heard nothing.
+
+- The email delivery job first dispatches waiting rows (`PostgresRecruitDispatchStore`, up to
+  200 a run, `FOR UPDATE SKIP LOCKED`, so workers never take the same row), then delivers one
+  batch of due email (the delivery job's usual batch of 25, oldest due first). An invitation's
+  email goes out in the same run when it fits that batch, otherwise in the following runs, in
+  order, like legacy's mail queue; a backlog delays it, never drops it. A failed dispatch never
+  holds back delivery; the rows wait for the next run.
+- Each row becomes one feed item of kind `recruit.<event>` for its recipient (migration 0355
+  widens the payload rule; subject `recruit_outbox:<id>`, no parameters), dated when the change
+  happened. The line is built at read time from the request as it is then (position title and
+  company name), so a renamed company shows its new name. The bell's unread count uses the same
+  rule: only events addressed to the reader count, so a forged or stray row shows nothing.
+- What each event says, and where it leads:
+
+| Event | Recipient | Line | Link |
+|---|---|---|---|
+| `invitation.sent` | person | You're invited to apply for {position} at {company}. | `/recruit/invitations` |
+| `invitation.withdrawn` | person | Your invitation to {position} at {company} was withdrawn. | `/recruit/invitations` |
+| `invitation.accepted`, `.declined` | assigned recruiter, else the inviter | An invitation to {position} at {company} was accepted (declined). | `/recruit/staff/requests/<id>/invitations` |
+| `interview.scheduled`, `.cancelled` | person | Your interview for {position} at {company} is scheduled (was cancelled). | `/recruit/my-interviews` |
+| `application.shortlisted`, `.rejected` | person | You were shortlisted for / Your application for {position} at {company} was not taken forward. | `/recruit/jobs?applied=1` |
+| `request_application.received` | assigned recruiter | Someone applied for {position} at {company}. | `/recruit/requests/<id>/applications` |
+| `request_application.accepted`, `.rejected` | person | Your application for {position} at {company} was accepted (not taken forward). | `/recruit/open-requests?applied=1` |
+
+- A sent invitation that is still open, on a request still open or filling (the only states in which it
+  can be accepted), when dispatched is also emailed: class
+  `recruit.invitation` (optional, so a person can switch it off), subject legacy's "You’re
+  invited to apply for a job opening", naming the position and company. One email per
+  invitation (`recruit.invitation:<invitation id>`). Every delivery attempt rechecks the invitation, like the
+  and its request, like the morning summary's recipients: one withdrawn or answered after it was queued, or
+  whose request was filled or closed, even between a failed attempt and its retry, is suppressed rather
+  than sent. The feed item stays either way, since it records what happened. Legacy's email carried a tracking pixel
+  (`invitations/log/<uuid>`); this one does not, and "seen" stays the person's own action.
+- Legacy's mobile push for an invitation stays with the legacy API (C-7).
+- An event email is queued when the event happens, like the civil ID result email: a worker that
+  cannot deliver marks it not sent, and it is not sent again later (a days-old invitation email
+  would mislead). The daily staff emails wait for a worker that can deliver instead (#576),
+  because their day would otherwise be spent.
+
+## Legacy parity sweep (legacy @ 55119d3, 2026-11-20)
+
+Every action of legacy's comms, notification, email, report and statistics controllers and
+cron jobs, and where it lives here. Controller paths are relative to each app's
+`modules/v1/controllers`; jobs are `console/controllers` actions and their schedule in
+`cron/cronlist`. Invitation controllers are the recruit lane's and are not listed.
+
+| App | Legacy action | Here |
+|---|---|---|
+| candidate | `CandidateNotification` list, mark-read, mark-read-all | Feed: `GET /notifications` (types filter), `POST /notifications/:id/read`, `POST /notifications/read-all`; the bell's count is the same rule as the list |
+| candidate | `Chat` list, messages, new-messages, unread-count, send-message, mark-read, view, start-chat | Not built: chat (C-4) is dead in prod and was dropped on 10-04 |
+| candidate | `Statistic` list (hours, paid, bonus, earnings, upcoming interviews) | Hours: work lane (`/work/history` totals). Interviews: recruit (`/recruit/my-interviews`). Paid, bonus and earnings wait on the pay lane |
+| company | `Chat` (all actions) | Not built (C-4 dropped) |
+| staff | `Chat` (all actions, and start-client-chat) | Not built (C-4 dropped) |
+| staff | `CandidateIdCard` view, list-candidate-ids, list-candidates, generate, list-expired, renew, total-expired, list-without-card-with-job | S8: `/workspace/id-cards` (who has none, whose expired, every card; issue and renew), `/workspace/id-cards/print`, `/profile/id-card`; the two totals are morning summary counters |
+| staff | `Certificate` from-work-history, certificate | S8: `/workspace/certificates?person=` and `/profile/certificates`, made on demand from the person's assignments |
+| staff | `Certificate` list, create, update, delete (stored, staff-dated) | Not ported: no UI used them in legacy (S8 notes) |
+| staff | `FiringHitmap` list | `/workspace/statistics/firings` (slice 3), counted live |
+| staff | `Statistic` list | `/workspace/statistics` (slices 1 and 2); pay-backed tiles show "not available" until the pay lane lands |
+| staff, admin | `CronLog` list | Admin jobs page (`apps/gateway/src/admin-jobs.ts`, platform ops): each job's last run and missed runs |
+| staff, admin | `EmailCampaign` list, status-list, view, run, create, update, delete | Not ported: D-CM1 moves campaigns out of the product (contract C-2) |
+| staff, admin | `Webhook` list, view, (admin) test, create, update, delete | C-6, decided by data (SHU-210): built only if the staging copy's `webhook` table has live rows. Waits on that count |
+| admin | `MailLog` list (search by address or subject), view | Staff delivery log per person, `/workspace/people/<person>/emails` (class, state, each attempt's outcome). It never shows an address or a body, and there is no cross-person search by address (legacy built that query from raw input) |
+| admin | `MailLog` stats (sent per day) | The daily volume check counts each Kuwait day's sends and alerts past 500, 1000, 1500. There is no per-day chart page: open, small |
+| admin | `Statistic` list | `/workspace/statistics` overview (slice 2) |
+| admin | `Statistic` transfer, revenue | Wait on the pay lane (transfer types, revenue roll-ups P-4) |
+| admin | `Statistic` invitation-graph-data (invitations per month, 12 months) | Open, small: the statistics page shows the invitation total, not the monthly graph |
+| admin | `Statistic` clear-cache | Not needed: nothing is cached, every page counts live |
+| status | `Statistic` list, transfer, graph | Not ported: it answered with no sign-in and exposed payable totals and staff salaries (the work lane made the same call for the status app) |
+
+| Job (schedule) | What it did | Here |
+|---|---|---|
+| `cron/summary` (daily 05:00 UTC = 08:00 Kuwait) | Morning report email to staff | Morning summary (slice 4), from the email delivery job at 08:00 Kuwait |
+| `cron/daily` (13:30 UTC): `FiringHitmap::updateHitMap`, `firingSpike` | Stored the hit map and emailed the operations mailbox | Counted live (slice 3); spike email to subscribed staff (slice 4) |
+| `cron/gen-hit-map` (28th) | Rebuilt the stored hit map | Not needed: counted live |
+| `cron/daily`: `Candidate::birthdayAlert` | "Happy Birthday from StudentHub" email to every verified candidate on their birthday | Open: not built. Profiles keep the birth date (migration 0212) |
+| `cron/daily`: `Candidate::civilIdExpire` | "Please update your civil id" email to assigned candidates on the expiry day | Open: not built. The civil ID expiry is on main (Q14-3) |
+| `cron/mid-month`, `cron/end-of-month`: `Candidate::notifyCivilIDExpiring` | "Civil ID is expiring" email to assigned candidates whose ID expires within 25 days, on the 15th and 28th | Open: not built (same source) |
+| `cron/mid-month`, `cron/end-of-month`: `Candidate::notifyMissingBankInfo` | "Bank information is missing" email to assigned candidates | Waits on the pay lane (bank details) |
+| `cron/end-of-month`: `Company::requestForAttendance` | Asks each company for its working hours sheet | Work lane |
+| `cron/daily`: `DailyStandupQuestion::standupReport` | Stand-up report email | Staff HR stays on legacy until replaced (D-WK4) |
+| `cron/daily`: `Invoice::unpaidAlert` | Unpaid invoice email | Invoices lane |
+| `cron/daily`, `cron/weekly`: transfer emails and `Transfer::saveTransfer` | Transfer paid, failed and success emails | Pay lane |
+| `cron/payable-candidate-notification` (05:00) | Payable report with an Excel attachment | Pay lane |
+| `cron/daily`: token clean-up | Deleted expired sign-in tokens | Access lane (sessions expire by themselves) |
+| `cron/every-minute`: `Suggestion::suggestionCandidateNotification`, `suggestionFulltimerNotification` | Emails a company its suggested candidates | Open: recruit writes no outbox event for a suggestion yet; once it does, slice 9's dispatcher delivers it |
+| `cron/process-campaign` (every minute) | Sent email campaigns | Not ported (D-CM1) |
+| `report/recruiter` (17:00 UTC, Sunday to Thursday) | Each recruiter's day (assigned, notes, invitations, suggestions, stories) to Slack and Segment | Open: no per-recruiter daily report yet. Slack is not a channel here; the natural home is a per-recruiter table on the statistics page |
+| `cron/update-candidate-stats`, `update-company-stats` (15th) | Stored counters | Not needed: counted live |
+| `cron/kuwait-mom-check` | Kuwaiti-mother email | Not scheduled in legacy (dead) |
+| `cron/check-daily-attendance` | Staff timer email | Commented out in legacy's cron (dead) |
+| `cron/segment-*` | Analytics events | Analytics (X3), not this lane |
+
+Candidate notification types (legacy `CandidateNotification`):
+
+| Type | Legacy | Here |
+|---|---|---|
+| 0 invitation | `Invitation::sendNotification` | `recruit.invitation.sent` (slice 9) |
+| 1 assignment, 2 unassigned | Placement start and end | Open: the work lane writes no event for a placement yet; a feed kind is one registration |
+| 3, 4 work day approved, rejected | Day decisions | `work.session_approved`, `work.session_rejected` (one item per decided entry) |
+| 5, 6, 7 transfer initiated, paid, unpaid | Transfers | Wait on the pay lane |
+| 8, 9 work session approved, rejected | Session decisions | `work.session_approved`, `work.session_rejected` |
+| 10, 11 job interest shortlisted, rejected | Job applications | `recruit.application.shortlisted`, `recruit.application.rejected` (slice 9) |
+| 12, 13, 14 photo request, civil ID request, staff message | Staff messages | `staff.message` (slice 1) |
+
+Legacy emails that belong to other lanes (sign-in, OTP and password emails: access; request and
+suggestion emails to companies: recruit; transfer, payable and bank emails: pay; invoice emails:
+invoices; company create and update report to staff: organizations; warning and commitment
+emails: people, Q16-2 and Q16-3) send through this lane's outbox when those lanes register
+their class.
+
+Largest open gap that is not pay, after slice 9: the person reminder emails (birthday, civil ID
+expired today, civil ID expiring within 25 days), all from data already on main.
