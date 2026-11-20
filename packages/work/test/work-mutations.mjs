@@ -14,8 +14,21 @@ const review = "apps/gateway/src/work/review-pages.js", reviewSuite = "apps/gate
 const legacy = "packages/work/src/legacy.js", legacySuite = "packages/work/test/legacy.test.js";
 const staffTime = "packages/work/src/staff-time.js", staffTimeSuite = "packages/work/test/staff-time.test.js";
 const staffTimePages = "apps/gateway/src/work/staff-time-pages.js", staffTimePagesSuite = "apps/gateway/test/work-staff-time-pages.test.js";
+const standup = "packages/work/src/standup.js", standupSuite = "packages/work/test/standup.test.js";
+const standupPages = "apps/gateway/src/work/standup-pages.js", standupPagesSuite = "apps/gateway/test/work-standup-pages.test.js";
 const exportsFile = "apps/gateway/src/work/exports.js", exportsSuite = "apps/gateway/test/work-exports.test.js";
 const mutations = [
+  ["stand-up answers are operator staff only", "async #staff(actorId) { return isOperatorStaff(await this.#grants.listGrantsForPrincipal(actorId)); }", "async #staff(actorId) { return true; }", "STANDUP", standup, standupSuite],
+  ["stand-up questions are operator admins only", "async #admin(actorId) { return isOperatorAdmin(await this.#grants.listGrantsForPrincipal(actorId)); }", "async #admin(actorId) { return true; }", "STANDUP", standup, standupSuite],
+  ["today lists only their own answers", "staffId: actorId, limit: STANDUP_ANSWER_PAGE_SIZE }", "limit: STANDUP_ANSWER_PAGE_SIZE }", "STANDUP", standup, standupSuite],
+  ["a question is answered once a day", 'return refused("already_answered");', "return { kind: \"answered\", workDate };", "STANDUP", standup, standupSuite],
+  ["an answer needs the day in progress", 'if (result === "not_working")', "if (false)", "STANDUP", standup, standupSuite],
+  ["an answer must be the next question", 'if (result === "out_of_order")', "if (false)", "STANDUP", standup, standupSuite],
+  ["a refused answer says why on /me/work", '    not_working: "Start your day to answer the stand-up.",', "", "STANDUP_PAGES", standupPages, standupPagesSuite],
+  ["unanswered leaves out who answered", "!answered.has(id)", "true", "STANDUP", standup, standupSuite],
+  ["stand-up answers page", "next: rows.length > STANDUP_ANSWER_PAGE_SIZE && last ?", "next: false ?", "STANDUP", standup, standupSuite],
+  ["the question is asked only while the day is in progress", "const ask = !dayInProgress ?", "const ask = false ?", "STANDUP_PAGES", standupPages, standupPagesSuite],
+  ["question forms need the same origin", "if (req.headers.origin !== origin ||", "if (false ||", "STANDUP_PAGES", standupPages, standupPagesSuite],
   ["staff time is operator staff only", "async #staff(actorId) { return isOperatorStaff(await this.#grants.listGrantsForPrincipal(actorId)); }", "async #staff(actorId) { return true; }", "STAFF_TIME", staffTime, staffTimeSuite],
   ["end closes today's session only", "const open = await this.#store.openSession(actorId, kuwaitDate(now));", "const open = this.#store.sessions?.find((s) => s.staffId === actorId && s.endedAt === null);", "STAFF_TIME", staffTime, staffTimeSuite],
   ["a staff member reads only their own days", "const staffId = admin ? options.staffId : actorId;", "const staffId = options.staffId;", "STAFF_TIME_LIST", staffTime, staffTimeSuite],

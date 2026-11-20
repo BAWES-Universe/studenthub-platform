@@ -10,3 +10,5 @@ export type {
 } from "../postgres-work-store.js";
 export { PostgresWorkStaffTimeStore } from "../postgres-work-staff-time.js";
 export type { WorkStaffDayRecord, WorkStaffSessionRecord } from "../postgres-work-staff-time.js";
+export { PostgresWorkStandupStore } from "../postgres-work-standup.js";
+export type { WorkStandupAnswerRecord, WorkStandupQuestionRecord } from "../postgres-work-standup.js";
