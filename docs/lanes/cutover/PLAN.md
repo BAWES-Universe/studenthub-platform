@@ -43,6 +43,15 @@ Lane in the full-migration plan agreed on the desk (PR #393, 2026-11-17): verifi
 
 Two active rows of one kind whose names normalize the same become one item: the lowest legacy id is imported and the others map to it (reported as merged). An active platform item with the same kind and name that no legacy row holds yet is adopted rather than duplicated. Reconciliation is per table: legacy ids against the id map, with reported skips listed apart from unexplained gaps.
 
+## M-4 organizations map
+
+`tools/legacy-import/src/m4-organizations.ts` maps legacy `company` rows; `PostgresOrganizationImportStore` (`@studenthub/db/import`) writes the organization, its approved snapshot (`legacy_company_snapshots`, migration 0651) and the id map. `PostgresImportedOrganizationSnapshots` is the `ApprovedOrganizationAdapter` the organizations package reads; wiring it into the gateway replaces the unconfigured adapter and is the organizations owner's step (gateway wiring is outside this lane).
+
+- A top-level company hangs under the operator organization in the registry, as an approved registration does; its snapshot parent is null. A sub-company's parent is its legacy parent through the id map, so parents import first.
+- The platform allows one level of sub-company. A deeper company, one whose parent is missing, and one in a parent loop are reported and left out with their descendants.
+- The snapshot holds the columns the organization projections read (`company_name`, common names, descriptions, website, email, `currency_code`, approved to hire, hourly rate, bonus commission, status override) and the three activity counters, each normalized to what the package parses: blank text is null, decimals lose padding zeros, the currency code is upper case, and the status override is 0, 9 or 10. An unusable value becomes null and is reported by column; the company still imports.
+- Stamped with the organizations package's parity revision, as `snapshotRow` requires.
+
 ## M-5 table map (work)
 
 Legacy staff ids resolve to the platform principal the same way for every row below; a staff id with no principal is reported by legacy id, not imported. Each table gets its own reconciliation count: legacy rows against imported rows by `legacy_ref`, by legacy id only. Legacy times are Asia/Kuwait wall time: a `work_date` is the Kuwait date read straight from that wall time, with no UTC conversion, so an answer or session at 21:00 to 23:59 keeps its own day.
