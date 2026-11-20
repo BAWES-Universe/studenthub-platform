@@ -33,6 +33,8 @@ const PLACEMENT = (person: string, day: string) => `LEFT JOIN LATERAL (
    WHERE a.person_principal_id = ${person} AND (a.end_date IS NULL OR a.end_date >= ${day}::date)
    ORDER BY (a.start_date <= ${day}::date) DESC, CASE WHEN a.start_date <= ${day}::date THEN a.start_date END DESC, a.start_date, a.id LIMIT 1) placement ON true`;
 const NAME = "coalesce(pp.display_name, p.display_name)::text";
+// The company as the card and certificate print it: its English trading name, else its name.
+const COMPANY = "coalesce(op.name_en, o.name)::text";
 // Legacy's employee ID: C and the candidate id, padded to five digits (lpad alone would cut longer ids).
 const EMPLOYEE = "CASE WHEN l.legacy_candidate_id IS NULL THEN NULL WHEN length(l.legacy_candidate_id) < 5 THEN 'C' || lpad(l.legacy_candidate_id, 5, '0') ELSE 'C' || l.legacy_candidate_id END";
 
@@ -130,5 +132,31 @@ export class PostgresIdCardsStore {
   async recordPublicPhotoView(view: { cardNumber: number; subjectPrincipalId: string; documentVersion: string; clientHash: string }): Promise<void> {
     await this.#pool.query(`INSERT INTO id_card_public_views(card_number, subject_principal_id, document_type, document_version, client_hash) VALUES ($1::bigint, $2::text, 'personal-photo', $3::uuid, $4::text)`,
       [view.cardNumber, view.subjectPrincipalId, view.documentVersion, view.clientHash]);
+  }
+
+  /**
+   * S8 experience certificates: the person's store assignments that started on or before
+   * `today`, latest first, with company and store names; undefined when the person does not exist.
+   */
+  async workHistory(personId: string, today: string): Promise<{ name: string | null; rows: { assignmentId: string; company: string; store: string; startDate: string; endDate: string | null }[] } | undefined> {
+    if (!DAY.test(today)) throw new RangeError("invalid day");
+    const person = (await this.#pool.query<{ name: string | null }>(`SELECT ${NAME} AS name FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id = p.id WHERE p.id = $1`, [personId])).rows[0];
+    if (!person) return undefined;
+    const rows = (await this.#pool.query<{ id: string; company: string; store: string; start_date: string; end_date: string | null }>(`SELECT a.id::text, ${COMPANY} AS company, s.name::text AS store,
+        to_char(a.start_date, 'YYYY-MM-DD') AS start_date, to_char(a.end_date, 'YYYY-MM-DD') AS end_date
+       FROM work_assignments a JOIN organizations o ON o.id = a.org_id LEFT JOIN organization_profiles op ON op.org_id = a.org_id JOIN organization_stores s ON s.id = a.store_id
+      WHERE a.person_principal_id = $1 AND a.start_date <= $2::date ORDER BY a.start_date DESC, a.id`, [personId, today])).rows;
+    return { name: person.name, rows: rows.map(r => ({ assignmentId: r.id, company: r.company, store: r.store, startDate: r.start_date, endDate: r.end_date })) };
+  }
+
+  /** One assignment for its certificate: whose it is, their name, company, store and dates. */
+  async assignment(assignmentId: string): Promise<{ personId: string; name: string | null; assignmentId: string; company: string; store: string; startDate: string; endDate: string | null } | undefined> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(assignmentId)) throw new RangeError("invalid assignment");
+    const r = (await this.#pool.query<{ person_id: string; name: string | null; company: string; store: string; start_date: string; end_date: string | null }>(`SELECT a.person_principal_id AS person_id, ${NAME} AS name, ${COMPANY} AS company, s.name::text AS store,
+        to_char(a.start_date, 'YYYY-MM-DD') AS start_date, to_char(a.end_date, 'YYYY-MM-DD') AS end_date
+       FROM work_assignments a JOIN principals p ON p.id = a.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = p.id
+       JOIN organizations o ON o.id = a.org_id LEFT JOIN organization_profiles op ON op.org_id = a.org_id JOIN organization_stores s ON s.id = a.store_id
+      WHERE a.id = $1::uuid`, [assignmentId])).rows[0];
+    return r && { personId: r.person_id, name: r.name, assignmentId, company: r.company, store: r.store, startDate: r.start_date, endDate: r.end_date };
   }
 }
