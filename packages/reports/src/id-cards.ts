@@ -16,6 +16,7 @@ import { idCardsPdf, type IdCardFace } from "./id-card-pdf.js";
 import { readImage } from "./pdf.js";
 import type { IdCardVerifier } from "./id-card-verify.js";
 import { qrModules } from "./qr.js";
+import { publicPhoto, type PublicPhoto } from "./public-photo.js";
 
 export const ID_CARD_VALID_MONTHS = 3;
 export const ID_CARD_BATCH_MAX = 100;
@@ -45,7 +46,7 @@ export interface IdCardsStore {
   write(action: IdCardAction, people: readonly string[], today: string, expiresOn: string, actor: string): Promise<readonly { readonly personId: string; readonly code: IdCardRefusal }[]>;
   card(personId: string, today: string): Promise<OwnIdCard | undefined>;
   /** The public verification page's facts for a card number; undefined when there is no such card. */
-  verify(cardNumber: number, today: string): Promise<{ readonly name: string | null; readonly company: string | null; readonly expiresOn: string; readonly assigned: boolean } | undefined>;
+  verify(cardNumber: number, today: string): Promise<{ readonly personId: string; readonly name: string | null; readonly company: string | null; readonly expiresOn: string; readonly assigned: boolean } | undefined>;
   /** How many assigned people have no card, and how many have an expired one, for the morning summary. */
   counts(today: string): Promise<{ readonly needs: number; readonly expired: number }>;
 }
@@ -53,10 +54,19 @@ export interface IdCardsAuthority { isStaff(principalId: string): Promise<boolea
 /** The person's current personal photo for a card `viewerId` is printing (the read is audited against the viewer); null when they have none. */
 export interface IdCardPhotoSource { read(personId: string, viewerId: string): Promise<{ readonly bytes: Buffer; readonly mime: string } | null> }
 
+/**
+ * The card holder's photo for the anonymous public page. Each read that returns bytes is first
+ * recorded against the card and the hashed client address (there is no signed-in viewer); when
+ * that record cannot be written, no bytes are returned.
+ */
+export interface IdCardPublicPhotoSource { read(personId: string, view: { readonly cardNumber: number; readonly clientHash: string }): Promise<{ readonly bytes: Buffer; readonly mime: string } | null> }
+
 /** What the public page shows for a scanned card. Never the civil ID number or the phone (finding F10). */
 export type IdCardCheck =
   | { readonly status: "unknown" }
-  | { readonly status: "checked"; readonly name: string | null; readonly company: string | null; readonly validUntil: string; readonly valid: boolean; readonly reason: "expired" | "not_assigned" | null };
+  | { readonly status: "checked"; readonly name: string | null; readonly company: string | null; readonly validUntil: string; readonly valid: boolean; readonly reason: "expired" | "not_assigned" | null;
+      /** The short-lived key for the holder's photo; only on a valid card, and only when public photos are configured. */
+      readonly photoKey: string | null };
 
 export type IdCardWriteResult =
   | { readonly status: "ok"; readonly count: number; readonly expiresOn: string }
@@ -82,10 +92,10 @@ export function addMonths(day: string, months: number): string {
 }
 
 export class IdCardsService {
-  readonly #store: IdCardsStore; readonly #authority: IdCardsAuthority; readonly #now: () => Date; readonly #photos: IdCardPhotoSource | undefined; readonly #verifier: IdCardVerifier | undefined;
-  /** Without a `verifier` the cards print without a QR code and every verification link is unknown. */
-  constructor(store: IdCardsStore, authority: IdCardsAuthority, now: () => Date = () => new Date(), photos?: IdCardPhotoSource, verifier?: IdCardVerifier) {
-    this.#store = store; this.#authority = authority; this.#now = now; this.#photos = photos; this.#verifier = verifier;
+  readonly #store: IdCardsStore; readonly #authority: IdCardsAuthority; readonly #now: () => Date; readonly #photos: IdCardPhotoSource | undefined; readonly #verifier: IdCardVerifier | undefined; readonly #publicPhotos: IdCardPublicPhotoSource | undefined;
+  /** Without a `verifier` the cards print without a QR code and every verification link is unknown; without `publicPhotos` the public page shows no photo. */
+  constructor(store: IdCardsStore, authority: IdCardsAuthority, now: () => Date = () => new Date(), photos?: IdCardPhotoSource, verifier?: IdCardVerifier, publicPhotos?: IdCardPublicPhotoSource) {
+    this.#store = store; this.#authority = authority; this.#now = now; this.#photos = photos; this.#verifier = verifier; this.#publicPhotos = publicPhotos;
   }
 
   /** A staff list; undefined for anyone who is not StudentHub staff. */
@@ -142,18 +152,45 @@ export class IdCardsService {
   }
 
   /**
+   * The card a link names as it is now, with the date the link is valid until. Every link shaped
+   * like a token is looked up, signed or not, so a forged link, a missing card and a real one take
+   * the same work; anything not signed by this server is then unknown, like a missing card.
+   */
+  async #lookup(token: string) {
+    const parsed = this.#verifier?.parse(token);
+    if (!parsed) return undefined;
+    const today = kuwaitDay(this.#now()), card = await this.#store.verify(parsed.cardNumber, today);
+    if (!parsed.signed || !card) return undefined;
+    const validUntil = parsed.validUntil < card.expiresOn ? parsed.validUntil : card.expiresOn;
+    const reason = validUntil < today ? "expired" as const : !card.assigned ? "not_assigned" as const : null;
+    return { card, cardNumber: parsed.cardNumber, validUntil, reason };
+  }
+
+  /**
    * The public check behind the QR code. Valid while the printed date has not passed, the card
    * has not expired, and its holder is still assigned to a store. Anything not signed by this
-   * server is unknown, the same as a card number that does not exist.
+   * server is unknown, the same as a card number that does not exist. A valid card's answer
+   * carries a photo key good for ID_CARD_PHOTO_SECONDS.
    */
   async check(token: string): Promise<IdCardCheck> {
-    const read = this.#verifier?.read(token);
-    if (!read) return { status: "unknown" };
-    const today = kuwaitDay(this.#now()), card = await this.#store.verify(read.cardNumber, today);
-    if (!card) return { status: "unknown" };
-    const validUntil = read.validUntil < card.expiresOn ? read.validUntil : card.expiresOn;
-    const reason = validUntil < today ? "expired" : !card.assigned ? "not_assigned" : null;
-    return { status: "checked", name: card.name, company: card.company, validUntil, valid: reason === null, reason };
+    const found = await this.#lookup(token);
+    if (!found) return { status: "unknown" };
+    const { card, validUntil, reason } = found;
+    const photoKey = reason === null && this.#publicPhotos ? this.#verifier!.photoKey(token, Math.floor(this.#now().getTime() / 1000)) : null;
+    return { status: "checked", name: card.name, company: card.company, validUntil, valid: reason === null, reason, photoKey };
+  }
+
+  /**
+   * The holder's photo for the public page, rebuilt without metadata (publicPhoto), or null. Only
+   * for a signed link to a card that is valid now, with an unexpired photo key made for that link.
+   * Every refusal (unknown, forged, expired or revoked card, stale key, no photo) is the same null.
+   */
+  async publicPhoto(token: string, key: string, clientHash: string): Promise<PublicPhoto | null> {
+    const found = await this.#lookup(token);
+    const keyValid = !!this.#verifier && this.#verifier.photoKeyValid(token, key, Math.floor(this.#now().getTime() / 1000));
+    if (!found || found.reason !== null || !keyValid || !this.#publicPhotos || !/^[A-Za-z0-9_-]{22}$/.test(clientHash)) return null;
+    const photo = await this.#publicPhotos.read(found.card.personId, { cardNumber: found.cardNumber, clientHash });
+    return photo && publicPhoto(photo.bytes, photo.mime);
   }
 
   counts(at: Date): Promise<{ readonly needs: number; readonly expired: number }> { return this.#store.counts(kuwaitDay(at)); }

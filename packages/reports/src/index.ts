@@ -5,3 +5,4 @@ export * from "./pdf.js";
 export * from "./id-card-pdf.js";
 export * from "./qr.js";
 export * from "./id-card-verify.js";
+export * from "./public-photo.js";
