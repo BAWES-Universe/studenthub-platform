@@ -4,7 +4,7 @@
 
 import type { Pool as PgPool, PoolClient, PoolConfig } from "pg";
 import {
-  ASSIGNMENT_COLUMNS, SESSION_COLUMNS, PoolOwner, ancestorsOf, assignmentFromRow, insertDecision, insertEvent, insertSession,
+  ASSIGNMENT_COLUMNS, SESSION_COLUMNS, PoolOwner, ancestorsOf, assignmentFromRow, guarded, insertDecision, insertEvent, insertSession,
   sessionInForce, setSessionStatus, workSessionFromRow,
   type AssignmentRow, type NewWorkSessionRecord, type SessionRow, type WorkAssignmentRecord,
   type WorkDecisionRecord, type WorkEventRecord, type WorkSessionRecord,
@@ -29,6 +29,8 @@ export interface WorkAppealTransaction {
   insertSession(s: NewWorkSessionRecord): Promise<WorkSessionRecord>;
   insertDecision(d: WorkDecisionRecord): Promise<void>;
   setStatus(sessionIds: readonly string[], status: "approved", decisionId: string): Promise<void>;
+  softDeleteSession(id: string, actorId: string, reason: string): Promise<void>;
+  restoreSession(id: string): Promise<void>;
   insertAppeal(a: Omit<WorkAppealRecord, "createdAt" | "updatedAt">): Promise<WorkAppealRecord>;
   lockAppeal(id: string): Promise<WorkAppealRecord | undefined>;
   setAppealStatus(id: string, status: WorkAppealStatus): Promise<WorkAppealRecord>;
@@ -74,6 +76,12 @@ function appealTransaction(client: PoolClient): WorkAppealTransaction {
     insertSession: (s) => insertSession(client, s),
     insertDecision: (d) => insertDecision(client, d),
     setStatus: (ids, status, decisionId) => setSessionStatus(client, ids, status, decisionId),
+    async softDeleteSession(id, actorId, reason) {
+      await client.query("UPDATE work_sessions SET deleted_at = clock_timestamp(), deleted_by = $2, delete_reason = $3 WHERE id = $1 AND deleted_at IS NULL", [id, actorId, reason]);
+    },
+    async restoreSession(id) {
+      await guarded(client, () => client.query("UPDATE work_sessions SET deleted_at = NULL, deleted_by = NULL, delete_reason = NULL WHERE id = $1 AND deleted_at IS NOT NULL", [id]));
+    },
     async insertAppeal(a) {
       const row = await appealRow(`WITH a AS (INSERT INTO work_appeals(id, session_id, person_principal_id, org_id, store_id, reason, status)
         VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *) SELECT ${APPEAL_COLUMNS} FROM a`, [a.id, a.sessionId, a.personId, a.orgId, a.storeId, a.reason, a.status]);
