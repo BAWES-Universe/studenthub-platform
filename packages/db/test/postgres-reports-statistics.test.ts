@@ -169,3 +169,34 @@ test("REPORTS_STATISTICS_PG overview: profiles, assignments running on the day, 
   assert.deepEqual(await diff(), { candidates: 1, assigned: 2, suggested: 2, requests: 5, requestsDelivered: 2 });
   await assert.rejects(store.overviewCounts("nope"), RangeError);
 });
+
+test("REPORTS_STATISTICS_PG firings: placements ended per top-level company and month, up to today, sub-companies rolled up", async () => {
+  const op = `st-op-${randomUUID()}`, parent = `st-parent-${randomUUID()}`, sub = `st-sub-${randomUUID()}`, gone = `st-gone-${randomUUID()}`;
+  await authz.upsertOrganization(createOrganization({ id: op, name: "StudentHub" }));
+  await authz.upsertOrganization(createOrganization({ id: parent, name: "Parent Co", parentOrgId: op }));
+  await authz.upsertOrganization(createOrganization({ id: sub, name: "Sub Co", parentOrgId: parent }));
+  await authz.upsertOrganization(createOrganization({ id: gone, name: "Gone Co", parentOrgId: op }));
+  const stores = new Map<string, string>();
+  for (const org of [parent, sub, gone]) {
+    const id = randomUUID(); stores.set(org, id);
+    await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Mall',$3,$3)", [id, org, "a".repeat(64)]);
+  }
+  const place = async (org: string, start: string, end: string | null) => pool.query(`INSERT INTO work_assignments(id,person_principal_id,org_id,store_id,contract_resolution,start_date,end_date,source,created_by)
+    VALUES($1,$2,$3,$4,'{}',$5,$6,'staff',$7)`, [randomUUID(), await principal("worker"), org, stores.get(org), start, end, creator]);
+  await place(parent, "2026-01-01", "2026-11-03");
+  await place(sub, "2026-02-01", "2026-11-19");
+  await place(sub, "2026-02-01", "2026-11-25"); // ends later this month: not yet
+  await place(parent, "2025-01-01", "2026-01-15");
+  await place(parent, "2024-01-01", "2025-11-30"); // before the 12 months
+  await place(parent, "2026-01-01", null); // still running
+  await place(gone, "2026-01-01", "2026-11-02");
+  await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [gone, `test:${randomUUID()}`]);
+  const scoped = new PostgresStatisticsStore({ pool, operatorOrgIds: [op] });
+  const months = ["2026-11", "2026-10", "2026-09", "2026-08", "2026-07", "2026-06", "2026-05", "2026-04", "2026-03", "2026-02", "2026-01", "2025-12"];
+  const { companies, counts } = await scoped.firings(DAY, months);
+  const ours = new Set([op, parent, sub, gone]);
+  assert.deepEqual(companies.filter(c => ours.has(c.orgId)), [{ orgId: parent, name: "Parent Co" }], "not the operator, not the sub-company, not a deleted company");
+  assert.deepEqual(counts.filter(c => ours.has(c.orgId)).sort((a, b) => a.month.localeCompare(b.month)), [{ orgId: parent, month: "2026-01", total: 1 }, { orgId: parent, month: "2026-11", total: 2 }]);
+  await assert.rejects(scoped.firings(DAY, []), RangeError);
+  await assert.rejects(scoped.firings(DAY, ["2026-1"]), RangeError);
+});

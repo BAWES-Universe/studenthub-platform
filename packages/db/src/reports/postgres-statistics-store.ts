@@ -42,10 +42,26 @@ const OVERVIEW = `SELECT
   (SELECT count(*)::int FROM ${KWD_REQUESTS} WHERE r.status <> 'draft' AND COALESCE(t.value, 'KWD') = 'KWD') AS requests,
   (SELECT count(*)::int FROM ${KWD_REQUESTS} WHERE (r.status = 'filled' OR (r.status = 'closed' AND r.close_reason = 'fulfilled')) AND COALESCE(t.value, 'KWD') = 'KWD') AS "requestsDelivered"`;
 
+// $1 operator org ids, $2 first day of the oldest month, $3 the Asia/Kuwait day. Each organization rolls up to its
+// top-level company: the ancestor whose parent is an operator organization (or none). Deleted companies are left out.
+const TOP = `WITH RECURSIVE up(org_id, at, parent, depth) AS (
+    SELECT id, id, parent_org_id, 0 FROM organizations WHERE NOT (id = ANY($1::text[]))
+    UNION ALL SELECT up.org_id, o.id, o.parent_org_id, up.depth + 1 FROM up JOIN organizations o ON o.id = up.parent
+      WHERE NOT (o.id = ANY($1::text[])) AND up.depth < 32),
+  top AS (SELECT org_id, at AS company_id FROM up WHERE parent IS NULL OR parent = ANY($1::text[])),
+  companies AS (SELECT o.id, o.name FROM organizations o JOIN top t ON t.org_id = o.id AND t.company_id = o.id
+    WHERE NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = o.id))`;
+const FIRING_COMPANIES = `${TOP} SELECT id AS "orgId", name FROM companies`;
+const FIRINGS = `${TOP} SELECT t.company_id AS "orgId", to_char(a.end_date, 'YYYY-MM') AS month, count(*)::int AS total
+  FROM work_assignments a JOIN top t ON t.org_id = a.org_id JOIN companies c ON c.id = t.company_id
+  WHERE a.end_date >= $2::date AND a.end_date <= $3::date GROUP BY 1, 2`;
+
 export class PostgresStatisticsStore {
   readonly #pool: pg.Pool; readonly #owns: boolean; readonly #summary: PostgresMorningSummaryStore;
-  constructor(options: { connectionString?: string; pool?: pg.Pool } = {}) {
-    this.#owns = !options.pool;
+  readonly #operators: readonly string[];
+  /** `operatorOrgIds` are StudentHub's own organizations: they are not companies, and companies sit under them. */
+  constructor(options: { connectionString?: string; pool?: pg.Pool; operatorOrgIds?: readonly string[] } = {}) {
+    this.#owns = !options.pool; this.#operators = options.operatorOrgIds ?? ["root"];
     this.#pool = options.pool ?? new pg.Pool({ connectionString: options.connectionString ?? databaseUrl() });
     this.#summary = new PostgresMorningSummaryStore({ pool: this.#pool });
   }
@@ -75,5 +91,20 @@ export class PostgresStatisticsStore {
   async hiring(day: string): Promise<StatisticsHiringCounts> {
     if (!DAY.test(day)) throw new RangeError("invalid day");
     return (await this.#pool.query<StatisticsHiringCounts>(HIRING, [day])).rows[0]!;
+  }
+
+  /** Top-level companies, and placements ended in `months` (`YYYY-MM`) up to one Asia/Kuwait day, both from one snapshot. */
+  async firings(day: string, months: readonly string[]): Promise<{ companies: { orgId: string; name: string }[]; counts: { orgId: string; month: string; total: number }[] }> {
+    if (!DAY.test(day) || months.length === 0 || !months.every(m => /^\d{4}-\d{2}$/.test(m))) throw new RangeError("invalid months");
+    const from = `${[...months].sort()[0]}-01`;
+    const c = await this.#pool.connect();
+    try {
+      await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const companies = (await c.query<{ orgId: string; name: string }>(FIRING_COMPANIES, [this.#operators])).rows;
+      const counts = (await c.query<{ orgId: string; month: string; total: number }>(`${FIRINGS}`, [this.#operators, from, day])).rows;
+      await c.query("COMMIT");
+      return { companies, counts };
+    } catch (error) { await c.query("ROLLBACK").catch(() => undefined); throw error; }
+    finally { c.release(); }
   }
 }
