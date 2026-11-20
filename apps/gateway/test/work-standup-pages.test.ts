@@ -24,7 +24,8 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
     },
     ...(world.noStandup ? {} : { standup: {
       today: async (...a: unknown[]) => { calls.push(["today", ...a]); return world.notStaff ? refused() : { kind: "today", workDate: "2026-11-18", next: world.next === false ? null : { id: Q2, question: "Plans <today>?", createdAt: "x" }, answers: world.answered ? [answer()] : [] }; },
-      answer: async (...a: unknown[]) => { calls.push(["answer", ...a]); return world.answerResult ?? { kind: "answered", workDate: "2026-11-18" }; },
+      // As the service does: only while the day is in progress, and only the next question (Q2 here).
+      answer: async (...a: unknown[]) => { calls.push(["answer", ...a]); return world.answerResult ?? (!world.open ? refused("not_working") : a[1] !== Q2 ? refused("out_of_order") : { kind: "answered", workDate: "2026-11-18" }); },
       questions: async (...a: unknown[]) => { calls.push(["questions", ...a]); return world.notAdmin ? refused() : { kind: "questions", questions: [{ id: Q1, question: "Blockers <now>?", createdAt: "x" }] }; },
       addQuestion: async (...a: unknown[]) => { calls.push(["add", ...a]); return world.questionResult ?? { kind: "question", question: {} }; },
       editQuestion: async (...a: unknown[]) => { calls.push(["edit", ...a]); return world.questionResult ?? { kind: "question", question: {} }; },
@@ -71,10 +72,18 @@ test("STANDUP_PAGES /me/work asks the next question only while the day is in pro
 
 test("STANDUP_PAGES an answer posts from the same origin and comes back to /me/work", async () => {
   const calls: unknown[][] = [];
-  const saved = await post("/me/work/standup", { body: `question=${Q2}&answer=Interviews+%26+calls` }, calls);
+  const saved = await post("/me/work/standup", { body: `question=${Q2}&answer=Interviews+%26+calls`, world: { open: true } }, calls);
   assert.deepEqual([saved.status, saved.headers.location], [303, "/me/work?done=answered"]);
   assert.deepEqual(calls.filter((c) => c[0] === "answer"), [["answer", "actor", Q2, "Interviews & calls"]]);
   assert.match((await request("/me/work?done=answered")).html, /Answer saved\./);
+  // A post made straight to the endpoint is held to the same rules as the form.
+  const closed = await post("/me/work/standup", { body: `question=${Q2}&answer=x` });
+  assert.equal(closed.status, 409);
+  assert.match(closed.html, /role="alert"><p>Start your day to answer the stand-up\.<\/p>/);
+  const skipped = await post("/me/work/standup", { body: `question=${Q1}&answer=x`, world: { open: true } });
+  assert.equal(skipped.status, 409);
+  assert.match(skipped.html, /Answer the stand-up questions one at a time, in order\. Here is the next one\./);
+  assert.ok(skipped.html.includes(`name="question" value="${Q2}"`), "the next question is asked again");
   const twice = await post("/me/work/standup", { body: `question=${Q2}&answer=x`, world: { open: true, answerResult: { kind: "refused", code: "already_answered" } } });
   assert.equal(twice.status, 409);
   assert.match(twice.html, /You&#39;ve already answered that question today\./);

@@ -34,6 +34,12 @@ async function adminId() {
 }
 const service = (now: { value: Date }) => new StandupService({ store, grants: authz, newId: () => randomUUID(), now: () => now.value });
 const date = (now: Date) => new Date(now.getTime() + 3 * 3_600_000).toISOString().slice(0, 10);
+/** Starts the staff member's day (a session in progress), as the staff timer does. */
+async function startDay(staffId: string, workDate: string, at: Date) {
+  const id = randomUUID();
+  await pool.query("INSERT INTO work_staff_sessions(id, staff_principal_id, work_date, started_at, source) VALUES($1,$2,$3::date,$4,'timer')", [id, staffId, workDate, at]);
+  return id;
+}
 
 test("STANDUP_PG questions in order, one answer per question and Kuwait day, rewording keeps the answered text, retiring stops asking", async () => {
   // A far-off day of its own, so other tests' questions and answers don't meet this one's.
@@ -51,6 +57,10 @@ test("STANDUP_PG questions in order, one answer per question and Kuwait day, rew
   const first = await svc.today(staff);
   assert.equal(first.kind === "today" && first.workDate, day);
   assert.equal(first.kind === "today" && first.next?.id, one.question.id);
+  // Not before their day has started, and not ahead of the next question.
+  assert.deepEqual(await svc.answer(staff, one.question.id, "None"), { kind: "refused", code: "not_working" });
+  const session = await startDay(staff, day, now.value);
+  assert.deepEqual(await svc.answer(staff, two.question.id, "A"), { kind: "refused", code: "out_of_order" });
   assert.deepEqual(await svc.answer(staff, one.question.id, "None"), { kind: "answered", workDate: day });
   // Two answers at once: one is saved.
   const both = await Promise.all([svc.answer(staff, two.question.id, "A"), svc.answer(staff, two.question.id, "B")]);
@@ -61,10 +71,19 @@ test("STANDUP_PG questions in order, one answer per question and Kuwait day, rew
   const answers = await svc.answers(admin, day, { staffId: staff });
   assert.deepEqual(answers.kind === "answers" && answers.answers.map((a) => a.question), ["Blockers?", "Plans?"]);
   assert.deepEqual(await svc.retireQuestion(admin, two.question.id), { kind: "retired" });
+  await startDay(quiet, day, now.value);
   assert.deepEqual(await svc.answer(quiet, two.question.id, "x"), { kind: "refused", code: "not_found" });
   assert.deepEqual((await svc.questions(admin)), { kind: "questions", questions: [{ ...one.question, question: "Anything blocking you?" }] });
   const unanswered = await svc.unanswered(admin, day);
   assert.ok(unanswered.kind === "unanswered" && unanswered.staffIds.includes(quiet) && !unanswered.staffIds.includes(staff));
+  // Once their day has ended, nothing more is taken.
+  await pool.query("UPDATE work_staff_sessions SET ended_at = $2 WHERE id = $1", [session, new Date(now.value.getTime() + 60_000)]);
+  assert.deepEqual(await svc.answer(quiet, one.question.id, "y"), { kind: "answered", workDate: day });
+  await svc.addQuestion(admin, "Anything else?");
+  const late = await svc.today(staff);
+  assert.ok(late.kind === "today" && late.next);
+  assert.deepEqual(await svc.answer(staff, late.next.id, "z"), { kind: "refused", code: "not_working" });
+  await store.retireQuestion(late.next.id);
   // The next Kuwait day asks again.
   now.value = new Date(now.value.getTime() + 86_400_000);
   assert.equal(((await svc.today(staff)) as { next: { id: string } }).next.id, one.question.id);

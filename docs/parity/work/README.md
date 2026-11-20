@@ -202,6 +202,11 @@ The stand-up part of A-14. `StandupService` (`packages/work/src/standup.ts`) ove
   answers today are listed under it. A question is answered once per staff member and Kuwait day;
   a second answer, or two at once, is refused (`already_answered`). Answers are 1 to 4,000
   characters.
+- Both rules hold for an answer posted straight to `/me/work/standup`, not only for the form: with
+  no staff session in progress today the answer is refused (`not_working`), and an answer to any
+  question but the next one is refused (`out_of_order`). The store checks both in the answer's own
+  transaction, holding the session and the question `FOR SHARE`, so the day can't end and the
+  question can't be retired under it.
 - Operator admins keep the questions at `/work/staff-time`'s "Stand-up" link (`/work/standup`):
   add, reword, stop asking. Questions are asked in the order they were added; legacy had no order.
   Legacy deleted a question; here it is retired, so its answers stay. Rewording keeps the wording

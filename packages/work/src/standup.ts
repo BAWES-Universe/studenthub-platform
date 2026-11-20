@@ -37,8 +37,14 @@ export interface StandupStore {
   retireQuestion(id: string): Promise<boolean>;
   /** The next question still asked that the staff member hasn't answered on the date. */
   nextQuestion(staffId: string, workDate: IsoDate): Promise<StandupQuestion | undefined>;
-  /** "exists" when that question is already answered by them that day; "gone" when the question is retired or unknown. */
-  insertAnswer(a: { readonly id: string; readonly staffId: string; readonly questionId: string; readonly answer: string; readonly workDate: IsoDate }): Promise<"inserted" | "exists" | "gone">;
+  /**
+   * Saves an answer, atomically with its checks, so they hold under parallel requests:
+   * "not_working" when the staff member has no session in progress on the date;
+   * "gone" when the question is retired or unknown;
+   * "exists" when that question is already answered by them that day;
+   * "out_of_order" when it isn't the next question still asked that they haven't answered that day.
+   */
+  insertAnswer(a: { readonly id: string; readonly staffId: string; readonly questionId: string; readonly answer: string; readonly workDate: IsoDate }): Promise<"inserted" | "exists" | "gone" | "not_working" | "out_of_order">;
   /** Answers on the date, by staff id then time, after the cursor. */
   answers(filter: { readonly workDate: IsoDate; readonly staffId?: string; readonly after?: StandupAnswerCursor; readonly limit: number }): Promise<readonly StandupAnswer[]>;
   /** Everyone who holds a staff or admin grant on an operator organization. */
@@ -50,7 +56,7 @@ export interface StandupStore {
 export const STANDUP_ANSWER_PAGE_SIZE = 100;
 export const STANDUP_QUESTION_MAX = 255;
 export const STANDUP_ANSWER_MAX = 4000;
-export type StandupRefusal = "forbidden" | "invalid_input" | "not_found" | "already_answered";
+export type StandupRefusal = "forbidden" | "invalid_input" | "not_found" | "already_answered" | "not_working" | "out_of_order";
 type Refused = { readonly kind: "refused"; readonly code: StandupRefusal };
 const refused = (code: StandupRefusal): Refused => ({ kind: "refused", code });
 
@@ -85,7 +91,11 @@ export class StandupService {
     return { kind: "today", workDate, next: next ?? null, answers };
   }
 
-  /** Answers a question for today; a second answer to the same question the same day is refused. */
+  /**
+   * Answers a question for today. Only while their day is in progress, and only
+   * the next question they haven't answered today (one at a time, in order); a
+   * second answer to the same question the same day is refused.
+   */
   async answer(actorId: string, questionId: unknown, answer: unknown): Promise<{ readonly kind: "answered"; readonly workDate: IsoDate } | Refused> {
     if (!(await this.#staff(actorId))) return refused("forbidden");
     const body = cleanText(answer, STANDUP_ANSWER_MAX);
@@ -94,6 +104,8 @@ export class StandupService {
     const result = await this.#store.insertAnswer({ id: this.#newId(), staffId: actorId, questionId: questionId.toLowerCase(), answer: body, workDate });
     if (result === "exists") return refused("already_answered");
     if (result === "gone") return refused("not_found");
+    if (result === "not_working") return refused("not_working");
+    if (result === "out_of_order") return refused("out_of_order");
     return { kind: "answered", workDate };
   }
 

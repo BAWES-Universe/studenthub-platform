@@ -8,6 +8,8 @@ class Memory implements StandupStore {
   questionsAll: { id: string; question: string; createdAt: string; retired: boolean }[] = [];
   answersAll: StandupAnswer[] = [];
   staff = ["admin", "staff", "staff-2"];
+  /** "staffId|date" of days with no session in progress; every other day is in progress. */
+  closedDays = new Set<string>();
   async questions() { return this.questionsAll.filter((q) => !q.retired).map(({ retired: _, ...q }) => q); }
   async insertQuestion(q: { id: string; question: string; createdBy: string }) {
     const row = { id: q.id, question: q.question, createdAt: `2026-11-18T05:00:0${this.questionsAll.length}.000Z`, retired: false };
@@ -30,9 +32,11 @@ class Memory implements StandupStore {
     return (await this.questions()).find((q) => !this.answersAll.some((a) => a.questionId === q.id && a.staffId === staffId && a.workDate === workDate));
   }
   async insertAnswer(a: { id: string; staffId: string; questionId: string; answer: string; workDate: string }) {
+    if (this.closedDays.has(`${a.staffId}|${a.workDate}`)) return "not_working" as const;
     const q = this.questionsAll.find((x) => x.id === a.questionId && !x.retired);
     if (!q) return "gone" as const;
     if (this.answersAll.some((x) => x.questionId === a.questionId && x.staffId === a.staffId && x.workDate === a.workDate)) return "exists" as const;
+    if ((await this.nextQuestion(a.staffId, a.workDate))?.id !== a.questionId) return "out_of_order" as const;
     this.answersAll.push({ id: a.id, staffId: a.staffId, questionId: a.questionId, question: q.question, answer: a.answer, workDate: a.workDate, createdAt: `2026-11-18T06:00:00.${String(this.answersAll.length).padStart(3, "0")}Z` });
     return "inserted" as const;
   }
@@ -141,4 +145,18 @@ test("STANDUP admins read the answers on a date page by page, and who answered n
   const one = await svc.answers("admin", "2026-11-18", { staffId: "staff-2" });
   assert.deepEqual(one.kind === "answers" && one.answers, []);
   assert.deepEqual(await svc.unanswered("admin", "2026-11-18"), { kind: "unanswered", workDate: "2026-11-18", staffIds: ["admin", "staff-2"] });
+});
+
+test("STANDUP an answer is refused when the day isn't in progress, or when it skips ahead of the next question", async () => {
+  const now = { value: new Date("2026-11-18T06:00:00Z") };
+  const { store, svc } = service(now);
+  await svc.addQuestion("admin", "Blockers?");
+  await svc.addQuestion("admin", "Plans?");
+  store.closedDays.add("staff|2026-11-18");
+  assert.deepEqual(await svc.answer("staff", Q1, "None"), { kind: "refused", code: "not_working" });
+  store.closedDays.clear();
+  assert.deepEqual(await svc.answer("staff", Q2, "Ship it"), { kind: "refused", code: "out_of_order" });
+  assert.equal((await svc.answer("staff", Q1, "None")).kind, "answered");
+  assert.equal((await svc.answer("staff", Q2, "Ship it")).kind, "answered");
+  assert.deepEqual(store.answersAll.map((a) => a.questionId), [Q1, Q2]);
 });

@@ -48,6 +48,8 @@ export const STANDUP_REFUSED: Readonly<Record<string, string>> = {
   invalid_input: `Write an answer of up to ${STANDUP_ANSWER_MAX} characters.`,
   already_answered: "You've already answered that question today.",
   not_found: "That question is no longer asked. Here is the next one.",
+  not_working: "Start your day to answer the stand-up.",
+  out_of_order: "Answer the stand-up questions one at a time, in order. Here is the next one.",
 };
 
 function cursorText(c: StandupAnswerCursor): string { return `${encodeURIComponent(c.staffId)}~${c.createdAt}~${c.id}`; }

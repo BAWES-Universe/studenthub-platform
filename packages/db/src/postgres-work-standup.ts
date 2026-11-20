@@ -60,16 +60,32 @@ export class PostgresWorkStandupStore {
     return rows[0] ? question(rows[0]) : undefined;
   }
 
-  async insertAnswer(a: { id: string; staffId: string; questionId: string; answer: string; workDate: string }): Promise<"inserted" | "exists" | "gone"> {
-    // The question's wording is copied from a question still asked, in the same statement.
-    const { rowCount } = await this.#db.pool.query(
-      `INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source)
-       SELECT $1, $2, q.id, q.question, $4, $5::date, 'app' FROM work_standup_questions q WHERE q.id = $3 AND q.retired_at IS NULL
-       ON CONFLICT (staff_principal_id, question_id, work_date) WHERE source = 'app' DO NOTHING`,
-      [a.id, a.staffId, a.questionId, a.answer, a.workDate]);
-    if (rowCount === 1) return "inserted";
-    const { rowCount: asked } = await this.#db.pool.query("SELECT 1 FROM work_standup_questions WHERE id = $1 AND retired_at IS NULL", [a.questionId]);
-    return asked ? "exists" : "gone";
+  async insertAnswer(a: { id: string; staffId: string; questionId: string; answer: string; workDate: string }): Promise<"inserted" | "exists" | "gone" | "not_working" | "out_of_order"> {
+    return this.#db.transaction(async (client) => {
+      // The session in progress and the question are held FOR SHARE until commit, so the
+      // day can't be ended and the question can't be retired or reworded under the answer.
+      const working = await client.query(
+        "SELECT 1 FROM work_staff_sessions WHERE staff_principal_id = $1 AND work_date = $2::date AND ended_at IS NULL FOR SHARE", [a.staffId, a.workDate]);
+      if (!working.rowCount) return "not_working";
+      const asked = await client.query("SELECT 1 FROM work_standup_questions WHERE id = $1 AND retired_at IS NULL FOR SHARE", [a.questionId]);
+      if (!asked.rowCount) return "gone";
+      const given = await client.query("SELECT 1 FROM work_standup_answers WHERE staff_principal_id = $1 AND question_id = $2 AND work_date = $3::date LIMIT 1", [a.staffId, a.questionId, a.workDate]);
+      if (given.rowCount) return "exists";
+      // One at a time, in order. An earlier answer still in flight in another transaction
+      // isn't seen here, so this refuses rather than letting a later question jump ahead.
+      const next = await client.query<{ id: string }>(
+        `SELECT q.id FROM work_standup_questions q
+         WHERE q.retired_at IS NULL AND NOT EXISTS (SELECT 1 FROM work_standup_answers x WHERE x.question_id = q.id AND x.staff_principal_id = $1 AND x.work_date = $2::date)
+         ORDER BY q.created_at, q.id LIMIT 1`, [a.staffId, a.workDate]);
+      if (next.rows[0]?.id !== a.questionId) return "out_of_order";
+      // The question's wording is copied from the question still asked, in the same statement.
+      const { rowCount } = await client.query(
+        `INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source)
+         SELECT $1, $2, q.id, q.question, $4, $5::date, 'app' FROM work_standup_questions q WHERE q.id = $3 AND q.retired_at IS NULL
+         ON CONFLICT (staff_principal_id, question_id, work_date) WHERE source = 'app' DO NOTHING`,
+        [a.id, a.staffId, a.questionId, a.answer, a.workDate]);
+      return rowCount === 1 ? "inserted" : "exists";
+    });
   }
 
   async answers(filter: { workDate: string; staffId?: string; after?: { staffId: string; createdAt: string; id: string }; limit: number }): Promise<readonly WorkStandupAnswerRecord[]> {
