@@ -1,6 +1,6 @@
 # Orca bot handover: `studenthub-universe`
 
-**Status: FINAL v3, agreed by Claude and GPT on the desk (studenthub-platform PR #393, GPT AGREE comment 7044614566 with launch gates, all folded in below).** This agrees the operating design only. No bot run, ticket or repository protection has been proven yet.
+**Status: v4. Agreed by Claude and GPT on the desk (studenthub-platform PR #393), plus the v4 edits the Orca bot proposed and Claude and GPT reviewed.** This agrees the operating design only. No bot run, ticket or repository protection has been proven yet.
 
 Written 2026-11-20 by Claude from GPT's baseline (desk 7044372449), Claude's AMEND (7044479611) and GPT's AGREE with final edits (7044614566). It is meant to let an Orca bot start cold, with no chat history, and to give Khalid a clear plan for adding more bots and a clear view of velocity. A copy goes into the repo at `docs/lanes/orca/HANDOVER.md` so the bot reads it from GitHub.
 
@@ -13,16 +13,16 @@ Markers used below: **[FACT]** checked on 2026-11-20 · **[DEFAULT]** what we do
 **What the bot is.** [FACT] `studenthub-universe` is an Orca bot on your PC. It runs your Codex. In GitHub it pushes and comments as `BAWES`; in Linear it acts as you. It is a **contributor lane**, like an outside engineer: it writes code in pull requests that go through the same review and merge gates as everything else. It does not replace the box.
 
 **What you do, once (setup is separate from dispatch).** [OWNER]
-1. **Protect `main` for the bot's identity.** The bot pushes with your GitHub login, so the rules must stop *you* from pushing straight to `main`, not just ask the bot not to. In GitHub, studenthub-platform → Settings → Rules → `main-protected-v1.2`: turn on "Require a pull request before merging", with the bypass list empty. Claude's token can't read the classic branch-protection page, so this is the check we can't do for you. If you'd rather not, the pilot stays read-only.
+1. **Protect `main` for the bot's identity.** The bot pushes with your GitHub login, so the rules must stop *you* from pushing straight to `main`, not just ask the bot not to. In GitHub, studenthub-platform → Settings → Rules → `main-protected-v1.2`: turn on "Require a pull request before merging" (0 required approvals is fine), with the bypass list empty. If you'd rather not, the pilot stays read-only. Claude then confirms it from the API before dispatch (Part D, pre-dispatch check).
 2. Keep the PC on and Orca running during the pilot (about 2 days). Orca bots work only while it is.
 3. Paste the remit in Part C into the bot's chat once, so it saves it in its `SOUL.md`. Its current remit ("assess delivery") is reviewer-style; this makes it an implementation worker with our rules.
 4. When 1 to 3 are done, say **"start the Orca pilot"** in project chat. Nothing is dispatched to the bot before you say that.
 
-After that you relay nothing: Claude dispatches tickets on GitHub, the bot answers there, Claude reviews, GPT corroborates.
+After that you relay nothing, dispatch nothing, answer no routine technical question and merge nothing. **Claude owns each ticket from dispatch to landing:** it registers the lease, opens the issue, triggers the bot, reviews the final commit, squash-merges and closes the issue. The bot works and reports on GitHub; GPT corroborates and can raise findings there directly. If Claude is unavailable, the ticket waits for an eligible reviewer and merge operator; it never comes to you.
 
 **How to stop it.** [OWNER] Use Orca's pause/stop control for the bot and check that no worker is still running. Don't delete the bot, so its history stays. A STOP comment on GitHub from Claude or GPT (section B9) is a signal the bot should obey, but it is not a kill switch.
 
-**How you'll see velocity.** Claude posts a scorecard on the desk after each pilot stage and weekly after that, comparing Orca, the box, GPT and Claude lanes (section B11). The coordinator brings the headline to project chat.
+**How you'll see velocity.** Claude posts a scorecard on the desk after each pilot stage and weekly after that, comparing Orca, the box, GPT and Claude lanes (Part E). The coordinator brings the headline to project chat.
 
 ---
 
@@ -128,7 +128,8 @@ Do **not** add a `Claude-Session:` trailer. [FACT] The box uses that trailer to 
 - Review is by a **different model family at the exact head SHA**. You run Codex, so **Claude reviews you**, and an independent Claude PASS is mandatory. GPT may corroborate, but GPT is the same family as Codex and cannot be the only reviewer. If Claude is unavailable, the PR waits.
 - A verdict is a PR comment whose first line is `PASS at <sha>` or `BLOCK at <sha>`.
 - On BLOCK: fix on the same branch, push, comment the new full SHA and what changed.
-- **Every blocking finding is fixed on your PR and re-verified.** Only items the reviewer explicitly marks non-blocking may move to a follow-up issue with a named owner, linked in the verdict. Nothing is left as "noted". (This came from the bot's own review of our process.)
+- **Every blocking finding is fixed on your PR and re-verified before merge.** Only items the reviewer explicitly marks non-blocking may move to a follow-up issue with a named owner, linked in the verdict. Nothing is left as "noted". If a new credible blocking finding appears before merge (from GPT, a bot reviewer or CI), Claude resolves it and records the disposition on the PR before landing. (This came from the bot's own review of our process.)
+- **Any head change needs a fresh verdict.** After any new commit, Claude reviews the new final commit and posts a new `PASS at`/`BLOCK at`. An older PASS never carries to a newer head for bot PRs.
 - **Merge** is Claude's job, only when required CI is green **and** an independent PASS exists on the **final exact SHA**, and the PR is up to date with `main`. Squash merge. Then Claude closes the dispatch issue with the merge SHA.
 
 ### B7. How you report
@@ -184,6 +185,18 @@ Agreed shape (GPT's baseline): prove one ticket end to end, then two disjoint ti
 
 [DEFAULT] The ceiling on bots is **review and landing throughput**, not how many writers we have. Each extra bot needs either distinct unowned work or extra independent review capacity (for example, a bot running a different model family that can review Codex code). Usage limits are shared: all bots on Khalid's PC share his Codex plan.
 
+**Pre-dispatch check (Claude, before every stage 1 and 2 dispatch, recorded on the issue):**
+- [ ] `HANDOVER.md` and `REGISTER.md` are on `main`
+- [ ] label `lane:orca` exists
+- [ ] the bot replied "remit saved"
+- [ ] the lease is clear: no open PR touches its paths
+- [ ] `main` requires a pull request with no bypass (read from the API)
+- [ ] Khalid has said "start the Orca pilot" (once, for the whole pilot)
+
+**What GitHub enforces and what it doesn't.** [FACT 2026-11-20] On `main`, GitHub requires four status checks for everyone, admins included: `repository-policy`, `coordinator-future-clock`, `fast-checks`, `gateway-image-smoke`. The ruleset blocks deletion and force-push and requires linear history. It does **not** yet require a pull request (setup step A1), and it requires no approving review. Claude, GPT and the bot all act as `BAWES`, so GitHub cannot tell them apart. Headers attribute messages and an exact-commit `PASS` records a verdict, but neither is enforced: in this pilot "only Claude merges" and "independent PASS before merge" are **operating rules**, checked by the post-merge audit (Part E). If we later want GitHub to enforce them, the writer and the reviewer/merge operator need distinct GitHub identities (for example a bot account or GitHub App for Orca) and a required review from the reviewer's identity. That never means Khalid merging each ticket by hand.
+
+**Proving the handoff.** Stage 1 passes only if the GitHub trail shows, with zero steps through Khalid: Claude's dispatch on the issue → the bot's acknowledgment → the bot's draft PR → ready at an exact SHA → Claude's verdict at that SHA → Claude's squash merge → the issue closed with the merge SHA. If the trigger, the review route or the merge route fails, Claude records the blocker on the issue and the desk, and pauses the pilot until the route is fixed. The fallback is never Khalid relaying.
+
 **Pilot ticket P1 (proposal, not assigned)**
 - **Slug:** `running-tests-guide`
 - **Why:** docs only, one path, no runtime change, no security code, no private or live data. On 2026-11-20 no open PR touched `docs/runbooks/`; Claude rechecks that on the day of dispatch.
@@ -214,7 +227,7 @@ Per bot and per lane, for the period:
 
 Comparison rows in the same table: **the box** (merged card PRs and SHU-71 run log), **GPT lanes** (PRs from `gpt/` branches) and **Claude lanes**, over the same days. The question the scorecard answers: does each extra bot add merged, verified work per day without slowing review for everyone else?
 
-Post-merge audit, run by Claude after each bot merge: `main` history has only squash commits from PRs (each title ends `(#N)`), and the bot's PR touched only its lease. This **detects** a problem after the fact; it does not **prevent** one. Prevention is the protection in A1. [FACT] The `main` ruleset blocks deletion and force-push and requires linear history with no bypass actors, but it does not require a pull request, and our token can't read the classic protection. That is why A1 is a launch gate.
+Post-merge audit, run by Claude after each bot merge: `main` history has only squash commits from PRs (each title ends `(#N)`), and the bot's PR touched only its lease. This **detects** a problem after the fact; it does not **prevent** one. Prevention is the protection in A1 plus the required checks (Part D, "What GitHub enforces"). That is why A1 is a launch gate.
 
 ---
 
@@ -224,14 +237,17 @@ Success to move to the next stage:
 - [ ] Bot acknowledged on GitHub without anyone relaying
 - [ ] Draft PR inside the lease, header on every comment, no `SHU-` anywhere
 - [ ] Ready with evidence; PASS within 2 rounds; merged by Claude
-- [ ] Every BLOCK finding fixed or linked to an owned follow-up
+- [ ] Every blocking finding fixed and re-verified on the PR before merge; only reviewer-marked non-blocking items moved to linked follow-ups with a named owner
+- [ ] A fresh Claude verdict on the final exact SHA after every head change
+- [ ] The full GitHub trail from dispatch to merge, with zero steps through Khalid
 - [ ] Zero rule breaches; scorecard posted
 
 Stop the pilot (Claude or GPT says STOP; Khalid pauses in Orca if needed) when:
 - [ ] Any push outside its branch, any Linear write, any reply to an unregistered mention, any touch of secrets, real data, pay or `.github`
 - [ ] Two tickets in a row not merged
 - [ ] Review backlog from bot PRs over 1 working day
+- [ ] The trigger, review or merge route fails (pause until fixed)
 
 ---
 
-Consensus: **Claude and GPT agreed on 2026-11-20** (desk PR #393: GPT baseline 7044372449, Claude AMEND 7044479611, GPT AGREE with final edits 7044614566, all applied in this version). Launch gates: A1 protection confirmed, remit saved, this file and the register on `main`, and Khalid saying "start the Orca pilot".
+Consensus: **Claude and GPT agreed on 2026-11-20** (desk PR #393: GPT baseline 7044372449, Claude AMEND 7044479611, GPT AGREE with final edits 7044614566, all applied), then v4 edits proposed by the Orca bot via Khalid and reviewed on the desk. Launch gates: A1 protection confirmed, remit saved, this file and the register on `main`, and Khalid saying "start the Orca pilot".
