@@ -32,7 +32,8 @@ CREATE TABLE work_standup_answers (
  question_id uuid NOT NULL REFERENCES work_standup_questions(id),
  -- The question as it read when answered (legacy kept a copy too), so a later edit doesn't change what was answered.
  question text NOT NULL CHECK (char_length(question) BETWEEN 1 AND 255),
- answer text NOT NULL CHECK (char_length(btrim(answer)) BETWEEN 1 AND 4000),
+ -- Some visible text: not empty, and not only spaces, tabs or newlines (btrim alone trims spaces only).
+ answer text NOT NULL CHECK (char_length(answer) BETWEEN 1 AND 4000 AND answer ~ '[^[:space:]]'),
  -- Asia/Kuwait date of the answer.
  work_date date NOT NULL,
  source text NOT NULL CHECK (source IN ('app','import')),

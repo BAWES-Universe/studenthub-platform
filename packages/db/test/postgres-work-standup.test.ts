@@ -108,12 +108,21 @@ test("STANDUP_PG answers page by staff then time; answers are never edited or re
   await assert.rejects(pool.query("UPDATE work_standup_answers SET answer = 'changed' WHERE staff_principal_id = $1", [staff]), /never edited or removed/);
   await assert.rejects(pool.query("DELETE FROM work_standup_answers WHERE staff_principal_id = $1", [staff]), /never edited or removed/);
   await assert.rejects(pool.query("DELETE FROM work_standup_questions WHERE id = $1", [q.id]), /retired, never removed/);
-  await assert.rejects(pool.query("INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source) VALUES($1,$2,$3,'Paging?','  ',$4::date,'app')", [randomUUID(), staff, q.id, day]), /check/i);
+  for (const blank of ["  ", "\n\t", "\r\n \t"]) {
+    await assert.rejects(pool.query("INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source) VALUES($1,$2,$3,'Paging?',$5,$4::date,'app')", [randomUUID(), staff, q.id, day, blank]), /check/i, JSON.stringify(blank));
+  }
   await store.retireQuestion(q.id);
 });
 
 test("STANDUP_PG neither table can be emptied by TRUNCATE, directly or by a CASCADE from a parent", async () => {
   const refused = /stand-up questions and answers are append-only and never removed/;
+  // Its own question and answer, so the check doesn't lean on rows other tests left.
+  const admin = await adminId();
+  const staff = await principal("truncate", [{ orgId: "root", role: "staff", scope: "subtree" }]);
+  const q = await store.insertQuestion({ id: randomUUID(), question: "Kept?", createdBy: admin });
+  const answerId = randomUUID();
+  await pool.query("INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source, legacy_ref) VALUES($1,$2,$3,'Kept?','yes','2051-01-01','import',$4)", [answerId, staff, q.id, `standup-test-${randomUUID()}`]);
+  await store.retireQuestion(q.id);
   for (const statement of ["TRUNCATE work_standup_answers", "TRUNCATE work_standup_questions CASCADE", "TRUNCATE work_standup_answers, work_standup_questions",
     "TRUNCATE principals CASCADE"]) {
     const client = await pool.connect();
@@ -132,5 +141,6 @@ test("STANDUP_PG neither table can be emptied by TRUNCATE, directly or by a CASC
       client.release();
     }
   }
-  assert.ok(((await pool.query("SELECT count(*)::int AS n FROM work_standup_answers")).rows[0] as { n: number }).n > 0);
+  assert.equal((await pool.query("SELECT 1 FROM work_standup_answers WHERE id = $1", [answerId])).rowCount, 1);
+  assert.equal((await pool.query("SELECT 1 FROM work_standup_questions WHERE id = $1", [q.id])).rowCount, 1);
 });
