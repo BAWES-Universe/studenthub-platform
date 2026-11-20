@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addMonths, IdCardsService, kuwaitDay, ID_CARD_BATCH_MAX } from "../src/index.js";
+import { addMonths, IdCardsService, IdCardVerifier, kuwaitDay, ID_CARD_BATCH_MAX } from "../src/index.js";
 import type { IdCardAction, IdCardsStore, IdCardView } from "../src/index.js";
 
 test("REPORTS_ID_CARDS three calendar months, clamped to the end of a shorter month", () => {
@@ -25,6 +25,8 @@ class Store implements IdCardsStore {
   async write(action: IdCardAction, people: readonly string[], today: string, expiresOn: string, actor: string) { this.writes.push({ action, people, today, expiresOn, actor }); return this.refuse; }
   async card(personId: string) { return personId === "holder" ? { name: "Alia Badr", arabicName: null, employeeId: null, cardNumber: 7, expiresOn: "2026-11-19", issuedAt: new Date(), placement: null } : undefined; }
   async counts() { return { needs: 0, expired: 0 }; }
+  verifyRows = new Map<number, { name: string | null; company: string | null; expiresOn: string; assigned: boolean }>();
+  async verify(n: number) { return this.verifyRows.get(n); }
 }
 const rig = (at = "2026-11-19T21:30:00Z") => {
   const store = new Store();
@@ -123,4 +125,27 @@ test("REPORTS_ID_CARDS_PDF a batch of 100 at-cap PNG photos is read one at a tim
   assert.equal(sizes.length, 100); assert.ok(sizes.every(([w, h]) => w === 320 && h === 320), "every photo is kept at card size, not 1000 x 1000");
   // Each card keeps at most a 320 x 320 RGB photo (300 KB raw), so the batch's retained growth stays far under one full-size decode per card (100 x 4 MB).
   assert.ok(after.heapUsed + after.arrayBuffers - before.heapUsed - before.arrayBuffers < 64 * 1024 * 1024, `retained growth ${(after.heapUsed + after.arrayBuffers - before.heapUsed - before.arrayBuffers) >> 20} MB`);
+});
+
+test("REPORTS_ID_CARD_CHECK the public check: valid until the earlier of the printed and current expiry, and only while assigned", async () => {
+  const store = new Store(), verifier = new IdCardVerifier(Buffer.alloc(32, 3));
+  const service = new IdCardsService(store, { async isStaff() { return false; } }, () => new Date("2026-11-19T06:00:00Z"), undefined, verifier);
+  store.verifyRows.set(7, { name: "Alia Badr", company: "Sultan Center", expiresOn: "2027-02-19", assigned: true });
+  assert.deepEqual(await service.check(verifier.token(7, "2027-02-19")), { status: "checked", name: "Alia Badr", company: "Sultan Center", validUntil: "2027-02-19", valid: true, reason: null });
+  assert.deepEqual(await service.check(verifier.token(7, "2026-11-18")), { status: "checked", name: "Alia Badr", company: "Sultan Center", validUntil: "2026-11-18", valid: false, reason: "expired" },
+    "an old print stays expired after a renewal");
+  assert.deepEqual(await service.check(verifier.token(7, "2026-11-19")), { status: "checked", name: "Alia Badr", company: "Sultan Center", validUntil: "2026-11-19", valid: true, reason: null }, "valid through the printed day");
+  store.verifyRows.set(7, { name: "Alia Badr", company: null, expiresOn: "2026-12-01", assigned: false });
+  assert.deepEqual(await service.check(verifier.token(7, "2027-02-19")), { status: "checked", name: "Alia Badr", company: null, validUntil: "2026-12-01", valid: false, reason: "not_assigned" },
+    "a card shortened since printing shows the shorter date; a holder who left is not valid");
+  assert.deepEqual(await service.check(verifier.token(8, "2027-02-19")), { status: "unknown" }, "no such card");
+  assert.deepEqual(await service.check("7.20270219.AAAAAAAAAAAAAAAAAAAAAA"), { status: "unknown" }, "forged");
+  assert.deepEqual(await new IdCardsService(store, { async isStaff() { return false; } }).check(verifier.token(7, "2027-02-19")), { status: "unknown" }, "no key configured");
+});
+
+test("REPORTS_ID_CARD_CHECK a printed card carries the QR code only when a key and origin are given", async () => {
+  const store = new Store(), verifier = new IdCardVerifier(Buffer.alloc(32, 3));
+  const service = new IdCardsService(store, { async isStaff() { return false; } }, () => new Date("2026-11-19T06:00:00Z"), undefined, verifier);
+  const withQr = (await service.ownPdf("holder", "https://studenthub.co"))!.toString("latin1"), without = (await service.ownPdf("holder"))!.toString("latin1");
+  assert.match(withQr, /Scan to check this card/); assert.doesNotMatch(without, /Scan to check this card/);
 });
