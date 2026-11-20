@@ -104,6 +104,16 @@ export class PostgresIdCardsStore {
     return r && { name: r.name, arabicName: r.arabic_name, employeeId: r.employee_id, cardNumber: Number(r.card_number), expiresOn: r.expires_on, issuedAt: r.issued_at, placement: placement(r) };
   }
 
+  /** What the public verification page may show for a card number: name, current company, expiry, and whether the holder is still assigned. */
+  async verify(cardNumber: number, today: string): Promise<{ name: string | null; company: string | null; expiresOn: string; assigned: boolean } | undefined> {
+    if (!DAY.test(today) || !Number.isSafeInteger(cardNumber) || cardNumber < 1) throw new RangeError("invalid card");
+    const r = (await this.#pool.query<{ name: string | null; company: string | null; expires_on: string; assigned: boolean }>(`SELECT ${NAME} AS name, placement.company,
+        to_char(c.expires_on, 'YYYY-MM-DD') AS expires_on, ${idCardAssigned("c.person_principal_id", "$2")} AS assigned
+       FROM id_cards c JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = p.id
+       ${PLACEMENT("p.id", "$2")} WHERE c.card_number = $1`, [cardNumber, today])).rows[0];
+    return r && { name: r.name, company: r.company, expiresOn: r.expires_on, assigned: r.assigned };
+  }
+
   async counts(today: string): Promise<{ needs: number; expired: number }> {
     if (!DAY.test(today)) throw new RangeError("invalid day");
     const r = (await this.#pool.query<{ needs: number; expired: number }>(`SELECT ${idCardNeedsCount("$1")} AS needs, ${idCardExpiredCount("$1")} AS expired`, [today])).rows[0]!;

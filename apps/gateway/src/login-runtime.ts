@@ -30,7 +30,7 @@ import { wireRecruit } from "./wiring/recruit.js";
 import {PostgresNotificationsStore} from "@studenthub/db/notifications";
 import {NotificationsService} from "../../../packages/notifications/src/notifications.js";
 import {createNotificationsHttp} from "./notifications-http.js";
-import {wireStaffMessages} from "./comms/wiring.js";
+import {idCardVerifyKey,wireStaffMessages} from "./comms/wiring.js";
 
 interface JwksDocument {
   readonly keys?: readonly TestJsonWebKey[];
@@ -348,7 +348,7 @@ export function createRuntimeLoginFromEnv(
   });
   const notificationStore=PostgresNotificationsStore.connect({connectionString:value("DATABASE_URL")});
   const notifications=createNotificationsHttp(application,new NotificationsService(notificationStore,notificationStore,access.services.authzStore));
-  const staffMessages=wireStaffMessages({connectionString:value("DATABASE_URL"),authzStore:access.services.authzStore,env});
+  const staffMessages=wireStaffMessages({connectionString:value("DATABASE_URL"),authzStore:access.services.authzStore,env,idCardVerifyKey:idCardVerifyKey(env)});
   const runtimeApplication={
       ...application,
       ...organizationArea.services.application,

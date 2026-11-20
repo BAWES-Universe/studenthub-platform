@@ -129,7 +129,15 @@ Planned PRs, in order (migrations 0602 to 0609):
    photo is absent, refused (two photos, wrong type, over 2 MB or PNG_MAX_PIXELS) or unreadable.
 3. **Verification.** The QR on the card opens a signed, expiring public page with name, photo,
    company and validity only. Legacy's page also showed the civil ID number (finding F10); the
-   new one never shows it or the phone.
+   new one never shows it or the phone. The QR code (`packages/reports/src/qr.ts`, no
+   dependencies, checked module for module against a reference encoder) holds
+   `/v/<card number>.<printed date>.<signature>`, an HMAC with `ID_CARD_VERIFY_KEY` (canonical
+   base64 for 32 bytes; unset means no QR and every link shows not found). The page shows name,
+   company and whether the card is valid, in English and Arabic, with no-store and noindex. A
+   link stops being valid on the date printed on that card, even after a renewal (the renewed
+   card is a new print), and before then it is not valid if the card was shortened or the
+   holder is no longer assigned. A forged link, a changed number and a missing card all show
+   the same not found. The photo joins the page with the photo seam (item 2).
 4. **Experience certificates** from work history, as PDFs (legacy appreciation certificate:
    name, company, store, from and to dates).
 5. **The ID card list export**, if still wanted: legacy's `CandidateIdCard::createExcel` is

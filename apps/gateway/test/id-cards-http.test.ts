@@ -3,17 +3,19 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test, { type TestContext } from "node:test";
 import { randomUUID } from "node:crypto";
-import { IdCardsService } from "../../../packages/reports/src/index.js";
+import { IdCardsService, IdCardVerifier } from "../../../packages/reports/src/index.js";
 import type { IdCardAction, IdCardPhotoSource, IdCardsStore, IdCardView } from "../../../packages/reports/src/index.js";
 import type { DocumentState, DocumentStore } from "../../../packages/private-documents/src/index.js";
 import { personalPhotoSource, type PersonalPhotoAuditPort } from "../../../packages/private-documents/src/personal-photo-source.js";
 import { handleIdCards } from "../src/reports/id-cards-http.js";
+import { idCardVerifyKey } from "../src/comms/wiring.js";
 
 const ORIGIN = "https://studenthub.example", STAFF = "staff-1", PERSON = "person-1";
 
 async function rig(t: TestContext, photos?: IdCardPhotoSource) {
   const writes: { action: IdCardAction; people: readonly string[] }[] = [];
-  let refuse: { personId: string; code: "not_assigned" }[] = [];
+  let refuse: { personId: string; code: "not_assigned" }[] = [], assigned = true;
+  const verifier = new IdCardVerifier(Buffer.alloc(32, 9));
   const store: IdCardsStore = {
     async list(view: IdCardView) {
       return view === "needs" ? { total: 1, rows: [{ personId: "p-<1>", name: "Alia <b>Badr</b>", employeeId: "C00042", cardNumber: null, expiresOn: null, placement: { company: "Sultan Center", store: "Avenues" } }] } : view === "issued" ? { total: 1, rows: [{ personId: PERSON, name: "Alia Badr", employeeId: "C00042", cardNumber: 17, expiresOn: "2099-01-01", placement: { company: "Sultan Center", store: "Avenues" } }] } : { total: 0, rows: [] };
@@ -21,10 +23,11 @@ async function rig(t: TestContext, photos?: IdCardPhotoSource) {
     async write(action, people) { if (refuse.length) return refuse; writes.push({ action, people }); return []; },
     async card(person) { return person === PERSON ? { name: "Alia Badr", arabicName: "علياء بدر", employeeId: "C00042", cardNumber: 17, expiresOn: "2099-01-01", issuedAt: new Date("2026-11-19T00:00:00Z"), placement: { company: "Sultan Center", store: "Avenues" } } : undefined; },
     async counts() { return { needs: 0, expired: 0 }; },
+    async verify(n) { return n === 17 ? { name: "Alia <b>Badr</b>", company: "Sultan Center", expiresOn: "2099-01-01", assigned } : undefined; },
   };
   const authority = { async isStaff(id: string) { return id === STAFF; } };
-  const service = new IdCardsService(store, authority, undefined, photos);
-  const http = { isStaff: authority.isStaff, list: service.list.bind(service), write: service.write.bind(service), own: service.own.bind(service), ownPdf: service.ownPdf.bind(service), staffPdf: service.staffPdf.bind(service) };
+  const service = new IdCardsService(store, authority, undefined, photos, verifier);
+  const http = { isStaff: authority.isStaff, list: service.list.bind(service), write: service.write.bind(service), own: service.own.bind(service), ownPdf: service.ownPdf.bind(service), staffPdf: service.staffPdf.bind(service), check: service.check.bind(service) };
   const server = createServer(async (req, res) => {
     if (!await handleIdCards(req, res, http, ORIGIN, async s => s === "s-staff" ? STAFF : s === "s-person" ? PERSON : s === "s-other" ? "other" : undefined)) { res.writeHead(418); res.end(); }
   });
@@ -34,7 +37,7 @@ async function rig(t: TestContext, photos?: IdCardPhotoSource) {
   const get = (path: string, session?: string, accept = "application/json") => fetch(base + path, { headers: { ...(session ? { cookie: `__Host-studenthub_session=${session}` } : {}), accept } });
   const post = (body: string, session = "s-staff", headers: Record<string, string> = {}, method = "POST") => fetch(base + "/workspace/id-cards", { method, redirect: "manual",
     headers: { cookie: `__Host-studenthub_session=${session}`, origin: ORIGIN, "content-type": "application/x-www-form-urlencoded", accept: "application/json", ...headers }, body });
-  return { get, post, writes, base, refuseWith(r: typeof refuse) { refuse = r; } };
+  return { get, post, writes, base, verifier, refuseWith(r: typeof refuse) { refuse = r; }, leave() { assigned = false; } };
 }
 
 test("REPORTS_ID_CARDS_HTTP only staff reach the staff page; everyone else gets the same not found for every method", async (t) => {
@@ -161,4 +164,45 @@ test("REPORTS_ID_CARDS_PHOTO_HTTP a real card render reads the photo once and au
     assert.notEqual((await x.get(path, session, "*/*")).status, 200, `${path} ${session}`);
   assert.equal(reads, 2, "refused callers never reach the document store");
   assert.equal(views.length, 2, "and write no audit rows");
+});
+
+test("REPORTS_ID_CARD_VERIFY_HTTP the QR link opens a public page with name, company and validity only, in English and Arabic", async (t) => {
+  const x = await rig(t), token = x.verifier.token(17, "2099-01-01");
+  for (const session of [undefined, "s-person", "s-bogus"]) {
+    const page = await x.get(`/v/${token}`, session, "text/html");
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get("cache-control"), "no-store"); assert.equal(page.headers.get("x-robots-tag"), "noindex, nofollow");
+    const html = await page.text();
+    assert.match(html, /Valid ID card/); assert.match(html, /بطاقة سارية/); assert.match(html, /Alia &lt;b&gt;Badr&lt;\/b&gt;/); assert.match(html, /Sultan Center/); assert.match(html, /2099-01-01/);
+    assert.doesNotMatch(html, /C00042|Avenues|علياء/, "no employee ID, store or anything else from the card");
+  }
+  const json = await x.get(`/v/${token}`);
+  assert.deepEqual(await json.json(), { status: "ok", name: "Alia <b>Badr</b>", company: "Sultan Center", validUntil: "2099-01-01", valid: true, reason: null });
+  assert.equal(json.headers.get("referrer-policy"), "no-referrer");
+  x.leave();
+  assert.match(await (await x.get(`/v/${token}`, undefined, "text/html")).text(), /Not valid[\s\S]*no longer works through StudentHub/);
+  const sig = token.split(".")[2]!;
+  for (const bad of [`/v/18.20990101.${sig}`, `/v/17.20990102.${sig}`, "/v/", "/v/x", `/v/${token}/more`, `/v/${"1".repeat(90)}`]) {
+    const res = await x.get(bad, undefined, "text/html");
+    assert.equal(res.status, 404, bad); assert.match(await res.text(), /Card not found/);
+    assert.equal(res.headers.get("x-robots-tag"), "noindex, nofollow");
+  }
+  assert.deepEqual(await (await x.get(`/v/18.20990101.${sig}`)).json(), { status: "not_found" });
+  assert.equal((await fetch(`${x.base}/v/${token}`, { method: "POST" })).status, 405);
+});
+
+test("REPORTS_ID_CARD_VERIFY_HTTP printed cards carry the QR code for the site's own origin", async (t) => {
+  const x = await rig(t);
+  const own = Buffer.from(await (await x.get("/profile/id-card.pdf", "s-person", "*/*")).arrayBuffer()).toString("latin1");
+  assert.match(own, /Scan to check this card/);
+  const batch = Buffer.from(await (await x.get(`/workspace/id-cards/print?person=${PERSON}`, "s-staff", "*/*")).arrayBuffer()).toString("latin1");
+  assert.match(batch, /Scan to check this card/);
+});
+
+test("REPORTS_ID_CARD_VERIFY_HTTP the key comes from ID_CARD_VERIFY_KEY as canonical base64 for 32 bytes; unset means no QR", () => {
+  assert.equal(idCardVerifyKey({}), undefined);
+  const raw = Buffer.alloc(32, 5).toString("base64");
+  assert.deepEqual(idCardVerifyKey({ ID_CARD_VERIFY_KEY: raw }), Buffer.alloc(32, 5));
+  for (const bad of ["", Buffer.alloc(31).toString("base64"), Buffer.alloc(33).toString("base64"), raw.replace(/=$/, ""), ` ${raw}`])
+    assert.throws(() => idCardVerifyKey({ ID_CARD_VERIFY_KEY: bad }), /ID_CARD_VERIFY_KEY/, JSON.stringify(bad));
 });
