@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acquireRun, CLAUDE_APP_ID, claim, claimKey, decide, dispatchHeader, parseRegister, readClaim, RegisterError, releaseRun, RUN_LOCK_STALE_MS, type IssueComment } from "../src/lane.js";
+import { acquireRun, CLAUDE_APP_ID, claim, claimKey, decide, dispatchHeader, holdsRun, parseRegister, readClaim, RegisterError, releaseRun, startReceiptHeader, withGate, type IssueComment } from "../src/lane.js";
 import { pickNext } from "../src/poll.js";
 
 const BOT = "studenthub-universe";
@@ -15,8 +15,10 @@ const row = (issue: number, gen: number, dispatch: string, state = "active", exp
 const register = (...rows: string[]): string => `# Orca lane register\n\nPreamble.\n\n${HEAD}${rows.join("")}`;
 const dispatch = (id: number, issue: number, gen: number, extra: Partial<IssueComment> = {}): IssueComment =>
   ({ id, body: `${dispatchHeader(BOT, issue, gen)}\n\n@orca-ide ${BOT}`, author: "BAWES", appId: CLAUDE_APP_ID, ...extra });
-const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: string[] = []) =>
-  decide({ rows: parseRegister(markdown), bot: BOT, now: NOW, comments: new Map(Object.entries(comments).map(([k, v]) => [Number(k), v])), claims: new Set(claims) });
+// claims: [claimKey, saved dispatch] pairs
+const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: [string, number][] = []) =>
+  decide({ rows: parseRegister(markdown), bot: BOT, now: NOW, comments: new Map(Object.entries(comments).map(([k, v]) => [Number(k), v])), claims: new Map(claims) });
+const acquire = (dir: string) => (d: { claimKey: string }) => { const t = `t-${Math.random()}`; return acquireRun(dir, d.claimKey, NOW, t) === "acquired" ? t : null; };
 
 test("the live register on main parses", () => {
   const live = readFileSync(path.join(process.cwd(), "docs/lanes/orca/REGISTER.md"), "utf8");
@@ -74,6 +76,10 @@ test("observe mode reports the eligible dispatch but never claims or starts", ()
   const md = register(row(581, 2, "`900`", "active", "2026-11-22 18:00", BOT, "observe"));
   const decisions = run(md, { 581: [dispatch(900, 581, 2)] });
   assert.deepEqual(decisions.map((d) => d.action), ["observe"]);
+  const observed = decisions[0]!;
+  assert.ok(observed.action === "observe" && !observed.receiptPosted && observed.receiptBody.startsWith(observed.receiptHeader) && observed.receiptBody.includes("900"));
+  const again = run(md, { 581: [dispatch(900, 581, 2), { id: 901, body: `${observed.action === "observe" ? observed.receiptHeader : ""}\n\nx`, author: "BAWES", appId: null }] })[0]!;
+  assert.ok(again.action === "observe" && again.receiptPosted);
   assert.equal(pickNext(decisions, () => { throw new Error("must not claim"); }, () => { throw new Error("must not lock"); }), null);
 });
 
@@ -95,38 +101,81 @@ test("concurrent wakes: exactly one claim wins, the other must not start", async
 
 test("restart after an ambiguous receipt resumes the claimed ticket instead of starting again", () => {
   const md = register(row(581, 1, "`900`"));
-  const decisions = run(md, { 581: [dispatch(900, 581, 1)] }, [claimKey(BOT, 581, 1)]);
+  const decisions = run(md, { 581: [dispatch(900, 581, 1)] }, [[claimKey(BOT, 581, 1), 900]]);
   assert.deepEqual(decisions.map((d) => d.action), ["resume"]);
+  // The start receipt never landed: resume says so, and the bot posts it before any work.
+  assert.ok(decisions[0]!.action === "resume" && decisions[0]!.startReceiptPosted === false);
   let claimed = 0;
-  assert.equal(pickNext(decisions, () => { claimed += 1; return "claimed"; }, () => "acquired")?.action, "resume");
+  assert.equal(pickNext(decisions, () => { claimed += 1; return "claimed"; }, () => "tok")?.action, "resume");
   assert.equal(claimed, 0);
+  const receipt: IssueComment = { id: 905, body: `${startReceiptHeader(BOT, 581, 1)}\n\ndispatch 900`, author: "BAWES", appId: null };
+  const after = run(md, { 581: [dispatch(900, 581, 1), receipt] }, [[claimKey(BOT, 581, 1), 900]]);
+  assert.ok(after[0]!.action === "resume" && after[0]!.startReceiptPosted === true);
+});
+
+test("a resume stays bound to the dispatch its claim saved", () => {
+  const md = register(row(581, 1, "`901`"));
+  assert.match(JSON.stringify(run(md, { 581: [dispatch(901, 581, 1)] }, [[claimKey(BOT, 581, 1), 900]])), /claim is bound to dispatch 900/);
 });
 
 test("one ticket at a time: an owned ticket blocks new starts; a lost claim race does nothing", () => {
   const md = register(row(581, 1, "`900`"), row(590, 1, "`950`"));
   const comments = { 581: [dispatch(900, 581, 1)], 590: [dispatch(950, 590, 1)] };
-  const owned = run(md, comments, [claimKey(BOT, 590, 1)]);
-  assert.deepEqual(pickNext(owned, () => "claimed", () => "acquired"), owned.find((d) => d.issue === 590));
-  assert.equal(pickNext(run(md, comments), () => "held", () => "acquired"), null);
+  const owned = run(md, comments, [[claimKey(BOT, 590, 1), 950]]);
+  assert.equal(pickNext(owned, () => "claimed", () => "tok")?.issue, 590);
+  assert.equal(pickNext(run(md, comments), () => "held", () => "tok"), null);
 });
 
-test("a second wake while a run holds the lock does nothing; release lets the next poll resume", () => {
+test("a second wake while a run holds the lock does nothing; only the owner's release frees it", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "orca-run-"));
   const key = claimKey(BOT, 581, 1);
-  const now = new Date("2026-11-21T12:00:00Z");
-  assert.equal(acquireRun(dir, key, now), "acquired");
-  assert.equal(acquireRun(dir, key, new Date(now.getTime() + 60_000)), "busy");
-  const decisions = run(register(row(581, 1, "`900`")), { 581: [dispatch(900, 581, 1)] }, [key]);
-  assert.equal(pickNext(decisions, () => "claimed", (d) => acquireRun(dir, d.claimKey, now)), null);
-  releaseRun(dir, key);
-  assert.equal(pickNext(decisions, () => "claimed", (d) => acquireRun(dir, d.claimKey, now))?.action, "resume");
+  assert.equal(acquireRun(dir, key, NOW, "A"), "acquired");
+  assert.equal(acquireRun(dir, key, NOW, "B"), "busy");
+  const decisions = run(register(row(581, 1, "`900`")), { 581: [dispatch(900, 581, 1)] }, [[key, 900]]);
+  assert.equal(pickNext(decisions, () => "claimed", acquire(dir)), null);
+  assert.equal(releaseRun(dir, key, "B"), "not-owner");
+  assert.equal(pickNext(decisions, () => "claimed", acquire(dir)), null);
+  assert.equal(releaseRun(dir, key, "A"), "released");
+  assert.equal(pickNext(decisions, () => "claimed", acquire(dir))?.action, "resume");
 });
 
-test("a crashed run's lock is taken over only after the stale window", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-stale-"));
-  const key = claimKey(BOT, 581, 1);
-  const start = new Date("2026-11-21T12:00:00Z");
-  assert.equal(acquireRun(dir, key, start), "acquired");
-  assert.equal(acquireRun(dir, key, new Date(start.getTime() + RUN_LOCK_STALE_MS - 1)), "busy");
-  assert.equal(acquireRun(dir, key, new Date(start.getTime() + RUN_LOCK_STALE_MS + 1)), "acquired");
+test("a dead run is never taken over by age; recovery is a new generation, and the old run is fenced out", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-fence-"));
+  const g1 = claimKey(BOT, 581, 1);
+  const g2 = claimKey(BOT, 581, 2);
+  assert.equal(claim(dir, g1, { dispatch: 900, at: "t" }), "claimed");
+  assert.equal(acquireRun(dir, g1, NOW, "A"), "acquired");
+  // Worker A goes quiet. Any later poll, however late, finds the lock busy: no takeover.
+  const gen1 = register(row(581, 1, "`900`"));
+  const c1 = { 581: [dispatch(900, 581, 1)] };
+  assert.equal(pickNext(run(gen1, c1, [[g1, 900]]), () => "claimed", acquire(dir)), null);
+  // Claude revokes gen 1 and dispatches gen 2. Worker B starts it with its own lock.
+  const gen2 = register(row(581, 1, "`900`", "revoked"), row(581, 2, "`910`"));
+  const c2 = { 581: [dispatch(900, 581, 1), dispatch(910, 581, 2)] };
+  const b = pickNext(run(gen2, c2, [[g1, 900]]), (d) => claim(dir, d.claimKey, { dispatch: d.dispatch, at: "t" }), (d) => acquireRun(dir, d.claimKey, NOW, "B") === "acquired" ? "B" : null);
+  assert.equal(b?.claimKey, g2);
+  assert.equal(b?.runToken, "B");
+  // A wakes up: its generation is no longer eligible, so its pre-write check fails...
+  const eligible = (key: string) => run(gen2, c2, [[g1, 900], [g2, 910]]).some((d) => (d.action === "start" || d.action === "resume") && d.claimKey === key);
+  assert.equal(eligible(g1), false);
+  // ...and it cannot clear B's lock, with its own key or B's.
+  assert.equal(releaseRun(dir, g2, "A"), "not-owner");
+  assert.equal(holdsRun(dir, g2, "B"), true);
+  assert.equal(releaseRun(dir, g1, "A"), "released");
+  // B's check still passes; a third wake C is refused while B runs.
+  assert.equal(eligible(g2) && holdsRun(dir, g2, "B"), true);
+  assert.equal(pickNext(run(gen2, c2, [[g1, 900], [g2, 910]]), () => "claimed", acquire(dir)), null);
+});
+
+test("the bot-wide gate lets one poll pick at a time and clears a gate left by a dead poll", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-gate-"));
+  const inner = withGate(dir, BOT, 101, () => true, () => withGate(dir, BOT, 102, () => true, () => "picked"));
+  assert.equal(inner, "busy");
+  assert.equal(withGate(dir, BOT, 103, () => true, () => "picked"), "picked");
+  // A poll killed inside the gate leaves it behind: busy while its pid lives, cleared once it is gone.
+  mkdirSync(path.join(dir, `.gate-${BOT}`));
+  writeFileSync(path.join(dir, `.gate-${BOT}`, "pid"), "104");
+  assert.equal(withGate(dir, BOT, 105, (pid) => pid === 104, () => "picked"), "busy");
+  assert.equal(withGate(dir, BOT, 105, () => false, () => "picked"), "picked");
+  assert.equal(withGate(dir, BOT, 106, () => true, () => "picked"), "picked");
 });

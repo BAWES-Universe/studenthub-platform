@@ -1,6 +1,6 @@
 // Orca lane intake: decides, from GitHub state only, whether an Orca bot may
 // start or resume a ticket. Pure functions here; poll.ts does the I/O.
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export const CLAUDE_APP_ID = 1236702;
@@ -35,11 +35,26 @@ export interface WorkDecision {
   readonly dispatch: number;
   readonly slug: string;
   readonly claimKey: string;
+  /** Header the start receipt must carry; on "resume" with startReceiptPosted false, post it before any work. */
+  readonly startReceiptHeader: string;
+  readonly startReceiptPosted: boolean;
+}
+
+export interface ObserveDecision {
+  readonly issue: number;
+  readonly gen: number;
+  readonly action: "observe";
+  readonly dispatch: number;
+  readonly slug: string;
+  readonly receiptHeader: string;
+  /** The exact comment to post, once, if receiptPosted is false. */
+  readonly receiptBody: string;
+  readonly receiptPosted: boolean;
 }
 
 export type Decision =
   | WorkDecision
-  | { readonly issue: number; readonly gen: number; readonly action: "observe"; readonly dispatch: number; readonly slug: string; readonly receiptHeader: string }
+  | ObserveDecision
   | { readonly issue: number; readonly gen: number; readonly action: "skip"; readonly reason: string };
 
 const HEADER = ["Issue", "Slug", "Bot", "Gen", "Mode", "Dispatch", "Lease (paths; migrations)", "Reviewer", "State", "Expires (UTC)"];
@@ -97,20 +112,27 @@ export const dispatchHeader = (bot: string, issue: number, gen: number): string 
 export const observeReceiptHeader = (bot: string, issue: number, gen: number): string =>
   `**Orca ${bot} → Claude** · observe · #${issue} gen ${gen}`;
 
+export const startReceiptHeader = (bot: string, issue: number, gen: number): string =>
+  `**Orca ${bot} → Claude** · start · #${issue} gen ${gen}`;
+
+const posted = (comments: readonly IssueComment[], header: string): boolean =>
+  comments.some((c) => c.author === DISPATCH_AUTHOR && c.body.split("\n")[0]!.trim() === header);
+
 export const claimKey = (bot: string, issue: number, gen: number): string => `${bot}--${issue}--g${gen}`;
 
 /**
  * Decides per row. Only the exact comment id the row names can authorize work, and
  * only if Claude's app wrote it with the header for this issue and generation.
- * A held claim means the ticket is already ours: resume, never start again.
- * A row in observe mode never starts work: it only reports what it sees.
+ * A held claim means the ticket is already ours: resume, never start again, and
+ * only for the dispatch the claim saved. A row in observe mode never starts work:
+ * it only reports what it sees. `claims` maps each held claim key to its dispatch.
  */
 export function decide(input: {
   readonly rows: readonly RegisterRow[];
   readonly bot: string;
   readonly now: Date;
   readonly comments: ReadonlyMap<number, readonly IssueComment[]>;
-  readonly claims: ReadonlySet<string>;
+  readonly claims: ReadonlyMap<string, number>;
 }): Decision[] {
   const decisions: Decision[] = [];
   const latestGen = new Map<number, number>();
@@ -122,16 +144,28 @@ export function decide(input: {
     if (row.state !== "active") { skip(`state ${row.state}`); continue; }
     if (row.expires.getTime() <= input.now.getTime()) { skip("expired"); continue; }
     if (row.dispatch === null) { skip("no dispatch bound"); continue; }
-    const comment = (input.comments.get(row.issue) ?? []).find((candidate) => candidate.id === row.dispatch);
+    const issueComments = input.comments.get(row.issue) ?? [];
+    const comment = issueComments.find((candidate) => candidate.id === row.dispatch);
     if (!comment) { skip("bound dispatch comment not found on the issue"); continue; }
     if (comment.author !== DISPATCH_AUTHOR || comment.appId !== CLAUDE_APP_ID) { skip("dispatch not written by Claude's app"); continue; }
     if (comment.body.split("\n")[0]!.trim() !== dispatchHeader(input.bot, row.issue, row.gen)) { skip("dispatch header does not match issue and generation"); continue; }
     if (row.mode === "observe") {
-      decisions.push({ issue: row.issue, gen: row.gen, action: "observe", dispatch: comment.id, slug: row.slug, receiptHeader: observeReceiptHeader(input.bot, row.issue, row.gen) });
+      const receiptHeader = observeReceiptHeader(input.bot, row.issue, row.gen);
+      decisions.push({
+        issue: row.issue, gen: row.gen, action: "observe", dispatch: comment.id, slug: row.slug, receiptHeader,
+        receiptBody: `${receiptHeader}\n\nBound dispatch ${comment.id} on #${row.issue} gen ${row.gen}. Observe only: no claim, no work.`,
+        receiptPosted: posted(issueComments, receiptHeader),
+      });
       continue;
     }
     const key = claimKey(input.bot, row.issue, row.gen);
-    decisions.push({ issue: row.issue, gen: row.gen, action: input.claims.has(key) ? "resume" : "start", dispatch: comment.id, slug: row.slug, claimKey: key });
+    const held = input.claims.get(key);
+    if (held !== undefined && held !== comment.id) { skip(`claim is bound to dispatch ${held}, not ${comment.id}`); continue; }
+    const header = startReceiptHeader(input.bot, row.issue, row.gen);
+    decisions.push({
+      issue: row.issue, gen: row.gen, action: held === undefined ? "start" : "resume", dispatch: comment.id, slug: row.slug, claimKey: key,
+      startReceiptHeader: header, startReceiptPosted: posted(issueComments, header),
+    });
   }
   return decisions;
 }
@@ -160,44 +194,70 @@ export function readClaim(dir: string, key: string): { dispatch: number; at: str
   }
 }
 
-/** A run lock older than this is treated as a crashed run and may be taken over (the ticket time box is 4h). */
-export const RUN_LOCK_STALE_MS = 4 * 60 * 60 * 1000;
-
 /**
- * Exclusive run lock for one ticket generation: only one process works on a
- * claimed ticket at a time. "busy" means another run holds it; do nothing.
+ * Exclusive run lock for one ticket generation, fenced by a token. There is no
+ * takeover by age: a lock is freed only by its owner's release. If a run dies
+ * holding it, Claude recovers by revoking the row and dispatching a new
+ * generation, which has a new claim and lock; the old token then fails check.
  */
-export function acquireRun(dir: string, key: string, now: Date): "acquired" | "busy" {
+export function acquireRun(dir: string, key: string, now: Date, token: string): "acquired" | "busy" {
   const lock = path.join(dir, key, "run");
   mkdirSync(path.join(dir, key), { recursive: true });
   try {
     mkdirSync(lock);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    let since: number;
-    try {
-      since = Date.parse(readFileSync(path.join(lock, "since"), "utf8"));
-    } catch {
-      since = Number.NaN;
-    }
-    if (!Number.isNaN(since) && now.getTime() - since < RUN_LOCK_STALE_MS) return "busy";
-    if (Number.isNaN(since) && now.getTime() - statSync(lock).mtimeMs < RUN_LOCK_STALE_MS) return "busy";
-    // Stale: take it over by renaming it away atomically, then retry once.
-    try {
-      renameSync(lock, `${lock}.stale-${now.getTime()}`);
-    } catch {
-      return "busy";
-    }
-    try {
-      mkdirSync(lock);
-    } catch {
-      return "busy";
-    }
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return "busy";
+    throw error;
   }
-  writeFileSync(path.join(lock, "since"), now.toISOString());
+  writeFileSync(path.join(lock, "owner.json"), `${JSON.stringify({ token, since: now.toISOString() })}\n`);
   return "acquired";
 }
 
-export function releaseRun(dir: string, key: string): void {
+/** True only if the run lock for this key exists and carries this token. */
+export function holdsRun(dir: string, key: string, token: string): boolean {
+  try {
+    return (JSON.parse(readFileSync(path.join(dir, key, "run", "owner.json"), "utf8")) as { token: string }).token === token;
+  } catch {
+    return false;
+  }
+}
+
+/** Frees the run lock only for its owner; any other token changes nothing. */
+export function releaseRun(dir: string, key: string, token: string): "released" | "not-owner" {
+  if (!holdsRun(dir, key, token)) return "not-owner";
   rmSync(path.join(dir, key, "run"), { recursive: true, force: true });
+  return "released";
+}
+
+/**
+ * Bot-wide gate around choosing a ticket, so two polls of one bot never pick at
+ * the same time. Held only for the pick. A gate left by a dead poll process (its
+ * pid no longer alive) is cleared; a live one means "busy": do nothing now.
+ */
+export function withGate<T>(dir: string, bot: string, pid: number, isAlive: (pid: number) => boolean, fn: () => T): T | "busy" {
+  mkdirSync(dir, { recursive: true });
+  const gate = path.join(dir, `.gate-${bot}`);
+  const enter = (): boolean => {
+    try {
+      mkdirSync(gate);
+      writeFileSync(path.join(gate, "pid"), String(pid));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
+    }
+  };
+  if (!enter()) {
+    let owner = Number.NaN;
+    try { owner = Number(readFileSync(path.join(gate, "pid"), "utf8")); } catch { /* being written */ }
+    if (Number.isNaN(owner) || isAlive(owner)) return "busy";
+    try { renameSync(gate, `${gate}.dead-${owner}-${pid}`); } catch { return "busy"; }
+    rmSync(`${gate}.dead-${owner}-${pid}`, { recursive: true, force: true });
+    if (!enter()) return "busy";
+  }
+  try {
+    return fn();
+  } finally {
+    rmSync(gate, { recursive: true, force: true });
+  }
 }
