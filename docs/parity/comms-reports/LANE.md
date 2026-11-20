@@ -16,7 +16,7 @@ Slices, in order (one PR each):
 3. **Password-reset SMS** (C-3): with the access lane's reset flow.
 4. **Morning summary** (P-2, SHU-211 keeps the email): the twelve legacy counters as a registry. Almost every counter reads assignments, requests or transfers, so each counter is switched on when its lane lands; a counter whose source is missing shows "not available", never 0. Digest via the outbox to staff with the morning-report permission at send time, Asia/Kuwait day boundary.
 5. **Revenue roll-ups** (P-4): after the pay lane's transfer types land; legacy's live formula, recomputed not incremented, reconciliation report.
-6. **Statistics** (P-3): after recruit, work and pay land.
+6. **Statistics** (P-3): slice 1 is the staff page `/workspace/statistics`: legacy staff dashboard counters as a registry (shared counters use the morning summary's queries; pay-backed ones show "not available") and the hiring figures from legacy admin (hired, retained after a year, retention ratio, invitations, recruitment yield). Companies, transfers, revenue, the year report and the hit map follow as their sources land.
 7. **Remaining exports onto P-1**: each lane's export button uses the service; this lane checks all seven legacy exports are covered. The check is `apps/gateway/test/legacy-exports-coverage.test.ts`: each of the 17 legacy downloads is mapped to a kind the gateway offers, owed by a named lane, or dropped with evidence, and every offered kind must name the download it replaces.
 8. **Webhooks** only if rows exist.
 
@@ -66,7 +66,7 @@ The audit of every legacy download is in the project's `contracts/exports-audit.
 builds the reports lane's part of family 1 and makes the export seam general, so other lanes add
 kinds without touching the routes.
 
-- **How to add an export kind (any lane).** Two additions, nothing else:
+- **How to add an export kind (any lane).** Three additions in one PR:
   1. An `ExportKind` in your package (`packages/<lane>/...` or `packages/exports/src/`): its id,
      its closed `filterKeys`, its `columns` (the row whitelist), `authorize` and `rows`. Register
      it in `apps/gateway/src/wiring/ops.ts`, in the `ExportService` kind list. `authorize` is the
@@ -75,6 +75,11 @@ kinds without touching the routes.
      turns the query string into the kind's filters or null (refused before the service is
      reached), `filename` names the download, `noun` names the rows on the result page, and
      optional `forRequester` resolves filters such as account manager "me".
+  3. The legacy download it replaces, in `LEGACY_DOWNLOADS`
+     (`apps/gateway/test/legacy-exports-coverage.test.ts`): change that row from `owedBy` to
+     `kind: "<your kind id>"` (or add a row if it replaces something the audit missed, with the
+     count), and record the same in the project's `contracts/exports-audit.md`. The coverage
+     test fails while an offered kind names no legacy download.
   The page's button is a form that posts to `/exports/<kind id>?<filters>`. `GET /exports/<id>`
   serves every kind under its own file name.
 - **Kinds `catalogue-country` and `catalogue-university`.** Every active catalogue entry of
