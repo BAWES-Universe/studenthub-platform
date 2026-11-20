@@ -4,5 +4,5 @@ An Orca bot works only on a GitHub issue listed here with state `active` and an 
 
 | Issue | Slug | Bot | Lease (paths; migrations) | Reviewer | State | Expires (UTC) |
 |---|---|---|---|---|---|---|
+| #581 | `running-tests-guide` | studenthub-universe | `docs/runbooks/running-tests.md` only; no migrations | Claude | active | 2026-11-22 18:00 |
 
-No tickets are registered yet. The pilot starts only after the stage 0 launch gates in HANDOVER.md, Part D.
