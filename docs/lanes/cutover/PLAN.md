@@ -28,13 +28,13 @@ Lane in the full-migration plan agreed on the desk (PR #393, 2026-11-17): verifi
 
 ## M-5 table map (work)
 
-Legacy staff ids resolve to the platform principal the same way for every row below; a staff id with no principal is reported by legacy id, not imported. Each table gets its own reconciliation count: legacy rows against imported rows by `legacy_ref`, by legacy id only.
+Legacy staff ids resolve to the platform principal the same way for every row below; a staff id with no principal is reported by legacy id, not imported. Each table gets its own reconciliation count: legacy rows against imported rows by `legacy_ref`, by legacy id only. Legacy times are Asia/Kuwait wall time: a `work_date` is the Kuwait date read straight from that wall time, with no UTC conversion, so an answer or session at 21:00 to 23:59 keeps its own day.
 
 | Legacy table | Platform table | Rules |
 |---|---|---|
 | `staff_work_session` | `work_staff_sessions` (migration 0505) | one row per legacy session |
 | `daily_standup_question` | `work_standup_questions` (migration 0506) | `legacy_ref` = `question_uuid`; `retired_at` null |
-| `daily_standup_answer` | `work_standup_answers` (migration 0506) | `source` = `import`; `legacy_ref` = `answer_uuid`; `work_date` = the date of `created_at`; the question text is copied as it read; repeated answers on a day are kept (the once-per-day index covers app answers only) |
+| `daily_standup_answer` | `work_standup_answers` (migration 0506) | `source` = `import`; `legacy_ref` = `answer_uuid`; `work_date` = the Kuwait date of `created_at` as stored; the question text is copied as it read; repeated answers on a day are kept (the once-per-day index covers app answers only) |
 
 ## Daily read-only legacy refresh on staging
 
