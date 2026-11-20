@@ -13,16 +13,20 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
  * gets the same not found whatever the method.
  *
  * GET /profile/id-card is the person's own card: name, card number, company, store and the
- * date it is valid until, or a note that they have no card yet.
+ * date it is valid until, or a note that they have no card yet. GET /profile/id-card.pdf is
+ * the same card to print. GET /workspace/id-cards/print?person=...&person=... is a batch of
+ * cards as one PDF for staff (legacy's generate returned a zip of card images).
  */
 export interface IdCardsHttpService {
   isStaff(principalId: string): Promise<boolean>;
   list(viewer: string, view: IdCardView, name: string | null, page: number): Promise<{ readonly rows: readonly IdCardListRow[]; readonly total: number; readonly today: string } | undefined>;
   write(viewer: string, action: IdCardAction, people: readonly string[]): Promise<IdCardWriteResult>;
   own(personId: string): Promise<(OwnIdCard & { readonly valid: boolean }) | undefined>;
+  ownPdf(personId: string): Promise<Buffer | undefined>;
+  staffPdf(viewer: string, people: readonly string[]): Promise<{ readonly status: "ok"; readonly pdf: Buffer } | { readonly status: "refused"; readonly refusals: readonly { readonly personId: string; readonly code: "no_card" }[] } | { readonly status: "invalid" } | { readonly status: "not_found" }>;
 }
 
-export const ID_CARDS_PATH = "/workspace/id-cards", OWN_ID_CARD_PATH = "/profile/id-card";
+export const ID_CARDS_PATH = "/workspace/id-cards", OWN_ID_CARD_PATH = "/profile/id-card", PRINT_PATH = "/workspace/id-cards/print", OWN_PDF_PATH = "/profile/id-card.pdf";
 const LIMIT = 16384;
 const esc = (v: string) => v.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const cookie = (v: string | undefined) => v?.split(";").map(x => x.trim()).find(x => x.startsWith("__Host-studenthub_session="))?.slice(26);
@@ -36,6 +40,11 @@ function json(res: ServerResponse, status: number, body: unknown): true {
 function reply(req: IncomingMessage, res: ServerResponse, status: number, body: Record<string, unknown>, title: string, message: string, extra = ""): true {
   if (wantsHtml(req.headers.accept)) { writeHtml(res, status, pageDocument(title, `<main><h1>${esc(title)}</h1><p>${esc(message)}</p>${extra}</main>`), { "cache-control": "no-store" }); return true; }
   return json(res, status, body);
+}
+function pdf(res: ServerResponse, bytes: Buffer, fileName: string): true {
+  res.writeHead(200, { "content-type": "application/pdf", "content-disposition": "attachment; filename=\"" + fileName + "\"", "content-length": String(bytes.length),
+    "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
+  res.end(bytes); return true;
 }
 const notFound = (req: IncomingMessage, res: ServerResponse) => reply(req, res, 404, { status: "not_found" }, "Not found", "The page could not be found.");
 
@@ -53,8 +62,10 @@ function listPage(view: IdCardView, name: string | null, page: number, list: { r
   const query = (v: IdCardView, p = 1) => `${ID_CARDS_PATH}?view=${v}${name ? `&name=${encodeURIComponent(name)}` : ""}${p > 1 ? `&page=${p}` : ""}`;
   const tabs = ID_CARD_VIEWS.map(v => v === view ? `<strong>${VIEW_LABELS[v]}</strong>` : `<a href="${esc(query(v))}">${VIEW_LABELS[v]}</a>`).join(" · ");
   const search = `<form method="get" action="${ID_CARDS_PATH}"><input type="hidden" name="view" value="${view}"><label>Name <input type="search" name="name" maxlength="100" value="${esc(name ?? "")}"></label><button type="submit">Search</button></form>`;
-  const rows = list.rows.map(r => `<tr><td><input type="checkbox" name="person" value="${esc(r.personId)}" aria-label="Select ${esc(r.name ?? r.personId)}"></td><td>${esc(r.name ?? "No name")}</td><td>${esc(r.employeeId ?? "")}</td><td>${esc(r.placement ? `${r.placement.company}, ${r.placement.store}` : "Not assigned")}</td><td>${r.cardNumber === null ? "No card" : `${r.cardNumber}`}</td><td>${esc(r.expiresOn ? `${r.expiresOn}${r.expiresOn < list.today ? " (expired)" : ""}` : "")}</td></tr>`).join("");
-  const action = view === "needs" ? `<button type="submit" name="action" value="issue">Issue cards</button>` : `<button type="submit" name="action" value="renew">Renew cards</button>`;
+  const rows = list.rows.map(r => `<tr><td><input type="checkbox" name="person" value="${esc(r.personId)}" aria-label="Select ${esc(r.name ?? r.personId)}"></td><td>${esc(r.name ?? "No name")}</td><td>${esc(r.employeeId ?? "")}</td><td>${esc(r.placement ? `${r.placement.company}, ${r.placement.store}` : "Not assigned")}</td><td>${r.cardNumber === null ? "No card" : `${r.cardNumber} <a href="${PRINT_PATH}?person=${esc(encodeURIComponent(r.personId))}">PDF</a>`}</td><td>${esc(r.expiresOn ? `${r.expiresOn}${r.expiresOn < list.today ? " (expired)" : ""}` : "")}</td></tr>`).join("");
+  // Re-issue (legacy "generate" on someone who has a card) keeps the card number and starts a new three months, like renew, but is recorded as a re-issue.
+  const action = view === "needs" ? `<button type="submit" name="action" value="issue">Issue cards</button>`
+    : `<button type="submit" name="action" value="renew">Renew cards</button> <button type="submit" name="action" value="issue">Re-issue cards</button>`;
   const pages = Math.max(1, Math.ceil(list.total / ID_CARD_PAGE_SIZE));
   const nav = `${page > 1 ? `<a href="${esc(query(view, page - 1))}">Previous</a> ` : ""}${page < pages ? `<a href="${esc(query(view, page + 1))}">Next</a>` : ""}`;
   const table = list.total ? `<form method="post" action="${ID_CARDS_PATH}"><table><thead><tr><th>Select</th><th>Name</th><th>Employee ID</th><th>Company and store</th><th>Card</th><th>Valid until</th></tr></thead><tbody>${rows}</tbody></table><p>Up to ${ID_CARD_BATCH_MAX} at a time. Each card is valid for three months from today.</p>${action}</form><p>${nav}</p>`
@@ -78,8 +89,10 @@ async function staffPage(req: IncomingMessage, res: ServerResponse, service: IdC
       writeHtml(res, 409, pageDocument("Not saved", `<main><h1>Not saved</h1><p>No card was ${action === "issue" ? "issued" : "renewed"}, because:</p><ul>${items}</ul><p><a href="${ID_CARDS_PATH}">Back to ID cards</a></p></main>`), { "cache-control": "no-store" });
       return true;
     }
+    const print = `${PRINT_PATH}?${new URLSearchParams(body.people.map(p => ["person", p])).toString()}`;
     return reply(req, res, 200, { status: "ok", action, count: result.count, expiresOn: result.expiresOn }, "Saved",
-      `${result.count} ${result.count === 1 ? "card" : "cards"} ${action === "issue" ? "issued" : "renewed"}, valid until ${result.expiresOn}.`, `<p><a href="${ID_CARDS_PATH}?view=issued">See all cards</a></p>`);
+      `${result.count} ${result.count === 1 ? "card" : "cards"} ${action === "issue" ? "issued" : "renewed"}, valid until ${result.expiresOn}.`,
+      `<p><a href="${esc(print)}">Download ${result.count === 1 ? "the card" : "these cards"} to print (PDF)</a></p><p><a href="${ID_CARDS_PATH}?view=issued">See all cards</a></p>`);
   }
   if (req.method !== "GET") { req.resume(); res.writeHead(405, { allow: "GET, POST" }); res.end(); return true; }
   req.resume();
@@ -94,6 +107,30 @@ async function staffPage(req: IncomingMessage, res: ServerResponse, service: IdC
   return true;
 }
 
+async function printCards(req: IncomingMessage, res: ServerResponse, service: IdCardsHttpService, viewer: string): Promise<true> {
+  req.resume();
+  if (req.method !== "GET") { res.writeHead(405, { allow: "GET" }); res.end(); return true; }
+  const params = new URL(req.url ?? "/", "http://gateway.invalid").searchParams;
+  if ([...params.keys()].some(k => k !== "person")) return reply(req, res, 400, { status: "invalid" }, "Not shown", "The cards could not be printed.");
+  const result = await service.staffPdf(viewer, params.getAll("person"));
+  if (result.status === "not_found") return notFound(req, res);
+  if (result.status === "invalid") return reply(req, res, 400, { status: "invalid" }, "Not shown", `Choose between 1 and ${ID_CARD_BATCH_MAX} people, each once.`);
+  if (result.status === "refused") {
+    if (!wantsHtml(req.headers.accept)) return json(res, 409, { status: "refused", refusals: result.refusals });
+    return reply(req, res, 409, { status: "refused" }, "Not printed", "Some of these people have no card yet.", `<ul>${result.refusals.map(r => `<li>${esc(r.personId)}</li>`).join("")}</ul><p><a href="${ID_CARDS_PATH}">Back to ID cards</a></p>`);
+  }
+  return pdf(res, result.pdf, "id-cards.pdf");
+}
+
+async function ownPdf(req: IncomingMessage, res: ServerResponse, service: IdCardsHttpService, person: string | undefined): Promise<true> {
+  req.resume();
+  if (req.method !== "GET") { res.writeHead(405, { allow: "GET" }); res.end(); return true; }
+  if (!person) return reply(req, res, 401, { status: "unauthenticated" }, "Sign in", "Sign in to download your ID card.", `<p><a href="/profile">Go to your profile</a></p>`);
+  const bytes = await service.ownPdf(person);
+  if (!bytes) return notFound(req, res);
+  return pdf(res, bytes, "studenthub-id-card.pdf");
+}
+
 async function ownPage(req: IncomingMessage, res: ServerResponse, service: IdCardsHttpService, person: string | undefined): Promise<true> {
   req.resume();
   if (req.method !== "GET") { res.writeHead(405, { allow: "GET" }); res.end(); return true; }
@@ -104,18 +141,18 @@ async function ownPage(req: IncomingMessage, res: ServerResponse, service: IdCar
   const rows: [string, string][] = [["Name", card.name ?? "Not set"], ...(card.arabicName ? [["Arabic name", card.arabicName] as [string, string]] : []), ["Card number", String(card.cardNumber)],
     ...(card.employeeId ? [["Employee ID", card.employeeId] as [string, string]] : []), ["Company", card.placement?.company ?? "Not assigned"], ["Store", card.placement?.store ?? "Not assigned"], ["Valid until", card.expiresOn]];
   const status = card.valid ? `<p>This card is valid.</p>` : `<p role="alert">This card expired on ${esc(card.expiresOn)}. Ask StudentHub staff to renew it.</p>`;
-  writeHtml(res, 200, pageDocument("Your ID card", `<main><h1>Your ID card</h1>${status}<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></main>`), { "cache-control": "no-store" });
+  writeHtml(res, 200, pageDocument("Your ID card", `<main><h1>Your ID card</h1>${status}<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl><p><a class="button" href="${OWN_PDF_PATH}">Download to print (PDF)</a></p></main>`), { "cache-control": "no-store" });
   return true;
 }
 
 export async function handleIdCards(req: IncomingMessage, res: ServerResponse, service: IdCardsHttpService | undefined, origin: string | undefined,
   authorize: (session: string) => Promise<string | undefined>): Promise<boolean> {
   const path = new URL(req.url ?? "/", "http://gateway.invalid").pathname;
-  if (path !== ID_CARDS_PATH && path !== OWN_ID_CARD_PATH) return false;
+  if (path !== ID_CARDS_PATH && path !== PRINT_PATH && path !== OWN_ID_CARD_PATH && path !== OWN_PDF_PATH) return false;
   const session = cookie(req.headers.cookie), viewer = service && session ? await authorize(session).catch(() => undefined) : undefined;
-  if (path === OWN_ID_CARD_PATH) { if (!service) { req.resume(); return notFound(req, res); } return ownPage(req, res, service, viewer); }
+  if (path === OWN_ID_CARD_PATH || path === OWN_PDF_PATH) { if (!service) { req.resume(); return notFound(req, res); } return path === OWN_PDF_PATH ? ownPdf(req, res, service, viewer) : ownPage(req, res, service, viewer); }
   // Authorization comes first, so every caller who is not staff gets the same not found whatever the method.
   let staff = false; if (viewer) try { staff = await service!.isStaff(viewer); } catch { /* treated as not staff */ }
   if (!viewer || !staff) { req.resume(); return notFound(req, res); }
-  return staffPage(req, res, service!, viewer, origin);
+  return path === PRINT_PATH ? printCards(req, res, service!, viewer) : staffPage(req, res, service!, viewer, origin);
 }

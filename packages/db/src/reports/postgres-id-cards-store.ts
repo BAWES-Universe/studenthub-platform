@@ -74,6 +74,9 @@ export class PostgresIdCardsStore {
       await c.query("BEGIN");
       // Lock the people's cards (and the rows they would insert) so two staff writing the same person queue up.
       for (const person of [...people].sort()) await c.query("SELECT pg_advisory_xact_lock(hashtextextended('id_card:' || $1, 0))", [person]);
+      // Share-lock the people's assignments before checking them: an end date being written now is
+      // waited for and then seen, and none can be written until this card commits.
+      await c.query("SELECT 1 FROM work_assignments WHERE person_principal_id = ANY($1::text[]) ORDER BY id FOR SHARE", [people]);
       const checked = await c.query<{ person_id: string; known: boolean; assigned: boolean; has_card: boolean }>(`SELECT x AS person_id, EXISTS (SELECT 1 FROM principals p WHERE p.id = x) AS known,
           ${idCardAssigned("x", "$2")} AS assigned, EXISTS (SELECT 1 FROM id_cards c WHERE c.person_principal_id = x) AS has_card
          FROM unnest($1::text[]) WITH ORDINALITY AS t(x, n) ORDER BY n`, [people, today]);
