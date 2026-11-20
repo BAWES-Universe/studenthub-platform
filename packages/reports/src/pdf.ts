@@ -159,13 +159,19 @@ export function readJpeg(bytes: Buffer): PdfImage | null {
   return null;
 }
 
+/** The most pixels a PNG may declare; checked in IHDR before anything is inflated. */
+export const PNG_MAX_PIXELS = 1_000_000;
+/** The longest side, in pixels, a PNG photo is kept at: the card photo is 27 mm across, about 320 px at 300 dpi. */
+export const PHOTO_MAX_SIDE = 320;
+
 /**
- * A PNG as a PDF image. Gray, RGB and palette PNGs pass their compressed data straight through
- * with the PNG predictor; a PNG with transparency is flattened onto white first (alpha channels,
- * and palette alpha from tRNS). Interlaced PNGs, 16-bit samples, a colour-key tRNS on gray or RGB,
- * and images over PNG_MAX_PIXELS are not placed (null).
+ * A PNG as a small PDF image. Every PNG is decoded here, flattened onto white (alpha channels, and
+ * palette alpha from tRNS) and box-downscaled so its longest side is at most PHOTO_MAX_SIDE; only
+ * that small RGB image is kept, so a batch of cards never holds full-size photos. The decoded size
+ * is bounded before inflating: at most PNG_MAX_PIXELS, and the inflate may not produce one byte
+ * more than the declared rows. Interlaced PNGs, 16-bit samples and a colour-key tRNS on gray or RGB
+ * are not placed (null).
  */
-export const PNG_MAX_PIXELS = 4_000_000;
 export function readPng(bytes: Buffer): PdfImage | null {
   const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   if (bytes.length < 33 || !bytes.subarray(0, 8).equals(SIGNATURE)) return null;
@@ -181,25 +187,25 @@ export function readPng(bytes: Buffer): PdfImage | null {
     else if (kind === "IEND") break;
     i += 12 + size;
   }
-  if (!width || !height || width > 10000 || height > 10000 || width * height > PNG_MAX_PIXELS || interlace !== 0 || bits !== 8 || !idat.length) return null;
-  const compressed = Buffer.concat(idat);
-  const parms = (colors: number) => `<< /Predictor 15 /Colors ${colors} /BitsPerComponent 8 /Columns ${width} >>`;
+  const channels = type === 0 || type === 3 ? 1 : type === 2 ? 3 : type === 4 ? 2 : type === 6 ? 4 : 0;
+  if (!channels || !width || !height || width * height > PNG_MAX_PIXELS || interlace !== 0 || bits !== 8 || !idat.length) return null;
   if (alpha && type !== 3) return null;
-  if (type === 0) return { width, height, bits: 8, colorSpace: "/DeviceGray", filter: "FlateDecode", decodeParms: parms(1), data: compressed };
-  if (type === 2) return { width, height, bits: 8, colorSpace: "/DeviceRGB", filter: "FlateDecode", decodeParms: parms(3), data: compressed };
+  let colours: Buffer | null = null;
   if (type === 3) {
     if (!palette || palette.length % 3 || palette.length > 768 || (alpha && alpha.length > palette.length / 3)) return null;
     // Palette transparency: blend each entry onto white, as the alpha path does per pixel.
-    for (let e = 0; alpha && e < alpha.length; e++) for (let k = 0; k < 3; k++) palette[e * 3 + k] = Math.round(palette[e * 3 + k]! * alpha[e]! / 255 + 255 * (1 - alpha[e]! / 255));
-    return { width, height, bits: 8, colorSpace: `[/Indexed /DeviceRGB ${palette.length / 3 - 1} <${palette.toString("hex")}>]`, filter: "FlateDecode", decodeParms: parms(1), data: compressed };
+    colours = palette;
+    for (let e = 0; alpha && e < alpha.length; e++) for (let k = 0; k < 3; k++) colours[e * 3 + k] = Math.round(colours[e * 3 + k]! * alpha[e]! / 255 + 255 * (1 - alpha[e]! / 255));
   }
-  if (type !== 4 && type !== 6) return null;
-  // Gray or RGB with alpha: undo the PNG filters, blend onto white, and store plain RGB.
-  const channels = type === 4 ? 2 : 4, stride = width * channels;
+  const stride = width * channels, expected = (stride + 1) * height;
   let raw: Buffer;
-  try { raw = inflateSync(compressed, { maxOutputLength: (stride + 1) * height }); } catch { return null; }
-  if (raw.length !== (stride + 1) * height) return null;
-  const out = Buffer.alloc(width * height * 3), prev = Buffer.alloc(stride), line = Buffer.alloc(stride);
+  try { raw = inflateSync(Buffer.concat(idat), { maxOutputLength: expected }); } catch { return null; }
+  if (raw.length !== expected) return null;
+  // Box-downscale while undoing the PNG filters row by row: only the previous row and the small output are held.
+  const scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(width, height));
+  const outW = Math.max(1, Math.round(width * scale)), outH = Math.max(1, Math.round(height * scale));
+  const sums = new Float64Array(outW * outH * 3), counts = new Uint32Array(outW * outH);
+  let prev = Buffer.alloc(stride), line = Buffer.alloc(stride);
   for (let y = 0; y < height; y++) {
     const filter = raw[y * (stride + 1)]!, src = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
     for (let x = 0; x < stride; x++) {
@@ -209,16 +215,23 @@ export function readPng(bytes: Buffer): PdfImage | null {
       if (predictor < 0) return null;
       line[x] = (src[x]! + predictor) & 0xff;
     }
+    const oy = Math.min(outH - 1, Math.floor(y * outH / height));
     for (let x = 0; x < width; x++) {
-      const alpha = line[x * channels + channels - 1]! / 255;
-      for (let k = 0; k < 3; k++) {
-        const value = line[x * channels + (channels === 2 ? 0 : k)]!;
-        out[(y * width + x) * 3 + k] = Math.round(value * alpha + 255 * (1 - alpha));
+      const o = oy * outW + Math.min(outW - 1, Math.floor(x * outW / width)), at = x * channels;
+      let rgb: [number, number, number];
+      if (colours) { const e = line[at]!; if (e * 3 + 2 >= colours.length) return null; rgb = [colours[e * 3]!, colours[e * 3 + 1]!, colours[e * 3 + 2]!]; }
+      else {
+        const opacity = channels === 2 || channels === 4 ? line[at + channels - 1]! / 255 : 1;
+        const flat = (v: number) => v * opacity + 255 * (1 - opacity);
+        rgb = channels <= 2 ? [flat(line[at]!), flat(line[at]!), flat(line[at]!)] : [flat(line[at]!), flat(line[at + 1]!), flat(line[at + 2]!)];
       }
+      sums[o * 3] += rgb[0]; sums[o * 3 + 1] += rgb[1]; sums[o * 3 + 2] += rgb[2]; counts[o]!++;
     }
-    line.copy(prev);
+    [prev, line] = [line, prev];
   }
-  return { width, height, bits: 8, colorSpace: "/DeviceRGB", filter: "FlateDecode", data: deflateSync(out) };
+  const out = Buffer.alloc(outW * outH * 3);
+  for (let o = 0; o < outW * outH; o++) for (let k = 0; k < 3; k++) out[o * 3 + k] = Math.round(sums[o * 3 + k]! / counts[o]!);
+  return { width: outW, height: outH, bits: 8, colorSpace: "/DeviceRGB", filter: "FlateDecode", data: deflateSync(out) };
 }
 
 /** A JPEG or PNG photo as a PDF image, or null. */

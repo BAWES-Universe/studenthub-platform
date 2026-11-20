@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
-import { buildPdf, encodable, fitText, PdfPage, PNG_MAX_PIXELS, readImage, readJpeg, readPng, textWidth } from "../src/pdf.js";
+import { buildPdf, encodable, fitText, PdfPage, PHOTO_MAX_SIDE, PNG_MAX_PIXELS, readImage, readJpeg, readPng, textWidth } from "../src/pdf.js";
 import { cardNumberText, idCardsPdf, longDate } from "../src/id-card-pdf.js";
 
 const latin = (b: Buffer) => b.toString("latin1");
@@ -78,35 +78,53 @@ function png(width: number, height: number, type: number, rows: number[][], extr
     chunk("IDAT", deflateSync(Buffer.from(rows.flat()))), chunk("IEND", Buffer.alloc(0))]);
 }
 
-test("REPORTS_PDF PNG photos: gray, RGB and palette pass through; transparency is flattened onto white", async () => {
-  const rgb = readPng(png(2, 1, 2, [[0, 10, 20, 30, 40, 50, 60]]))!;
-  assert.equal(rgb.colorSpace, "/DeviceRGB"); assert.equal(rgb.decodeParms, "<< /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns 2 >>");
-  assert.equal(readPng(png(1, 1, 0, [[0, 7]]))?.colorSpace, "/DeviceGray");
-  assert.equal(readPng(png(1, 1, 3, [[0, 0]], { palette: [255, 0, 0, 0, 255, 0] }))?.colorSpace, "[/Indexed /DeviceRGB 1 <ff000000ff00>]");
-  // RGBA, Sub filter on the second pixel: (100,150,200,255) then (+0,+0,+0,-255) = (100,150,200,0): opaque colour, then fully transparent.
-  const alpha = readPng(png(2, 1, 6, [[1, 100, 150, 200, 255, 0, 0, 0, 1]]))!;
+test("REPORTS_PDF PNG photos are decoded, flattened onto white and kept as small RGB", async () => {
   const { inflateSync } = await import("node:zlib");
-  assert.equal(alpha.colorSpace, "/DeviceRGB"); assert.equal(alpha.decodeParms, undefined);
-  assert.deepEqual([...inflateSync(alpha.data)], [100, 150, 200, 255, 255, 255]);
+  const pixels = (bytes: Buffer) => { const image = readPng(bytes)!; assert.equal(image.colorSpace, "/DeviceRGB"); assert.equal(image.decodeParms, undefined); return [...inflateSync(image.data)]; };
+  assert.deepEqual(pixels(png(2, 1, 2, [[0, 10, 20, 30, 40, 50, 60]])), [10, 20, 30, 40, 50, 60], "RGB");
+  assert.deepEqual(pixels(png(1, 1, 0, [[0, 7]])), [7, 7, 7], "gray");
+  assert.deepEqual(pixels(png(2, 1, 3, [[0, 0, 1]], { palette: [255, 0, 0, 0, 255, 0] })), [255, 0, 0, 0, 255, 0], "palette");
+  // RGBA, Sub filter on the second pixel: (100,150,200,255) then (+0,+0,+0,-255) = (100,150,200,0): opaque colour, then fully transparent.
+  assert.deepEqual(pixels(png(2, 1, 6, [[1, 100, 150, 200, 255, 0, 0, 0, 1]])), [100, 150, 200, 255, 255, 255]);
   // Gray with half alpha, Up filter on row 2 adds the row above.
-  const ga = readPng(png(1, 2, 4, [[0, 0, 128], [2, 0, 0]]))!;
-  assert.deepEqual([...inflateSync(ga.data)], [127, 127, 127, 127, 127, 127]);
+  assert.deepEqual(pixels(png(1, 2, 4, [[0, 0, 128], [2, 0, 0]])), [127, 127, 127, 127, 127, 127]);
+  // Palette transparency from tRNS is flattened onto white: transparent black prints white, half-alpha red prints pink.
+  assert.deepEqual(pixels(png(2, 1, 3, [[0, 0, 1]], { palette: [0, 0, 0, 255, 0, 0], trns: [0, 128] })), [255, 255, 255, 255, 127, 127]);
+  assert.equal(readPng(png(1, 1, 3, [[0, 0]], { palette: [0, 0, 0], trns: [0, 0] })), null, "more tRNS entries than palette entries");
+  assert.equal(readPng(png(1, 1, 3, [[0, 1]], { palette: [0, 0, 0] })), null, "an index past the palette");
+  assert.equal(readPng(png(1, 1, 2, [[0, 1, 2, 3]], { trns: [0, 1, 0, 2, 0, 3] })), null, "colour-key transparency is not placed");
   assert.equal(readPng(png(1, 1, 2, [[0, 1, 2, 3]], { interlace: 1 })), null, "interlaced");
   assert.equal(readPng(png(1, 1, 2, [[0, 1, 2, 3]], { bits: 16 })), null, "16-bit");
   assert.equal(readPng(png(1, 1, 6, [[9, 1, 2, 3, 4]])), null, "unknown filter");
   assert.equal(readPng(png(1, 1, 3, [[0, 0]])), null, "palette PNG without a palette");
   assert.equal(readImage(png(1, 1, 0, [[0, 7]]), "image/gif"), null);
-  // Palette transparency from tRNS is flattened onto white: transparent black prints white, half-alpha red prints pink.
-  assert.equal(readPng(png(1, 1, 3, [[0, 0]], { palette: [0, 0, 0, 255, 0, 0], trns: [0, 128] }))?.colorSpace, "[/Indexed /DeviceRGB 1 <ffffffff7f7f>]");
-  assert.equal(readPng(png(1, 1, 3, [[0, 0]], { palette: [0, 0, 0], trns: [0, 0] })), null, "more tRNS entries than palette entries");
-  assert.equal(readPng(png(1, 1, 2, [[0, 1, 2, 3]], { trns: [0, 1, 0, 2, 0, 3] })), null, "colour-key transparency is not placed");
   // A short IHDR is refused, not read past its end, even when the buffer is long enough overall.
   assert.equal(readPng(png(1, 1, 2, [[0, 1, 2, 3]], { ihdrSize: 0 })), null, "zero-length IHDR");
   assert.equal(readPng(png(1, 1, 2, [[0, 1, 2, 3]], { ihdrSize: 12 })), null, "short IHDR");
-  // Decoded size is bounded before any inflate: a photo over PNG_MAX_PIXELS prints without it.
-  assert.equal(PNG_MAX_PIXELS, 4_000_000);
-  assert.equal(readPng(png(2001, 2000, 6, [[0]])), null, "over the pixel budget");
-  assert.notEqual(readPng(png(2000, 2000, 2, [[0]])), null, "exactly the budget passes the header checks");
+  // Rows beyond the declared size are not inflated: the inflate may produce exactly the declared bytes.
+  assert.equal(readPng(png(1, 1, 2, [[0, 1, 2, 3], [0, 4, 5, 6]])), null, "more data than the header declares");
+});
+
+test("REPORTS_PDF a PNG's decoded size is bounded before inflating, and photos are kept at card size", async () => {
+  const { inflateSync } = await import("node:zlib");
+  assert.equal(PNG_MAX_PIXELS, 1_000_000); assert.equal(PHOTO_MAX_SIDE, 320);
+  // High-compression alpha PNGs: a few KB on disk, megabytes decoded.
+  const flat = (w: number, h: number) => png(w, h, 6, Array.from({ length: h }, () => [0, ...Array.from({ length: w }, () => [10, 20, 30, 255]).flat()]));
+  const over = flat(1001, 1000);
+  assert.ok(over.length < 64 * 1024, "the over-budget PNG is small on disk");
+  assert.equal(readPng(over), null, "one pixel row past the budget is refused, though its data is valid");
+  // A huge declared size with little data is refused from the header alone; nothing is inflated.
+  assert.equal(readPng(png(10000, 10000, 6, [[0]])), null);
+  const atCap = readPng(flat(1000, 1000))!;
+  assert.equal(atCap.width, 320); assert.equal(atCap.height, 320);
+  const kept = inflateSync(atCap.data);
+  assert.equal(kept.length, 320 * 320 * 3); assert.deepEqual([...kept.subarray(0, 6)], [10, 20, 30, 10, 20, 30]);
+  // Downscaling averages the pixels it folds together: alternating black and white columns become mid gray.
+  const stripes = readPng(png(640, 1, 0, [[0, ...Array.from({ length: 640 }, (_, x) => (x % 2) * 255)]]))!;
+  assert.equal(stripes.width, 320); assert.equal(stripes.height, 1);
+  assert.ok([...inflateSync(stripes.data)].every(v => v === 128));
+  const tall = readPng(png(1, 960, 0, Array.from({ length: 960 }, () => [0, 9])))!;
+  assert.equal(tall.width, 1); assert.equal(tall.height, 320, "the longest side sets the scale");
 });
 
 test("REPORTS_ID_CARD_PDF two pages per card with the card's details, no civil ID, and the photo when there is one", () => {
