@@ -78,3 +78,49 @@ test("REPORTS_ID_CARDS a card is valid through its expiry day, in Kuwait time", 
   assert.equal((await rig("2026-11-19T21:00:00Z").service.own("holder"))?.valid, false);
   assert.equal(await rig().service.own("nobody"), undefined);
 });
+
+test("REPORTS_ID_CARDS_PDF the person's own card and staff batches print as PDF; a missing or unreadable photo still prints", async () => {
+  const store = new Store(), reads: string[] = [];
+  const photos = { async read(id: string) { reads.push(id); if (id === "holder") throw new Error("storage down"); return null; } };
+  const service = new IdCardsService(store, { async isStaff(id: string) { return id === "staff"; } }, () => new Date("2026-11-19T06:00:00Z"), photos);
+  const own = await service.ownPdf("holder");
+  assert.ok(own?.subarray(0, 5).equals(Buffer.from("%PDF-")));
+  assert.ok(own!.toString("latin1").includes("(Alia Badr) Tj"));
+  assert.equal(await service.ownPdf("nobody"), undefined);
+  assert.deepEqual(await service.staffPdf("person", ["holder"]), { status: "not_found" });
+  for (const people of [[], ["holder", "holder"], ["bad id"], Array.from({ length: ID_CARD_BATCH_MAX + 1 }, (_, i) => `p${i}`)])
+    assert.deepEqual(await service.staffPdf("staff", people), { status: "invalid" });
+  assert.deepEqual(await service.staffPdf("staff", ["holder", "nobody"]), { status: "refused", refusals: [{ personId: "nobody", code: "no_card" }] });
+  const batch = await service.staffPdf("staff", ["holder"]);
+  assert.equal(batch.status, "ok");
+  assert.deepEqual(reads, ["holder", "holder"]);
+});
+
+test("REPORTS_ID_CARDS_PDF a staff print batch is taken before authorization", async () => {
+  const store = new Store(), people = ["holder"];
+  const service = new IdCardsService(store, { async isStaff() { people.push("nobody"); return true; } }, () => new Date("2026-11-19T06:00:00Z"));
+  assert.equal((await service.staffPdf("staff", people)).status, "ok");
+});
+
+test("REPORTS_ID_CARDS_PDF a batch of 100 at-cap PNG photos is read one at a time and kept at card size", async () => {
+  const { deflateSync } = await import("node:zlib");
+  // A 1000 x 1000 RGBA photo (the pixel cap), a few KB on disk; the reader does not check CRCs, so they are left zero.
+  const chunk = (kind: string, data: Buffer) => { const head = Buffer.alloc(8); head.writeUInt32BE(data.length, 0); head.write(kind, 4, "latin1"); return Buffer.concat([head, data, Buffer.alloc(4)]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(1000, 0); ihdr.writeUInt32BE(1000, 4); ihdr[8] = 8; ihdr[9] = 6;
+  const row = Buffer.alloc(1 + 4000); for (let x = 0; x < 1000; x++) row.set([x & 255, (x * 3) & 255, 90, 255], 1 + x * 4);
+  const photo = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(Buffer.concat(Array(1000).fill(row)))), chunk("IEND", Buffer.alloc(0))]);
+  const people = Array.from({ length: ID_CARD_BATCH_MAX }, (_, i) => `p-${i}`);
+  const store = new Store(); store.card = async () => ({ name: "Alia Badr", arabicName: null, employeeId: null, cardNumber: 7, expiresOn: "2099-01-01", issuedAt: new Date(), placement: null });
+  let inFlight = 0, most = 0, reads = 0;
+  const photos = { async read() { most = Math.max(most, ++inFlight); reads++; await new Promise(r => setImmediate(r)); inFlight--; return { bytes: photo, mime: "image/png" }; } };
+  const service = new IdCardsService(store, { async isStaff(id: string) { return id === "staff"; } }, () => new Date("2026-11-19T12:00:00Z"), photos);
+  const before = process.memoryUsage();
+  const result = await service.staffPdf("staff", people);
+  const after = process.memoryUsage();
+  assert.equal(result.status, "ok"); assert.equal(reads, 100); assert.equal(most, 1, "one photo read at a time");
+  const pdf = (result as { pdf: Buffer }).pdf.toString("latin1");
+  const sizes = [...pdf.matchAll(/\/Subtype \/Image \/Width (\d+) \/Height (\d+)/g)].map(m => [Number(m[1]), Number(m[2])]);
+  assert.equal(sizes.length, 100); assert.ok(sizes.every(([w, h]) => w === 320 && h === 320), "every photo is kept at card size, not 1000 x 1000");
+  // Each card keeps at most a 320 x 320 RGB photo (300 KB raw), so the batch's retained growth stays far under one full-size decode per card (100 x 4 MB).
+  assert.ok(after.heapUsed + after.arrayBuffers - before.heapUsed - before.arrayBuffers < 64 * 1024 * 1024, `retained growth ${(after.heapUsed + after.arrayBuffers - before.heapUsed - before.arrayBuffers) >> 20} MB`);
+});

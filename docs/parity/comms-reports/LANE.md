@@ -113,9 +113,20 @@ Planned PRs, in order (migrations 0602 to 0609):
    work lane's assignments when the card is shown (the one running today, else the next), so a
    move shows without a new card. The morning summary's two ID card counters ("expired ID
    cards" and "assigned without ID cards") switch on with the same queries.
-2. **The card as a PDF**, with the person's photo. The person downloads their own; staff
-   download a batch's cards as one PDF (legacy's generate returned a zip of front and back
-   PNGs per person).
+2. **The card as a PDF.** `GET /profile/id-card.pdf` for the person, `GET
+   /workspace/id-cards/print?person=...` (up to 100) for staff, linked from the result page
+   after issuing or renewing (legacy's generate returned a zip of front and back PNGs per
+   person). Two bank-card-size pages per card: front with the photo, name, card number,
+   employee ID, company, store and valid-until date; back with where to return a found card.
+   Legacy printed the civil ID number on the back; the new card does not (F10). The PDF writer
+   (`packages/reports/src/pdf.ts`) has no dependencies: standard Helvetica fonts in WinAnsi, so
+   the card prints the Latin name only (Arabic needs an embedded font and shaping), and JPEG or
+   PNG images (PNG transparency is flattened onto white). The photo comes from a
+   `IdCardPhotoSource` port, wired in production to the personal-photo source on the same
+   document storage as civil ID reads (`DOCUMENT_*` env). Each read that returns bytes is first
+   audited in `staff_person_views` as `id_card_render` (viewer: the person, or the staff member
+   printing); if the audit fails, no photo is used. The card shows a plain circle only when the
+   photo is absent, refused (two photos, wrong type, over 2 MB or PNG_MAX_PIXELS) or unreadable.
 3. **Verification.** The QR on the card opens a signed, expiring public page with name, photo,
    company and validity only. Legacy's page also showed the civil ID number (finding F10); the
    new one never shows it or the phone.

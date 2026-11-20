@@ -115,3 +115,23 @@ test("REPORTS_ID_CARDS_PG a legacy card needs its legacy id instead of an issuin
   await pool.query("INSERT INTO id_cards(person_principal_id,expires_on,legacy_ref) VALUES($1,'2026-01-01',$2)", [p, String(Math.floor(Math.random() * 1e12))]);
   await assert.rejects(pool.query("UPDATE id_cards SET issued_by=$2 WHERE person_principal_id=$1", [p, creator]), /check constraint/);
 });
+
+test("REPORTS_ID_CARDS_PG an assignment end being written while a card is issued is waited for, so the card is refused", async () => {
+  const p = await person("Leaving");
+  await assign(p, "2026-01-01", null);
+  const other = await pool.connect();
+  try {
+    await other.query("BEGIN");
+    await other.query("UPDATE work_assignments SET end_date = '2026-11-18' WHERE person_principal_id = $1", [p]);
+    const updater = (await other.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+    const pending = store.write("issue", [p], DAY, "2027-02-19", creator);
+    // Commit only once the issue is seen waiting on the updater's row lock; without the share lock it never waits and this fails.
+    for (let deadline = Date.now() + 5000; ; await new Promise(r => setTimeout(r, 20))) {
+      if ((await pool.query("SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))", [updater])).rowCount) break;
+      if (Date.now() > deadline) assert.fail("issuing a card never waited for the assignment being ended");
+    }
+    await other.query("COMMIT");
+    assert.deepEqual(await pending, [{ personId: p, code: "not_assigned" }]);
+  } finally { other.release(); }
+  assert.equal((await pool.query("SELECT 1 FROM id_cards WHERE person_principal_id = $1", [p])).rowCount, 0);
+});
