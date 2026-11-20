@@ -141,8 +141,8 @@ test("REPORTS_ID_CARDS_PG the public check reads the name, current company, expi
   await assign(p, "2026-01-01", "2026-12-31");
   await store.write("issue", [p], DAY, "2027-02-19", creator);
   const { cardNumber } = (await store.card(p, DAY))!;
-  assert.deepEqual(await store.verify(cardNumber, DAY), { name: `Check ${tag}`, company: "Sultan Center", expiresOn: "2027-02-19", assigned: true });
-  assert.deepEqual(await store.verify(cardNumber, "2027-01-01"), { name: `Check ${tag}`, company: null, expiresOn: "2027-02-19", assigned: false }, "the assignment ended");
+  assert.deepEqual(await store.verify(cardNumber, DAY), { personId: p, name: `Check ${tag}`, company: "Sultan Center", expiresOn: "2027-02-19", assigned: true });
+  assert.deepEqual(await store.verify(cardNumber, "2027-01-01"), { personId: p, name: `Check ${tag}`, company: null, expiresOn: "2027-02-19", assigned: false }, "the assignment ended");
   const max = (await pool.query<{ n: string }>("SELECT coalesce(max(card_number),0)+1000 AS n FROM id_cards")).rows[0]!.n;
   assert.equal(await store.verify(Number(max), DAY), undefined);
   await assert.rejects(store.verify(0, DAY), /invalid card/);

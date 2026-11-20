@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { clientAddress, type AddressList } from "../../../../packages/access/src/index.js";
 import { ID_CARD_BATCH_MAX, ID_CARD_PAGE_SIZE, ID_CARD_VIEWS } from "../../../../packages/reports/src/id-cards.js";
 import { ID_CARD_VERIFY_PATH } from "../../../../packages/reports/src/id-card-verify.js";
+import type { PublicPhoto } from "../../../../packages/reports/src/public-photo.js";
 import type { IdCardAction, IdCardCheck, IdCardListRow, IdCardView, IdCardWriteResult, OwnIdCard } from "../../../../packages/reports/src/id-cards.js";
 import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 
@@ -21,10 +22,11 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
  * cards as one PDF for staff (legacy's generate returned a zip of card images).
  *
  * GET /v/<token> is the public page behind the QR code on a printed card. Anyone may open it,
- * signed in or not. It shows only the name, company and whether the card is valid, never the
+ * signed in or not. It shows only the name, photo (valid cards only, through a one-minute photo
+ * link), company and whether the card is valid, never the
  * civil ID, phone or employee ID, and a link that was not signed by this server shows the same
  * not found as one for a card that does not exist. The page is not indexed or cached. Each
- * client address may open it PUBLIC_CHECK_LIMIT.max times a minute; past that it gets a 429 with
+ * client address may open it and its photo PUBLIC_CHECK_LIMIT.max times a minute together; past that it gets a 429 with
  * Retry-After, before any card is looked up.
  */
 export interface IdCardsHttpService {
@@ -36,28 +38,35 @@ export interface IdCardsHttpService {
   staffPdf(viewer: string, people: readonly string[], origin?: string): Promise<{ readonly status: "ok"; readonly pdf: Buffer } | { readonly status: "refused"; readonly refusals: readonly { readonly personId: string; readonly code: "no_card" }[] } | { readonly status: "invalid" } | { readonly status: "not_found" }>;
   /** The public check behind the QR code; absent when no verification key is configured. */
   check?(token: string): Promise<IdCardCheck>;
+  /** The holder's photo for a valid card's public page, rebuilt without metadata; null for every refusal. */
+  publicPhoto?(token: string, key: string, clientHash: string): Promise<PublicPhoto | null>;
   /** The per-address brake on the public check; absent means no limit (tests, no key). */
   publicLimit?: PublicCheckLimit;
 }
 
-/** Answers undefined when the request may go on, or the seconds to wait. */
-export interface PublicCheckLimit { hit(req: IncomingMessage): number | undefined }
+export interface PublicCheckLimit {
+  /** Counts the request: undefined when it may go on, or the seconds to wait. */
+  hit(req: IncomingMessage): number | undefined;
+  /** The keyed hash of the request's client address (22 base64url characters), as recorded for a public photo read. */
+  client(req: IncomingMessage): string;
+}
 export const PUBLIC_CHECK_LIMIT = Object.freeze({ max: 30, windowSeconds: 60, addresses: 10_000 });
 
 /**
  * A fixed-window count per client address, kept in this gateway process. The address (the
  * rightmost untrusted forwarded hop behind a trusted proxy, as the abuse gate reads it) is held
- * only as an HMAC under a key made at start, so the memory never holds a raw address. At most
+ * only as an HMAC (under `key`, or one made at start), so neither the memory nor the photo read
+ * record ever holds a raw address. At most
  * `addresses` windows are kept: expired ones are swept first, then the oldest are dropped. It is
  * a brake on walking or scraping the page, not a gate: each gateway process counts on its own.
  */
-export function publicCheckLimit(options: { readonly trustedProxies: AddressList; readonly max?: number; readonly windowSeconds?: number; readonly addresses?: number; readonly nowMs?: () => number }): PublicCheckLimit {
-  const key = randomBytes(32), counts = new Map<string, { start: number; count: number }>();
+export function publicCheckLimit(options: { readonly trustedProxies: AddressList; readonly key?: Buffer; readonly max?: number; readonly windowSeconds?: number; readonly addresses?: number; readonly nowMs?: () => number }): PublicCheckLimit {
+  const key = options.key ?? randomBytes(32), counts = new Map<string, { start: number; count: number }>();
   const max = options.max ?? PUBLIC_CHECK_LIMIT.max, windowMs = (options.windowSeconds ?? PUBLIC_CHECK_LIMIT.windowSeconds) * 1000, cap = options.addresses ?? PUBLIC_CHECK_LIMIT.addresses;
   const now = options.nowMs ?? Date.now;
-  return { hit(req) {
-    const at = now(), address = clientAddress(req.socket.remoteAddress, req.headers["x-forwarded-for"], options.trustedProxies) ?? "unknown";
-    const id = createHmac("sha256", key).update(address).digest("base64url");
+  const client = (req: IncomingMessage) => createHmac("sha256", key).update(clientAddress(req.socket.remoteAddress, req.headers["x-forwarded-for"], options.trustedProxies) ?? "unknown").digest().subarray(0, 16).toString("base64url");
+  return { client, hit(req) {
+    const at = now(), id = client(req);
     let held = counts.get(id);
     if (!held || at - held.start >= windowMs) {
       if (held) counts.delete(id);
@@ -104,6 +113,8 @@ async function verifyPage(req: IncomingMessage, res: ServerResponse, service: Id
     writeHtml(res, 429, pageDocument("Please slow down", `<main><h1>Please slow down</h1><p>Too many card checks from this address. Try again in a minute.</p><p lang="ar" dir="rtl">عدد كبير من عمليات التحقق من هذا العنوان. حاول مرة أخرى بعد دقيقة.</p></main>`), headers);
     return true;
   }
+  const photoPath = /^\/v\/([^/]{1,80})\/photo$/.exec(path);
+  if (photoPath) return photoReply(req, res, service, photoPath[1]!);
   const result: IdCardCheck = service?.check && path.length <= 80 ? await service.check(path.slice(ID_CARD_VERIFY_PATH.length)).catch(() => ({ status: "unknown" as const })) : { status: "unknown" };
   const html = wantsHtml(req.headers.accept);
   if (result.status === "unknown") {
@@ -111,13 +122,30 @@ async function verifyPage(req: IncomingMessage, res: ServerResponse, service: Id
     writeHtml(res, 404, pageDocument("Card not found", `<main><h1>Card not found</h1><p>This link does not match a StudentHub ID card.</p><p lang="ar" dir="rtl">هذا الرابط لا يطابق أي بطاقة من StudentHub.</p></main>`), PUBLIC_HEADERS);
     return true;
   }
-  const body = { status: "ok", name: result.name, company: result.company, validUntil: result.validUntil, valid: result.valid, reason: result.reason };
+  const photo = result.photoKey ? `${path}/photo?k=${encodeURIComponent(result.photoKey)}` : null;
+  const body = { status: "ok", name: result.name, company: result.company, validUntil: result.validUntil, valid: result.valid, reason: result.reason, photo };
   if (!html) { res.writeHead(200, { "content-type": "application/json", "x-content-type-options": "nosniff", ...PUBLIC_HEADERS }); res.end(JSON.stringify(body)); return true; }
   const verdict = result.valid ? `<p role="status"><strong>Valid ID card</strong> · <span lang="ar" dir="rtl">بطاقة سارية</span></p>`
     : `<p role="alert"><strong>Not valid</strong> · <span lang="ar" dir="rtl">غير سارية</span></p><p>${REASONS[result.reason!][0]}</p><p lang="ar" dir="rtl">${REASONS[result.reason!][1]}</p>`;
   const rows: [string, string, string][] = [["Name", "الاسم", result.name ?? "Not set"], ["Company", "الشركة", result.company ?? "Not assigned"], ["Valid until", "صالحة حتى", result.validUntil]];
-  writeHtml(res, 200, pageDocument("StudentHub ID card", `<main><h1>StudentHub ID card</h1>${verdict}<dl>${rows.map(([en, ar, v]) => `<dt>${en} · <span lang="ar" dir="rtl">${ar}</span></dt><dd>${esc(v)}</dd>`).join("")}</dl></main>`), PUBLIC_HEADERS);
+  const img = photo ? `<p><img src="${esc(photo)}" alt="Photo of the card holder · صورة حامل البطاقة" width="160" height="160" style="object-fit:cover;border-radius:50%"></p>` : "";
+  writeHtml(res, 200, pageDocument("StudentHub ID card", `<main><h1>StudentHub ID card</h1>${verdict}${img}<dl>${rows.map(([en, ar, v]) => `<dt>${en} · <span lang="ar" dir="rtl">${ar}</span></dt><dd>${esc(v)}</dd>`).join("")}</dl></main>`), PUBLIC_HEADERS);
   return true;
+}
+
+/**
+ * GET /v/<token>/photo?k=<photo key>: the holder's photo for a valid card's page. Every refusal
+ * (no key configured, unknown, forged or revoked card, stale key, no photo, a failed read) is the
+ * same empty 404. The photo is rebuilt without metadata and is never cached or framed elsewhere.
+ */
+async function photoReply(req: IncomingMessage, res: ServerResponse, service: IdCardsHttpService | undefined, token: string): Promise<true> {
+  const key = new URL(req.url ?? "/", "http://gateway.invalid").searchParams.get("k") ?? "";
+  const photo = service?.publicPhoto && service.publicLimit && key.length <= 40
+    ? await service.publicPhoto(token, key, service.publicLimit.client(req)).catch(() => null) : null;
+  if (!photo) { res.writeHead(404, { "content-length": "0", "x-content-type-options": "nosniff", ...PUBLIC_HEADERS }); res.end(); return true; }
+  res.writeHead(200, { "content-type": photo.mime, "content-length": String(photo.bytes.length), "content-disposition": "inline", "x-content-type-options": "nosniff",
+    "cross-origin-resource-policy": "same-origin", "content-security-policy": "default-src 'none'; sandbox", ...PUBLIC_HEADERS });
+  res.end(photo.bytes); return true;
 }
 
 const notFound = (req: IncomingMessage, res: ServerResponse) => reply(req, res, 404, { status: "not_found" }, "Not found", "The page could not be found.");

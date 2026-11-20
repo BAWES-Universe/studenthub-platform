@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addMonths, IdCardsService, IdCardVerifier, kuwaitDay, ID_CARD_BATCH_MAX } from "../src/index.js";
-import type { IdCardAction, IdCardsStore, IdCardView } from "../src/index.js";
+import { addMonths, cleanJpeg, IdCardsService, IdCardVerifier, kuwaitDay, ID_CARD_BATCH_MAX } from "../src/index.js";
+import type { IdCardAction, IdCardPublicPhotoSource, IdCardsStore, IdCardView } from "../src/index.js";
+import { JPEG_WITH_GPS } from "./jpeg-fixtures.js";
 
 test("REPORTS_ID_CARDS three calendar months, clamped to the end of a shorter month", () => {
   assert.equal(addMonths("2026-11-19", 3), "2027-02-19");
@@ -25,8 +26,9 @@ class Store implements IdCardsStore {
   async write(action: IdCardAction, people: readonly string[], today: string, expiresOn: string, actor: string) { this.writes.push({ action, people, today, expiresOn, actor }); return this.refuse; }
   async card(personId: string) { return personId === "holder" ? { name: "Alia Badr", arabicName: null, employeeId: null, cardNumber: 7, expiresOn: "2026-11-19", issuedAt: new Date(), placement: null } : undefined; }
   async counts() { return { needs: 0, expired: 0 }; }
-  verifyRows = new Map<number, { name: string | null; company: string | null; expiresOn: string; assigned: boolean }>();
-  async verify(n: number) { return this.verifyRows.get(n); }
+  verifyRows = new Map<number, { personId: string; name: string | null; company: string | null; expiresOn: string; assigned: boolean }>();
+  lookups: number[] = [];
+  async verify(n: number) { this.lookups.push(n); return this.verifyRows.get(n); }
 }
 const rig = (at = "2026-11-19T21:30:00Z") => {
   const store = new Store();
@@ -130,16 +132,18 @@ test("REPORTS_ID_CARDS_PDF a batch of 100 at-cap PNG photos is read one at a tim
 test("REPORTS_ID_CARD_CHECK the public check: valid until the earlier of the printed and current expiry, and only while assigned", async () => {
   const store = new Store(), verifier = new IdCardVerifier(Buffer.alloc(32, 3));
   const service = new IdCardsService(store, { async isStaff() { return false; } }, () => new Date("2026-11-19T06:00:00Z"), undefined, verifier);
-  store.verifyRows.set(7, { name: "Alia Badr", company: "Sultan Center", expiresOn: "2027-02-19", assigned: true });
-  assert.deepEqual(await service.check(verifier.token(7, "2027-02-19")), { status: "checked", name: "Alia Badr", company: "Sultan Center", validUntil: "2027-02-19", valid: true, reason: null });
-  assert.deepEqual(await service.check(verifier.token(7, "2026-11-18")), { status: "checked", name: "Alia Badr", company: "Sultan Center", validUntil: "2026-11-18", valid: false, reason: "expired" },
+  store.verifyRows.set(7, { personId: "holder", name: "Alia Badr", company: "Sultan Center", expiresOn: "2027-02-19", assigned: true });
+  assert.deepEqual(await service.check(verifier.token(7, "2027-02-19")), { status: "checked", name: "Alia Badr", company: "Sultan Center", validUntil: "2027-02-19", valid: true, reason: null, photoKey: null });
+  assert.deepEqual(await service.check(verifier.token(7, "2026-11-18")), { status: "checked", name: "Alia Badr", company: "Sultan Center", validUntil: "2026-11-18", valid: false, reason: "expired", photoKey: null },
     "an old print stays expired after a renewal");
-  assert.deepEqual(await service.check(verifier.token(7, "2026-11-19")), { status: "checked", name: "Alia Badr", company: "Sultan Center", validUntil: "2026-11-19", valid: true, reason: null }, "valid through the printed day");
-  store.verifyRows.set(7, { name: "Alia Badr", company: null, expiresOn: "2026-12-01", assigned: false });
-  assert.deepEqual(await service.check(verifier.token(7, "2027-02-19")), { status: "checked", name: "Alia Badr", company: null, validUntil: "2026-12-01", valid: false, reason: "not_assigned" },
+  assert.deepEqual(await service.check(verifier.token(7, "2026-11-19")), { status: "checked", name: "Alia Badr", company: "Sultan Center", validUntil: "2026-11-19", valid: true, reason: null, photoKey: null }, "valid through the printed day");
+  store.verifyRows.set(7, { personId: "holder", name: "Alia Badr", company: null, expiresOn: "2026-12-01", assigned: false });
+  assert.deepEqual(await service.check(verifier.token(7, "2027-02-19")), { status: "checked", name: "Alia Badr", company: null, validUntil: "2026-12-01", valid: false, reason: "not_assigned", photoKey: null },
     "a card shortened since printing shows the shorter date; a holder who left is not valid");
   assert.deepEqual(await service.check(verifier.token(8, "2027-02-19")), { status: "unknown" }, "no such card");
+  store.lookups.length = 0;
   assert.deepEqual(await service.check("7.20270219.AAAAAAAAAAAAAAAAAAAAAA"), { status: "unknown" }, "forged");
+  assert.deepEqual(store.lookups, [7], "a forged link is looked up like a real one, so both take the same work");
   assert.deepEqual(await new IdCardsService(store, { async isStaff() { return false; } }).check(verifier.token(7, "2027-02-19")), { status: "unknown" }, "no key configured");
 });
 
@@ -148,4 +152,44 @@ test("REPORTS_ID_CARD_CHECK a printed card carries the QR code only when a key a
   const service = new IdCardsService(store, { async isStaff() { return false; } }, () => new Date("2026-11-19T06:00:00Z"), undefined, verifier);
   const withQr = (await service.ownPdf("holder", "https://studenthub.co"))!.toString("latin1"), without = (await service.ownPdf("holder"))!.toString("latin1");
   assert.match(withQr, /Scan to check this card/); assert.doesNotMatch(without, /Scan to check this card/);
+});
+
+test("REPORTS_ID_CARD_PUBLIC_PHOTO a valid card's page hands out a one-minute photo key; the photo is read once, recorded, and rebuilt without EXIF", async () => {
+  const store = new Store(), verifier = new IdCardVerifier(Buffer.alloc(32, 3)), CLIENT = "c".repeat(22);
+  let now = new Date("2026-11-19T06:00:00Z");
+  const reads: { personId: string; view: unknown }[] = [];
+  const photos: IdCardPublicPhotoSource = { async read(personId, view) { reads.push({ personId, view }); return { bytes: JPEG_WITH_GPS.rgb, mime: "image/jpeg" }; } };
+  const service = new IdCardsService(store, { async isStaff() { return false; } }, () => now, undefined, verifier, photos);
+  store.verifyRows.set(7, { personId: "holder", name: "Alia Badr", company: "Sultan Center", expiresOn: "2027-02-19", assigned: true });
+  const token = verifier.token(7, "2027-02-19"), checked = await service.check(token);
+  assert.equal(checked.status, "checked");
+  const key = checked.status === "checked" ? checked.photoKey! : "";
+  assert.ok(verifier.photoKeyValid(token, key, now.getTime() / 1000));
+  const photo = await service.publicPhoto(token, key, CLIENT);
+  assert.deepEqual(photo, { bytes: cleanJpeg(JPEG_WITH_GPS.rgb), mime: "image/jpeg" });
+  assert.ok(!photo!.bytes.includes("SECRETPLACE"), "no GPS on the public route");
+  assert.deepEqual(reads, [{ personId: "holder", view: { cardNumber: 7, clientHash: CLIENT } }]);
+
+  // Every refusal is the same null, and none reads the photo.
+  reads.length = 0;
+  assert.equal(await service.publicPhoto(token, key, "not a hash"), null, "client hash not from the limiter");
+  assert.equal(await service.publicPhoto(verifier.token(7, "2027-02-18"), key, CLIENT), null, "key made for another link");
+  assert.equal(await service.publicPhoto("7.20270219.AAAAAAAAAAAAAAAAAAAAAA", key, CLIENT), null, "forged link");
+  assert.equal(await service.publicPhoto(verifier.token(8, "2027-02-19"), verifier.photoKey(verifier.token(8, "2027-02-19"), now.getTime() / 1000), CLIENT), null, "no such card");
+  now = new Date(now.getTime() + 60_000);
+  assert.equal(await service.publicPhoto(token, key, CLIENT), null, "the key lasts a minute");
+  now = new Date("2026-11-19T06:00:00Z");
+  store.verifyRows.set(7, { personId: "holder", name: "Alia Badr", company: null, expiresOn: "2027-02-19", assigned: false });
+  assert.equal(await service.publicPhoto(token, key, CLIENT), null, "a revoked card (holder no longer assigned) shows no photo, even with a fresh key");
+  const revoked = await service.check(token);
+  assert.equal(revoked.status === "checked" && revoked.photoKey, null, "and its page gets no photo key");
+  store.verifyRows.set(7, { personId: "holder", name: "Alia Badr", company: "Sultan Center", expiresOn: "2026-11-18", assigned: true });
+  assert.equal(await service.publicPhoto(token, key, CLIENT), null, "an expired card shows no photo");
+  assert.deepEqual(reads, []);
+
+  store.verifyRows.set(7, { personId: "holder", name: "Alia Badr", company: "Sultan Center", expiresOn: "2027-02-19", assigned: true });
+  const plain = new IdCardsService(store, { async isStaff() { return false; } }, () => now, undefined, verifier);
+  const noPhotos = await plain.check(token);
+  assert.equal(noPhotos.status === "checked" && noPhotos.photoKey, null, "no photo key when public photos are not configured");
+  assert.equal(await plain.publicPhoto(token, key, CLIENT), null);
 });

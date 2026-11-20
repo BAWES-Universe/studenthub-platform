@@ -139,8 +139,16 @@ Planned PRs, in order (migrations 0602 to 0609):
    holder is no longer assigned. A forged link, a changed number and a missing card all show
    the same not found. Each client address (read behind GATEWAY_TRUSTED_PROXIES like the abuse
    gate, held only as an HMAC) may check 30 links a minute per gateway process, then gets a 429
-   before any card is looked up. The photo joins the page in a follow-up: every JPEG re-encoded
-   so no EXIF or GPS reaches the public route, anonymous views in their own append-only table.
+   before any card is looked up. A valid card's page shows the holder's photo through
+   `/v/<token>/photo?k=<key>`, where the key is an HMAC for that link that lasts 60 seconds. The
+   photo is never sent as uploaded: a PNG is decoded through the card's downscale path and
+   written anew (IHDR, IDAT, IEND only); a JPEG is rebuilt from an allow list of segments
+   (tables, frame, scans) with a fresh JFIF header, so EXIF, GPS, XMP, ICC, IPTC, comments and
+   trailing data are all dropped, and anything off the list refuses the photo. Each read is
+   recorded first in the append-only `id_card_public_views` (migration 0604: card, photo
+   version, time, keyed hash of the client address). Unknown, forged, expired and revoked
+   cards, stale keys and missing photos all get the same empty 404, and every link shaped like
+   a token is looked up whether or not it is signed, so they take the same work.
 4. **Experience certificates** from work history, as PDFs (legacy appreciation certificate:
    name, company, store, from and to dates).
 5. **The ID card list export**, if still wanted: legacy's `CandidateIdCard::createExcel` is
