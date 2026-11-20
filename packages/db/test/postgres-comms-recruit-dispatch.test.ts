@@ -10,6 +10,8 @@ import { EmailOutboxService, FakeEmailPort, type EmailClass } from "../../notifi
 import type { StoredEmailClass } from "../src/postgres-email-outbox-store.js";
 import { NotificationsService } from "../../notifications/src/notifications.js";
 import { dispatchRecruitThenDeliver } from "../../comms/src/recruit-dispatch.js";
+import { emailDeliveryWork } from "../../../apps/worker/src/email-delivery.js";
+import { PostgresFiringSpikeStore, PostgresMorningSummaryStore } from "@studenthub/db/reports";
 
 // The outbox store's own class list must be exactly the canonical one (this file stops compiling otherwise).
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -90,15 +92,21 @@ test("COMMS_RECRUIT_DISPATCH_PG each recruit event reaches its recipient once: a
   await assert.rejects(pool.query("INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key) VALUES($1,'recruit.invitation.sent','recruit_outbox:1','{\"text\":\"x\"}','bad')", [person]), /notifications_kind_payload_check/);
 });
 
-test("COMMS_RECRUIT_DISPATCH_PG the email delivery job dispatches first, so the invitation email goes out in the same run", async () => {
+// The worker's own email_delivery work (default batch size), with a sender that delivers.
+function workerRun(port: FakeEmailPort) {
+  const emailStore = new PostgresEmailOutboxStore({ pool });
+  return emailDeliveryWork({ recruitDispatch: dispatcher, service: new EmailOutboxService(emailStore, port, true, true),
+    summaryStore: new PostgresMorningSummaryStore({ pool }), spikeStore: new PostgresFiringSpikeStore({ pool }), volumeStore: emailStore, alert: () => undefined });
+}
+
+test("COMMS_RECRUIT_DISPATCH_PG the worker's email delivery job dispatches first, so with no backlog the invitation email goes out in the same run", async () => {
   await drain();
   await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
   const person = await principal("invitee"), req = await request("Run Co", "Runner");
   const inv = await invitation(req.id, person, "sent");
   await outbox("invitation.sent", person, req.id, inv);
-  const port = new FakeEmailPort();
-  const service = new EmailOutboxService(new PostgresEmailOutboxStore({ pool }), port, true, true);
-  await dispatchRecruitThenDeliver(dispatcher, () => service.processDue(100, new Date()));
+  const port = new FakeEmailPort(), run = workerRun(port);
+  await run();
   const sent = port.sent.filter(m => m.to === `${person}@example.invalid`);
   assert.deepEqual(sent.map(m => m.subject), ["You’re invited to apply for a job opening"]);
   assert.match(sent[0]!.body, /apply for Runner at Run Co\./);
@@ -106,7 +114,7 @@ test("COMMS_RECRUIT_DISPATCH_PG the email delivery job dispatches first, so the 
   const quiet = await principal("quiet"), inv2 = await invitation(req.id, quiet, "sent");
   await pool.query("INSERT INTO email_preferences(principal_id,class,enabled) VALUES($1,'recruit.invitation',false)", [quiet]);
   await outbox("invitation.sent", quiet, req.id, inv2);
-  await dispatchRecruitThenDeliver(dispatcher, () => service.processDue(100, new Date()));
+  await run();
   assert.equal(port.sent.filter(m => m.to === `${quiet}@example.invalid`).length, 0);
   assert.equal((await pool.query("SELECT state FROM email_outbox WHERE idempotency_key=$1", [`recruit.invitation:${inv2}`])).rows[0].state, "suppressed");
   assert.equal((await pool.query("SELECT count(*)::int n FROM notifications WHERE recipient_principal_id=$1 AND kind='recruit.invitation.sent'", [quiet])).rows[0].n, 1);
@@ -212,4 +220,27 @@ test("COMMS_RECRUIT_DISPATCH_PG a failed dispatch writes nothing, delivery still
   assert.notEqual((await pool.query("SELECT dispatched_at FROM recruit_outbox WHERE id=$1::bigint", [row])).rows[0].dispatched_at, null);
   assert.equal(Number((await pool.query("SELECT count(*) n FROM notifications WHERE recipient_principal_id=$1 AND kind='recruit.invitation.sent'", [person])).rows[0].n), 1);
   assert.deepEqual(port.sent.map(m => m.to), [`${other}@example.invalid`, `${person}@example.invalid`]);
+});
+
+test("COMMS_RECRUIT_DISPATCH_PG behind a backlog larger than one delivery batch, the invitation email is delayed to a later run, never dropped or doubled", async () => {
+  await drain();
+  await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
+  const req = await request("Backlog Co", "Clerk"), backlog: string[] = [];
+  for (let i = 0; i < 40; i++) {
+    const who = await principal(`backlog${i}`), inv = await invitation(req.id, who, "sent");
+    await pool.query("INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key) VALUES('recruit.invitation', $1, $2::jsonb, $3)",
+      [who, JSON.stringify({ position: "Clerk", company: "Backlog Co" }), `recruit.invitation:${inv}`]);
+    backlog.push(`${who}@example.invalid`);
+  }
+  const person = await principal("behind"), inv = await invitation(req.id, person, "sent");
+  await outbox("invitation.sent", person, req.id, inv);
+  const port = new FakeEmailPort(), run = workerRun(port), mine = `${person}@example.invalid`;
+  const ours = () => port.sent.filter(m => m.to === mine || backlog.includes(m.to)).length;
+  await run();
+  assert.ok(port.sent.length <= 25 && ours() < 41, "one run delivers at most one default batch");
+  assert.ok(["pending", "sent"].includes((await pool.query("SELECT state FROM email_outbox WHERE idempotency_key=$1", [`recruit.invitation:${inv}`])).rows[0]?.state), "queued in the first run");
+  for (let runs = 1; runs < 5 && ours() < 41; runs++) await run();
+  assert.equal(ours(), 41, "every queued email went out");
+  assert.equal(port.sent.filter(m => m.to === mine).length, 1, "the invitation email was sent exactly once");
+  assert.equal(new Set(port.sent.filter(m => backlog.includes(m.to)).map(m => m.to)).size, 40);
 });

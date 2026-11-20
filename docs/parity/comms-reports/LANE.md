@@ -184,9 +184,11 @@ request application change, in the same transaction, and leaves delivery to this
 (migrations 0453 to 0458). Until now nothing read it: an invited person heard nothing.
 
 - The email delivery job first dispatches waiting rows (`PostgresRecruitDispatchStore`, up to
-  200 a run, `FOR UPDATE SKIP LOCKED`, so workers never take the same row), then delivers, so an
-  invitation's email goes out in the same run. A failed dispatch never holds back delivery; the
-  rows wait for the next run.
+  200 a run, `FOR UPDATE SKIP LOCKED`, so workers never take the same row), then delivers one
+  batch of due email (the delivery job's usual batch of 25, oldest due first). An invitation's
+  email goes out in the same run when it fits that batch, otherwise in the following runs, in
+  order, like legacy's mail queue; a backlog delays it, never drops it. A failed dispatch never
+  holds back delivery; the rows wait for the next run.
 - Each row becomes one feed item of kind `recruit.<event>` for its recipient (migration 0355
   widens the payload rule; subject `recruit_outbox:<id>`, no parameters), dated when the change
   happened. The line is built at read time from the request as it is then (position title and

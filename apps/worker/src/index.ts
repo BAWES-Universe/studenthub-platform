@@ -1,11 +1,10 @@
 import { Telemetry, telemetryMode, observedJob, createJobRegistry, runJob, JOB_NAMES, writeJobAlert, type JobAlert } from '../../../packages/observability/src/index.js';
 import { PostgresJobRunsStore } from '../../../packages/db/src/ops/index.js';
 import { PostgresEmailOutboxStore } from '../../../packages/db/src/notifications/index.js';
-import {EmailOutboxService,UnconfiguredEmailPort,deliverAndCheckVolume}from'../../../packages/notifications/src/index.js';
+import {EmailOutboxService,UnconfiguredEmailPort}from'../../../packages/notifications/src/index.js';
 import { PostgresFiringSpikeStore, PostgresMorningSummaryStore } from '../../../packages/db/src/reports/index.js';
-import { deliverWithDailyStaffEmails } from '../../../packages/reports/src/index.js';
 import { PostgresRecruitDispatchStore } from '../../../packages/db/src/comms/index.js';
-import { dispatchRecruitThenDeliver } from '../../../packages/comms/src/recruit-dispatch.js';
+import { emailDeliveryWork } from './email-delivery.js';
 export { observedJob } from '../../../packages/observability/src/index.js';
 import { pathToFileURL } from "node:url";
 import { runCivilIdOcrCommand } from "./civil-id-ocr-worker.js";
@@ -29,7 +28,7 @@ if (entrypoint === import.meta.url) {
     const [rawCommand,rawName]=process.argv.slice(2),command=rawCommand??"run",name=rawName??"heartbeat";
     if(command==="civil-id-ocr"){process.exitCode=await runCivilIdOcrCommand();}
     else if(command!=="run"||!JOB_NAMES.includes(name as typeof JOB_NAMES[number])){process.stderr.write("usage: worker run <heartbeat|missed_run_check|email_delivery> | worker civil-id-ocr\n");process.exitCode=1}
-    else {const emit=(value:JobAlert)=>writeJobAlert(value),service=new EmailOutboxService(emailStore,new UnconfiguredEmailPort(),false,false),registry=createJobRegistry(store,emit,async()=>deliverAndCheckVolume(()=>dispatchRecruitThenDeliver(recruitDispatch,()=>deliverWithDailyStaffEmails(service,summaryStore,spikeStore)),emailStore,()=>emit({code:"email_volume",jobName:"email_delivery",owner:"platform-on-call",runbook:"docs/runbooks/alerts.md#email_volume"})));const job=registry.find(value=>value.name===name)!;const result=await runJob(job.name==="heartbeat"?{...job,work:async()=>createWorkerHeartbeat()}:job,store,{telemetry,alert:emit});if(result!==undefined)process.stdout.write(`${JSON.stringify(result)}\n`)}
+    else {const emit=(value:JobAlert)=>writeJobAlert(value),service=new EmailOutboxService(emailStore,new UnconfiguredEmailPort(),false,false),registry=createJobRegistry(store,emit,emailDeliveryWork({recruitDispatch,service,summaryStore,spikeStore,volumeStore:emailStore,alert:()=>emit({code:"email_volume",jobName:"email_delivery",owner:"platform-on-call",runbook:"docs/runbooks/alerts.md#email_volume"})}));const job=registry.find(value=>value.name===name)!;const result=await runJob(job.name==="heartbeat"?{...job,work:async()=>createWorkerHeartbeat()}:job,store,{telemetry,alert:emit});if(result!==undefined)process.stdout.write(`${JSON.stringify(result)}\n`)}
     // Bounded diagnostic drain belongs to CLI shutdown, never a business request.
     await telemetry.snapshot();
   } catch { process.exitCode=1; } finally { await Promise.all([telemetry.close(),store.close(),emailStore.close(),summaryStore.close(),spikeStore.close(),recruitDispatch.close()]); }
