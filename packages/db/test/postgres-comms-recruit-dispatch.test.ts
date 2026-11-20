@@ -182,3 +182,34 @@ test("COMMS_RECRUIT_DISPATCH_PG an invitation whose request closed is not emaile
   assert.equal(await state(invC), "sent");
   assert.deepEqual(port.sent.map(m => m.to), [`${c}@example.invalid`], "only the open request's invitation reached the sender");
 });
+
+test("COMMS_RECRUIT_DISPATCH_PG a failed dispatch writes nothing, delivery still runs, the error is reported, and the rows dispatch on a later run", async () => {
+  await drain();
+  await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
+  const outboxStore = new PostgresEmailOutboxStore({ pool }), port = new FakeEmailPort();
+  const service = new EmailOutboxService(outboxStore, port, true, true);
+  // An email already queued by an earlier run, which this run must still deliver.
+  const req = await request("Broken Co", "Clerk"), other = await principal("other"), otherInv = await invitation(req.id, other, "sent");
+  await pool.query("INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key) VALUES('recruit.invitation', $1, $2::jsonb, $3)",
+    [other, JSON.stringify({ position: "Clerk", company: "Broken Co" }), `recruit.invitation:${otherInv}`]);
+  const person = await principal("broken"), inv = await invitation(req.id, person, "sent");
+  const row = await outbox("invitation.sent", person, req.id, inv);
+  // The feed insert for this person fails, so the whole dispatch transaction fails.
+  const fn = `rd_fail_${randomUUID().replaceAll("-", "")}`;
+  await pool.query(`CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.recipient_principal_id = '${person}' THEN RAISE EXCEPTION 'injected dispatch failure'; END IF; RETURN NEW; END $$`);
+  await pool.query(`CREATE TRIGGER ${fn} BEFORE INSERT ON notifications FOR EACH ROW EXECUTE FUNCTION ${fn}()`);
+  try {
+    await assert.rejects(dispatchRecruitThenDeliver(dispatcher, () => service.processDue(100, new Date())), /injected dispatch failure/);
+  } finally {
+    await pool.query(`DROP TRIGGER ${fn} ON notifications`);
+    await pool.query(`DROP FUNCTION ${fn}()`);
+  }
+  assert.deepEqual(port.sent.map(m => m.to), [`${other}@example.invalid`], "delivery ran despite the failed dispatch");
+  assert.equal((await pool.query("SELECT dispatched_at FROM recruit_outbox WHERE id=$1::bigint", [row])).rows[0].dispatched_at, null, "the row still waits");
+  assert.equal(Number((await pool.query("SELECT count(*) n FROM notifications WHERE recipient_principal_id=$1", [person])).rows[0].n), 0, "nothing was half-written");
+  // The next run dispatches it and sends its email.
+  await dispatchRecruitThenDeliver(dispatcher, () => service.processDue(100, new Date()));
+  assert.notEqual((await pool.query("SELECT dispatched_at FROM recruit_outbox WHERE id=$1::bigint", [row])).rows[0].dispatched_at, null);
+  assert.equal(Number((await pool.query("SELECT count(*) n FROM notifications WHERE recipient_principal_id=$1 AND kind='recruit.invitation.sent'", [person])).rows[0].n), 1);
+  assert.deepEqual(port.sent.map(m => m.to), [`${other}@example.invalid`, `${person}@example.invalid`]);
+});
