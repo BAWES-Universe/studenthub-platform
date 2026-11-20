@@ -116,7 +116,10 @@ export class IdCardsService {
     const today = kuwaitDay(this.#now()), cards = await Promise.all(batch.map(p => this.#store.card(p, today)));
     const missing = batch.filter((_, i) => !cards[i]);
     if (missing.length) return { status: "refused", refusals: missing.map(personId => ({ personId, code: "no_card" as const })) };
-    return { status: "ok", pdf: idCardsPdf(await Promise.all(batch.map((p, i) => this.#face(p, cards[i]!, viewer)))) };
+    // Photos are read one at a time: a file-backed document store takes an exclusive lock per read.
+    const faces: IdCardFace[] = [];
+    for (const [i, p] of batch.entries()) faces.push(await this.#face(p, cards[i]!, viewer));
+    return { status: "ok", pdf: idCardsPdf(faces) };
   }
 
   async #face(personId: string, card: OwnIdCard, viewerId: string): Promise<IdCardFace> {

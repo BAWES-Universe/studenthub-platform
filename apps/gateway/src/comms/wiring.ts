@@ -23,7 +23,12 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
   const cards = new PostgresIdCardsStore({ pool }), audit = { recordView: cards.recordPhotoRender.bind(cards) };
   let opened: ReturnType<typeof openPersonalPhotoSourceFromEnv> | undefined;
   const env = options.env;
-  const photos: IdCardPhotoSource | undefined = env && { async read(personId, viewerId) { opened ??= openPersonalPhotoSourceFromEnv(audit, env); const source = await opened; return source ? source.source.read(personId, viewerId) : null; } };
+  const photos: IdCardPhotoSource | undefined = env && { async read(personId, viewerId) {
+    // A failed open (storage briefly down) is forgotten so the next print tries again; this print falls back to no photo.
+    const attempt = opened ??= openPersonalPhotoSourceFromEnv(audit, env);
+    const source = await attempt.catch(error => { if (opened === attempt) opened = undefined; throw error; });
+    return source ? source.source.read(personId, viewerId) : null;
+  } };
   const idCards = new IdCardsService(cards, authority, undefined, photos);
   return { http: { isStaff: authority.isStaff, send: (sender, input) => service.send(sender, input),
     deliveryLog: (person, offset, limit) => emails.deliveryLog(person, offset, limit),

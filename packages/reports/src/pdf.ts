@@ -161,30 +161,36 @@ export function readJpeg(bytes: Buffer): PdfImage | null {
 
 /**
  * A PNG as a PDF image. Gray, RGB and palette PNGs pass their compressed data straight through
- * with the PNG predictor; a PNG with transparency is flattened onto white first. Interlaced
- * PNGs and 16-bit samples are not placed (null).
+ * with the PNG predictor; a PNG with transparency is flattened onto white first (alpha channels,
+ * and palette alpha from tRNS). Interlaced PNGs, 16-bit samples, a colour-key tRNS on gray or RGB,
+ * and images over PNG_MAX_PIXELS are not placed (null).
  */
+export const PNG_MAX_PIXELS = 4_000_000;
 export function readPng(bytes: Buffer): PdfImage | null {
   const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   if (bytes.length < 33 || !bytes.subarray(0, 8).equals(SIGNATURE)) return null;
-  let i = 8, width = 0, height = 0, bits = 0, type = -1, interlace = 0, palette: Buffer | null = null;
+  let i = 8, width = 0, height = 0, bits = 0, type = -1, interlace = 0, palette: Buffer | null = null, alpha: Buffer | null = null;
   const idat: Buffer[] = [];
   while (i + 12 <= bytes.length) {
     const size = bytes.readUInt32BE(i), kind = bytes.toString("latin1", i + 4, i + 8), data = bytes.subarray(i + 8, i + 8 + size);
     if (i + 12 + size > bytes.length) return null;
-    if (kind === "IHDR") { width = data.readUInt32BE(0); height = data.readUInt32BE(4); bits = data[8]!; type = data[9]!; interlace = data[12]!; }
+    if (kind === "IHDR") { if (size !== 13) return null; width = data.readUInt32BE(0); height = data.readUInt32BE(4); bits = data[8]!; type = data[9]!; interlace = data[12]!; }
     else if (kind === "PLTE") palette = Buffer.from(data);
+    else if (kind === "tRNS") alpha = Buffer.from(data);
     else if (kind === "IDAT") idat.push(data);
     else if (kind === "IEND") break;
     i += 12 + size;
   }
-  if (!width || !height || width > 10000 || height > 10000 || interlace !== 0 || bits !== 8 || !idat.length) return null;
+  if (!width || !height || width > 10000 || height > 10000 || width * height > PNG_MAX_PIXELS || interlace !== 0 || bits !== 8 || !idat.length) return null;
   const compressed = Buffer.concat(idat);
   const parms = (colors: number) => `<< /Predictor 15 /Colors ${colors} /BitsPerComponent 8 /Columns ${width} >>`;
+  if (alpha && type !== 3) return null;
   if (type === 0) return { width, height, bits: 8, colorSpace: "/DeviceGray", filter: "FlateDecode", decodeParms: parms(1), data: compressed };
   if (type === 2) return { width, height, bits: 8, colorSpace: "/DeviceRGB", filter: "FlateDecode", decodeParms: parms(3), data: compressed };
   if (type === 3) {
-    if (!palette || palette.length % 3 || palette.length > 768) return null;
+    if (!palette || palette.length % 3 || palette.length > 768 || (alpha && alpha.length > palette.length / 3)) return null;
+    // Palette transparency: blend each entry onto white, as the alpha path does per pixel.
+    for (let e = 0; alpha && e < alpha.length; e++) for (let k = 0; k < 3; k++) palette[e * 3 + k] = Math.round(palette[e * 3 + k]! * alpha[e]! / 255 + 255 * (1 - alpha[e]! / 255));
     return { width, height, bits: 8, colorSpace: `[/Indexed /DeviceRGB ${palette.length / 3 - 1} <${palette.toString("hex")}>]`, filter: "FlateDecode", decodeParms: parms(1), data: compressed };
   }
   if (type !== 4 && type !== 6) return null;

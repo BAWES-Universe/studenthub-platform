@@ -55,11 +55,14 @@ test("REPORTS_ID_CARD_PHOTO_WIRED the production wiring prints the person's own 
   assert.deepEqual(await new PostgresIdCardsStore({ pool }).write("issue", [person], today, "2099-01-01", creator), []);
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x4a, 0x46, 0xff, 0xc0, 0x00, 17, 8, 0x00, 0x20, 0x00, 0x30, 3, ...Array(9).fill(0x11), 0xff, 0xda, 0x00, 0x02, 0xff, 0xd9]);
   const version = randomUUID(), root = await mkdtemp(join(tmpdir(), "idcp-wired-")), path = join(root, "store");
-  const documents = await FileDocumentStore.create(path);
-  await documents.transaction(async s => { s.documents.push({ id: randomUUID(), version, type: "personal-photo", mime: "image/jpeg", size: jpeg.length, scope: { orgId: "org", personId: person }, acl: "private", data: jpeg.toString("base64") } as (typeof s.documents)[number]); });
   const wired = wireStaffMessages({ connectionString: URL, authzStore: authz, env: { DOCUMENT_STORAGE: "synthetic-file", DOCUMENT_ORG_ID: "org", DOCUMENT_ROOT: path } });
   const audits = async () => (await pool.query<{ viewer_principal_id: string; document_type: string; document_version: string }>("SELECT viewer_principal_id, document_type, document_version::text FROM staff_person_views WHERE subject_principal_id=$1 AND kind='id_card_render' ORDER BY id", [person])).rows;
   try {
+    // Storage not there yet: the card still prints, without the photo, and the failed open is not remembered.
+    assert.doesNotMatch((await wired.http.idCards!.ownPdf(person))!.toString("latin1"), /\/Subtype \/Image/);
+    assert.equal((await audits()).length, 0);
+    const documents = await FileDocumentStore.create(path);
+    await documents.transaction(async s => { s.documents.push({ id: randomUUID(), version, type: "personal-photo", mime: "image/jpeg", size: jpeg.length, scope: { orgId: "org", personId: person }, acl: "private", data: jpeg.toString("base64") } as (typeof s.documents)[number]); });
     const pdf = await wired.http.idCards!.ownPdf(person);
     assert.match(pdf!.toString("latin1"), /\/Subtype \/Image/, "the photo is on the card");
     assert.deepEqual(await audits(), [{ viewer_principal_id: person, document_type: "personal-photo", document_version: version }]);

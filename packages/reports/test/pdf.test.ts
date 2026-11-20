@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
-import { buildPdf, encodable, fitText, PdfPage, readImage, readJpeg, readPng, textWidth } from "../src/pdf.js";
+import { buildPdf, encodable, fitText, PdfPage, PNG_MAX_PIXELS, readImage, readJpeg, readPng, textWidth } from "../src/pdf.js";
 import { cardNumberText, idCardsPdf, longDate } from "../src/id-card-pdf.js";
 
 const latin = (b: Buffer) => b.toString("latin1");
@@ -69,12 +69,12 @@ test("REPORTS_PDF JPEG photos pass through with their size and colour space", ()
   assert.equal(readJpeg(jpeg(0xc0, 8, 3).subarray(0, 12)), null, "truncated");
 });
 
-function png(width: number, height: number, type: number, rows: number[][], extra: { bits?: number; interlace?: number; palette?: number[] } = {}): Buffer {
+function png(width: number, height: number, type: number, rows: number[][], extra: { bits?: number; interlace?: number; palette?: number[]; trns?: number[]; ihdrSize?: number } = {}): Buffer {
   const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
   const crc = (b: Buffer) => { let c = 0xffffffff; for (const x of b) c = crcTable[(c ^ x) & 0xff]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
   const chunk = (kind: string, data: Buffer) => { const head = Buffer.alloc(8); head.writeUInt32BE(data.length, 0); head.write(kind, 4, "latin1"); const tail = Buffer.alloc(4); tail.writeUInt32BE(crc(Buffer.concat([head.subarray(4), data])), 0); return Buffer.concat([head, data, tail]); };
   const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr[8] = extra.bits ?? 8; ihdr[9] = type; ihdr[12] = extra.interlace ?? 0;
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), ...(extra.palette ? [chunk("PLTE", Buffer.from(extra.palette))] : []),
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr.subarray(0, extra.ihdrSize ?? 13)), ...(extra.palette ? [chunk("PLTE", Buffer.from(extra.palette))] : []), ...(extra.trns ? [chunk("tRNS", Buffer.from(extra.trns))] : []),
     chunk("IDAT", deflateSync(Buffer.from(rows.flat()))), chunk("IEND", Buffer.alloc(0))]);
 }
 
@@ -96,6 +96,17 @@ test("REPORTS_PDF PNG photos: gray, RGB and palette pass through; transparency i
   assert.equal(readPng(png(1, 1, 6, [[9, 1, 2, 3, 4]])), null, "unknown filter");
   assert.equal(readPng(png(1, 1, 3, [[0, 0]])), null, "palette PNG without a palette");
   assert.equal(readImage(png(1, 1, 0, [[0, 7]]), "image/gif"), null);
+  // Palette transparency from tRNS is flattened onto white: transparent black prints white, half-alpha red prints pink.
+  assert.equal(readPng(png(1, 1, 3, [[0, 0]], { palette: [0, 0, 0, 255, 0, 0], trns: [0, 128] }))?.colorSpace, "[/Indexed /DeviceRGB 1 <ffffffff7f7f>]");
+  assert.equal(readPng(png(1, 1, 3, [[0, 0]], { palette: [0, 0, 0], trns: [0, 0] })), null, "more tRNS entries than palette entries");
+  assert.equal(readPng(png(1, 1, 2, [[0, 1, 2, 3]], { trns: [0, 1, 0, 2, 0, 3] })), null, "colour-key transparency is not placed");
+  // A short IHDR is refused, not read past its end, even when the buffer is long enough overall.
+  assert.equal(readPng(png(1, 1, 2, [[0, 1, 2, 3]], { ihdrSize: 0 })), null, "zero-length IHDR");
+  assert.equal(readPng(png(1, 1, 2, [[0, 1, 2, 3]], { ihdrSize: 12 })), null, "short IHDR");
+  // Decoded size is bounded before any inflate: a photo over PNG_MAX_PIXELS prints without it.
+  assert.equal(PNG_MAX_PIXELS, 4_000_000);
+  assert.equal(readPng(png(2001, 2000, 6, [[0]])), null, "over the pixel budget");
+  assert.notEqual(readPng(png(2000, 2000, 2, [[0]])), null, "exactly the budget passes the header checks");
 });
 
 test("REPORTS_ID_CARD_PDF two pages per card with the card's details, no civil ID, and the photo when there is one", () => {
