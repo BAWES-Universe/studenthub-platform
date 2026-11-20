@@ -112,17 +112,22 @@ function digestOf(value: unknown): string {
 }
 
 /**
- * Maps legacy companies. The result is ordered parents before children, so a batch can
+ * Maps legacy companies. The first row of each legacy id decides it; a later row with the same
+ * id is reported as a duplicate and never imported, even when the first was refused.
+ * The result is ordered parents before children, so a batch can
  * resolve each parent through the id map. A company whose parent is missing or in a loop is
  * reported and left out, and so are its descendants.
  */
 export function mapLegacyCompanies(rows: readonly Row[]): { readonly organizations: readonly OrganizationImportRow[]; readonly issues: readonly OrganizationIssue[] } {
   const issues: OrganizationIssue[] = [];
   const drafts = new Map<string, Omit<OrganizationImportRow, "digest">>();
+  // Every parsed id, kept or not: a repeat of an id whose first row was refused is still a duplicate.
+  const seenIds = new Set<string>();
   for (const row of rows) {
     const id = legacyId(row.company_id);
     if (id === null) { issues.push({ rule: "company.badId", legacyId: "?" }); continue; }
-    if (drafts.has(id)) { issues.push({ rule: "company.duplicateId", legacyId: id }); continue; }
+    if (seenIds.has(id)) { issues.push({ rule: "company.duplicateId", legacyId: id }); continue; }
+    seenIds.add(id);
     const parent = parentId(row.parent_company_id);
     if (parent === "bad") { issues.push({ rule: "company.missingParent", legacyId: id, field: "parent_company_id" }); continue; }
     const snapshot = {} as Record<CompanySnapshotColumn, string | number | boolean | null>;

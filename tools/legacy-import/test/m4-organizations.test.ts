@@ -84,6 +84,24 @@ test("missing parents, loops, bad ids and nameless rows are reported and left ou
   ]);
 });
 
+test("a repeated id is a duplicate even when its first row was refused, and the later valid row is not imported", () => {
+  const { organizations, issues } = mapLegacyCompanies([
+    company(1, { company_name: " " }),
+    company(1),
+    company(2, { parent_company_id: "abc" }),
+    company(2),
+    company(3, { parent_company_id: 2 }),
+  ]);
+  assert.deepEqual(organizations, []);
+  assert.deepEqual(issues.map((i) => [i.rule, i.legacyId]), [
+    ["company.noName", "1"],
+    ["company.duplicateId", "1"],
+    ["company.missingParent", "2"],
+    ["company.duplicateId", "2"],
+    ["company.missingParent", "3"],
+  ]);
+});
+
 test("the digest is stable and follows the row", () => {
   const a = mapLegacyCompanies([company(1)]).organizations[0]!.digest;
   assert.equal(mapLegacyCompanies([company(1)]).organizations[0]!.digest, a);
