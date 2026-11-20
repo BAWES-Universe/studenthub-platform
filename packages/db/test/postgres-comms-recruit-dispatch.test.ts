@@ -6,9 +6,14 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, PostgresNotificationsStore, runMigrations } from "@studenthub/db";
 import { PostgresRecruitDispatchStore } from "@studenthub/db/comms";
 import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
-import { EmailOutboxService, FakeEmailPort } from "../../notifications/src/index.js";
+import { EmailOutboxService, FakeEmailPort, type EmailClass } from "../../notifications/src/index.js";
+import type { StoredEmailClass } from "../src/postgres-email-outbox-store.js";
 import { NotificationsService } from "../../notifications/src/notifications.js";
 import { dispatchRecruitThenDeliver } from "../../comms/src/recruit-dispatch.js";
+
+// The outbox store's own class list must be exactly the canonical one (this file stops compiling otherwise).
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+export const OUTBOX_CLASSES_MATCH: Same<StoredEmailClass, EmailClass> = true;
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS = `rd-ops-${randomUUID()}`;
