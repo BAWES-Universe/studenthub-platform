@@ -149,3 +149,36 @@ test("COMMS_RECRUIT_DISPATCH_PG every delivery attempt rechecks the invitation: 
   await service.processDue(100, new Date(Date.now() + 3_600_000));
   assert.equal(await state(inv3), "sent");
 });
+
+test("COMMS_RECRUIT_DISPATCH_PG an invitation whose request closed is not emailed: closed before dispatch, or after queueing but before the claim; the feed item stays", async () => {
+  await drain();
+  await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
+  const outboxStore = new PostgresEmailOutboxStore({ pool }), port = new FakeEmailPort();
+  const service = new EmailOutboxService(outboxStore, port, true, true);
+  const state = async (inv: string) => (await pool.query("SELECT state FROM email_outbox WHERE idempotency_key=$1", [`recruit.invitation:${inv}`])).rows[0]?.state;
+  const feed = async (who: string) => Number((await pool.query("SELECT count(*) n FROM notifications WHERE recipient_principal_id=$1 AND kind='recruit.invitation.sent'", [who])).rows[0].n);
+  // Closed before dispatch: the feed item is written, no email is queued.
+  const early = await request("Early Co", "Clerk"), a = await principal("early"), invA = await invitation(early.id, a, "sent");
+  await outbox("invitation.sent", a, early.id, invA);
+  await pool.query("UPDATE recruit_requests SET status='closed', close_reason='cancelled' WHERE id=$1", [early.id]);
+  await dispatcher.dispatch(1000, new Date());
+  assert.equal(await feed(a), 1);
+  assert.equal(await state(invA), undefined, "no email queued for a closed request");
+  // Queued while open, then filled before any worker claims it.
+  const late = await request("Late Co", "Clerk"), b = await principal("late"), invB = await invitation(late.id, b, "sent");
+  await outbox("invitation.sent", b, late.id, invB);
+  await dispatcher.dispatch(1000, new Date());
+  assert.equal(await state(invB), "pending");
+  await pool.query("UPDATE recruit_requests SET status='filling' WHERE id=$1", [late.id]);
+  await pool.query("UPDATE recruit_requests SET status='filled' WHERE id=$1", [late.id]);
+  // Control: a still-open (filling) request is sent in the same run.
+  const live = await request("Live Co", "Clerk"), c = await principal("live"), invC = await invitation(live.id, c, "sent");
+  await outbox("invitation.sent", c, live.id, invC);
+  await dispatcher.dispatch(1000, new Date());
+  await pool.query("UPDATE recruit_requests SET status='filling' WHERE id=$1", [live.id]);
+  await service.processDue(100, new Date());
+  assert.equal(await state(invB), "suppressed");
+  assert.equal(await feed(b), 1, "the feed item stays");
+  assert.equal(await state(invC), "sent");
+  assert.deepEqual(port.sent.map(m => m.to), [`${c}@example.invalid`], "only the open request's invitation reached the sender");
+});

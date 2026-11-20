@@ -28,7 +28,7 @@ export class PostgresRecruitDispatchStore {
       await c.query("BEGIN");
       const rows = (await c.query<{ id: string; kind: string; recipient_principal_id: string; subject_id: string; position_title: string; company_name: string; open_invitation: boolean; created_at: Date }>(
         `SELECT r.id::text id, r.kind, r.created_at, r.recipient_principal_id, r.subject_id::text subject_id, q.position_title, o.name company_name,
-           EXISTS (SELECT 1 FROM recruit_invitations i WHERE i.id = r.subject_id AND i.status IN ('sent','seen')) open_invitation
+           (q.status IN ('open','filling') AND EXISTS (SELECT 1 FROM recruit_invitations i WHERE i.id = r.subject_id AND i.status IN ('sent','seen'))) open_invitation
          FROM recruit_outbox r JOIN recruit_requests q ON q.id = r.request_id JOIN organizations o ON o.id = q.org_id
          WHERE r.dispatched_at IS NULL ORDER BY r.id FOR UPDATE OF r SKIP LOCKED LIMIT $1`, [limit])).rows;
       for (const r of rows) {
@@ -36,7 +36,7 @@ export class PostgresRecruitDispatchStore {
           VALUES($1, $2, $3, '{}'::jsonb, $3, $4) ON CONFLICT (recipient_principal_id, dedupe_key) DO NOTHING`,
           [r.recipient_principal_id, `recruit.${r.kind}`, `recruit_outbox:${r.id}`, r.created_at]);
         const position = LINE(r.position_title), company = LINE(r.company_name);
-        // A withdrawn invitation is not emailed, even if the withdrawal came before this run.
+        // A withdrawn or answered invitation, or one whose request is no longer open or filling (so it can't be accepted), is not emailed.
         if (r.kind === "invitation.sent" && r.open_invitation && position && company)
           await c.query(`INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key)
             VALUES('recruit.invitation', $1, $2::jsonb, $3) ON CONFLICT (idempotency_key) DO NOTHING`,
