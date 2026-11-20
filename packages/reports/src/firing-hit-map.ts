@@ -18,7 +18,7 @@ import { kuwaitDay } from "./id-cards.js";
  *   in the current month. Here a placement counts once its end date has come (up to today in Kuwait).
  * - Deleted top-level companies are left out. A deleted sub-company's placements still count under its
  *   live parent, as legacy counted them by `parent_company_id`.
- * - The spike email (`FiringHitmap::firingSpike`) is not in this slice.
+ * - The spike email (`FiringHitmap::firingSpike`) is in `firing-spike.ts`.
  */
 export interface FiringCompany { readonly orgId: string; readonly name: string }
 /** Placements of one company (sub-companies rolled up) that ended in one month, `YYYY-MM`. */
@@ -71,16 +71,26 @@ export function buildFiringHitMap(day: string, companies: readonly FiringCompany
   return { day, months, companies: rows };
 }
 
+/** The spike email subscription, when the email is wired (see `firing-spike.ts`). */
+export interface FiringSpikeSubscriptions { isSubscribed(principalId: string): Promise<boolean>; setSubscribed(principalId: string, on: boolean, at: Date): Promise<void> }
+
 export class FiringHitMapService {
   readonly #store: FiringHitMapStore; readonly #authority: { isStaff(principalId: string): Promise<boolean> }; readonly #now: () => Date;
-  constructor(store: FiringHitMapStore, authority: { isStaff(principalId: string): Promise<boolean> }, now: () => Date = () => new Date()) {
-    this.#store = store; this.#authority = authority; this.#now = now;
+  readonly #subscriptions: FiringSpikeSubscriptions | undefined;
+  constructor(store: FiringHitMapStore, authority: { isStaff(principalId: string): Promise<boolean> }, now: () => Date = () => new Date(), subscriptions?: FiringSpikeSubscriptions) {
+    this.#store = store; this.#authority = authority; this.#now = now; this.#subscriptions = subscriptions;
   }
-  /** The hit map as of today in Kuwait; undefined for anyone who is not StudentHub staff. */
-  async page(viewer: string): Promise<FiringHitMap | undefined> {
+  /** The hit map as of today in Kuwait, and whether the viewer gets the spike email (null when it is not wired); undefined for anyone who is not StudentHub staff. */
+  async page(viewer: string): Promise<(FiringHitMap & { readonly spikeEmail: boolean | null }) | undefined> {
     if (!(await this.#authority.isStaff(viewer))) return undefined;
     const day = kuwaitDay(this.#now());
-    const { companies, counts } = await this.#store.firings(day, lastTwelveMonths(day));
-    return buildFiringHitMap(day, companies, counts);
+    const [{ companies, counts }, spikeEmail] = await Promise.all([this.#store.firings(day, lastTwelveMonths(day)), this.#subscriptions ? this.#subscriptions.isSubscribed(viewer) : null]);
+    return { ...buildFiringHitMap(day, companies, counts), spikeEmail };
+  }
+  /** Turns the spike email on or off for a staff member; false for anyone else, or when the email is not wired. */
+  async subscribe(viewer: string, on: boolean): Promise<boolean> {
+    if (!this.#subscriptions || !(await this.#authority.isStaff(viewer))) return false;
+    await this.#subscriptions.setSubscribed(viewer, on, this.#now());
+    return true;
   }
 }

@@ -95,17 +95,24 @@ export class PostgresStatisticsStore {
   }
 
   /** Top-level companies, and placements ended in `months` (`YYYY-MM`) up to one Asia/Kuwait day, both from one snapshot. */
-  async firings(day: string, months: readonly string[]): Promise<{ companies: { orgId: string; name: string }[]; counts: { orgId: string; month: string; total: number }[] }> {
-    if (!DAY.test(day) || months.length === 0 || !months.every(m => /^\d{4}-\d{2}$/.test(m))) throw new RangeError("invalid months");
-    const from = `${[...months].sort()[0]}-01`;
+  async firings(day: string, months: readonly string[]): Promise<FiringRows> {
     const c = await this.#pool.connect();
     try {
       await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-      const companies = (await c.query<{ orgId: string; name: string }>(FIRING_COMPANIES, [this.#operators])).rows;
-      const counts = (await c.query<{ orgId: string; month: string; total: number }>(FIRINGS, [this.#operators, from, day, months])).rows;
+      const rows = await readFirings(c, this.#operators, day, months);
       await c.query("COMMIT");
-      return { companies, counts };
+      return rows;
     } catch (error) { await c.query("ROLLBACK").catch(() => undefined); throw error; }
     finally { c.release(); }
   }
+}
+
+export interface FiringRows { companies: { orgId: string; name: string }[]; counts: { orgId: string; month: string; total: number }[] }
+/** The hit map's companies and counts, read on `client` (inside the caller's transaction). */
+export async function readFirings(client: pg.PoolClient, operators: readonly string[], day: string, months: readonly string[]): Promise<FiringRows> {
+  if (!DAY.test(day) || months.length === 0 || !months.every(m => /^\d{4}-\d{2}$/.test(m))) throw new RangeError("invalid months");
+  const from = `${[...months].sort()[0]}-01`;
+  const companies = (await client.query<{ orgId: string; name: string }>(FIRING_COMPANIES, [operators])).rows;
+  const counts = (await client.query<{ orgId: string; month: string; total: number }>(FIRINGS, [operators, from, day, months])).rows;
+  return { companies, counts };
 }
