@@ -7,8 +7,10 @@ import { IdCardsService, IdCardVerifier } from "../../../packages/reports/src/in
 import type { IdCardAction, IdCardPhotoSource, IdCardsStore, IdCardView } from "../../../packages/reports/src/index.js";
 import type { DocumentState, DocumentStore } from "../../../packages/private-documents/src/index.js";
 import { personalPhotoSource, type PersonalPhotoAuditPort } from "../../../packages/private-documents/src/personal-photo-source.js";
-import { handleIdCards } from "../src/reports/id-cards-http.js";
-import { idCardVerifyKey } from "../src/comms/wiring.js";
+import { handleIdCards, publicCheckLimit, PUBLIC_CHECK_LIMIT, type IdCardsHttpService } from "../src/reports/id-cards-http.js";
+import { idCardVerifyKey, wireStaffMessages } from "../src/comms/wiring.js";
+import { blockListOf, parseTrustedProxies } from "../../../packages/access/src/index.js";
+import type { IncomingMessage } from "node:http";
 
 const ORIGIN = "https://studenthub.example", STAFF = "staff-1", PERSON = "person-1";
 
@@ -205,4 +207,54 @@ test("REPORTS_ID_CARD_VERIFY_HTTP the key comes from ID_CARD_VERIFY_KEY as canon
   assert.deepEqual(idCardVerifyKey({ ID_CARD_VERIFY_KEY: raw }), Buffer.alloc(32, 5));
   for (const bad of ["", Buffer.alloc(31).toString("base64"), Buffer.alloc(33).toString("base64"), raw.replace(/=$/, ""), ` ${raw}`])
     assert.throws(() => idCardVerifyKey({ ID_CARD_VERIFY_KEY: bad }), /ID_CARD_VERIFY_KEY/, JSON.stringify(bad));
+});
+
+async function serve(t: TestContext, http: IdCardsHttpService) {
+  const server = createServer(async (req, res) => { if (!await handleIdCards(req, res, http, ORIGIN, async () => undefined)) { res.writeHead(418); res.end(); } });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>(r => server.close(() => r())));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+test("REPORTS_ID_CARD_VERIFY_LIMIT the wired public check is limited per client address before any card is looked up", async (t) => {
+  // The pool points nowhere: a check that got past the limit would fail its lookup and show not found.
+  const key = Buffer.alloc(32, 3), env = { ID_CARD_VERIFY_KEY: key.toString("base64"), GATEWAY_TRUSTED_PROXIES: "127.0.0.1" };
+  const wired = wireStaffMessages({ connectionString: "postgres://nobody@127.0.0.1:9/none", authzStore: { async listGrantsForPrincipal() { return []; } }, env, idCardVerifyKey: key });
+  t.after(() => wired.close());
+  assert.ok(wired.http.idCards?.publicLimit, "the key turns the limit on");
+  let lookups = 0;
+  const check = wired.http.idCards!.check!;
+  const base = await serve(t, { ...wired.http.idCards!, check: token => { lookups += 1; return check(token); } });
+  const token = new IdCardVerifier(key).token(5, "2099-01-01");
+  const from = (address: string, accept = "application/json") => fetch(`${base}/v/${token}`, { headers: { "x-forwarded-for": address, accept } });
+  for (let i = 0; i < PUBLIC_CHECK_LIMIT.max; i += 1) assert.equal((await from("203.0.113.7")).status, 404, `check ${i + 1} goes through`);
+  const limited = await from("203.0.113.7");
+  assert.equal(limited.status, 429); assert.deepEqual(await limited.json(), { status: "rate_limited" });
+  assert.ok(Number(limited.headers.get("retry-after")) >= 1); assert.equal(limited.headers.get("cache-control"), "no-store"); assert.equal(limited.headers.get("referrer-policy"), "no-referrer");
+  const page = await from("203.0.113.7", "text/html");
+  assert.equal(page.status, 429); assert.match(await page.text(), /Please slow down[\s\S]*حاول مرة أخرى/);
+  assert.equal(lookups, PUBLIC_CHECK_LIMIT.max, "a limited request never reaches the card lookup");
+  assert.equal((await from("203.0.113.8")).status, 404, "another address has its own count");
+  const unset = wireStaffMessages({ connectionString: "postgres://nobody@127.0.0.1:9/none", authzStore: { async listGrantsForPrincipal() { return []; } }, env: {} });
+  t.after(() => unset.close());
+  assert.equal(unset.http.idCards?.publicLimit, undefined, "no key, no QR, nothing to limit");
+});
+
+test("REPORTS_ID_CARD_VERIFY_LIMIT counts per address in a fixed window, trusts forwarded hops only behind a trusted proxy, and keeps a bounded table", () => {
+  let now = 0;
+  const req = (peer: string, forwarded?: string) => ({ socket: { remoteAddress: peer }, headers: forwarded ? { "x-forwarded-for": forwarded } : {} }) as unknown as IncomingMessage;
+  const direct = publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies("")), max: 2, windowSeconds: 60, nowMs: () => now });
+  assert.equal(direct.hit(req("198.51.100.1", "203.0.113.1")), undefined);
+  assert.equal(direct.hit(req("198.51.100.1", "203.0.113.2")), undefined);
+  assert.equal(direct.hit(req("198.51.100.1", "203.0.113.3")), 60, "an untrusted peer can't spread its count over made-up forwarded addresses");
+  now = 59_500; assert.equal(direct.hit(req("198.51.100.1")), 1);
+  now = 60_000; assert.equal(direct.hit(req("198.51.100.1")), undefined, "a new window starts the count again");
+  const proxied = publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies("10.0.0.0/8")), max: 1, nowMs: () => now });
+  assert.equal(proxied.hit(req("10.0.0.5", "203.0.113.9, 10.0.0.4")), undefined);
+  assert.equal(proxied.hit(req("10.0.0.6", "203.0.113.9")), 60, "the same client behind another proxy shares one count");
+  assert.equal(proxied.hit(req("10.0.0.5", "203.0.113.10")), undefined);
+  const small = publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies("")), max: 1, addresses: 2, nowMs: () => now });
+  for (const a of ["192.0.2.1", "192.0.2.2", "192.0.2.3"]) assert.equal(small.hit(req(a)), undefined);
+  assert.equal(small.hit(req("192.0.2.3")), 60, "the newest address is still counted");
+  assert.equal(small.hit(req("192.0.2.1")), undefined, "the oldest was dropped to keep the table at its bound");
 });

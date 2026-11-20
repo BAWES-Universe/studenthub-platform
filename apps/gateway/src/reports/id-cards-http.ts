@@ -1,4 +1,6 @@
+import { createHmac, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { clientAddress, type AddressList } from "../../../../packages/access/src/index.js";
 import { ID_CARD_BATCH_MAX, ID_CARD_PAGE_SIZE, ID_CARD_VIEWS } from "../../../../packages/reports/src/id-cards.js";
 import { ID_CARD_VERIFY_PATH } from "../../../../packages/reports/src/id-card-verify.js";
 import type { IdCardAction, IdCardCheck, IdCardListRow, IdCardView, IdCardWriteResult, OwnIdCard } from "../../../../packages/reports/src/id-cards.js";
@@ -21,7 +23,9 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
  * GET /v/<token> is the public page behind the QR code on a printed card. Anyone may open it,
  * signed in or not. It shows only the name, company and whether the card is valid, never the
  * civil ID, phone or employee ID, and a link that was not signed by this server shows the same
- * not found as one for a card that does not exist. The page is not indexed or cached.
+ * not found as one for a card that does not exist. The page is not indexed or cached. Each
+ * client address may open it PUBLIC_CHECK_LIMIT.max times a minute; past that it gets a 429 with
+ * Retry-After, before any card is looked up.
  */
 export interface IdCardsHttpService {
   isStaff(principalId: string): Promise<boolean>;
@@ -32,6 +36,38 @@ export interface IdCardsHttpService {
   staffPdf(viewer: string, people: readonly string[], origin?: string): Promise<{ readonly status: "ok"; readonly pdf: Buffer } | { readonly status: "refused"; readonly refusals: readonly { readonly personId: string; readonly code: "no_card" }[] } | { readonly status: "invalid" } | { readonly status: "not_found" }>;
   /** The public check behind the QR code; absent when no verification key is configured. */
   check?(token: string): Promise<IdCardCheck>;
+  /** The per-address brake on the public check; absent means no limit (tests, no key). */
+  publicLimit?: PublicCheckLimit;
+}
+
+/** Answers undefined when the request may go on, or the seconds to wait. */
+export interface PublicCheckLimit { hit(req: IncomingMessage): number | undefined }
+export const PUBLIC_CHECK_LIMIT = Object.freeze({ max: 30, windowSeconds: 60, addresses: 10_000 });
+
+/**
+ * A fixed-window count per client address, kept in this gateway process. The address (the
+ * rightmost untrusted forwarded hop behind a trusted proxy, as the abuse gate reads it) is held
+ * only as an HMAC under a key made at start, so the memory never holds a raw address. At most
+ * `addresses` windows are kept: expired ones are swept first, then the oldest are dropped. It is
+ * a brake on walking or scraping the page, not a gate: each gateway process counts on its own.
+ */
+export function publicCheckLimit(options: { readonly trustedProxies: AddressList; readonly max?: number; readonly windowSeconds?: number; readonly addresses?: number; readonly nowMs?: () => number }): PublicCheckLimit {
+  const key = randomBytes(32), counts = new Map<string, { start: number; count: number }>();
+  const max = options.max ?? PUBLIC_CHECK_LIMIT.max, windowMs = (options.windowSeconds ?? PUBLIC_CHECK_LIMIT.windowSeconds) * 1000, cap = options.addresses ?? PUBLIC_CHECK_LIMIT.addresses;
+  const now = options.nowMs ?? Date.now;
+  return { hit(req) {
+    const at = now(), address = clientAddress(req.socket.remoteAddress, req.headers["x-forwarded-for"], options.trustedProxies) ?? "unknown";
+    const id = createHmac("sha256", key).update(address).digest("base64url");
+    let held = counts.get(id);
+    if (!held || at - held.start >= windowMs) {
+      if (held) counts.delete(id);
+      if (counts.size >= cap) for (const [k, v] of counts) if (at - v.start >= windowMs) counts.delete(k);
+      while (counts.size >= cap) counts.delete(counts.keys().next().value!);
+      held = { start: at, count: 0 }; counts.set(id, held);
+    }
+    held.count += 1;
+    return held.count > max ? Math.max(1, Math.ceil((held.start + windowMs - at) / 1000)) : undefined;
+  } };
 }
 
 export const ID_CARDS_PATH = "/workspace/id-cards", OWN_ID_CARD_PATH = "/profile/id-card", PRINT_PATH = "/workspace/id-cards/print", OWN_PDF_PATH = "/profile/id-card.pdf";
@@ -61,6 +97,13 @@ const REASONS = { expired: ["This card has expired.", "انتهت صلاحية �
 async function verifyPage(req: IncomingMessage, res: ServerResponse, service: IdCardsHttpService | undefined, path: string): Promise<true> {
   req.resume();
   if (req.method !== "GET") { res.writeHead(405, { allow: "GET", ...PUBLIC_HEADERS }); res.end(); return true; }
+  const wait = service?.publicLimit?.hit(req);
+  if (wait !== undefined) {
+    const headers = { "retry-after": String(wait), ...PUBLIC_HEADERS };
+    if (!wantsHtml(req.headers.accept)) { res.writeHead(429, { "content-type": "application/json", "x-content-type-options": "nosniff", ...headers }); res.end(JSON.stringify({ status: "rate_limited" })); return true; }
+    writeHtml(res, 429, pageDocument("Please slow down", `<main><h1>Please slow down</h1><p>Too many card checks from this address. Try again in a minute.</p><p lang="ar" dir="rtl">عدد كبير من عمليات التحقق من هذا العنوان. حاول مرة أخرى بعد دقيقة.</p></main>`), headers);
+    return true;
+  }
   const result: IdCardCheck = service?.check && path.length <= 80 ? await service.check(path.slice(ID_CARD_VERIFY_PATH.length)).catch(() => ({ status: "unknown" as const })) : { status: "unknown" };
   const html = wantsHtml(req.headers.accept);
   if (result.status === "unknown") {

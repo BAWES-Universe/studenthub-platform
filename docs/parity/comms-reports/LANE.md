@@ -137,7 +137,10 @@ Planned PRs, in order (migrations 0602 to 0609):
    link stops being valid on the date printed on that card, even after a renewal (the renewed
    card is a new print), and before then it is not valid if the card was shortened or the
    holder is no longer assigned. A forged link, a changed number and a missing card all show
-   the same not found. The photo joins the page with the photo seam (item 2).
+   the same not found. Each client address (read behind GATEWAY_TRUSTED_PROXIES like the abuse
+   gate, held only as an HMAC) may check 30 links a minute per gateway process, then gets a 429
+   before any card is looked up. The photo joins the page in a follow-up: every JPEG re-encoded
+   so no EXIF or GPS reaches the public route, anonymous views in their own append-only table.
 4. **Experience certificates** from work history, as PDFs (legacy appreciation certificate:
    name, company, store, from and to dates).
 5. **The ID card list export**, if still wanted: legacy's `CandidateIdCard::createExcel` is

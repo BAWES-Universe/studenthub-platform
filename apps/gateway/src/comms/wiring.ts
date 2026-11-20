@@ -7,7 +7,9 @@ import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 import { IdCardsService, IdCardVerifier, MorningSummaryService, type IdCardPhotoSource } from "../../../../packages/reports/src/index.js";
 import { openPersonalPhotoSourceFromEnv } from "../../../../packages/private-documents/src/personal-photo-source.js";
 import { StaffMessagesService } from "../../../../packages/comms/src/staff-messages.js";
+import { blockListOf, parseTrustedProxies } from "../../../../packages/access/src/index.js";
 import { hasOperatorStaffGrant } from "../wiring/profile.js";
+import { publicCheckLimit } from "../reports/id-cards-http.js";
 import type { StaffMessagesHttpService } from "./staff-messages-http.js";
 
 /**
@@ -47,5 +49,7 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
     deliveryLog: (person, offset, limit) => emails.deliveryLog(person, offset, limit),
     morningSummary: { today: viewer => summary.today(viewer), subscribe: (viewer, on) => summary.subscribe(viewer, on) },
     idCards: { isStaff: authority.isStaff, list: (viewer, view, name, page) => idCards.list(viewer, view, name, page), write: (viewer, action, people) => idCards.write(viewer, action, people), own: person => idCards.own(person),
-      ownPdf: (person, origin) => idCards.ownPdf(person, origin), staffPdf: (viewer, people, origin) => idCards.staffPdf(viewer, people, origin), check: token => idCards.check(token) } }, close: async () => { await (await opened?.catch(() => undefined))?.close(); await pool.end(); } };
+      ownPdf: (person, origin) => idCards.ownPdf(person, origin), staffPdf: (viewer, people, origin) => idCards.staffPdf(viewer, people, origin), check: token => idCards.check(token),
+      // The public check is limited per client address, read behind the same trusted proxies as the abuse gate.
+      publicLimit: options.idCardVerifyKey && env ? publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies(env.GATEWAY_TRUSTED_PROXIES)) }) : undefined } }, close: async () => { await (await opened?.catch(() => undefined))?.close(); await pool.end(); } };
 }

@@ -4,7 +4,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * The ID card's verification link (S8 b). The QR code on a printed card holds
  * `<origin>/v/<card number>.<valid until, YYYYMMDD>.<signature>`. The signature is an HMAC with a
  * key only the server holds, so a link cannot be made up or changed: someone who scans the card
- * learns only what the public page shows (name, photo, company and whether the card is valid),
+ * learns only what the public page shows (name, company and whether the card is valid),
  * and nobody can walk the card numbers.
  *
  * The link expires with the printed card: after the date printed on it the page says the card
