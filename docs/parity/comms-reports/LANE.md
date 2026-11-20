@@ -16,7 +16,7 @@ Slices, in order (one PR each):
 3. **Password-reset SMS** (C-3): with the access lane's reset flow.
 4. **Morning summary** (P-2, SHU-211 keeps the email): the twelve legacy counters as a registry. Almost every counter reads assignments, requests or transfers, so each counter is switched on when its lane lands; a counter whose source is missing shows "not available", never 0. Digest via the outbox to staff with the morning-report permission at send time, Asia/Kuwait day boundary.
 5. **Revenue roll-ups** (P-4): after the pay lane's transfer types land; legacy's live formula, recomputed not incremented, reconciliation report.
-6. **Statistics** (P-3): after recruit, work and pay land.
+6. **Statistics** (P-3): slice 1 is the staff page `/workspace/statistics`: legacy staff dashboard counters as a registry (shared counters use the morning summary's queries; pay-backed ones show "not available") and the hiring figures from legacy admin (hired, retained after a year, retention ratio, invitations, recruitment yield). Companies, transfers, revenue, the year report and the hit map follow as their sources land.
 7. **Remaining exports onto P-1**: each lane's export button uses the service; this lane checks all seven legacy exports are covered. The check is `apps/gateway/test/legacy-exports-coverage.test.ts`: each of the 17 legacy downloads is mapped to a kind the gateway offers, owed by a named lane, or dropped with evidence, and every offered kind must name the download it replaces.
 8. **Webhooks** only if rows exist.
 

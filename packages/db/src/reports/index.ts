@@ -4,3 +4,5 @@ export { PostgresCatalogueListStore } from "./postgres-catalogue-list-store.js";
 export type { CatalogueListRow, CatalogueListType } from "./postgres-catalogue-list-store.js";
 export { PostgresIdCardsStore, idCardAssigned, idCardNeedsCount, idCardExpiredCount } from "./postgres-id-cards-store.js";
 export type { IdCardView, IdCardAction, IdCardRefusal, IdCardListRow, IdCardRow, IdCardPlacementRow } from "./postgres-id-cards-store.js";
+export { PostgresStatisticsStore } from "./postgres-statistics-store.js";
+export type { StatisticsHiringCounts } from "./postgres-statistics-store.js";
