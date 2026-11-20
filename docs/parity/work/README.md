@@ -161,6 +161,12 @@ else English; error pages before sign-in follow the browser. An Arabic page is m
 `lang="ar" dir="rtl"`. Dates and times are Kuwait's, with Latin digits as the legacy apps showed
 them, and durations read "2 س 30 د". Store names, notes and replies are shown as written.
 
+The screens of the people who look after the work are in Arabic or English the same way, by the
+viewer's own saved language: the company's Work review (O-11), a store's Time approvals and
+Assignment changes (M-03, M-04), and StudentHub staff's Placements, Work logs, Appeals and
+corrections (A-12, A-13), `/me/work` with its stand-up card, Staff time and the stand-up admin page
+(`apps/gateway/src/work/team-copy.ts`). Stand-up questions and answers are shown as written.
+
 ## Screens: employer and staff (C-10, O-11, M-03, M-04, A-12, A-13)
 
 `apps/gateway/src/work/review-pages.ts` and `staff-pages.ts`, same pattern as the person's screens (no script on these pages). Every read and write goes through the work services, which check the actor's grants on each request.
@@ -274,6 +280,5 @@ from `/exports/<id>` under the kind's name. Files are CSV; legacy wrote Excel.
 
 - The rest of A-14 (staff leave and expenses); it depends on the pay lane's settlement (P1, F4).
 - A session detail page for M-03 (`/store/:storeId/time-approvals/:sessionId`); each session is decided in the queue for now.
-- Arabic copy for the staff, company and store work screens and `/me/work` (the person's screens are in Arabic).
 - A reply box for the person on an appeal: the contract lists `appeals.self.comment`, but W-6 lets only staff post updates, as legacy did. This is to be confirmed with the legacy rules before it is added.
 - The importer run itself (cutover lane, M-5).

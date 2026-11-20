@@ -16,10 +16,14 @@ const staffTime = "packages/work/src/staff-time.js", staffTimeSuite = "packages/
 const staffTimePages = "apps/gateway/src/work/staff-time-pages.js", staffTimePagesSuite = "apps/gateway/test/work-staff-time-pages.test.js";
 const standup = "packages/work/src/standup.js", standupSuite = "packages/work/test/standup.test.js";
 const standupPages = "apps/gateway/src/work/standup-pages.js", standupPagesSuite = "apps/gateway/test/work-standup-pages.test.js";
-const copyFile = "apps/gateway/src/work/copy.js";
+const copyFile = "apps/gateway/src/work/copy.js", teamCopyFile = "apps/gateway/src/work/team-copy.js";
 const exportsFile = "apps/gateway/src/work/exports.js", exportsSuite = "apps/gateway/test/work-exports.test.js";
 const mutations = [
   ["the person's screens follow their saved language", "c = await workCopyFor(services.language, person, req);", "c = await workCopyFor(undefined, person, req);", "WORK_PAGES in Arabic", pages, pagesSuite],
+  ["company and store screens follow the actor's saved language", "c = await workCopyFor(services.language, actor, req);", "c = await workCopyFor(undefined, actor, req);", "WORK_REVIEW in Arabic", review, reviewSuite],
+  ["staff screens follow the staff member's saved language", "c = await workCopyFor(services.language, actor, req);", "c = await workCopyFor(undefined, actor, req);", "WORK_STAFF in Arabic", staffPages, staffSuite],
+  ["/me/work follows the staff member's saved language", "t.staffTime.signInMine, c));\n            return true;\n        }\n        c = await workCopyFor(services.language, actor, req);", "t.staffTime.signInMine, c));\n            return true;\n        }\n        c = await workCopyFor(undefined, actor, req);", "STAFF_TIME_PAGES in Arabic", staffTimePages, staffTimePagesSuite],
+  ["the stand-up admin page follows the admin's saved language", "c = await workCopyFor(services.language, actor, req);", "c = await workCopyFor(undefined, actor, req);", "STANDUP_PAGES in Arabic", standupPages, standupPagesSuite],
   ["without a saved language, the browser's Arabic is used", 'return first?.tag.startsWith("ar") ? "ar" : "en";', 'return "en";', "WORK_PAGES in Arabic", copyFile, pagesSuite],
   ["stand-up answers are operator staff only", "async #staff(actorId) { return isOperatorStaff(await this.#grants.listGrantsForPrincipal(actorId)); }", "async #staff(actorId) { return true; }", "STANDUP", standup, standupSuite],
   ["stand-up questions are operator admins only", "async #admin(actorId) { return isOperatorAdmin(await this.#grants.listGrantsForPrincipal(actorId)); }", "async #admin(actorId) { return true; }", "STANDUP", standup, standupSuite],
@@ -27,7 +31,7 @@ const mutations = [
   ["a question is answered once a day", 'return refused("already_answered");', "return { kind: \"answered\", workDate };", "STANDUP", standup, standupSuite],
   ["an answer needs the day in progress", 'if (result === "not_working")', "if (false)", "STANDUP", standup, standupSuite],
   ["an answer must be the next question", 'if (result === "out_of_order")', "if (false)", "STANDUP", standup, standupSuite],
-  ["a refused answer says why on /me/work", '    not_working: "Start your day to answer the stand-up.",', "", "STANDUP_PAGES", standupPages, standupPagesSuite],
+  ["a refused answer says why on /me/work", 'not_working: () => "Start your day to answer the stand-up.",', "", "STANDUP_PAGES", teamCopyFile, standupPagesSuite],
   ["unanswered leaves out who answered", "!answered.has(id)", "true", "STANDUP", standup, standupSuite],
   ["stand-up answers page", "next: rows.length > STANDUP_ANSWER_PAGE_SIZE && last ?", "next: false ?", "STANDUP", standup, standupSuite],
   ["the question is asked only while the day is in progress", "const ask = !dayInProgress ?", "const ask = false ?", "STANDUP_PAGES", standupPages, standupPagesSuite],
@@ -38,7 +42,7 @@ const mutations = [
   ["inactive list is for admins", "if (!(await this.#admin(actorId)))\n            return refused(\"forbidden\");\n        const [everyone", "const [everyone", "STAFF_TIME_INACTIVE", staffTime, staffTimeSuite],
   ["inactive leaves out who started", "!active.has(id)", "true", "STAFF_TIME_INACTIVE", staffTime, staffTimeSuite],
   ["/me/work lists only their own days", "today.workDate, { staffId: actor })", "today.workDate)", "STAFF_TIME_PAGES", staffTimePages, staffTimePagesSuite],
-  ["start and end need the same origin", "if (req.headers.origin !== origin || req.headers[\"sec-fetch-site\"] === \"cross-site\") {\n            req.resume();\n            write(res, ...plain(403, \"Request refused\"", "if (false) {\n            req.resume();\n            write(res, ...plain(403, \"Request refused\"", "STAFF_TIME_PAGES", staffTimePages, staffTimePagesSuite],
+  ["start and end need the same origin", 'if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {', "if (false) {", "STAFF_TIME_PAGES", staffTimePages, staffTimePagesSuite],
   ["history is operator staff only", "if (!isOperatorStaff(await this.#grants.listGrantsForPrincipal(actorId)))", "if (false)", "W1_HISTORY", placement, placementSuite],
   ["history refuses a reversed range", "|| range.from > range.to)", ")", "W1_HISTORY", placement, placementSuite],
   ["history pages", "next: rows.length > HISTORY_PAGE_SIZE && last ?", "next: false ?", "W1_HISTORY", placement, placementSuite],

@@ -21,11 +21,12 @@ const ROWS = [
   { session: session({ id: S2, status: "rejected", source: "manual" }), decision: { outcome: "rejected", reason: "late <again>", note: "private word", notePublic: false, rating: 2, decidedBy: "manager", decidedAt: "2026-11-18T10:00:00.000Z" } },
   { session: session({ id: S3, endedAt: null, durationSeconds: null }), decision: null },
 ];
-interface World { rows?: unknown[]; viewRefused?: boolean; decided?: unknown; requests?: unknown[] | null; requestOutcome?: unknown }
+interface World { language?: "en" | "ar"; rows?: unknown[]; viewRefused?: boolean; decided?: unknown; requests?: unknown[] | null; requestOutcome?: unknown }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const decided = world.decided ?? { kind: "decided", decisions: [], changed: 1 };
   return {
     personFor: async (id: string) => id === SESSION ? "actor" : undefined,
+    language: async (personId: string) => personId === "actor" ? world.language : undefined,
     views: { all: async (...args: unknown[]) => { calls.push(["all", ...args]); return world.viewRefused ? { kind: "refused", code: "forbidden" } : { rows: world.rows ?? ROWS, totals: { approvedSeconds: 0, pendingSeconds: 0, rejectedSeconds: 0, open: 0 }, next: null }; },
       company: async (...args: unknown[]) => { calls.push(["company", ...args]); return world.viewRefused ? { kind: "refused", code: "forbidden" } : { rows: world.rows ?? ROWS, totals: { approvedSeconds: 0, pendingSeconds: 9000, rejectedSeconds: 9000, open: 1 }, next: null }; } },
     decisions: {
@@ -43,7 +44,7 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   } as unknown as WorkHttpServices;
 }
 
-type Opt = { method?: string; body?: string; origin?: string; cookie?: string | null; contentType?: string; service?: WorkHttpServices | undefined; world?: World };
+type Opt = { acceptLanguage?: string; method?: string; body?: string; origin?: string; cookie?: string | null; contentType?: string; service?: WorkHttpServices | undefined; world?: World };
 async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
   const req = Readable.from(o.body !== undefined ? [o.body] : []) as Readable & { method?: string; url?: string; headers: Record<string, string> };
   req.method = o.method ?? "GET";
@@ -52,6 +53,7 @@ async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
     ...(o.cookie === null ? {} : { cookie: `__Host-studenthub_session=${o.cookie ?? SESSION}` }),
     ...(o.body !== undefined ? { "content-type": o.contentType ?? "application/x-www-form-urlencoded", "content-length": String(Buffer.byteLength(o.body)) } : {}),
     ...(o.origin ? { origin: o.origin } : {}),
+    ...(o.acceptLanguage ? { "accept-language": o.acceptLanguage } : {}),
   };
   const res = new EventEmitter() as EventEmitter & { statusCode: number; headersSent: boolean; headers: Record<string, string>; chunks: string[]; writeHead(s: number, h: Record<string, string>): void; end(v?: unknown): void; destroy(): void };
   res.statusCode = 0; res.headers = {}; res.chunks = []; res.headersSent = false;
@@ -201,4 +203,28 @@ test("WORK_EXPORT the company screen exports these hours in detail or per person
   assert.ok((await request("/work/logs?from=2026-01-01&to=2026-11-18")).html.includes('<form method="post" action="/exports/work-assigned-history?from=2026-01-01&amp;to=2026-11-18"><button type="submit">Export who worked where (CSV)</button></form>'));
   // The old screen-local export path is gone.
   assert.equal((await post("/organization/co/work/export", "kind=summary")).handled, false);
+});
+
+test("WORK_REVIEW in Arabic: the actor's saved language, else the browser's; right to left, Kuwait dates, the same forms", async () => {
+  const page = await request("/organization/co/work", { world: { language: "ar" } });
+  assert.match(page.html, /<html lang="ar" dir="rtl">/);
+  assert.match(page.html, /<h1>مراجعة العمل<\/h1>/);
+  assert.match(page.html, /<option value="pending">بانتظار الموافقة<\/option>/);
+  assert.match(page.html, /<p>تمت الموافقة 0 د · بالانتظار 2 س 30 د · مرفوضة 2 س 30 د · 1 جارية<\/p>/);
+  assert.match(page.html, /<p>الأربعاء، 18 نوفمبر 2026، 09:00 إلى 11:30 \(2 س 30 د\) · Avenues &lt;Mall&gt;<\/p><p><strong>مرفوضة<\/strong> · أُدخلت متأخرة<\/p>/);
+  assert.match(page.html, /<p>ملاحظة \(تراها شركتك فقط\): private word<\/p><p>التقييم: 2 من 5<\/p><p>صدر القرار في الأربعاء، 18 نوفمبر 2026 من Mona<\/p>/);
+  assert.match(page.html, /<button type="submit" name="action" value="approve">الموافقة على المحدد<\/button>/);
+  // A refused decision explains itself in the actor's language.
+  const refused = await post("/organization/co/work/decide", `sessionId=${S1}&action=approve`, { world: { language: "ar", decided: { kind: "refused", code: "session_open" } } });
+  assert.match(refused.html, /لا يمكن اتخاذ قرار بشأن ساعات ما زالت جارية\./);
+  // The store screens and their tabs.
+  const changes = await request(`/store/${STORE}/assignment-changes`, { world: { language: "ar", requests: [{ id: REQ, personId: "person-1", storeId: STORE, orgId: "co", status: "pending", note: null, requestedAt: "2026-11-17T10:00:00.000Z", decisionReason: null }] } });
+  assert.match(changes.html, /<h1>طلبات التعيين: Avenues &lt;Mall&gt;<\/h1><\/header><nav class="p-card" aria-label="المتجر"><a href="\/store\/[^"]+\/time-approvals">اعتماد الساعات<\/a>/);
+  assert.match(changes.html, /<strong>بانتظار StudentHub<\/strong> · طُلب في الثلاثاء، 17 نوفمبر 2026/);
+  // A saved English preference wins over an Arabic browser; no preference follows the browser, before and after sign-in.
+  assert.match((await request("/organization/co/work", { world: { language: "en" }, acceptLanguage: "ar" })).html, /<h1>Work review<\/h1>/);
+  assert.match((await request("/organization/co/work", { acceptLanguage: "ar-KW,ar;q=0.9" })).html, /<h1>مراجعة العمل<\/h1>/);
+  const signedOut = await request("/organization/co/work", { cookie: null, acceptLanguage: "ar" });
+  assert.deepEqual([signedOut.status, /<h1>تسجيل الدخول<\/h1><p>سجّل الدخول لمراجعة الساعات\.<\/p>/.test(signedOut.html)], [401, true]);
+  assert.match((await request("/work/logs", { world: { language: "ar" } })).html, /<h1>سجلات العمل<\/h1>[\s\S]*تصحيح هذه الساعات/);
 });

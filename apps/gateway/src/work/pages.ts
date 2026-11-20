@@ -364,7 +364,7 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
       const detail = await services.appeals.detail(person, appealId);
       if ("kind" in detail) { fail(404, "appealNotFound"); return true; }
       // The service shows an appeal to its owner and to staff of its company; staff get the A-13 view.
-      if (detail.appeal.personId !== person) { write(res, 200, await renderStaffAppeal(services, detail, staffDone(url.searchParams.get("done")))); return true; }
+      if (detail.appeal.personId !== person) { write(res, 200, await renderStaffAppeal(services, detail, staffDone(url.searchParams.get("done"), c), null, c)); return true; }
       const done = url.searchParams.get("done");
       // Render first, so replies are only marked read once the page that shows them is ready.
       const html = await renderAppeal(services, names, person, detail, done && c.appealDone[done] ? c.appealDone[done]! : null, c);
