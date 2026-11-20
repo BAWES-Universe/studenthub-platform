@@ -95,6 +95,9 @@ export function parseRegister(markdown: string): RegisterRow[] {
     if (!Number.isFinite(expiresAt.getTime()) || expiresAt.toISOString().slice(0, 16) !== `${expiry[1]}T${expiry[2]}`) {
       throw new RegisterError(`bad expiry for ${issue}: ${expires}`);
     }
+    if (![Number(issueMatch[1]), Number(gen), dispatchText === "-" ? 1 : Number(dispatchText)].every(Number.isSafeInteger)) {
+      throw new RegisterError(`number out of range in row for ${issue}`);
+    }
     const key = `${issueMatch[1]}#${gen}`;
     if (seen.has(key)) throw new RegisterError(`duplicate row ${key}`);
     seen.add(key);
