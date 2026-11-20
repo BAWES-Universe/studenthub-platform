@@ -20,14 +20,15 @@ function notFound(req: IncomingMessage, res: ServerResponse): true {
 const ratio = (n: number | null) => n === null ? "Not available (nothing to divide by)" : `${n}%`;
 
 function html(page: StatisticsPage): string {
-  const rows = page.counters.map(c => `<tr><td>${esc(c.label)}</td><td>${c.value === null ? `Not available <small>(waits on ${esc(c.waitsOn ?? "")})</small>` : esc(String(c.value))}</td></tr>`).join("");
+  const table = (rows: StatisticsPage["counters"], head: string) => `<table><thead><tr><th>What</th><th>${head}</th></tr></thead><tbody>${rows.map(c => `<tr><td>${esc(c.label)}</td><td>${c.value === null ? `Not available <small>(waits on ${esc(c.waitsOn ?? "")})</small>` : esc(String(c.value))}</td></tr>`).join("")}</tbody></table>`;
   const h = page.hiring;
   const hiring: [string, string][] = [["Hired (store assignments)", String(h.hired)], ["Retained more than a year", String(h.retained)], ["Retention ratio", ratio(h.retentionRatio)],
     ["Invitations sent", String(h.invitations)], ["Recruitment yield (hires per 100 invitations)", ratio(h.recruitmentYield)]];
   return `<main><h1>Statistics</h1><p>Counted from the records as of ${esc(page.day)} (Kuwait time).</p>`
-    + `<h2>Needs attention</h2><table><thead><tr><th>What</th><th>Count</th></tr></thead><tbody>${rows}</tbody></table>`
+    + `<h2>Needs attention</h2>${table(page.counters, "Count")}`
     + `<h2>Hiring</h2><dl>${hiring.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`
-    + `<p>An assignment counts as retained once it has lasted more than 365 days, including one that is still running.</p></main>`;
+    + `<p>An assignment counts as retained once it has lasted more than 365 days, including one that is still running.</p>`
+    + `<h2>Overview</h2>${table(page.overview, "Total")}</main>`;
 }
 
 /** Handles the statistics path; false for any other path. `viewer` is the signed-in person, if any. */

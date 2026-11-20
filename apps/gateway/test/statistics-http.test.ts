@@ -8,7 +8,7 @@ import { handleIdCards, type IdCardsHttpService } from "../src/reports/id-cards-
 async function rig(t: TestContext) {
   const reads: string[] = [];
   const raw = Object.fromEntries(STAFF_STATISTICS_COUNTERS.filter(c => c.source.kind === "available").map(c => [c.key, 7]));
-  const store: StatisticsStore = { async staffCounts(day) { reads.push(day); return raw; }, async hiring() { return { hired: 4, retained: 1, invitations: 0 }; } };
+  const store: StatisticsStore = { async staffCounts(day) { reads.push(day); return raw; }, async hiring() { return { hired: 4, retained: 1, invitations: 0 }; }, async overviewCounts() { return { candidates: 50, assigned: 9, suggested: 30, requests: 12, requestsDelivered: 5 }; } };
   const isStaff = async (id: string) => id === "staff";
   const statistics = new StatisticsService(store, { isStaff }, () => new Date("2026-11-20T06:00:00Z"));
   const service = { isStaff, statistics: { page: (v: string) => statistics.page(v) } } as unknown as IdCardsHttpService;
@@ -37,6 +37,9 @@ test("REPORTS_STATISTICS_HTTP staff see every counter, with not available for a 
   assert.match(html, /Candidates missing bank info<\/td><td>Not available <small>\(waits on unpaid transfers from the pay lane/);
   assert.match(html, /Retention ratio<\/dt><dd>25%<\/dd>/);
   assert.match(html, /Recruitment yield \(hires per 100 invitations\)<\/dt><dd>Not available \(nothing to divide by\)<\/dd>/);
+  assert.match(html, /<h2>Overview<\/h2>/);
+  assert.match(html, /Requests delivered<\/td><td>5<\/td>/);
+  assert.match(html, /Staff on leave today<\/td><td>Not available <small>\(waits on staff leave/);
   assert.equal((await x.call("/workspace/statistics", "s-staff", "application/json", "POST")).status, 405);
 });
 
