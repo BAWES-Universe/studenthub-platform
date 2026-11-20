@@ -22,7 +22,8 @@ export interface WorkImportResult {
   readonly conflicts: readonly { readonly legacyRef: string; readonly existingDigest: string; readonly incomingDigest: string }[];
   readonly refused: readonly { readonly legacyRef: string; readonly code: WorkImportRefusal }[];
 }
-export type WorkImportRefusal = "overlap" | "no_placement" | "no_session" | "no_question" | "open_twice" | "invalid";
+/** `unknown_digest`: the row was imported before digests were kept (0508), so it is held, never compared or overwritten. */
+export type WorkImportRefusal = "overlap" | "no_placement" | "no_session" | "no_question" | "open_twice" | "invalid" | "unknown_digest";
 export interface WorkImportPlacement {
   readonly legacyRef: string; readonly personId: string; readonly orgId: string; readonly storeId: string;
   readonly startDate: IsoDate; readonly endDate: IsoDate | null; readonly payContractId: string | null;
@@ -197,11 +198,12 @@ export class PostgresWorkImportStore {
     const days = rows.map((r) => `day ${r.staffPrincipalId} ${r.workDate}`);
     return this.#batch("work_staff_sessions", ordered, async (client, row, tally) => {
       const digest = workImportDigest({ ...row, endedAt: null });
-      const { rows: held } = await client.query<{ id: string; legacy_digest: string; ended_at: Date | null }>(
+      const { rows: held } = await client.query<{ id: string; legacy_digest: string | null; ended_at: Date | null }>(
         "SELECT id, legacy_digest, ended_at FROM work_staff_sessions WHERE legacy_ref = $1 FOR UPDATE", [row.legacyRef]);
       const existing = held[0];
       const end = row.endedAt === null ? null : new Date(row.endedAt).toISOString();
       if (existing) {
+        if (existing.legacy_digest === null) { tally.refused.push({ legacyRef: row.legacyRef, code: "unknown_digest" }); return; }
         const heldEnd = existing.ended_at?.toISOString() ?? null;
         if (existing.legacy_digest !== digest) { tally.conflicts.push({ legacyRef: row.legacyRef, existingDigest: existing.legacy_digest, incomingDigest: digest }); return; }
         // Same session, different end: only ending an open one is applied.
@@ -229,7 +231,8 @@ export class PostgresWorkImportStore {
   async importStandupQuestions(rows: readonly WorkImportStandupQuestion[]): Promise<WorkImportResult> {
     return this.#batch("work_standup_questions", rows, async (client, row, tally) => {
       const digest = workImportDigest(row);
-      const { rows: held } = await client.query<{ legacy_digest: string }>("SELECT legacy_digest FROM work_standup_questions WHERE legacy_ref = $1", [row.legacyRef]);
+      const { rows: held } = await client.query<{ legacy_digest: string | null }>("SELECT legacy_digest FROM work_standup_questions WHERE legacy_ref = $1", [row.legacyRef]);
+      if (held[0]?.legacy_digest === null) { tally.refused.push({ legacyRef: row.legacyRef, code: "unknown_digest" }); return; }
       if (held[0]) { this.#same(tally, row.legacyRef, held[0].legacy_digest, digest); return; }
       await guarded(client, () => client.query(`INSERT INTO work_standup_questions(id, question, created_at, updated_at, legacy_ref, legacy_digest)
         VALUES($1,$2,$3,$4,$5,$6)`, [randomUUID(), row.question, row.createdAt, row.updatedAt, row.legacyRef, digest]));
@@ -245,7 +248,8 @@ export class PostgresWorkImportStore {
   async importStandupAnswers(rows: readonly WorkImportStandupAnswer[]): Promise<WorkImportResult> {
     return this.#batch("work_standup_answers", rows, async (client, row, tally) => {
       const digest = workImportDigest(row);
-      const { rows: held } = await client.query<{ legacy_digest: string }>("SELECT legacy_digest FROM work_standup_answers WHERE legacy_ref = $1", [row.legacyRef]);
+      const { rows: held } = await client.query<{ legacy_digest: string | null }>("SELECT legacy_digest FROM work_standup_answers WHERE legacy_ref = $1", [row.legacyRef]);
+      if (held[0]?.legacy_digest === null) { tally.refused.push({ legacyRef: row.legacyRef, code: "unknown_digest" }); return; }
       if (held[0]) { this.#same(tally, row.legacyRef, held[0].legacy_digest, digest); return; }
       const { rows: question } = await client.query<{ id: string }>("SELECT id FROM work_standup_questions WHERE legacy_ref = $1", [row.questionLegacyRef]);
       if (!question[0]) { tally.refused.push({ legacyRef: row.legacyRef, code: "no_question" }); return; }

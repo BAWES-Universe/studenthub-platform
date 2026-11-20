@@ -156,8 +156,10 @@ answers) and `importStandupAnswers` follow the contract above, with the digest s
 `legacy_digest` (migration 0508). A session imported open that legacy has since ended gets
 its end once (counted as updated); any other change is a conflict. The import key of a
 staff session or question can't be changed afterwards. Rows that already had a
-`legacy_ref` before 0508 get the all-zero digest, which no import produces, so a re-run
-reports each of them as a conflict and never overwrites it. Within a batch, ends are applied
+`legacy_ref` before 0508 keep a NULL digest (unknown: nothing is made up for them); they
+keep working, a timer can still end an open one, and a re-run refuses each of them as
+`unknown_digest` without comparing or overwriting it. Rows imported from 0508 on must carry
+their digest. Within a batch, ends are applied
 before new open sessions, and each staff member's day is locked with the refs, so two
 batches can't deadlock. `reconcileStaffImport(table, legacyRefs, reportedRefs)` gives each table's reconciliation by legacy reference only: the legacy and
 imported counts, the legacy refs with no imported row (split into `skipped`, the refs the
