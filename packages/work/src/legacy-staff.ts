@@ -89,6 +89,8 @@ const staffId = (v: unknown): string | undefined => {
 const MAX_ANSWER = 4000;
 /** Characters as Postgres counts them (code points, not UTF-16 units). */
 const chars = (s: string): number => [...s].length;
+/** Postgres text can't hold NUL; such a row is reported, never stripped (that would change what was said). */
+const hasNul = (s: string): boolean => s.includes("\u0000");
 
 /**
  * One `staff_work_session` row. The end is `updated_at` when it agrees with
@@ -108,7 +110,8 @@ export function mapLegacyStaffSession(row: LegacyStaffSessionRow): { readonly se
     return { session: Object.freeze({ ...base, endedAt: null }), issues: [] };
   }
   const minutes = Number(row.total_minutes);
-  if (!Number.isInteger(minutes) || minutes < 0) return { issues: [issue("bad_minutes", String(row.total_minutes))] };
+  // Only a number goes into the detail: a non-numeric value is row text and stays out of the report.
+  if (!Number.isInteger(minutes) || minutes < 0) return { issues: [issue("bad_minutes", Number.isFinite(minutes) ? String(minutes) : undefined)] };
   const updatedAt = legacyInstant(row.updated_at);
   if (updatedAt && updatedAt >= startedAt && Math.floor((updatedAt.getTime() - startedAt.getTime()) / 60_000) === minutes) {
     return { session: Object.freeze({ ...base, endedAt: updatedAt }), issues: [] };
@@ -121,7 +124,7 @@ export function mapLegacyStandupQuestion(row: LegacyStandupQuestionRow): { reado
   const id = String(row.question_uuid);
   const issue = (code: StaffImportIssueCode, detail?: string): StaffImportIssue => ({ table: "daily_standup_question", legacyId: id, code, ...(detail ? { detail } : {}) });
   const text = typeof row.question === "string" ? row.question.trim() : "";
-  if (chars(text) < 1 || chars(text) > 255) return { issues: [issue("bad_text", "question")] };
+  if (chars(text) < 1 || chars(text) > 255 || hasNul(text)) return { issues: [issue("bad_text", "question")] };
   const createdAt = legacyInstant(row.created_at);
   if (!createdAt) return { issues: [issue("bad_time", "created_at")] };
   const updated = legacyInstant(row.updated_at);
@@ -143,9 +146,9 @@ export function mapLegacyStandupAnswer(row: LegacyStandupAnswerRow): { readonly 
   const questionRef = typeof row.question_uuid === "string" ? row.question_uuid.trim() : "";
   if (questionRef === "") return { issues: [issue("no_question")] };
   const question = typeof row.question === "string" ? row.question : "";
-  if (chars(question) < 1 || chars(question) > 255) return { issues: [issue("bad_text", "question")] };
+  if (chars(question) < 1 || chars(question) > 255 || hasNul(question)) return { issues: [issue("bad_text", "question")] };
   const answer = typeof row.answer === "string" ? row.answer : "";
-  if (!/[^\s]/u.test(answer) || chars(answer) > MAX_ANSWER) return { issues: [issue("bad_text", "answer")] };
+  if (!/[^\s]/u.test(answer) || chars(answer) > MAX_ANSWER || hasNul(answer)) return { issues: [issue("bad_text", "answer")] };
   const createdAt = legacyInstant(row.created_at);
   if (!createdAt) return { issues: [issue("bad_time", "created_at")] };
   return {

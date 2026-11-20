@@ -149,16 +149,18 @@ reported by the importer, not passed on.
 |---|---|---|
 | `staff_work_session` | `work_staff_sessions`, `source = 'import'` | The start is `created_at`; the day is its Kuwait date. Ending a session saved `total_minutes` and `updated_at` together, so `updated_at` is the end when its whole minutes match `total_minutes`; otherwise the end is the start plus `total_minutes` (what legacy showed and exported) and the row is reported as `minutes_mismatch`. No minutes: imported open, as legacy showed it. Negative or fractional minutes are reported, not imported. A second open session on one day is refused (`open_twice`). |
 | `daily_standup_question` | `work_standup_questions` | Trimmed text, 1 to 255 characters, asked (not retired), no author. |
-| `daily_standup_answer` | `work_standup_answers`, `source = 'import'` | The question text as it read, the day as the Kuwait date of `created_at`; repeats on a day are kept. An answer whose question legacy deleted is refused (`no_question`); a blank answer or one over 4,000 characters is reported, not cut. |
+| `daily_standup_answer` | `work_standup_answers`, `source = 'import'` | The question text as it read, the day as the Kuwait date of `created_at`; repeats on a day are kept. An answer whose question legacy deleted is refused (`no_question`); a blank answer, one over 4,000 characters, or text holding a NUL character (which Postgres can't store) is reported, not cut. |
 
 `PostgresWorkImportStore.importStaffSessions`, `importStandupQuestions` (run before the
 answers) and `importStandupAnswers` follow the contract above, with the digest stored in
 `legacy_digest` (migration 0508). A session imported open that legacy has since ended gets
 its end once (counted as updated); any other change is a conflict. The import key of a
-staff session or question can't be changed afterwards. `reconcileStaffImport(table,
-legacyRefs)` gives each table's reconciliation by legacy reference only: the legacy and
-imported counts, the legacy refs with no imported row (split into `skipped`, the rows the
-run reported or refused, and `missing`, the unexplained ones), and imported refs legacy no
+staff session or question can't be changed afterwards. Within a batch, ends are applied
+before new open sessions, and each staff member's day is locked with the refs, so two
+batches can't deadlock. `reconcileStaffImport(table, legacyRefs, reportedRefs)` gives each table's reconciliation by legacy reference only: the legacy and
+imported counts, the legacy refs with no imported row (split into `skipped`, the refs the
+run passes in `reportedRefs` because it reported or refused them, and `missing`, the
+unexplained ones; without `reportedRefs` every absent ref is `missing`), and imported refs legacy no
 longer holds. Issues and results carry legacy ids, rule codes and numbers only, never row
 text, and importing sends nothing (no notices, outbox rows or emails).
 

@@ -38,6 +38,8 @@ test("LEGACY_STAFF bad rows are reported by legacy id and not imported", () => {
   assert.deepEqual(code({ created_at: "2026-11-18" }), ["bad_time:created_at"]);
   assert.deepEqual(code({ total_minutes: -5 }), ["bad_minutes:-5"]);
   assert.deepEqual(code({ total_minutes: "1.5" }), ["bad_minutes:1.5"]);
+  // Non-numeric minutes are row text: the issue names the rule only.
+  assert.deepEqual(code({ total_minutes: "private note" }), ["bad_minutes:"]);
 });
 
 test("LEGACY_STANDUP questions keep their legacy ref and trimmed text; bad ones are reported", () => {
@@ -45,7 +47,7 @@ test("LEGACY_STANDUP questions keep their legacy ref and trimmed text; bad ones 
   assert.deepEqual(issues, []);
   assert.deepEqual([question?.legacyRef, question?.question, question?.createdAt.toISOString(), question?.updatedAt.toISOString()],
     ["question_1", "Blockers?", "2026-01-02T07:00:00.000Z", "2026-01-02T07:00:00.000Z"]);
-  for (const text of [null, "   ", "x".repeat(256)]) {
+  for (const text of [null, "   ", "x".repeat(256), "Block\u0000ers?"]) {
     assert.deepEqual(mapLegacyStandupQuestion({ question_uuid: "q", question: text, created_at: "2026-01-02 10:00:00", updated_at: null }).issues.map((i) => i.code), ["bad_text"]);
   }
   // 255 characters outside the BMP are still 255 characters here, as Postgres counts them.
@@ -64,5 +66,8 @@ test("LEGACY_STANDUP answers keep the question as it read and the Kuwait day of 
   assert.deepEqual(code({ answer: " \n\t" }), ["bad_text:answer"]);
   assert.deepEqual(code({ answer: "a".repeat(4001) }), ["bad_text:answer"]);
   assert.deepEqual(code({ answer: "a".repeat(4000) }), []);
+  // Postgres text can't hold NUL: reported, never stripped.
+  assert.deepEqual(code({ answer: "Done\u0000today" }), ["bad_text:answer"]);
+  assert.deepEqual(code({ question: "Plan\u0000?" }), ["bad_text:question"]);
   assert.deepEqual(code({ created_at: null }), ["bad_time:created_at"]);
 });

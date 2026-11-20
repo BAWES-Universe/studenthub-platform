@@ -62,6 +62,25 @@ test("STAFF_IMPORT_PG staff sessions: keyed by legacy ref, an open session ends 
   const both = await Promise.all([imports.importStaffSessions([raced]), imports.importStaffSessions([raced])]);
   assert.deepEqual(both.map((r) => [r.inserted, r.unchanged]).sort(), [[0, 1], [1, 0]]);
 
+  // Legacy closed an imported open session and opened another the same day: either input order imports both.
+  for (const [i, order] of [["a", "closedFirst"], ["b", "openFirst"]] as const) {
+    const first = toRow(`${i}1`, `2031-03-1${i === "a" ? 5 : 6} 08:00:00`, null, "2031-03-15 08:00:00");
+    assert.equal((await imports.importStaffSessions([first])).inserted, 1);
+    const closing = { ...first, endedAt: new Date(Date.parse(first.startedAt) + 3600_000).toISOString() };
+    const next = toRow(`${i}2`, `2031-03-1${i === "a" ? 5 : 6} 10:00:00`, null, "2031-03-15 10:00:00");
+    const r = await imports.importStaffSessions(order === "closedFirst" ? [closing, next] : [next, closing]);
+    assert.deepEqual([r.updated, r.inserted, r.refused], [1, 1, []], order);
+  }
+  // Two batches opening sessions for one staff member on the same two days in opposite orders:
+  // neither deadlocks; each day keeps one open session and the other is refused as open_twice.
+  const racer = await principal("race");
+  const openOn = (id: string, day: string) => ({ legacyRef: `work_session_${tag}-${id}`, staffPrincipalId: racer, workDate: day, startedAt: `${day}T05:00:00.000Z`, endedAt: null });
+  const [left, right] = await Promise.all([
+    imports.importStaffSessions([openOn("L1", "2031-03-20"), openOn("L2", "2031-03-21")]),
+    imports.importStaffSessions([openOn("R2", "2031-03-21"), openOn("R1", "2031-03-20")]),
+  ]);
+  assert.equal(left.inserted + right.inserted, 2);
+  assert.deepEqual([...left.refused, ...right.refused].map((x) => x.code), ["open_twice", "open_twice"]);
   const gap = `work_session_${tag}-gap`;
   const recon = await imports.reconcileStaffImport("work_staff_sessions", [closed.legacyRef, open.legacyRef, second.legacyRef, raced.legacyRef, gap], [second.legacyRef]);
   assert.equal(recon.legacy, 5);
@@ -71,7 +90,6 @@ test("STAFF_IMPORT_PG staff sessions: keyed by legacy ref, an open session ends 
   assert.deepEqual((await imports.reconcileStaffImport("work_staff_sessions", [closed.legacyRef], [closed.legacyRef])).skipped, []);
   assert.ok(recon.imported >= 3);
   assert.ok(![closed.legacyRef, open.legacyRef, raced.legacyRef].some((r) => recon.extra.includes(r)));
-  assert.ok(recon.extra.every((r) => !r.startsWith(`work_session_${tag}`)));
   await assert.rejects(imports.reconcileStaffImport("principals" as never, []), /unknown staff import table/);
 });
 
@@ -96,6 +114,9 @@ test("STAFF_IMPORT_PG stand-up questions then answers: repeats on a day kept, mi
     // Legacy allowed a second answer to the same question on one day: it is kept.
     const again = toAnswer("2", "2031-04-03 23:59:00", q.legacyRef, "And the export");
     const orphan = toAnswer("3", "2031-04-03 10:00:00", "question_deleted");
+    // Text Postgres can't store is refused for its row only, if one ever gets past the mapper.
+    const nul = { ...toAnswer("4", "2031-04-03 11:00:00"), answer: "Done\u0000today" };
+    assert.deepEqual(await imports.importStandupAnswers([toAnswer("5", "2031-04-04 09:00:00"), nul]), { ...empty, inserted: 1, refused: [{ legacyRef: nul.legacyRef, code: "invalid" }] });
     assert.deepEqual(await imports.importStandupAnswers([first, again, orphan]), { ...empty, inserted: 2, refused: [{ legacyRef: orphan.legacyRef, code: "no_question" }] });
     assert.deepEqual(await imports.importStandupAnswers([first, again]), { ...empty, unchanged: 2 });
     assert.equal((await imports.importStandupAnswers([{ ...first, answer: "Changed" }])).conflicts.length, 1);
@@ -104,6 +125,7 @@ test("STAFF_IMPORT_PG stand-up questions then answers: repeats on a day kept, mi
     assert.deepEqual(rows.map((r) => [r.legacy_ref, r.question, r.d, r.source, r.created_at.toISOString(), r.q]), [
       [first.legacyRef, "What did you finish? (as asked)", "2031-04-03", "import", "2031-04-03T06:00:00.000Z", q.legacyRef],
       [again.legacyRef, "What did you finish? (as asked)", "2031-04-03", "import", "2031-04-03T20:59:00.000Z", q.legacyRef],
+      [`answer_${tag}-5`, "What did you finish? (as asked)", "2031-04-04", "import", "2031-04-04T06:00:00.000Z", q.legacyRef],
     ]);
     const recon = await imports.reconcileStaffImport("work_standup_answers", [first.legacyRef, again.legacyRef, orphan.legacyRef]);
     assert.deepEqual([recon.table, recon.legacy, recon.missing, recon.skipped], ["work_standup_answers", 3, [orphan.legacyRef], []]);

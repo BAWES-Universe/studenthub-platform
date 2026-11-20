@@ -128,6 +128,8 @@ const mutations = [
   ["legacy staff ids are positive integers", "/^[1-9][0-9]{0,18}$/", "/^[0-9]+$/", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
   ["stand-up answers keep the Kuwait day", "workDate: kuwaitDay(createdAt), createdAt })", "workDate: createdAt.toISOString().slice(0, 10), createdAt })", "LEGACY_STANDUP", legacyStaff, legacyStaffSuite],
   ["stand-up text is counted as Postgres counts it", "const chars = (s) => [...s].length;", "const chars = (s) => s.length;", "LEGACY_STANDUP", legacyStaff, legacyStaffSuite],
+  ["stand-up answers holding NUL are reported, not imported", " || hasNul(answer))", ")", "LEGACY_STANDUP", legacyStaff, legacyStaffSuite],
+  ["non-numeric minutes stay out of the issue", "Number.isFinite(minutes) ? String(minutes) : undefined", "String(row.total_minutes)", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
   ["blank stand-up answers are not imported", "!/[^\\s]/u.test(answer) || ", "", "LEGACY_STANDUP", legacyStaff, legacyStaffSuite],
 ];
 

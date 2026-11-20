@@ -78,7 +78,8 @@ export function workImportDigest(value: unknown): string {
 
 const isOverlap = (e: unknown) => (e as { code?: string }).code === "23P01";
 const isUnique = (e: unknown) => (e as { code?: string }).code === "23505";
-const isRuleRefusal = (e: unknown) => (e as { code?: string }).code === "23514" || (e as { code?: string }).code === "23503";
+// 22021: text Postgres can't store (a NUL); the row is refused, the batch goes on.
+const isRuleRefusal = (e: unknown) => ["23514", "23503", "22021"].includes((e as { code?: string }).code ?? "");
 
 class Tally {
   inserted = 0; unchanged = 0; updated = 0;
@@ -189,7 +190,12 @@ export class PostgresWorkImportStore {
    * refused as `open_twice` (one open session per staff member and day).
    */
   async importStaffSessions(rows: readonly WorkImportStaffSession[]): Promise<WorkImportResult> {
-    return this.#batch("work_staff_sessions", rows, async (client, row, tally) => {
+    // Ends first: legacy may have closed an imported open session and opened another the same day.
+    const ordered = [...rows.filter((r) => r.endedAt !== null), ...rows.filter((r) => r.endedAt === null)];
+    // Each staff member's day is locked with the refs, in the same global order, so two batches opening
+    // sessions on the same days wait for each other and the second sees open_twice instead of deadlocking.
+    const days = rows.map((r) => `day ${r.staffPrincipalId} ${r.workDate}`);
+    return this.#batch("work_staff_sessions", ordered, async (client, row, tally) => {
       const digest = workImportDigest({ ...row, endedAt: null });
       const { rows: held } = await client.query<{ id: string; legacy_digest: string; ended_at: Date | null }>(
         "SELECT id, legacy_digest, ended_at FROM work_staff_sessions WHERE legacy_ref = $1 FOR UPDATE", [row.legacyRef]);
@@ -216,7 +222,7 @@ export class PostgresWorkImportStore {
         throw error;
       }
       tally.inserted++;
-    });
+    }, undefined, days);
   }
 
   /** Stand-up questions, imported as asked (not retired). Run before their answers. */
@@ -275,13 +281,14 @@ export class PostgresWorkImportStore {
   }
 
   async #batch<R extends { readonly legacyRef: string }>(table: string, rows: readonly R[], each: (client: PoolClient, row: R, tally: Tally) => Promise<void>,
-    after?: (client: PoolClient) => Promise<void>): Promise<WorkImportResult> {
+    after?: (client: PoolClient) => Promise<void>, extraLocks: readonly string[] = []): Promise<WorkImportResult> {
     return this.#db.transaction(async (client) => {
       // Two batches naming the same legacy_ref would both miss it on lookup and one insert would fail,
       // rolling back its whole batch. Lock every ref of the batch first, in one global order (so two
       // batches can't deadlock); a second batch then waits and finds the row as unchanged or a conflict.
       await client.query(`SELECT pg_advisory_xact_lock(k) FROM (SELECT DISTINCT hashtextextended($1 || ':' || r, 0) AS k FROM unnest($2::text[]) r) t ORDER BY k`,
-        [table, rows.map((r) => r.legacyRef)]);
+        // Extra keys contain a space, which no legacy_ref may, so they never share a lock with a ref.
+        [table, [...rows.map((r) => r.legacyRef), ...extraLocks]]);
       const tally = new Tally();
       for (const row of rows) {
         try {
