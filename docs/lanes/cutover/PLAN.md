@@ -13,7 +13,7 @@ Lane in the full-migration plan agreed on the desk (PR #393, 2026-11-17): verifi
 ## What "done" means for this lane
 
 1. **Release matrix** (this PR). `tools/release-matrix/matrix.json` has one row for each of the 77 target screens and 7 exclusions in the SHU-235 contract, each of the 120 mobile endpoints, the seven import domains and the release steps. A gate closes only with evidence the check can parse (PR at an exact head, a run, or a run report comment); a waiver cites its decision record. `cli.js check` runs in CI through the test suite; `cli.js release candidate` must pass for the 17 Dec candidate; `release cutover` (adds K-6, K-7, PAY-SHADOW, SWITCHES) on 1 Jan; `release retired` (adds K-8) when legacy is switched off. The test also enforces SHU-235 section 7: deleting or duplicating any of the 382 legacy ordinals fails.
-2. **Importer.** Order: M-4 catalogues and organizations with id maps, M-1 people, M-3 link report, M-2 documents, M-5 work, recruit and finance history (legacy `staff_work_session` goes to the work lane's `work_staff_sessions`, migration 0505), M-7 incremental, then M-6 full rehearsal. Each step is idempotent, writes a reconciliation report with legacy ids only, is tested on synthetic fixtures shaped like legacy, and closes its `built` and `dryRun` gates. `rehearsal` and `reconciled` close on the staging copy.
+2. **Importer.** Order: M-4 catalogues and organizations with id maps, M-1 people, M-3 link report, M-2 documents, M-5 work, recruit and finance history (see the M-5 table map below), M-7 incremental, then M-6 full rehearsal. Each step is idempotent, writes a reconciliation report with legacy ids only, is tested on synthetic fixtures shaped like legacy, and closes its `built` and `dryRun` gates. `rehearsal` and `reconciled` close on the staging copy.
 3. **Mobile exit.** Inventory done (below). The compatibility layer serves every `serve` route with the legacy shape in the 17 Dec candidate; `retire` routes answer with the legacy error shape; the legacy API is retired on 1 Jan, tested against traffic captured from a store build.
 4. **Rollback.** K-5 rehearses final sync, single-writer cutover and rollback on staging before 17 Dec.
 
@@ -25,6 +25,16 @@ Lane in the full-migration plan agreed on the desk (PR #393, 2026-11-17): verifi
 | 10 Dec | every import domain built and dry-run; compatibility layer for all `serve` routes on main |
 | 17 Dec | `release candidate` passes: every candidate gate closed with evidence or a recorded waiver; rollback rehearsed |
 | 31 Dec to 1 Jan | final sync (M-7), K-6 go/no-go with Khalid, K-7 switch; `release cutover` passes |
+
+## M-5 table map (work)
+
+Legacy staff ids resolve to the platform principal the same way for every row below; a staff id with no principal is reported by legacy id, not imported. Each table gets its own reconciliation count: legacy rows against imported rows by `legacy_ref`, by legacy id only.
+
+| Legacy table | Platform table | Rules |
+|---|---|---|
+| `staff_work_session` | `work_staff_sessions` (migration 0505) | one row per legacy session |
+| `daily_standup_question` | `work_standup_questions` (migration 0506) | `legacy_ref` = `question_uuid`; `retired_at` null |
+| `daily_standup_answer` | `work_standup_answers` (migration 0506) | `source` = `import`; `legacy_ref` = `answer_uuid`; `work_date` = the date of `created_at`; the question text is copied as it read; repeated answers on a day are kept (the once-per-day index covers app answers only) |
 
 ## Daily read-only legacy refresh on staging
 
@@ -52,7 +62,7 @@ Job: `tools/legacy-import/src/refresh-cli.ts` (`node dist/tools/legacy-import/sr
 
 Configuration (root-only env file on the staging host): `LEGACY_REFRESH_SOURCE_URL` (read-only legacy account), `LEGACY_REFRESH_TARGET_URL` (mirror account, `legacy_mirror` database), optional `LEGACY_REFRESH_REPORT` and `LEGACY_REFRESH_LOCK`. `LEGACY_REFRESH_TIMEOUT_MS` may be at most 2147483647 (Node's largest timer).
 
-Reading the mirror: a consumer takes a shared lock on the same lock file (`flock --shared` on `LEGACY_REFRESH_LOCK`, the same path the job uses), then reads `last-run.json`, proceeds only if it says `ok`, and holds the shared lock until its read is finished. A refresh cannot start while any reader holds it (it exits `locked` and records that in `last-refused.json`), and a reader cannot start mid-copy, so no reader ever sees tables being replaced. Checking `ok` without the lock is not enough: the next refresh could start between the check and the read. The matrix row `REFRESH` closes with the first timer-triggered run's time and counts (the 2026-11-17 install run was manual, so it stays open until then).
+Reading the mirror: a consumer takes a shared lock on the same lock file (`flock --shared` on `LEGACY_REFRESH_LOCK`, the same path the job uses), then reads `last-run.json`, proceeds only if it says `ok`, and holds the shared lock until its read is finished. A refresh cannot start while any reader holds it (it exits `locked` and records that in `last-refused.json`), and a reader cannot start mid-copy, so no reader ever sees tables being replaced. Checking `ok` without the lock is not enough: the next refresh could start between the check and the read. The matrix row `REFRESH` is done: the first timer-triggered run on the #550 code (b8cd999), at 2026-11-20 00:30Z, ended `ok` with 123 tables and 865,915 rows, excluded the 7 bearer-token tables, listed no non-transactional tables and wrote no refusal record (PR #393 comment 7032910903). Before it, the 2026-11-19 repin ran once by hand with the same result (865,911 rows), over TCP with a database-wide `SELECT, SHOW VIEW` grant, and the mirror held no previously copied token, queue or session tables.
 
 ## Mobile inventory
 
