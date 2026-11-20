@@ -201,14 +201,16 @@ async function aliasDuringOpenChange(change: (c: pg.PoolClient) => Promise<unkno
     await writer.query("BEGIN");
     await change(writer);
     const pending = alias();
-    // Commit only once the import is waiting on the writer's lock.
-    for (let i = 0; i < 200; i++) {
+    // Commit only once the import is waiting on the writer's lock, and fail if it never waits.
+    let waited = false;
+    for (let i = 0; i < 200 && !waited; i++) {
       const { rows } = await pool.query(
         "SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND $1::int = ANY(pg_blocking_pids(pid))", [(writer as unknown as { processID: number }).processID]);
-      if (rows[0]) break;
-      await new Promise((r) => setTimeout(r, 25));
+      waited = rows.length > 0;
+      if (!waited) await new Promise((r) => setTimeout(r, 25));
     }
     await writer.query("COMMIT");
+    assert.ok(waited, "the import did not wait for the open write");
     return await pending;
   } finally {
     writer.release();
@@ -234,6 +236,21 @@ test("an alias waits for an open rename or delete of its target item and is held
     (c) => c.query("UPDATE catalogue_items SET status = 'deleted', deleted_at = now() WHERE id = $1", [target]),
     () => store.importItems(more([`${other}1`, `${other}2`]), NOW)) as Awaited<ReturnType<typeof store.importItems>>;
   assert.deepEqual(deleted.refused, [{ legacyTable: "university", legacyId: `${other}2`, code: "name_conflict" }]);
+});
+
+test("control: an alias that waits for an open write which keeps its target eligible still maps after the commit", async () => {
+  const run = tag();
+  const rows = (ids: string[]) => mapLegacyCatalogue("currency", ids.map((id) => ({ currency_id: id, title: `${run} Dinar`, code: "KWD", currency_symbol: "KD", decimal_place: 3, status: 1 }))).items;
+  await store.importItems(rows([`${run}1`]), NOW);
+  const item = (await store.idMap("currency")).get(`${run}1`);
+  const result = await aliasDuringOpenChange(
+    async (c) => {
+      await c.query("UPDATE catalogue_items SET updated_at = now() WHERE id = $1", [item]);
+      await c.query("UPDATE catalogue_currency_details SET updated_at = now() WHERE currency_id = $1", [item]);
+    },
+    () => store.importItems(rows([`${run}1`, `${run}2`]), NOW)) as Awaited<ReturnType<typeof store.importItems>>;
+  assert.deepEqual({ merged: result.merged, refused: result.refused }, { merged: 1, refused: [] });
+  assert.equal((await store.idMap("currency")).get(`${run}2`), item);
 });
 
 test("an alias waits for an open details write on its target currency and compares the committed details", async () => {
