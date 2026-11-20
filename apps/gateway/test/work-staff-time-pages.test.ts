@@ -8,12 +8,13 @@ import type { WorkHttpServices } from "../src/work/http.js";
 const SESSION = "t".repeat(43), ORIGIN = "https://studenthub.test.invalid";
 const NOW = new Date("2026-11-18T09:30:00Z");
 
-interface World { forbidden?: boolean; open?: boolean; endResult?: unknown }
+interface World { language?: "en" | "ar"; forbidden?: boolean; open?: boolean; endResult?: unknown }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const refused = { kind: "refused", code: "forbidden" };
   const session = (over: Record<string, unknown> = {}) => ({ id: "s1", staffId: "actor", workDate: "2026-11-18", startedAt: "2026-11-18T05:00:00.000Z", endedAt: "2026-11-18T07:05:00.000Z", minutes: 125, source: "timer", ...over });
   return {
     personFor: async (id: string) => id === SESSION ? "actor" : undefined,
+    language: async (personId: string) => personId === "actor" ? world.language : undefined,
     personNames: async (ids: readonly string[]) => new Map(ids.filter((i) => i !== "nameless").map((i) => [i, i === "actor" ? "Huda <H>" : "Omar"])),
     staffTime: {
       today: async (...a: unknown[]) => { calls.push(["today", ...a]); return world.forbidden ? refused : { kind: "today", workDate: "2026-11-18", sessions: world.open ? [session(), session({ id: "s2", startedAt: "2026-11-18T08:00:00.000Z", endedAt: null, minutes: null })] : [session()] }; },
@@ -27,12 +28,12 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   } as unknown as WorkHttpServices;
 }
 
-type Opt = { method?: string; body?: string; origin?: string; cookie?: string | null; service?: WorkHttpServices | undefined; world?: World; contentType?: string };
+type Opt = { acceptLanguage?: string; method?: string; body?: string; origin?: string; cookie?: string | null; service?: WorkHttpServices | undefined; world?: World; contentType?: string };
 async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
   const req = Readable.from(o.body !== undefined ? [o.body] : []) as Readable & { method?: string; url?: string; headers: Record<string, string> };
   req.method = o.method ?? "GET"; req.url = path;
   req.headers = { ...(o.cookie === null ? {} : { cookie: `__Host-studenthub_session=${o.cookie ?? SESSION}` }),
-    ...(o.body !== undefined ? { "content-type": o.contentType ?? "application/x-www-form-urlencoded", "content-length": String(Buffer.byteLength(o.body)) } : {}), ...(o.origin ? { origin: o.origin } : {}) };
+    ...(o.body !== undefined ? { "content-type": o.contentType ?? "application/x-www-form-urlencoded", "content-length": String(Buffer.byteLength(o.body)) } : {}), ...(o.origin ? { origin: o.origin } : {}), ...(o.acceptLanguage ? { "accept-language": o.acceptLanguage } : {}) };
   const res = new EventEmitter() as EventEmitter & { statusCode: number; headersSent: boolean; headers: Record<string, string>; chunks: string[]; writeHead(s: number, h: Record<string, string>): void; end(v?: unknown): void; destroy(): void };
   res.statusCode = 0; res.headers = {}; res.chunks = []; res.headersSent = false;
   res.writeHead = (s, h) => { res.statusCode = s; res.headers = h; res.headersSent = true; };
@@ -104,4 +105,19 @@ test("STAFF_TIME_PAGES /work/staff-time lists days with names, pages on, and sho
   assert.deepEqual(calls2.find((c) => c[0] === "days"), ["days", "actor", "2026-11-01", "2026-11-18", { after: { workDate: "2026-11-17", staffId: "other" } }]);
   assert.equal((await request("/work/staff-time?after=broken")).status, 400);
   assert.equal((await request("/work/staff-time?from=2026-11-18&to=2026-11-01")).status, 400);
+});
+
+test("STAFF_TIME_PAGES in Arabic: /me/work and staff time follow the actor's saved language, else the browser's", async () => {
+  const mine = await request("/me/work", { world: { language: "ar", open: true } });
+  assert.match(mine.html, /<html lang="ar" dir="rtl">/);
+  assert.match(mine.html, /<h1>يوم عملي<\/h1>[\s\S]*<ul><li>08:00 إلى 10:05 \(2 س 05 د\)<\/li><li>11:00 حتى الآن<\/li><\/ul><p>اليوم حتى الآن: 2 س 05 د، إضافة إلى الجلسة الجارية\.<\/p>/);
+  assert.match(mine.html, /<button class="p-button" type="submit">إنهاء يومي<\/button>/);
+  assert.match(mine.html, /<li>الثلاثاء، 17 نوفمبر 2026: لم ينتهِ<\/li>/);
+  const admin = await request("/work/staff-time", { world: { language: "ar" } });
+  assert.match(admin.html, /<caption>أيام الموظفين<\/caption><thead><tr><th scope="col">الموظف<\/th>/);
+  assert.match(admin.html, /<td>8 س 00 د<\/td><td>انتهى<\/td>/);
+  assert.match(admin.html, /<h2 id="inactive-heading">لم يبدؤوا يوم الأربعاء، 18 نوفمبر 2026<\/h2>/);
+  assert.match((await request("/me/work", { acceptLanguage: "ar" })).html, /<h1>يوم عملي<\/h1>/);
+  assert.match((await request("/me/work", { world: { language: "en" }, acceptLanguage: "ar" })).html, /<h1>My work day<\/h1>/);
+  assert.equal(minutesText(125), "2h 05m");
 });

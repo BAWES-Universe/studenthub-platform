@@ -10,13 +10,14 @@ const SESSION = "t".repeat(43), ORIGIN = "https://studenthub.test.invalid";
 const NOW = new Date("2026-11-18T09:30:00Z");
 const Q1 = "aaaaaaaa-0000-4000-8000-000000000001", Q2 = "aaaaaaaa-0000-4000-8000-000000000002";
 
-interface World { nextStaff?: string; open?: boolean; notStaff?: boolean; notAdmin?: boolean; next?: boolean; answered?: boolean; answerResult?: unknown; questionResult?: unknown; noStandup?: boolean }
+interface World { language?: "en" | "ar"; nextStaff?: string; open?: boolean; notStaff?: boolean; notAdmin?: boolean; next?: boolean; answered?: boolean; answerResult?: unknown; questionResult?: unknown; noStandup?: boolean }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const refused = (code = "forbidden") => ({ kind: "refused", code });
   const answer = (over: Record<string, unknown> = {}) => ({ id: "cccccccc-0000-4000-8000-000000000001", staffId: "actor", questionId: Q1, question: "Blockers <now>?", answer: "None & done", workDate: "2026-11-18", createdAt: "2026-11-18T06:15:00.000Z", ...over });
   const session = (over: Record<string, unknown> = {}) => ({ id: "s1", staffId: "actor", workDate: "2026-11-18", startedAt: "2026-11-18T05:00:00.000Z", endedAt: null, minutes: null, source: "timer", ...over });
   return {
     personFor: async (id: string) => id === SESSION ? "actor" : undefined,
+    language: async (personId: string) => personId === "actor" ? world.language : undefined,
     personNames: async (ids: readonly string[]) => new Map(ids.filter((i) => i !== "nameless").map((i) => [i, i === "actor" ? "Huda" : "Omar"])),
     staffTime: {
       today: async () => ({ kind: "today", workDate: "2026-11-18", sessions: world.open ? [session()] : [] }),
@@ -38,12 +39,12 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   } as unknown as WorkHttpServices;
 }
 
-type Opt = { method?: string; body?: string; origin?: string; cookie?: string | null; service?: WorkHttpServices | undefined; world?: World; contentType?: string };
+type Opt = { acceptLanguage?: string; method?: string; body?: string; origin?: string; cookie?: string | null; service?: WorkHttpServices | undefined; world?: World; contentType?: string };
 async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
   const req = Readable.from(o.body !== undefined ? [o.body] : []) as Readable & { method?: string; url?: string; headers: Record<string, string> };
   req.method = o.method ?? "GET"; req.url = path;
   req.headers = { ...(o.cookie === null ? {} : { cookie: `__Host-studenthub_session=${o.cookie ?? SESSION}` }),
-    ...(o.body !== undefined ? { "content-type": o.contentType ?? "application/x-www-form-urlencoded", "content-length": String(Buffer.byteLength(o.body)) } : {}), ...(o.origin ? { origin: o.origin } : {}) };
+    ...(o.body !== undefined ? { "content-type": o.contentType ?? "application/x-www-form-urlencoded", "content-length": String(Buffer.byteLength(o.body)) } : {}), ...(o.origin ? { origin: o.origin } : {}), ...(o.acceptLanguage ? { "accept-language": o.acceptLanguage } : {}) };
   const res = new EventEmitter() as EventEmitter & { statusCode: number; headersSent: boolean; headers: Record<string, string>; chunks: string[]; writeHead(s: number, h: Record<string, string>): void; end(v?: unknown): void; destroy(): void };
   res.statusCode = 0; res.headers = {}; res.chunks = []; res.headersSent = false;
   res.writeHead = (s, h) => { res.statusCode = s; res.headers = h; res.headersSent = true; };
@@ -63,7 +64,7 @@ test("STANDUP_PAGES /me/work asks the next question only while the day is in pro
   const working = await request("/me/work", { world: { open: true } });
   assert.ok(working.html.includes(`<form method="post" action="/me/work/standup"><input type="hidden" name="question" value="${Q2}">`));
   assert.match(working.html, /<label for="standup-answer">Plans &lt;today&gt;\?<\/label><textarea id="standup-answer" name="answer" required maxlength="4000"/);
-  assert.match((await request("/me/work", { world: { open: true, next: false, answered: true } })).html, /You've answered every stand-up question today\./);
+  assert.match((await request("/me/work", { world: { open: true, next: false, answered: true } })).html, /You&#39;ve answered every stand-up question today\./);
   assert.match((await request("/me/work", { world: { open: true, next: false } })).html, /There are no stand-up questions yet\./);
   // Not wired, or not staff for the stand-up: no card, the rest of the page as before.
   assert.ok(!(await request("/me/work", { world: { open: true, noStandup: true } })).html.includes("standup-heading"));
@@ -152,4 +153,19 @@ test("STANDUP_PAGES question forms: add, reword and retire, from the same origin
   for (const p of ["/work/standupx", "/work/standup/questions/nope", `/work/standup/questions/${Q1}/delete`]) assert.equal((await request(p)).handled, false, p);
   assert.equal((await request("/work/standup", { cookie: null })).status, 401);
   assert.equal((await request("/work/standup", { world: { noStandup: true } })).status, 503);
+});
+
+test("STANDUP_PAGES in Arabic: the card on /me/work, its refusals and the admin page follow the actor's language", async () => {
+  const card = await request("/me/work", { world: { language: "ar", open: true, answered: true } });
+  assert.match(card.html, /<h2 id="standup-heading">الاجتماع اليومي<\/h2>[\s\S]*<button class="p-button" type="submit">حفظ الإجابة<\/button><\/form><h3>إجاباتك اليوم<\/h3>/);
+  // The questions and answers are shown as written.
+  assert.match(card.html, /<label for="standup-answer">Plans &lt;today&gt;\?<\/label>/);
+  assert.match((await request("/me/work", { world: { language: "ar", answered: true } })).html, /<p>ابدأ يومك للإجابة عن أسئلة الاجتماع اليومي\.<\/p>/);
+  const skipped = await post("/me/work/standup", { body: `question=${Q1}&answer=x`, world: { language: "ar", open: true } });
+  assert.match(skipped.html, /أجب عن أسئلة الاجتماع اليومي واحدًا تلو الآخر بالترتيب\./);
+  const admin = await request("/work/standup?date=2026-11-17", { world: { language: "ar" } });
+  assert.match(admin.html, /<html lang="ar" dir="rtl">/);
+  assert.match(admin.html, /<h2 id="answers-heading">الإجابات يوم الثلاثاء، 17 نوفمبر 2026<\/h2>/);
+  assert.match(admin.html, /<button type="submit">إيقاف طرحه<\/button>/);
+  assert.match(admin.html, /<h2 id="unanswered-heading">لم يُجيبوا يوم الثلاثاء، 17 نوفمبر 2026<\/h2>/);
 });
