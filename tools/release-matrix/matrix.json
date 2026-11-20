@@ -87,7 +87,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -109,7 +110,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -140,7 +142,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -197,7 +200,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -215,7 +219,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -233,7 +238,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -251,7 +257,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -269,7 +276,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -287,7 +295,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -305,7 +314,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -336,7 +346,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -354,7 +365,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -372,7 +384,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -390,7 +403,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -408,7 +422,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -426,7 +441,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -483,7 +499,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -527,7 +544,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -584,7 +602,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -615,7 +634,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -633,7 +653,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -690,7 +711,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -721,7 +743,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -739,7 +762,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -770,7 +794,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -801,7 +826,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -819,7 +845,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -837,7 +864,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -881,7 +909,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -899,7 +928,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -917,7 +947,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -952,7 +983,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -974,7 +1006,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -1005,7 +1038,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -1023,7 +1057,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -1145,7 +1180,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
@@ -1163,7 +1199,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
         },
         "verified": {
           "state": "open"
