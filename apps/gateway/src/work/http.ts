@@ -27,6 +27,8 @@ export interface WorkHttpServices {
   readonly staffTime?: StaffTimeService;
   /** The daily stand-up (legacy daily_standup_question/answer); absent means its parts of the staff screens are left out. */
   readonly standup?: StandupService;
+  /** The person's saved language (the profile's preference); absent or undefined means their browser's. */
+  readonly language?: (personId: string) => Promise<"en" | "ar" | undefined>;
   /** Staff email addresses for the staff hours export; absent means none. */
   readonly staffEmails?: (staffIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
   /**

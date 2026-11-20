@@ -16,8 +16,11 @@ const staffTime = "packages/work/src/staff-time.js", staffTimeSuite = "packages/
 const staffTimePages = "apps/gateway/src/work/staff-time-pages.js", staffTimePagesSuite = "apps/gateway/test/work-staff-time-pages.test.js";
 const standup = "packages/work/src/standup.js", standupSuite = "packages/work/test/standup.test.js";
 const standupPages = "apps/gateway/src/work/standup-pages.js", standupPagesSuite = "apps/gateway/test/work-standup-pages.test.js";
+const copyFile = "apps/gateway/src/work/copy.js";
 const exportsFile = "apps/gateway/src/work/exports.js", exportsSuite = "apps/gateway/test/work-exports.test.js";
 const mutations = [
+  ["the person's screens follow their saved language", "c = await workCopyFor(services.language, person, req);", "c = await workCopyFor(undefined, person, req);", "WORK_PAGES in Arabic", pages, pagesSuite],
+  ["without a saved language, the browser's Arabic is used", 'return first?.tag.startsWith("ar") ? "ar" : "en";', 'return "en";', "WORK_PAGES in Arabic", copyFile, pagesSuite],
   ["stand-up answers are operator staff only", "async #staff(actorId) { return isOperatorStaff(await this.#grants.listGrantsForPrincipal(actorId)); }", "async #staff(actorId) { return true; }", "STANDUP", standup, standupSuite],
   ["stand-up questions are operator admins only", "async #admin(actorId) { return isOperatorAdmin(await this.#grants.listGrantsForPrincipal(actorId)); }", "async #admin(actorId) { return true; }", "STANDUP", standup, standupSuite],
   ["today lists only their own answers", "staffId: actorId, limit: STANDUP_ANSWER_PAGE_SIZE }", "limit: STANDUP_ANSWER_PAGE_SIZE }", "STANDUP", standup, standupSuite],

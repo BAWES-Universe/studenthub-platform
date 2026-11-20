@@ -81,6 +81,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
     storeNames: (ids) => viewStore.storeNames(ids),
     storeInfo: (id) => viewStore.storeInfo(id),
     personNames: (ids) => viewStore.personNames(ids),
+    language: (personId) => viewStore.language(personId),
     companyNames: (ids) => viewStore.companyNames(ids),
     storesOf: (orgId) => viewStore.storesOf(orgId),
     staffTime: new StaffTimeService({ store: staffTimeStore, grants, newId }),
