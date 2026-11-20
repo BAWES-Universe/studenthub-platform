@@ -116,14 +116,16 @@ function legacyId(value: unknown): string | null {
 
 /**
  * Legacy datetimes are Asia/Kuwait wall time (UTC+3, no daylight saving) with no zone.
- * Returns the instant, or null for a missing or zero date.
+ * Returns the instant, or null for a missing, zero or invalid date or time, or a value with anything after the seconds.
  */
 export function kuwaitInstant(value: unknown): string | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
   if (typeof value !== "string") return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(value.trim());
+  // The whole value must be one wall time (fractional seconds allowed, then dropped): no zone, offset or other suffix.
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?$/.exec(value.trim());
   if (!match || match[1] === "0000") return null;
   const [, y, mo, d, h, mi, s] = match.map(Number) as [number, number, number, number, number, number, number];
+  if (h > 23 || mi > 59 || s > 59) return null;
   const utc = Date.UTC(y, mo - 1, d, h - 3, mi, s);
   const back = new Date(utc + 3 * 3_600_000);
   if (back.getUTCFullYear() !== y || back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d) return null;

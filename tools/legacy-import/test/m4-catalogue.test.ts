@@ -12,6 +12,12 @@ test("legacy wall time is read as Asia/Kuwait (UTC+3), so a late-evening row kee
   assert.equal(kuwaitInstant("2024-02-30 10:00:00"), null);
   assert.equal(kuwaitInstant(null), null);
   assert.equal(kuwaitInstant(""), null);
+  assert.equal(kuwaitInstant("2024-03-05 23:59:59"), "2024-03-05T20:59:59.000Z");
+  assert.equal(kuwaitInstant("2024-03-05 10:00:00.250"), "2024-03-05T07:00:00.000Z");
+  for (const invalid of ["2024-03-05 24:00:00", "2024-03-05 10:60:00", "2024-03-05 10:00:60", "2024-03-05 10:00:00Z",
+    "2024-03-05 10:00:00+03:00", "2024-03-05 10:00:00 junk", "2024-03-05 10:00:00.", "2024-03-05 10:00"]) {
+    assert.equal(kuwaitInstant(invalid), null, invalid);
+  }
 });
 
 test("each legacy table maps to its catalogue kind with the platform's name normalization", () => {
