@@ -13,10 +13,11 @@ export interface StatisticsHiringCounts { readonly hired: number; readonly retai
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
-// $1 is the Asia/Kuwait day, $2 the current instant.
+// $1 is the Asia/Kuwait day, $2 the current instant. Minors are candidates only: a profile with a candidate grant.
 const COUNTS = `SELECT
   (SELECT count(*)::int FROM work_appeals WHERE status = 'submitted') AS "workLogAppeals",
-  (SELECT count(*)::int FROM person_profiles WHERE birth_date > ($1::date - interval '16 years')::date) AS "totalMinor",
+  (SELECT count(*)::int FROM person_profiles p WHERE p.birth_date > ($1::date - interval '16 years')::date
+     AND EXISTS (SELECT 1 FROM grants g WHERE g.principal_id = p.principal_id AND g.role = 'candidate')) AS "totalMinor",
   (SELECT count(*)::int FROM company_registrations WHERE status = 'pending') AS "companyUnderReview",
   (SELECT count(*)::int FROM work_assignment_requests q LEFT JOIN organization_commercial_terms t ON t.org_id = q.org_id AND t.field = 'currency_code'
      WHERE q.status = 'pending' AND COALESCE(t.value, 'KWD') = 'KWD') AS "totalStoreAssignmentRequests",
