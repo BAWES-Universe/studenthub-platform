@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FiringHitMapService, buildFiringHitMap, firingLevel, lastTwelveMonths, type FiringHitMapStore } from "../src/index.js";
+import { FiringHitMapService, buildFiringHitMap, firingLevel, firingSpikes, lastTwelveMonths, queueFiringSpikesThenDeliver, sendFiringSpikesIfDue, type FiringHitMapStore } from "../src/index.js";
 
 test("REPORTS_FIRINGS the last 12 months run newest first and cross the year", () => {
   assert.deepEqual(lastTwelveMonths("2026-02-10"), ["2026-02", "2026-01", "2025-12", "2025-11", "2025-10", "2025-09", "2025-08", "2025-07", "2025-06", "2025-05", "2025-04", "2025-03"]);
@@ -39,4 +39,35 @@ test("REPORTS_FIRINGS only staff see it, counted for the Kuwait day", async () =
   const map = (await service.page("staff"))!;
   assert.equal(map.day, "2026-12-01");
   assert.deepEqual(asked, ["2026-12-01 2026-12 2026-01"]);
+});
+
+test("REPORTS_FIRINGS the spike check alerts this month's marked companies only, from 08:00 Kuwait, and never blocks delivery", async () => {
+  const companies = [{ orgId: "a", name: "Alpha\nCo" }, { orgId: "b", name: "Beta" }, { orgId: "c", name: "C".repeat(250) }];
+  const counts = [{ orgId: "a", month: "2026-11", total: 2 }, { orgId: "a", month: "2026-05", total: 1 }, { orgId: "b", month: "2026-10", total: 5 }, { orgId: "c", month: "2026-11", total: 1 }];
+  const alerts = firingSpikes("2026-11-20", companies, counts);
+  assert.deepEqual(alerts.map(a => [a.orgId, a.month, a.parameters.level, a.parameters.total, a.parameters.twelveMonthTotal]), [["a", "2026-11", "danger", 2, 3], ["c", "2026-11", "danger", 1, 1]], "Beta's spike was last month");
+  assert.equal(alerts[0]!.parameters.company, "Alpha Co");
+  assert.equal([...alerts[1]!.parameters.company].length, 200);
+  const days: string[] = [];
+  const store = { async sendDay(day: string, months: readonly string[]) { days.push(`${day} ${months[0]}`); return days.length > 1 ? null : { alerts: 2 }; } };
+  assert.deepEqual(await sendFiringSpikesIfDue(store, new Date("2026-11-20T04:59:00Z")), { status: "not_yet", day: "2026-11-20" });
+  assert.deepEqual(await sendFiringSpikesIfDue(store, new Date("2026-11-20T05:00:00Z")), { status: "ran", day: "2026-11-20", alerts: 2 });
+  assert.deepEqual(await sendFiringSpikesIfDue(store, new Date("2026-11-20T06:00:00Z")), { status: "already_ran", day: "2026-11-20" });
+  assert.deepEqual(days, ["2026-11-20 2026-11", "2026-11-20 2026-11"]);
+  let delivered = 0;
+  const failing = { async sendDay(): Promise<null> { throw new Error("down"); } };
+  await assert.rejects(queueFiringSpikesThenDeliver(failing, async () => ++delivered, () => new Date("2026-11-20T06:00:00Z")), /down/);
+  assert.equal(delivered, 1, "delivery still ran");
+});
+
+test("REPORTS_FIRINGS the spike email subscription is staff only and shown on the page", async () => {
+  const subs = new Set<string>();
+  const subscriptions = { async isSubscribed(id: string) { return subs.has(id); }, async setSubscribed(id: string, on: boolean) { if (on) subs.add(id); else subs.delete(id); } };
+  const store: FiringHitMapStore = { async firings() { return { companies: [], counts: [] }; } };
+  const service = new FiringHitMapService(store, { isStaff: async id => id === "staff" }, () => new Date("2026-11-20T06:00:00Z"), subscriptions);
+  assert.equal((await service.page("staff"))!.spikeEmail, false);
+  assert.equal(await service.subscribe("alia", true), false);
+  assert.equal(await service.subscribe("staff", true), true);
+  assert.equal((await service.page("staff"))!.spikeEmail, true);
+  assert.equal((await new FiringHitMapService(store, { isStaff: async () => true }).page("staff"))!.spikeEmail, null, "not wired");
 });

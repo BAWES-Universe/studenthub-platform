@@ -6,3 +6,5 @@ export { PostgresIdCardsStore, idCardAssigned, idCardNeedsCount, idCardExpiredCo
 export type { IdCardView, IdCardAction, IdCardRefusal, IdCardListRow, IdCardRow, IdCardPlacementRow } from "./postgres-id-cards-store.js";
 export { PostgresStatisticsStore } from "./postgres-statistics-store.js";
 export type { StatisticsHiringCounts } from "./postgres-statistics-store.js";
+export { PostgresFiringSpikeStore } from "./postgres-firing-spike-store.js";
+export type { FiringSpikeRow } from "./postgres-firing-spike-store.js";
