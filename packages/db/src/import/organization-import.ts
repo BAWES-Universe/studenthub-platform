@@ -1,7 +1,8 @@
 // Cutover lane M-4: imported legacy companies become organizations with their approved snapshot.
 // Same contract as the catalogue import: keyed by legacy id in legacy_id_maps, a same-digest
 // re-run is unchanged, a changed row is a conflict carrying both digests and is never
-// overwritten, each row runs in its own savepoint, and one batch is one transaction.
+// overwritten, each row runs in its own savepoint, one batch is one transaction, and batches
+// are serialized with a transaction advisory lock.
 // Rows arrive parents first; a row whose parent is not in the id map is refused.
 // Results carry legacy ids, refusal codes and digests only.
 
@@ -61,6 +62,9 @@ export class PostgresOrganizationImportStore {
     let broken = false;
     try {
       await client.query("BEGIN");
+      // One import batch at a time: without this, two runs could both find no map row for the
+      // same legacy id, and the one that commits second would misreport the row as refused.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('legacy-import:organization', 0))");
       for (const row of rows) {
         await client.query("SAVEPOINT organization_import");
         try {

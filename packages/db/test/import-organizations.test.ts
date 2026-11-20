@@ -100,3 +100,16 @@ test("reconciliation lists reported skips apart from unexplained gaps", async ()
   assert.deepEqual(report.skipped, [String(a + 1)]);
   assert.deepEqual(report.missing, [String(a + 2)]);
 });
+
+test("two import runs at once are serialized: one inserts, the other finds the companies unchanged", async () => {
+  const base = ids(); next += 200;
+  const { organizations } = mapLegacyCompanies(Array.from({ length: 20 }, (_, i) => company(base + i)));
+  const other = new PostgresOrganizationImportStore({ connectionString: URL }, ORGANIZATION_PARITY_REVISION, operator);
+  try {
+    const [a, b] = await Promise.all([store.importOrganizations(organizations), other.importOrganizations(organizations)]);
+    assert.deepEqual([a.refused, b.refused, a.conflicts, b.conflicts], [[], [], [], []]);
+    assert.deepEqual([a.inserted + b.inserted, a.unchanged + b.unchanged], [20, 20]);
+  } finally {
+    await other.close();
+  }
+});
