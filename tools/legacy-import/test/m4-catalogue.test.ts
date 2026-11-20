@@ -61,6 +61,37 @@ test("active rows with the same name merge into the lowest legacy id; deleted ro
   ]);
 });
 
+test("same-name currencies and banks merge only when code and details match; otherwise each is a reported name conflict", () => {
+  const kwd = { code: "KWD", currency_symbol: "KD", decimal_place: 3, status: 1 };
+  const currencies = mapLegacyCatalogue("currency", [
+    { currency_id: 1, title: "Dinar", ...kwd },
+    { currency_id: 2, title: "dinar", ...kwd }, // equivalent: merged
+    { currency_id: 3, title: "Dinar", ...kwd, currency_symbol: "" }, // typed details missing: conflict
+    { currency_id: 4, title: "Dinar", ...kwd, code: "BHD" }, // different code: conflict
+    { currency_id: 5, title: "Dinar", ...kwd, decimal_place: 2 }, // different details: conflict
+  ]);
+  assert.deepEqual(currencies.items.map((i) => [i.legacyId, i.mergedInto]), [["1", null], ["2", "1"]]);
+  assert.deepEqual(currencies.issues.filter((i) => i.rule !== "catalogue.currencyDetailsInvalid"), [
+    { rule: "catalogue.merged", legacyTable: "currency", legacyId: "2", target: "1" },
+    { rule: "catalogue.nameConflict", legacyTable: "currency", legacyId: "3", target: "1" },
+    { rule: "catalogue.nameConflict", legacyTable: "currency", legacyId: "4", target: "1" },
+    { rule: "catalogue.nameConflict", legacyTable: "currency", legacyId: "5", target: "1" },
+  ]);
+  const nbk = { bank_swift_code: "NBOKKWKW", bank_iban_code: "NBOK", bank_code_abk: 12, bank_transfer_type: "LCL", deleted: 0 };
+  const banks = mapLegacyCatalogue("bank", [
+    { bank_id: 1, bank_name: "NBK", ...nbk },
+    { bank_id: 2, bank_name: "nbk", ...nbk },
+    { bank_id: 3, bank_name: "NBK", ...nbk, bank_iban_code: "X" },
+    { bank_id: 4, bank_name: "NBK", ...nbk, bank_transfer_type: "SWF" },
+  ]);
+  assert.deepEqual(banks.items.map((i) => [i.legacyId, i.mergedInto]), [["1", null], ["2", "1"]]);
+  assert.deepEqual(banks.issues.filter((i) => i.rule === "catalogue.nameConflict").map((i) => i.legacyId), ["3", "4"]);
+  // A re-run gives the same dispositions.
+  assert.deepEqual(mapLegacyCatalogue("currency", [
+    { currency_id: 5, title: "Dinar", ...kwd, decimal_place: 2 }, { currency_id: 1, title: "Dinar", ...kwd },
+  ]).items.map((i) => i.legacyId), ["1"]);
+});
+
 test("bank payment details map the legacy transfer codes; bad details are reported and the bank still imports", () => {
   const { items, issues } = mapLegacyCatalogue("bank", [
     { bank_id: 1, bank_name: "One", bank_swift_code: "nbokkwkw", bank_iban_code: "nbok", bank_code_abk: 12, bank_transfer_type: "LCL", deleted: 0 },

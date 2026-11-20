@@ -51,13 +51,14 @@ export type CatalogueIssueRule =
   | "catalogue.bankDetailsInvalid" // bank imported, payment details not
   | "catalogue.currencyDetailsInvalid" // currency imported, details not
   | "catalogue.areaDetailsSkipped" // area imported; details need a governorate legacy does not hold
-  | "catalogue.merged"; // same kind and name as another active row; mapped to that row's item
+  | "catalogue.merged" // same kind and name as another active row; mapped to that row's item
+  | "catalogue.nameConflict"; // same kind and name as another active row, but a different code or typed details; not imported
 
 export interface CatalogueIssue {
   readonly rule: CatalogueIssueRule;
   readonly legacyTable: LegacyCatalogueTable;
   readonly legacyId: string;
-  /** For catalogue.merged: the legacy id of the row it was merged into. */
+  /** For catalogue.merged and catalogue.nameConflict: the legacy id of the row it shares a name with. */
   readonly target?: string;
   /** For field rules: the legacy column at fault. */
   readonly field?: string;
@@ -160,10 +161,21 @@ function bankDetails(row: Row): CatalogueImportItem["bank"] | "invalid" {
   return { swiftCode, ibanBankCode, abkCode, transferType };
 }
 
+type TypedContent = Pick<CatalogueImportItem, "code" | "currency" | "bank">;
+
+/** Same code and the same typed details; details present on one side only are not the same. */
+export function sameTypedContent(a: TypedContent, b: TypedContent): boolean {
+  const same = (x: object | null, y: object | null) => x === null || y === null ? x === y
+    : JSON.stringify(Object.entries(x).sort()) === JSON.stringify(Object.entries(y).sort());
+  return a.code === b.code && same(a.currency, b.currency) && same(a.bank, b.bank);
+}
+
 /**
  * Maps one legacy catalogue table. Active rows of one kind whose names normalize the same are
- * merged: the lowest legacy id becomes the item and the others map to it (reported). Deleted
- * rows are imported as deleted items and never merged.
+ * merged: the lowest legacy id becomes the item and the others map to it (reported). A same-name
+ * row whose code or typed details (currency, bank) differ from that row's, including details one
+ * holds and the other lacks, is not merged and not imported: it is reported as a name conflict to
+ * reconcile by hand. Deleted rows are imported as deleted items and never merged.
  */
 export function mapLegacyCatalogue(table: LegacyCatalogueTable, rows: readonly Row[]): CatalogueMapping {
   const columns = COLUMNS[table];
@@ -220,16 +232,19 @@ export function mapLegacyCatalogue(table: LegacyCatalogueTable, rows: readonly R
   }
 
   drafts.sort((a, b) => compareLegacyIds(a.legacyId, b.legacyId));
-  const firstActive = new Map<string, string>();
+  const firstActive = new Map<string, (typeof drafts)[number]>();
   const items: CatalogueImportItem[] = [];
   for (const draft of drafts) {
     let mergedInto: string | null = null;
     if (draft.status === "active") {
       const target = firstActive.get(draft.normalizedName);
-      if (target === undefined) firstActive.set(draft.normalizedName, draft.legacyId);
-      else {
-        mergedInto = target;
-        issues.push({ rule: "catalogue.merged", legacyTable: table, legacyId: draft.legacyId, target });
+      if (target === undefined) firstActive.set(draft.normalizedName, draft);
+      else if (!sameTypedContent(target, draft)) {
+        issues.push({ rule: "catalogue.nameConflict", legacyTable: table, legacyId: draft.legacyId, target: target.legacyId });
+        continue;
+      } else {
+        mergedInto = target.legacyId;
+        issues.push({ rule: "catalogue.merged", legacyTable: table, legacyId: draft.legacyId, target: target.legacyId });
       }
     }
     const item = { ...draft, mergedInto };

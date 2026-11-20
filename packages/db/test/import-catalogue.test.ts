@@ -96,6 +96,53 @@ test("an active platform item with the same kind and name is adopted, not duplic
   assert.equal((await store.idMap("country")).get(run), existing);
 });
 
+test("a same-name currency or bank is adopted only with the same code and details; otherwise it is a name conflict, again on a re-run", async () => {
+  const run = tag();
+  const item = async (type: string, name: string, code: string | null) => {
+    const id = randomUUID();
+    await pool.query(
+      `INSERT INTO catalogue_items (id, catalogue_type, name, normalized_name, code, status, created_by_ref, updated_by_ref, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 'active', $6, $6, now(), now())`, [id, type, name, name.toLowerCase(), code, ACTOR]);
+    return id;
+  };
+  const currencyDetails = (id: string, symbol: string, places: number) => pool.query(
+    `INSERT INTO catalogue_currency_details (currency_id, symbol, decimal_places, created_by_ref, updated_by_ref, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $4, now(), now())`, [id, symbol, places, ACTOR]);
+  const same = await item("currency", `${run} Same`, "KWD"); await currencyDetails(same, "KD", 3);
+  await item("currency", `${run} Bare`, "KWD"); // no typed details
+  const coded = await item("currency", `${run} Coded`, "BHD"); await currencyDetails(coded, "KD", 3);
+  const bank = await item("bank", `${run} Bank`, null);
+  await pool.query(
+    `INSERT INTO catalogue_bank_payment_details (bank_id, swift_code, iban_bank_code, abk_code, transfer_type, created_by_ref, updated_by_ref, created_at, updated_at)
+     VALUES ($1, 'NBOKKWKW', 'NBOK', '12', 'local', $2, $2, now(), now())`, [bank, ACTOR]);
+
+  const kwd = { code: "KWD", currency_symbol: "KD", decimal_place: 3, status: 1 };
+  const currencies = mapLegacyCatalogue("currency", [
+    { currency_id: `${run}1`, title: `${run} Same`, ...kwd },
+    { currency_id: `${run}2`, title: `${run} Bare`, ...kwd },
+    { currency_id: `${run}3`, title: `${run} Coded`, ...kwd },
+  ]).items;
+  const banks = mapLegacyCatalogue("bank", [
+    { bank_id: `${run}`, bank_name: `${run} Bank`, bank_swift_code: "NBOKKWKW", bank_iban_code: "NBOK", bank_code_abk: 12, bank_transfer_type: "SWF", deleted: 0 },
+  ]).items;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await store.importItems(currencies, NOW);
+    assert.equal(result.adopted, attempt === 0 ? 1 : 0);
+    assert.equal(result.unchanged, attempt === 0 ? 0 : 1);
+    assert.equal(result.inserted, 0);
+    assert.deepEqual(result.refused, [
+      { legacyTable: "currency", legacyId: `${run}2`, code: "name_conflict" },
+      { legacyTable: "currency", legacyId: `${run}3`, code: "name_conflict" },
+    ]);
+    assert.deepEqual((await store.importItems(banks, NOW)).refused, [{ legacyTable: "bank", legacyId: run, code: "name_conflict" }]);
+  }
+  const map = await store.idMap("currency");
+  assert.equal(map.get(`${run}1`), same);
+  assert.equal(map.has(`${run}2`) || map.has(`${run}3`) || (await store.idMap("bank")).has(run), false);
+  const { rows } = await pool.query("SELECT symbol, decimal_places FROM catalogue_currency_details WHERE currency_id = $1", [coded]);
+  assert.deepEqual({ ...rows[0] }, { symbol: "KD", decimal_places: 3 });
+});
+
 test("bank and currency details are written with the item", async () => {
   const run = tag();
   const banks = mapLegacyCatalogue("bank", [

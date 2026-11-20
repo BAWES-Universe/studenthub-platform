@@ -6,7 +6,10 @@
 // - a row merged into another legacy row maps to that row's item, so it needs that row
 //   imported first (the importer sends rows in legacy id order, and the target sorts first);
 // - an active legacy row whose kind and normalized name match an active platform item that
-//   no legacy row holds yet is adopted: the map points at that item and nothing is written;
+//   no legacy row holds yet is adopted: the map points at that item and nothing is written.
+//   A currency or bank is adopted only when its code and typed details are the same as the
+//   item's (details on one side only are not the same); otherwise it is refused as
+//   name_conflict, nothing is written or mapped, and a re-run refuses it again;
 // - each row runs in its own savepoint and one batch is one transaction.
 // Results carry legacy ids, rule codes and digests only.
 
@@ -30,7 +33,7 @@ export interface CatalogueImportRow {
   readonly digest: string;
 }
 
-export type CatalogueImportRefusal = "no_merge_target" | "invalid";
+export type CatalogueImportRefusal = "no_merge_target" | "name_conflict" | "invalid";
 
 export interface CatalogueImportResult {
   readonly inserted: number;
@@ -142,6 +145,10 @@ export class PostgresCatalogueImportStore {
             AND NOT EXISTS (SELECT 1 FROM legacy_id_maps m WHERE m.entity = $3 AND m.platform_id = i.id::text)`,
         [row.type, row.normalizedName, ENTITY]);
       if (existing[0]) {
+        if (!(await this.#sameTypedContent(client, row, existing[0].id))) {
+          tally.refused.push({ legacyTable: row.legacyTable, legacyId: row.legacyId, code: "name_conflict" });
+          return;
+        }
         await this.#map(client, row, existing[0].id, "adopted");
         tally.adopted++;
         return;
@@ -169,6 +176,25 @@ export class PostgresCatalogueImportStore {
     }
     await this.#map(client, row, id, "imported");
     tally.inserted++;
+  }
+
+  /** For a currency or bank: the item's code and typed details equal the row's. Other kinds carry none. */
+  async #sameTypedContent(client: PoolClient, row: CatalogueImportRow, itemId: string): Promise<boolean> {
+    if (row.type !== "currency" && row.type !== "bank") return true;
+    const { rows: [item] } = await client.query<{ code: string | null; symbol: string | null; decimal_places: number | null;
+      swift_code: string | null; iban_bank_code: string | null; abk_code: string | null; transfer_type: string | null }>(
+      `SELECT i.code, c.symbol, c.decimal_places, b.swift_code, b.iban_bank_code, b.abk_code, b.transfer_type
+         FROM catalogue_items i
+         LEFT JOIN catalogue_currency_details c ON c.currency_id = i.id
+         LEFT JOIN catalogue_bank_payment_details b ON b.bank_id = i.id
+        WHERE i.id = $1`, [itemId]);
+    if (!item || (item.code ?? null) !== row.code) return false;
+    const currency = item.symbol === null ? null : { symbol: item.symbol, decimalPlaces: Number(item.decimal_places) };
+    const bank = item.swift_code === null ? null
+      : { swiftCode: item.swift_code, ibanBankCode: item.iban_bank_code, abkCode: item.abk_code, transferType: item.transfer_type };
+    const same = (x: object | null, y: object | null) => x === null || y === null ? x === y
+      : JSON.stringify(Object.entries(x).sort()) === JSON.stringify(Object.entries(y).sort());
+    return same(currency, row.currency) && same(bank, row.bank);
   }
 
   async #map(client: PoolClient, row: CatalogueImportRow, platformId: string, outcome: "imported" | "merged" | "adopted"): Promise<void> {
