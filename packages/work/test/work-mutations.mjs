@@ -90,7 +90,7 @@ const mutations = [
   ["manual times are Kuwait time", ":00+03:00`", ":00Z`", "WORK_PAGES", pages, pagesSuite],
   ["screen script needs the nonce", "`; script-src 'nonce-${nonce}'`", "`; script-src 'unsafe-inline'`", "WORK_PAGES", pages, pagesSuite],
   ["someone else's appeal gets the staff view, not the person's", "if (detail.appeal.personId !== person) {", "if (false) {", "WORK_PAGES", pages, pagesSuite],
-  ["review posts return to their own screen", "(value === place.base || value.startsWith(`${place.base}?`))", "true", "WORK_REVIEW", review, reviewSuite],
+  ["review posts return to their own screen", "if (value === place.base || value.startsWith(`${place.base}?`))", "if (true)", "WORK_REVIEW", review, reviewSuite],
   ["review refuses cross-origin posts", 'if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {', 'if (false) {', "WORK_REVIEW", review, reviewSuite],
   ["open hours can't be selected", 'const box = open ? "" :', 'const box = false ? "" :', "WORK_REVIEW", review, reviewSuite],
   ["only staff correct hours from the logs", "const correct = staff && !open ?", "const correct = !open ?", "WORK_REVIEW", review, reviewSuite],
@@ -113,7 +113,7 @@ const mutations = [
   ["correction lookup is staff only", "if (!isIsoDate(date) || !isUuid(sessionId) || !(await this.#scope.isOperatorStaff(actorId)))", "if (!isIsoDate(date) || !isUuid(sessionId))", "W5_VIEWS", views, decisionSuite],
   ["an entry page needs the store in the actor's scope", "if (!(await this.#scope.covers(actorId, orgId, store)))", "if (false)", "W5_VIEWS", views, decisionSuite],
   ["an entry page reads that store only", "storeIds: [store], sessionIds: [sessionId.toLowerCase()],", "sessionIds: [sessionId.toLowerCase()],", "W5_VIEWS", views, decisionSuite],
-  ["a decision goes back only to an entry on this store's page", "return back.startsWith(`${place.base}/${id}?`) && url.pathname", "return url.pathname", "M-03 entry page: a decision goes back", review, reviewSuite],
+  ["a decision goes back only to an entry on this store's page", "return back.startsWith(`${place.base}/${id}?`) && url.pathname", "return url.pathname", "WORK_REVIEW M-03 entry page: a decision goes back", review, reviewSuite],
   ["private note hidden", "note: d.notePublic ? d.note : null", "note: d.note", "W5_PRIVATE", views, decisionSuite],
   ["stable paging cursor", "next: sessions.length > filter.limit && last ? { workDate: last.workDate, id: last.id } : null", "next: null", "W5_PAGING", views, decisionSuite],
 ];
