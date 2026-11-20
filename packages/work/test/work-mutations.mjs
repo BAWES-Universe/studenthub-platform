@@ -114,6 +114,10 @@ const mutations = [
   ["an entry page needs the store in the actor's scope", "if (!(await this.#scope.covers(actorId, orgId, store)))", "if (false)", "W5_VIEWS", views, decisionSuite],
   ["an entry page reads that store only", "storeIds: [store], sessionIds: [sessionId.toLowerCase()],", "sessionIds: [sessionId.toLowerCase()],", "W5_VIEWS", views, decisionSuite],
   ["a decision goes back only to an entry on this store's page", "return back.startsWith(`${place.base}/${id}?`) && url.pathname", "return url.pathname", "WORK_REVIEW M-03 entry page: a decision goes back", review, reviewSuite],
+  ["only staff over the company remove hours", "if (!session || !(await scope.isStaff(actorId, session.orgId)))\n                return { kind: \"refused\", code: \"session_not_found\" };\n            if (session.deletedAt !== null)\n                return { kind: \"refused\", code: \"already_deleted\" };", "if (!session)\n                return { kind: \"refused\", code: \"session_not_found\" };\n            if (session.deletedAt !== null)\n                return { kind: \"refused\", code: \"already_deleted\" };", "W6_REMOVE staff remove", appeals, appealSuite],
+  ["a corrected session can't be removed", "if (await tx.isReplaced(session.id))", "if (false)", "W6_REMOVE a corrected session", appeals, appealSuite],
+  ["a stale correction stays out", "if (session.correctsSessionId !== null && (await tx.isReplaced(session.correctsSessionId)))", "if (false)", "W6_REMOVE a corrected session", appeals, appealSuite],
+  ["removal is on the staff logs only", "const remove = staff && !open ?", "const remove = !open ?", "WORK_REVIEW staff remove closed hours", review, reviewSuite],
   ["private note hidden", "note: d.notePublic ? d.note : null", "note: d.note", "W5_PRIVATE", views, decisionSuite],
   ["stable paging cursor", "next: sessions.length > filter.limit && last ? { workDate: last.workDate, id: last.id } : null", "next: null", "W5_PAGING", views, decisionSuite],
 ];

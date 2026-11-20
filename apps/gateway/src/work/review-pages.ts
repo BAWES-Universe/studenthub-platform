@@ -7,7 +7,8 @@
 // - M-04 Assignment changes, /store/:storeId/assignment-changes: ask for a
 //   person at the store, follow and cancel those requests;
 // - A-12 Work logs, /work/logs: staff see every company's hours (a person
-//   filter, the same decisions) and open a correction from each closed entry.
+//   filter, the same decisions) and open a correction from each closed entry, or
+//   remove it (/work/logs/remove, with a reason; put back from the notice).
 // Same pattern as the person's screens (pages.ts): server-rendered forms, the
 // actor from the session cookie, same-origin form posts, no script. Every read
 // and write goes through the work services, which re-check the actor's grants
@@ -29,7 +30,7 @@ import { teamCopy } from "./team-copy.js";
 // A decision note (2,000 characters) and reason (255) at up to 12 encoded bytes each, plus up to 200 session ids.
 const FORM_LIMIT = 64 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const LOGS = /^\/work\/logs(\/decide)?$/;
+const LOGS = /^\/work\/logs(?:\/(decide|remove|restore))?$/;
 const ORG = /^\/organization\/([A-Za-z0-9._:-]{1,256})\/work(\/decide)?$/;
 const STORE = /^\/store\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(time-approvals|assignment-changes)(?:\/(decide|request|cancel))?$/;
 const STORE_SESSION = /^\/store\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/time-approvals\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
@@ -151,9 +152,11 @@ function reviewRow(s: WorkSession, d: EmployerDecisionView | null, people: Reado
   const undo = !open && s.status !== "pending" ? `<button type="submit" name="undo" value="${s.id}">${esc(t.review.undo)}</button>` : "";
   // Staff correct closed hours (D-WK3); the correction replaces this entry in every total.
   const correct = staff && !open ? `<p><a href="/work/corrections/new?session=${s.id}&amp;date=${s.workDate}">${esc(t.review.correct)}</a></p>` : "";
+  // Staff take closed hours out of every total (legacy delete-session), with a reason, on its own page.
+  const remove = staff && !open ? `<p><a href="/work/logs/remove?session=${s.id}&amp;date=${s.workDate}">${esc(t.review.remove)}</a></p>` : "";
   // A store's queue opens each entry on its own page (M-03).
   const details = place.storeId ? `<p><a href="${esc(sessionHref(place, s))}">${esc(t.review.details)}</a></p>` : "";
-  return `<li class="p-card" id="s-${s.id}"><h3>${box} ${esc(who)}</h3><p>${esc(time)} · ${esc(stores.get(s.storeId) ?? t.review.store)}</p><p><strong>${esc(status)}</strong>${marks.length ? ` · ${esc(marks.join(t.review.marksJoin))}` : ""}</p>${placesText(s, c)}${s.note ? `<p>${esc(t.review.theirNote(s.note))}</p>` : ""}${decisionText(d, people, c)}${undo}${correct}${details}</li>`;
+  return `<li class="p-card" id="s-${s.id}"><h3>${box} ${esc(who)}</h3><p>${esc(time)} · ${esc(stores.get(s.storeId) ?? t.review.store)}</p><p><strong>${esc(status)}</strong>${marks.length ? ` · ${esc(marks.join(t.review.marksJoin))}` : ""}</p>${placesText(s, c)}${s.note ? `<p>${esc(t.review.theirNote(s.note))}</p>` : ""}${decisionText(d, people, c)}${undo}${correct}${remove}${details}</li>`;
 }
 
 /**
@@ -175,7 +178,8 @@ function exportForm(place: Place, f: Filters, c: WorkCopy): string {
 }
 
 /** O-11 and M-03; `undefined` when the actor may not see this company or store. */
-export async function renderReview(services: WorkHttpServices, actor: string, place: Place, f: Filters, message: { kind: "success" | "error"; text: string } | null, c: WorkCopy = WORK_COPY.en): Promise<string | undefined> {
+export async function renderReview(services: WorkHttpServices, actor: string, place: Place, f: Filters, message: { kind: "success" | "error"; text: string } | null, c: WorkCopy = WORK_COPY.en,
+  putBack: string | null = null): Promise<string | undefined> {
   const t = teamCopy(c);
   const page = place.staff
     ? await services.views.all(actor, f.range, { ...(f.personId ? { personId: f.personId } : {}), ...(f.status ? { status: f.status } : {}), after: f.after })
@@ -202,7 +206,9 @@ export async function renderReview(services: WorkHttpServices, actor: string, pl
   // The form's default button comes first and is disabled, so Enter in the reason field submits nothing (not a row's undo, not an approval).
   const decide = `<form method="post" action="${place.base}/decide" class="p-card"><button type="submit" disabled hidden aria-hidden="true" tabindex="-1"></button><input type="hidden" name="back" value="${esc(back)}">${totals}${list}${fields}</form>`;
   const more = page.next ? `<nav class="p-card"><a href="${place.base}?${esc(filterQuery(f, place, page.next))}">${esc(t.review.more)}</a></nav>` : "";
-  return reviewShell(place.title, `${message ? notice(message.kind, message.text) : ""}${storeNav(place, "time-approvals", c)}${filterForm}${exportForm(place, f, c)}${decide}${more}`, c);
+  // After a removal, the staff member can put the hours straight back.
+  const restore = putBack && place.staff ? `<form method="post" action="/work/logs/restore" class="p-card"><input type="hidden" name="sessionId" value="${putBack}"><button type="submit">${esc(t.review.putBack)}</button></form>` : "";
+  return reviewShell(place.title, `${message ? notice(message.kind, message.text) : ""}${restore}${storeNav(place, "time-approvals", c)}${filterForm}${exportForm(place, f, c)}${decide}${more}`, c);
 }
 
 /** M-03, one entry: `undefined` when it isn't at this store, isn't on that day, or isn't the actor's to review. */
@@ -234,6 +240,23 @@ export async function renderStoreSession(services: WorkHttpServices, actor: stri
 <button type="submit" name="action" value="approve">${esc(t.review.approveOne)}</button> <button type="submit" name="action" value="reject">${esc(t.review.rejectOne)}</button></fieldset>${s.status !== "pending" ? `<button type="submit" name="undo" value="${s.id}">${esc(t.review.undo)}</button>` : ""}</form>`;
   const nav = `<nav class="p-card"><a href="${place.base}">${esc(t.review.backToQueue)}</a></nav>`;
   return reviewShell(t.review.sessionTitle(who), `${message ? notice(message.kind, message.text) : ""}${storeNav(place, "time-approvals", c)}${entry}${decide}${nav}`, c);
+}
+
+/** A-12 removal: one closed entry and the reason form; `undefined` when it isn't in force or isn't the staff member's to look after. */
+export async function renderRemoval(services: WorkHttpServices, actor: string, date: string, sessionId: string, message: string | null, c: WorkCopy = WORK_COPY.en): Promise<string | undefined> {
+  const row = await services.views.staffSession(actor, date, sessionId);
+  if (!row || row.session.endedAt === null) return undefined;
+  const t = teamCopy(c), s = row.session;
+  const [people, stores] = await Promise.all([
+    services.personNames ? services.personNames([s.personId]) : new Map<string, string>(),
+    services.storeNames ? services.storeNames([s.storeId]) : new Map<string, string>(),
+  ]);
+  const time = t.common.timeRange(c.longDate(s.workDate), c.clock(s.startedAt), c.clock(s.endedAt!), c.duration(s.durationSeconds ?? 0));
+  const entry = `<section class="p-card"><h2>${esc(people.get(s.personId) ?? t.review.aPerson)}</h2><p>${esc(time)} · ${esc(stores.get(s.storeId) ?? t.review.store)}</p><p><strong>${esc(c.status[s.status] ?? s.status)}</strong></p></section>`;
+  const form = `<form method="post" action="/work/logs/remove" class="p-card"><p>${esc(t.review.removeIntro)}</p><input type="hidden" name="sessionId" value="${s.id}"><input type="hidden" name="date" value="${s.workDate}">
+<label>${esc(t.review.removeReason)}<input name="reason" required maxlength="255"></label><button type="submit">${esc(t.review.removeButton)}</button></form>`;
+  const nav = `<nav class="p-card"><a href="/work/logs">${esc(t.review.backToLogs)}</a></nav>`;
+  return reviewShell(t.review.removeTitle, `${message ? notice("error", message) : ""}${entry}${form}${nav}`, c);
 }
 
 /** M-04; `undefined` when the actor may not see this store's requests. */
@@ -276,7 +299,7 @@ export async function handleReviewPages(req: IncomingMessage, res: ServerRespons
     let place: Place, screen: "review" | "changes", action: string | undefined;
     if (logs) {
       place = { orgId: "", staff: true, base: "/work/logs", title: t.review.titles.logs };
-      screen = "review"; action = logs[1] ? "decide" : undefined;
+      screen = "review"; action = logs[1];
     } else if (org) {
       place = { orgId: org[1]!, base: `/organization/${org[1]!}/work`, title: t.review.titles.company };
       screen = "review"; action = org[2] ? "decide" : undefined;
@@ -292,6 +315,10 @@ export async function handleReviewPages(req: IncomingMessage, res: ServerRespons
     const done = url.searchParams.get("done");
     const doneMessage = done && t.review.done[done] ? { kind: "success" as const, text: t.review.done[done]! } : null;
 
+    if (action === "remove" || action === "restore") {
+      await removal(req, res, services, actor, origin, url, action, c, now);
+      return true;
+    }
     if (entry) {
       if (req.method !== "GET") { req.resume(); write(res, ...plain(405, ...t.common.notAllowed, c)); return true; }
       const html = await renderStoreSession(services, actor, place as Place & { storeId: string }, url.searchParams.get("date") ?? "", entry[2]!, doneMessage, c);
@@ -306,7 +333,8 @@ export async function handleReviewPages(req: IncomingMessage, res: ServerRespons
       }
       const f = readFilters(url.searchParams, place, now());
       if (!f) { write(res, ...plain(400, ...t.review.badFilters, c)); return true; }
-      const html = await renderReview(services, actor, place, f, doneMessage, c);
+      const putBack = done === "removed" && UUID.test(url.searchParams.get("restore") ?? "") ? url.searchParams.get("restore")!.toLowerCase() : null;
+      const html = await renderReview(services, actor, place, f, doneMessage, c, putBack);
       if (html) write(res, 200, html); else denied();
       return true;
     }
@@ -355,4 +383,34 @@ export async function handleReviewPages(req: IncomingMessage, res: ServerRespons
     if (!res.headersSent) write(res, ...(tooLarge(error, c) ?? plain(503, ...t.common.unavailable, c))); else res.destroy();
   }
   return true;
+}
+
+/** /work/logs/remove (GET the form, POST it) and /work/logs/restore (POST, from the notice after a removal). */
+async function removal(req: IncomingMessage, res: ServerResponse, services: WorkHttpServices, actor: string, origin: string, url: URL, action: "remove" | "restore",
+  c: WorkCopy, now: () => Date): Promise<void> {
+  const t = teamCopy(c);
+  const status = (code: string) => code === "invalid_input" ? 400 : code === "session_not_found" ? 404 : 409;
+  if (req.method === "GET" && action === "remove") {
+    const html = await renderRemoval(services, actor, url.searchParams.get("date") ?? "", url.searchParams.get("session") ?? "", null, c);
+    if (html) write(res, 200, html); else write(res, ...plain(404, ...t.review.staffSessionNotFound, c));
+    return;
+  }
+  if (req.method !== "POST") { req.resume(); write(res, ...plain(405, ...t.common.notAllowed, c)); return; }
+  if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); write(res, ...plain(403, ...t.common.refused, c)); return; }
+  const fields = await readFields(req, action === "remove" ? ["sessionId", "date", "reason"] : ["sessionId"]);
+  const sessionId = fields ? one(fields, "sessionId") ?? "" : "";
+  if (action === "remove") {
+    const result = fields ? await services.appeals.remove(actor, sessionId, one(fields, "reason")) : { kind: "refused" as const, code: "invalid_input" as const };
+    if (result.kind !== "refused") { redirect(res, `/work/logs?done=removed&restore=${result.sessionId}`); return; }
+    const text = t.review.removeRefusals[result.code] ?? t.review.removeRefusals.invalid_input!;
+    // The form again with the reason, while the entry is still there to remove; else a plain page.
+    const html = fields ? await renderRemoval(services, actor, one(fields, "date") ?? "", sessionId, text, c) : undefined;
+    if (html) write(res, status(result.code), html); else write(res, ...plain(status(result.code), t.review.staffSessionNotFound[0], text, c));
+    return;
+  }
+  const result = fields ? await services.appeals.restore(actor, sessionId) : { kind: "refused" as const, code: "invalid_input" as const };
+  if (result.kind !== "refused") { redirect(res, "/work/logs?done=restored"); return; }
+  const place: Place = { orgId: "", staff: true, base: "/work/logs", title: t.review.titles.logs };
+  const html = await renderReview(services, actor, place, readFilters(new URLSearchParams(), place, now())!, { kind: "error", text: t.review.removeRefusals[result.code] ?? t.review.removeRefusals.invalid_input! }, c);
+  if (html) write(res, status(result.code), html); else write(res, ...plain(403, ...t.review.denied, c));
 }
