@@ -138,9 +138,11 @@ export class PostgresCatalogueImportStore {
       if (!target[0]) { tally.refused.push({ legacyTable: row.legacyTable, legacyId: row.legacyId, code: "no_merge_target" }); return; }
       // A merge joins an active row to the active item of the same kind and name. The target's
       // item, as stored, may no longer be that (a digest conflict keeps a deleted or renamed item),
-      // so the alias is held by its legacy id rather than mapped to it.
+      // so the alias is held by its legacy id rather than mapped to it. The row stays locked until
+      // the batch commits, so an app rename, delete or details write cannot slip in before the map.
       const { rows: [item] } = await client.query<{ id: string }>(
-        `SELECT id::text FROM catalogue_items WHERE id::text = $1 AND status = 'active' AND catalogue_type = $2 AND normalized_name = $3`,
+        `SELECT id::text FROM catalogue_items WHERE id::text = $1 AND status = 'active' AND catalogue_type = $2 AND normalized_name = $3
+          FOR UPDATE`,
         [target[0].platform_id, row.type, row.normalizedName]);
       if (!item) { tally.refused.push({ legacyTable: row.legacyTable, legacyId: row.legacyId, code: "name_conflict" }); return; }
       // The target's item may hold older content than this batch's target row (a digest conflict
@@ -158,7 +160,8 @@ export class PostgresCatalogueImportStore {
       const { rows: existing } = await client.query<{ id: string }>(
         `SELECT i.id::text FROM catalogue_items i
           WHERE i.catalogue_type = $1 AND i.normalized_name = $2 AND i.status = 'active'
-            AND NOT EXISTS (SELECT 1 FROM legacy_id_maps m WHERE m.entity = $3 AND m.platform_id = i.id::text)`,
+            AND NOT EXISTS (SELECT 1 FROM legacy_id_maps m WHERE m.entity = $3 AND m.platform_id = i.id::text)
+          FOR UPDATE OF i`,
         [row.type, row.normalizedName, ENTITY]);
       if (existing[0]) {
         if (!(await this.#sameTypedContent(client, row, existing[0].id))) {
@@ -194,20 +197,22 @@ export class PostgresCatalogueImportStore {
     tally.inserted++;
   }
 
-  /** For a currency or bank: the item's code and typed details equal the row's. Other kinds carry none. */
+  /**
+   * For a currency or bank: the item's code and typed details equal the row's. Other kinds carry
+   * none. The caller holds the item row FOR UPDATE, which also blocks a details insert (its
+   * foreign-key check needs a key-share lock on the item); existing details rows are read FOR
+   * SHARE, so a concurrent details update waits for this batch to commit.
+   */
   async #sameTypedContent(client: PoolClient, row: CatalogueImportRow, itemId: string): Promise<boolean> {
     if (row.type !== "currency" && row.type !== "bank") return true;
-    const { rows: [item] } = await client.query<{ code: string | null; symbol: string | null; decimal_places: number | null;
-      swift_code: string | null; iban_bank_code: string | null; abk_code: string | null; transfer_type: string | null }>(
-      `SELECT i.code, c.symbol, c.decimal_places, b.swift_code, b.iban_bank_code, b.abk_code, b.transfer_type
-         FROM catalogue_items i
-         LEFT JOIN catalogue_currency_details c ON c.currency_id = i.id
-         LEFT JOIN catalogue_bank_payment_details b ON b.bank_id = i.id
-        WHERE i.id = $1`, [itemId]);
+    const { rows: [item] } = await client.query<{ code: string | null }>("SELECT code FROM catalogue_items WHERE id::text = $1", [itemId]);
     if (!item || (item.code ?? null) !== row.code) return false;
-    const currency = item.symbol === null ? null : { symbol: item.symbol, decimalPlaces: Number(item.decimal_places) };
-    const bank = item.swift_code === null ? null
-      : { swiftCode: item.swift_code, ibanBankCode: item.iban_bank_code, abkCode: item.abk_code, transferType: item.transfer_type };
+    const { rows: [c] } = await client.query<{ symbol: string; decimal_places: number }>(
+      "SELECT symbol, decimal_places FROM catalogue_currency_details WHERE currency_id::text = $1 FOR SHARE", [itemId]);
+    const { rows: [b] } = await client.query<{ swift_code: string; iban_bank_code: string; abk_code: string; transfer_type: string }>(
+      "SELECT swift_code, iban_bank_code, abk_code, transfer_type FROM catalogue_bank_payment_details WHERE bank_id::text = $1 FOR SHARE", [itemId]);
+    const currency = c ? { symbol: c.symbol, decimalPlaces: Number(c.decimal_places) } : null;
+    const bank = b ? { swiftCode: b.swift_code, ibanBankCode: b.iban_bank_code, abkCode: b.abk_code, transferType: b.transfer_type } : null;
     const same = (x: object | null, y: object | null) => x === null || y === null ? x === y
       : JSON.stringify(Object.entries(x).sort()) === JSON.stringify(Object.entries(y).sort());
     return same(currency, row.currency) && same(bank, row.bank);
