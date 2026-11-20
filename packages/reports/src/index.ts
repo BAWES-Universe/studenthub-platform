@@ -9,3 +9,4 @@ export * from "./public-photo.js";
 export * from "./certificates.js";
 export * from "./certificate-pdf.js";
 export * from "./statistics.js";
+export * from "./firing-hit-map.js";
