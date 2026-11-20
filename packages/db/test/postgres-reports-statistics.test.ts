@@ -191,12 +191,19 @@ test("REPORTS_STATISTICS_PG firings: placements ended per top-level company and 
   await place(parent, "2026-01-01", null); // still running
   await place(gone, "2026-01-01", "2026-11-02");
   await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [gone, `test:${randomUUID()}`]);
+  // A deleted sub-company's ended placements stay in its live parent's history, as legacy's parent_company_id count keeps them.
+  const goneSub = `st-gone-sub-${randomUUID()}`, goneSubStore = randomUUID();
+  await authz.upsertOrganization(createOrganization({ id: goneSub, name: "Closed Branch Co", parentOrgId: parent }));
+  await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Mall',$3,$3)", [goneSubStore, goneSub, "a".repeat(64)]);
+  stores.set(goneSub, goneSubStore);
+  await place(goneSub, "2026-01-01", "2026-11-04");
+  await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [goneSub, `test:${randomUUID()}`]);
   const scoped = new PostgresStatisticsStore({ pool, operatorOrgIds: [op] });
   const months = ["2026-11", "2026-10", "2026-09", "2026-08", "2026-07", "2026-06", "2026-05", "2026-04", "2026-03", "2026-02", "2026-01", "2025-12"];
   const { companies, counts } = await scoped.firings(DAY, months);
-  const ours = new Set([op, parent, sub, gone]);
+  const ours = new Set([op, parent, sub, gone, goneSub]);
   assert.deepEqual(companies.filter(c => ours.has(c.orgId)), [{ orgId: parent, name: "Parent Co" }], "not the operator, not the sub-company, not a deleted company");
-  assert.deepEqual(counts.filter(c => ours.has(c.orgId)).sort((a, b) => a.month.localeCompare(b.month)), [{ orgId: parent, month: "2026-01", total: 1 }, { orgId: parent, month: "2026-11", total: 2 }]);
+  assert.deepEqual(counts.filter(c => ours.has(c.orgId)).sort((a, b) => a.month.localeCompare(b.month)), [{ orgId: parent, month: "2026-01", total: 1 }, { orgId: parent, month: "2026-11", total: 3 }]);
   await assert.rejects(scoped.firings(DAY, []), RangeError);
   await assert.rejects(scoped.firings(DAY, ["2026-1"]), RangeError);
 });

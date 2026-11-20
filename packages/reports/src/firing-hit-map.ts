@@ -16,6 +16,8 @@ import { kuwaitDay } from "./id-cards.js";
  *   has one level.
  * - Legacy counted every placement whose end date fell in the month, including end dates later
  *   in the current month. Here a placement counts once its end date has come (up to today in Kuwait).
+ * - Deleted top-level companies are left out. A deleted sub-company's placements still count under its
+ *   live parent, as legacy counted them by `parent_company_id`.
  * - The spike email (`FiringHitmap::firingSpike`) is not in this slice.
  */
 export interface FiringCompany { readonly orgId: string; readonly name: string }

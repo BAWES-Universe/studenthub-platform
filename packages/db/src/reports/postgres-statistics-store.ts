@@ -43,7 +43,8 @@ const OVERVIEW = `SELECT
   (SELECT count(*)::int FROM ${KWD_REQUESTS} WHERE (r.status = 'filled' OR (r.status = 'closed' AND r.close_reason = 'fulfilled')) AND COALESCE(t.value, 'KWD') = 'KWD') AS "requestsDelivered"`;
 
 // $1 operator org ids, $2 first day of the oldest month, $3 the Asia/Kuwait day. Each organization rolls up to its
-// top-level company: the ancestor whose parent is an operator organization (or none). Deleted companies are left out.
+// top-level company: the ancestor whose parent is an operator organization (or none). Deleted top-level companies are
+// left out; a deleted sub-company's placements stay in its live parent's history, as legacy counts them by parent_company_id.
 const TOP = `WITH RECURSIVE up(org_id, at, parent, depth) AS (
     SELECT id, id, parent_org_id, 0 FROM organizations WHERE NOT (id = ANY($1::text[]))
     UNION ALL SELECT up.org_id, o.id, o.parent_org_id, up.depth + 1 FROM up JOIN organizations o ON o.id = up.parent
