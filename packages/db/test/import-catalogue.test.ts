@@ -143,6 +143,141 @@ test("a same-name currency or bank is adopted only with the same code and detail
   assert.deepEqual({ ...rows[0] }, { symbol: "KD", decimal_places: 3 });
 });
 
+test("a later same-name alias is checked against the item, not just the target id: a changed target holds it, a matching one maps", async () => {
+  const run = tag();
+  const row = (id: string, places: number) => ({ currency_id: id, title: `${run} Dinar`, code: "KWD", currency_symbol: "KD", decimal_place: places, status: 1 });
+  const first = mapLegacyCatalogue("currency", [row(`${run}1`, 3)]).items;
+  assert.equal((await store.importItems(first, NOW)).inserted, 1);
+  const item = (await store.idMap("currency")).get(`${run}1`);
+
+  // Legacy now says 2 places for the first row and for a new same-name row.
+  const changed = mapLegacyCatalogue("currency", [row(`${run}1`, 2), row(`${run}2`, 2)]).items;
+  assert.equal(changed[1]!.mergedInto, `${run}1`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await store.importItems(changed, NOW);
+    assert.equal(result.conflicts.length, 1);
+    assert.deepEqual(result.refused, [{ legacyTable: "currency", legacyId: `${run}2`, code: "name_conflict" }]);
+    assert.equal(result.merged, 0);
+  }
+  assert.equal((await store.idMap("currency")).has(`${run}2`), false);
+
+  // Control: a later alias that matches the item still maps to it.
+  const matching = mapLegacyCatalogue("currency", [row(`${run}1`, 3), row(`${run}3`, 3)]).items;
+  const result = await store.importItems(matching, NOW);
+  assert.deepEqual({ merged: result.merged, unchanged: result.unchanged, refused: result.refused }, { merged: 1, unchanged: 1, refused: [] });
+  assert.equal((await store.idMap("currency")).get(`${run}3`), item);
+});
+
+test("a later alias maps only to an active item of the same kind and name: a deleted target holds it, an active one maps", async () => {
+  const run = tag();
+  const bank = (id: string, deleted: number) => ({ bank_id: id, bank_name: `${run} Bank`, bank_swift_code: "NBOKKWKW", bank_iban_code: "NBOK", bank_code_abk: 12, bank_transfer_type: "LCL", deleted });
+  // Snapshot 1: A is deleted in legacy and imports as a deleted item.
+  assert.equal((await store.importItems(mapLegacyCatalogue("bank", [bank(`${run}1`, 1)]).items, NOW)).inserted, 1);
+  const deletedItem = (await store.idMap("bank")).get(`${run}1`);
+  // Snapshot 2: A is reactivated and a new same-name B arrives with the same code and details.
+  const reactivated = mapLegacyCatalogue("bank", [bank(`${run}1`, 0), bank(`${run}2`, 0)]).items;
+  assert.equal(reactivated[1]!.mergedInto, `${run}1`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await store.importItems(reactivated, NOW);
+    assert.equal(result.conflicts.length, 1);
+    assert.deepEqual(result.refused, [{ legacyTable: "bank", legacyId: `${run}2`, code: "name_conflict" }]);
+  }
+  assert.equal((await store.idMap("bank")).has(`${run}2`), false);
+  const { rows } = await pool.query("SELECT status FROM catalogue_items WHERE id = $1", [deletedItem]);
+  assert.equal(rows[0].status, "deleted");
+
+  // Control: when the target was active from the start, a matching alias maps to it.
+  const active = mapLegacyCatalogue("bank", [bank(`${run}3`, 0)]).items.map((i) => ({ ...i, name: `${run} Other`, normalizedName: `${run} other` }));
+  await store.importItems(active, NOW);
+  const alias = { ...mapLegacyCatalogue("bank", [bank(`${run}4`, 0)]).items[0]!, name: `${run} Other`, normalizedName: `${run} other`, mergedInto: `${run}3` };
+  assert.equal((await store.importItems([alias], NOW)).merged, 1);
+  assert.equal((await store.idMap("bank")).get(`${run}4`), (await store.idMap("bank")).get(`${run}3`));
+});
+
+/** Holds `change` open in its own transaction while an alias import starts, so the import must wait for it. */
+async function aliasDuringOpenChange(change: (c: pg.PoolClient) => Promise<unknown>, alias: () => Promise<unknown>) {
+  const writer = await pool.connect();
+  try {
+    await writer.query("BEGIN");
+    await change(writer);
+    const pending = alias();
+    // Commit only once the import is waiting on the writer's lock, and fail if it never waits.
+    let waited = false;
+    for (let i = 0; i < 200 && !waited; i++) {
+      const { rows } = await pool.query(
+        "SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND $1::int = ANY(pg_blocking_pids(pid))", [(writer as unknown as { processID: number }).processID]);
+      waited = rows.length > 0;
+      if (!waited) await new Promise((r) => setTimeout(r, 25));
+    }
+    await writer.query("COMMIT");
+    assert.ok(waited, "the import did not wait for the open write");
+    return await pending;
+  } finally {
+    writer.release();
+  }
+}
+
+test("an alias waits for an open rename or delete of its target item and is held if the item no longer matches", async () => {
+  const run = tag();
+  const rows = (ids: string[]) => mapLegacyCatalogue("university", ids.map((id) => ({ university_id: id, university_name_en: `${run} Uni`, deleted: 0 }))).items;
+  await store.importItems(rows([`${run}1`]), NOW);
+  const item = (await store.idMap("university")).get(`${run}1`);
+  const result = await aliasDuringOpenChange(
+    (c) => c.query("UPDATE catalogue_items SET name = $2, normalized_name = $3 WHERE id = $1", [item, `${run} Renamed`, `${run} renamed`]),
+    () => store.importItems(rows([`${run}1`, `${run}2`]), NOW)) as Awaited<ReturnType<typeof store.importItems>>;
+  assert.deepEqual(result.refused, [{ legacyTable: "university", legacyId: `${run}2`, code: "name_conflict" }]);
+  assert.equal((await store.idMap("university")).has(`${run}2`), false);
+
+  const other = tag();
+  const more = (ids: string[]) => mapLegacyCatalogue("university", ids.map((id) => ({ university_id: id, university_name_en: `${other} Uni`, deleted: 0 }))).items;
+  await store.importItems(more([`${other}1`]), NOW);
+  const target = (await store.idMap("university")).get(`${other}1`);
+  const deleted = await aliasDuringOpenChange(
+    (c) => c.query("UPDATE catalogue_items SET status = 'deleted', deleted_at = now() WHERE id = $1", [target]),
+    () => store.importItems(more([`${other}1`, `${other}2`]), NOW)) as Awaited<ReturnType<typeof store.importItems>>;
+  assert.deepEqual(deleted.refused, [{ legacyTable: "university", legacyId: `${other}2`, code: "name_conflict" }]);
+});
+
+test("control: an alias that waits for an open write which keeps its target eligible still maps after the commit", async () => {
+  const run = tag();
+  const rows = (ids: string[]) => mapLegacyCatalogue("currency", ids.map((id) => ({ currency_id: id, title: `${run} Dinar`, code: "KWD", currency_symbol: "KD", decimal_place: 3, status: 1 }))).items;
+  await store.importItems(rows([`${run}1`]), NOW);
+  const item = (await store.idMap("currency")).get(`${run}1`);
+  const result = await aliasDuringOpenChange(
+    async (c) => {
+      await c.query("UPDATE catalogue_items SET updated_at = now() WHERE id = $1", [item]);
+      await c.query("UPDATE catalogue_currency_details SET updated_at = now() WHERE currency_id = $1", [item]);
+    },
+    () => store.importItems(rows([`${run}1`, `${run}2`]), NOW)) as Awaited<ReturnType<typeof store.importItems>>;
+  assert.deepEqual({ merged: result.merged, refused: result.refused }, { merged: 1, refused: [] });
+  assert.equal((await store.idMap("currency")).get(`${run}2`), item);
+});
+
+test("an alias waits for an open details write on its target currency and compares the committed details", async () => {
+  const run = tag();
+  // Both rows carry invalid details, so the target item is imported without any.
+  const rows = (ids: string[]) => mapLegacyCatalogue("currency", ids.map((id) => ({ currency_id: id, title: `${run} Dinar`, code: "KWD", currency_symbol: "", decimal_place: 3, status: 1 }))).items;
+  await store.importItems(rows([`${run}1`]), NOW);
+  const item = (await store.idMap("currency")).get(`${run}1`);
+  const result = await aliasDuringOpenChange(
+    (c) => c.query(
+      `INSERT INTO catalogue_currency_details (currency_id, symbol, decimal_places, created_by_ref, updated_by_ref, created_at, updated_at)
+       VALUES ($1, 'KD', 3, $2, $2, now(), now())`, [item, ACTOR]),
+    () => store.importItems(rows([`${run}1`, `${run}2`]), NOW)) as Awaited<ReturnType<typeof store.importItems>>;
+  assert.deepEqual(result.refused, [{ legacyTable: "currency", legacyId: `${run}2`, code: "name_conflict" }]);
+  assert.equal((await store.idMap("currency")).has(`${run}2`), false);
+
+  // The same for an update of details the target already has.
+  const other = tag();
+  const valid = (ids: string[]) => mapLegacyCatalogue("currency", ids.map((id) => ({ currency_id: id, title: `${other} Dinar`, code: "KWD", currency_symbol: "KD", decimal_place: 3, status: 1 }))).items;
+  await store.importItems(valid([`${other}1`]), NOW);
+  const target = (await store.idMap("currency")).get(`${other}1`);
+  const updated = await aliasDuringOpenChange(
+    (c) => c.query("UPDATE catalogue_currency_details SET decimal_places = 2 WHERE currency_id = $1", [target]),
+    () => store.importItems(valid([`${other}1`, `${other}2`]), NOW)) as Awaited<ReturnType<typeof store.importItems>>;
+  assert.deepEqual(updated.refused, [{ legacyTable: "currency", legacyId: `${other}2`, code: "name_conflict" }]);
+});
+
 test("bank and currency details are written with the item", async () => {
   const run = tag();
   const banks = mapLegacyCatalogue("bank", [
