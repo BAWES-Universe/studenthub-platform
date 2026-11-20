@@ -31,7 +31,9 @@ export type OrganizationIssueRule =
   | "company.missingParent" // parent id not among the imported companies; not imported (nor its children)
   | "company.parentCycle" // parent chain loops; not imported
   | "company.tooDeep" // a sub-company's own sub-company; the platform allows one level; not imported
-  | "company.badValue"; // one snapshot column unusable; imported with that column null
+  | "company.badValue" // one snapshot column unusable; imported with that column null
+  | "company.archived" // deleted in legacy (legacy CompanyQuery hides it); not imported
+  | "company.archivedParent"; // parent deleted in legacy; not imported (nor its children)
 
 export interface OrganizationIssue {
   readonly rule: OrganizationIssueRule;
@@ -123,11 +125,15 @@ export function mapLegacyCompanies(rows: readonly Row[]): { readonly organizatio
   const drafts = new Map<string, Omit<OrganizationImportRow, "digest">>();
   // Every parsed id, kept or not: a repeat of an id whose first row was refused is still a duplicate.
   const seenIds = new Set<string>();
+  const archived = new Set<string>();
   for (const row of rows) {
     const id = legacyId(row.company_id);
     if (id === null) { issues.push({ rule: "company.badId", legacyId: "?" }); continue; }
     if (seenIds.has(id)) { issues.push({ rule: "company.duplicateId", legacyId: id }); continue; }
     seenIds.add(id);
+    // Legacy reads companies through CompanyQuery, which hides deleted = 1: an archived company is
+    // an exclusion, reported, and its children are held with company.archivedParent.
+    if (row.deleted === true || row.deleted === 1 || row.deleted === "1") { archived.add(id); issues.push({ rule: "company.archived", legacyId: id }); continue; }
     const parent = parentId(row.parent_company_id);
     if (parent === "bad") { issues.push({ rule: "company.missingParent", legacyId: id, field: "parent_company_id" }); continue; }
     const snapshot = {} as Record<CompanySnapshotColumn, string | number | boolean | null>;
@@ -151,12 +157,12 @@ export function mapLegacyCompanies(rows: readonly Row[]): { readonly organizatio
       if (seen.includes(at)) { outcome = "company.parentCycle"; break; }
       seen.push(at);
       const draft = drafts.get(at);
-      if (draft === undefined) { outcome = "company.missingParent"; break; }
+      if (draft === undefined) { outcome = archived.has(at) ? "company.archivedParent" : "company.missingParent"; break; }
       at = draft.parentLegacyId;
     }
     if (outcome === "root" && seen.length > 2) outcome = "company.tooDeep";
     if (outcome === "root") depth.set(id, seen.length - 1);
-    else issues.push(outcome === "company.missingParent"
+    else issues.push(outcome === "company.missingParent" || outcome === "company.archivedParent"
       ? { rule: outcome, legacyId: id, field: "parent_company_id" } : { rule: outcome, legacyId: id });
   }
   const byId = (a: string, b: string) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);

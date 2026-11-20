@@ -102,6 +102,24 @@ test("a repeated id is a duplicate even when its first row was refused, and the 
   ]);
 });
 
+test("archived companies are excluded and reported; their children are held as archivedParent", () => {
+  const { organizations, issues } = mapLegacyCompanies([
+    company(1, { deleted: 1 }),
+    company(2, { parent_company_id: 1 }),
+    company(3, { deleted: "1" }),
+    company(4, { deleted: 0 }),
+    company(5, { parent_company_id: 4, deleted: true }),
+    company(6, { parent_company_id: 4 }),
+  ]);
+  assert.deepEqual(organizations.map((o) => o.legacyId), ["4", "6"]);
+  assert.deepEqual(issues.map((i) => [i.rule, i.legacyId]), [
+    ["company.archived", "1"],
+    ["company.archived", "3"],
+    ["company.archived", "5"],
+    ["company.archivedParent", "2"],
+  ]);
+});
+
 test("the digest is stable and follows the row", () => {
   const a = mapLegacyCompanies([company(1)]).organizations[0]!.digest;
   assert.equal(mapLegacyCompanies([company(1)]).organizations[0]!.digest, a);

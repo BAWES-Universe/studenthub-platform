@@ -113,3 +113,35 @@ test("two import runs at once are serialized: one inserts, the other finds the c
     await other.close();
   }
 });
+
+test("a child is held when its mapped parent is no longer top level as stored; a top-level parent still takes children", async () => {
+  const a = ids(), b = a + 1, c = a + 2, d = a + 3;
+  // Snapshot 1: B is a sub-company of A.
+  const first = mapLegacyCompanies([company(a), company(b, { parent_company_id: a })]).organizations;
+  assert.equal((await store.importOrganizations(first)).inserted, 2);
+  // Snapshot 2: legacy moved B to top level and added C under B, and D under A.
+  const second = mapLegacyCompanies([company(a), company(b), company(c, { parent_company_id: b }), company(d, { parent_company_id: a })]).organizations;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await store.importOrganizations(second);
+    assert.deepEqual(result.conflicts.map((x) => x.legacyId), [String(b)]);
+    assert.deepEqual(result.refused, [{ legacyId: String(c), code: "parent_not_top_level" }]);
+  }
+  const map = await store.idMap();
+  assert.equal(map.has(String(c)), false);
+  const { rows } = await pool.query("SELECT parent_org_id FROM organizations WHERE id = $1", [map.get(String(b))]);
+  assert.equal(rows[0].parent_org_id, map.get(String(a)), "B keeps its imported parent");
+  // Control: D under the top-level A is imported.
+  const { rows: dRows } = await pool.query("SELECT parent_org_id FROM organizations WHERE id = $1", [map.get(String(d))]);
+  assert.equal(dRows[0].parent_org_id, map.get(String(a)));
+});
+
+test("a company archived in a later snapshot is reported by the mapper, and its imported organization stays", async () => {
+  const a = ids();
+  await store.importOrganizations(mapLegacyCompanies([company(a)]).organizations);
+  const later = mapLegacyCompanies([company(a, { deleted: 1 })]);
+  assert.deepEqual(later.organizations, []);
+  assert.deepEqual(later.issues, [{ rule: "company.archived", legacyId: String(a) }]);
+  const report = await store.reconcile([String(a)], [String(a)]);
+  assert.equal(report.imported, 1);
+  assert.equal((await store.idMap()).has(String(a)), true);
+});

@@ -49,6 +49,8 @@ Two active rows of one kind whose names normalize the same become one item: the 
 
 - A top-level company hangs under the operator organization in the registry, as an approved registration does; its snapshot parent is null. A sub-company's parent is its legacy parent through the id map, so parents import first.
 - The platform allows one level of sub-company. A deeper company, one whose parent is missing, and one in a parent loop are reported and left out with their descendants.
+- A company deleted in legacy (`deleted = 1`, which legacy's CompanyQuery hides) is an exclusion, reported as `company.archived`; its children are held as `company.archivedParent`. A company archived after it was imported keeps its organization and is reported, never deleted by the importer.
+- At write time a child maps only under a parent whose stored organization is still top level, in the registry and in its snapshot; otherwise it is held as `parent_not_top_level` (a digest conflict can keep a parent legacy has since moved).
 - The snapshot holds the columns the organization projections read (`company_name`, common names, descriptions, website, email, `currency_code`, approved to hire, hourly rate, bonus commission, status override) and the three activity counters, each normalized to what the package parses: blank text is null, decimals lose padding zeros, the currency code is upper case, and the status override is 0, 9 or 10. An unusable value becomes null and is reported by column; the company still imports.
 - Stamped with the organizations package's parity revision, as `snapshotRow` requires.
 

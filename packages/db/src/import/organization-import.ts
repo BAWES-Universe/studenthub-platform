@@ -3,7 +3,8 @@
 // re-run is unchanged, a changed row is a conflict carrying both digests and is never
 // overwritten, each row runs in its own savepoint, one batch is one transaction, and batches
 // are serialized with a transaction advisory lock.
-// Rows arrive parents first; a row whose parent is not in the id map is refused.
+// Rows arrive parents first; a row whose parent is not in the id map is refused, and so is one
+// whose parent's stored organization is no longer top level (one sub-company level only).
 // Results carry legacy ids, refusal codes and digests only.
 
 import { randomUUID } from "node:crypto";
@@ -18,7 +19,7 @@ export interface OrganizationImportRow {
   readonly digest: string;
 }
 
-export type OrganizationImportRefusal = "no_parent" | "invalid";
+export type OrganizationImportRefusal = "no_parent" | "parent_not_top_level" | "invalid";
 
 export interface OrganizationImportResult {
   readonly inserted: number;
@@ -71,7 +72,7 @@ export class PostgresOrganizationImportStore {
           const outcome = await this.#importOne(client, row);
           if (outcome === "inserted") inserted++;
           else if (outcome === "unchanged") unchanged++;
-          else if (outcome === "no_parent") refused.push({ legacyId: row.legacyId, code: "no_parent" });
+          else if (outcome === "no_parent" || outcome === "parent_not_top_level") refused.push({ legacyId: row.legacyId, code: outcome });
           else conflicts.push({ legacyId: row.legacyId, existingDigest: outcome.existing, incomingDigest: row.digest });
           await client.query("RELEASE SAVEPOINT organization_import");
         } catch (error) {
@@ -91,7 +92,7 @@ export class PostgresOrganizationImportStore {
     }
   }
 
-  async #importOne(client: PoolClient, row: OrganizationImportRow): Promise<"inserted" | "unchanged" | "no_parent" | { existing: string }> {
+  async #importOne(client: PoolClient, row: OrganizationImportRow): Promise<"inserted" | "unchanged" | "no_parent" | "parent_not_top_level" | { existing: string }> {
     const { rows: held } = await client.query<{ digest: string }>(
       "SELECT digest FROM legacy_id_maps WHERE legacy_table = $1 AND legacy_id = $2 FOR UPDATE", [LEGACY_TABLE, row.legacyId]);
     if (held[0]) return held[0].digest === row.digest ? "unchanged" : { existing: held[0].digest };
@@ -100,6 +101,15 @@ export class PostgresOrganizationImportStore {
       const { rows: parent } = await client.query<{ platform_id: string }>(
         "SELECT platform_id FROM legacy_id_maps WHERE legacy_table = $1 AND legacy_id = $2", [LEGACY_TABLE, row.parentLegacyId]);
       if (!parent[0]) return "no_parent";
+      // The platform allows one level of sub-company. The parent's mapped organization must still
+      // be top level, in the registry (under the operator org) and in its snapshot, as stored now:
+      // a digest conflict can keep a parent that legacy has since moved. Both rows stay locked
+      // until the batch commits.
+      const { rows: [topLevel] } = await client.query<{ id: string }>(
+        `SELECT o.id FROM organizations o JOIN legacy_company_snapshots s ON s.org_id = o.id
+          WHERE o.id = $1 AND o.parent_org_id = $2 AND s.parent_org_id IS NULL
+          FOR SHARE OF o, s`, [parent[0].platform_id, this.operatorOrgId]);
+      if (!topLevel) return "parent_not_top_level";
       parentOrgId = parent[0].platform_id;
     }
     const orgId = randomUUID();
