@@ -23,7 +23,8 @@ function services(calls: unknown[][]): WorkHttpServices {
     appeals: { raise: record("raise", { kind: "raised", appeal: { id: ID } }), mine: record("appealsMine", []), list: record("list", { kind: "refused", code: "forbidden" }),
       detail: record("detail", { kind: "refused", code: "appeal_not_found" }), postUpdate: record("postUpdate", { kind: "posted", update: {} }),
       setStatus: record("setStatus", { kind: "refused", code: "invalid_input" }), addMissing: record("addMissing", { kind: "refused", code: "overlaps_session" }),
-      markRead: record("markRead", { kind: "read" }), correct: record("correct", { kind: "refused", code: "session_replaced" }) },
+      markRead: record("markRead", { kind: "read" }), correct: record("correct", { kind: "refused", code: "session_replaced" }),
+      remove: record("remove", { kind: "refused", code: "already_deleted" }), restore: record("restore", { kind: "restored", sessionId: ID }) },
   } as unknown as WorkHttpServices;
 }
 
@@ -141,4 +142,9 @@ test("WORK_HTTP appeals and corrections pass ids from the path, never from the b
   assert.equal((await post(`/api/work/appeals/${ID}/missing-time`, { startedAt: "a", endedAt: "b", reason: "r" }, {}, calls)).status, 409);
   assert.equal((await post("/api/work/appeals", { sessionId: ID, reason: "late" }, {}, calls)).status, 200);
   assert.deepEqual(calls.map((c) => c[0]), ["postUpdate", "markRead", "addMissing", "raise"]);
+  // Staff remove and restore a session named by the path; a removal carries only its reason.
+  const removal: unknown[][] = [];
+  assert.equal((await post(`/api/work/sessions/${ID}/remove`, { reason: "logged twice", sessionId: "other" }, {}, removal)).status, 409);
+  assert.equal((await post(`/api/work/sessions/${ID}/restore`, {}, {}, removal)).status, 200);
+  assert.deepEqual(removal, [["remove", "person", ID, "logged twice"], ["restore", "person", ID]]);
 });

@@ -544,6 +544,34 @@ test("W6_PG appeals: own session only, staff answer, the appellant marks read, r
   assert.deepEqual((await events(appealId)).map((e) => e.kind), ["appeal.raised", "appeal.updated", "appeal.status_changed"]);
 });
 
+test("W6_PG staff remove a closed session from totals and pay with who and why, and restore it", async () => {
+  const w = await world();
+  const now = { value: new Date("2026-11-19T06:00:00Z") };
+  const [a, b] = await workedDay(w, now);
+  const appeals = appealService(now);
+  const before = (await sessions.dayTotals({ personId: w.person, from: "2026-11-18", to: "2026-11-18" }))[0];
+  assert.deepEqual(await appeals.remove(w.owner, a, "dup"), { kind: "refused", code: "session_not_found" });
+  assert.deepEqual(await appeals.remove(w.staff, a, "logged twice"), { kind: "removed", sessionId: a });
+  const row = (await pool.query("SELECT deleted_at IS NOT NULL AS gone, deleted_by, delete_reason FROM work_sessions WHERE id = $1", [a])).rows[0];
+  assert.deepEqual(row, { gone: true, deleted_by: w.staff, delete_reason: "logged twice" });
+  const after = (await sessions.dayTotals({ personId: w.person, from: "2026-11-18", to: "2026-11-18" }))[0];
+  assert.equal((before?.pendingSeconds ?? 0) - (after?.pendingSeconds ?? 0), 7200, "the removed 2h leaves the day's totals");
+  const pay = new PostgresWorkPayableSource(pool);
+  const [chain] = await pay.lineage([a]);
+  assert.equal(chain?.inForce ?? null, null, "pay sees the chain as discarded");
+  assert.deepEqual(await appeals.remove(w.staff, a, "again"), { kind: "refused", code: "already_deleted" });
+  // A session in its place overlaps it, so it can't come back until that one goes.
+  const manual = await services(now).session.addManual(w.person, { startedAt: "2026-11-18T07:00:00Z", endedAt: "2026-11-18T08:00:00Z" });
+  assert.equal(manual.kind, "added", JSON.stringify(manual));
+  assert.deepEqual(await appeals.restore(w.staff, a), { kind: "refused", code: "overlaps_session" });
+  assert.equal((await appeals.remove(w.staff, manual.kind === "added" ? manual.session.id : "", "wrong entry")).kind, "removed");
+  assert.deepEqual(await appeals.restore(w.staff, a), { kind: "restored", sessionId: a });
+  assert.deepEqual((await pool.query("SELECT deleted_at, deleted_by, delete_reason FROM work_sessions WHERE id = $1", [a])).rows[0], { deleted_at: null, deleted_by: null, delete_reason: null });
+  assert.deepEqual(await appeals.restore(w.staff, b), { kind: "refused", code: "not_deleted" });
+  const removal = (await events(a)).filter((e) => e.kind === "session.deleted" || e.kind === "session.restored");
+  assert.deepEqual(removal.map((e) => [e.kind, e.actor_principal_id, e.detail.reason ?? null]), [["session.deleted", w.staff, "logged twice"], ["session.restored", w.staff, null]]);
+});
+
 test("W6_PG a staff correction replaces the original in totals and in pay input; the original row is kept", async () => {
   const w = await world();
   const now = { value: new Date("2026-11-19T06:00:00Z") };

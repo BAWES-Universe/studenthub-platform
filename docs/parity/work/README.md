@@ -111,7 +111,7 @@ their employer and to pay.
 |---|---|
 | Person | `GET /api/work/today`, `POST /api/work/sessions/{start,stop,discard,manual}`, `GET /api/work/hours/mine`, `GET /api/work/placements/mine`, `POST /api/work/appeals`, `GET /api/work/appeals/mine`, `GET /api/work/appeals/:id`, `POST /api/work/appeal-updates/:id/read` |
 | Company, store manager | `GET /api/work/hours/company/:orgId`, `GET /api/work/placements/company/:orgId`, `GET /api/work/placement-requests/company/:orgId`, `POST /api/work/placement-requests`, `POST /api/work/decisions/{sessions,days}`, `POST /api/work/sessions/:id/undo` |
-| Staff | `POST /api/work/placements`, `POST /api/work/placements/:id/end-date`, `POST /api/work/placement-requests/:id/{accept,reject,cancel}`, `GET /api/work/hours/all`, `GET /api/work/appeals`, `POST /api/work/appeals/:id/{updates,status,missing-time}`, `POST /api/work/sessions/:id/correct` |
+| Staff | `POST /api/work/placements`, `POST /api/work/placements/:id/end-date`, `POST /api/work/placement-requests/:id/{accept,reject,cancel}`, `GET /api/work/hours/all`, `GET /api/work/appeals`, `POST /api/work/appeals/:id/{updates,status,missing-time}`, `POST /api/work/sessions/:id/{correct,remove,restore}` |
 
 Stop and discard name the open session they act on (`sessionId`, the id `today` returned). If another tab or device has
 since stopped it and started a new one, they answer 409 `session_changed` and change nothing. A placement's end date
@@ -177,7 +177,7 @@ corrections (A-12, A-13), `/me/work` with its stand-up card, Staff time and the 
 | O-11 Work review | `/organization/:orgId/work` | The company's hours by date range, status and store, with names; approve or reject the selected sessions with a reason, note (private unless shared) and rating; undo a decision. Filters survive the post |
 | M-03 Time approvals | `/store/:storeId/time-approvals`, `/:sessionId?date=` | The same queue for one store, waiting hours by default; only that store's manager (or the company, or staff). Each entry opens on its own page (where it started and stopped, its note, the decision and who made it), and is approved, rejected or undone there. An entry at another store, on another day, or out of the viewer's scope is one "not found" answer |
 | M-04 Assignment changes | `/store/:storeId/assignment-changes` | Ask StudentHub for a person at the store, follow the answer, cancel a waiting request |
-| A-12 Work | `/work/assignments?org=`, `/work/logs` | Staff: a company's placements and waiting requests; place, end or extend, accept or decline. Work logs across companies with a person filter, the same decisions, and "Correct these hours" |
+| A-12 Work | `/work/assignments?org=`, `/work/logs`, `/work/logs/remove` | Staff: a company's placements and waiting requests; place, end or extend, accept or decline. Work logs across companies with a person filter, the same decisions, "Correct these hours" and "Remove these hours" (a reason is required; the notice after a removal puts the hours back) |
 | A-13 Appeals and corrections | `/work/appeals?as=staff`, `/work/appeals/:id`, `/work/corrections` | Staff list appeals by status; on an appeal, reply, set the status, correct the appealed hours or add missing time (Kuwait time, reason required); correct any closed session from the logs |
 
 | Legacy | Here | Why |
@@ -276,8 +276,42 @@ from `/exports/<id>` under the kind's name. Files are CSV; legacy wrote Excel.
   exists; while it is absent a day not ended adds nothing. The release matrix gates cutover on
   wiring it (the cutover lane's STAFF-HOURS-FALLBACK step). The button is on `/work/staff-time`.
 
+## Legacy parity sweep (legacy @ 55119d3, 2026-11-20)
+
+Every action of legacy's work and attendance controllers, and where it lives here. Legacy paths
+are relative to each app's `modules/v1/controllers`.
+
+| App | Legacy action | Here |
+|---|---|---|
+| candidate | `AccountController` start-working-time, stop-working-time, discard | Track (`/work/track`), `POST /api/work/sessions/{start,stop,discard}` |
+| candidate | `CandidateWorkingHour` add-hour (manual log) | "Forgot to clock in?" on Track, `POST /api/work/sessions/manual` |
+| candidate | `CandidateWorkingHour` list-date, working-dates, date-detail, hours-detail, list-hour, stats | History (`/work/history[/:date]`), `GET /api/work/hours/mine` (one month by day, totals by status) |
+| candidate | `CandidateWorkingHour` appeal, appeal-detail, mark-read-appeal-update | Appeals (`/work/appeals[/:id]`), `POST /api/work/appeals`, `POST /api/work/appeal-updates/:id/read` |
+| candidate | `Candidate` work-history, work-history-detail | Placement (`/work/assignment[/:id]`), `GET /api/work/placements/mine` |
+| candidate | `Candidate` appreciation-certificate | Reports lane certificates (`apps/gateway/src/reports/certificates-http.ts`) |
+| company | `CandidateWorkingHour` list-date, date-detail, list-hour, stats | Work review (O-11), `GET /api/work/hours/company/:orgId` |
+| company | `CandidateWorkLogFeedback` save, bulk-save, undo | O-11 and M-03 decisions, `POST /api/work/decisions/{sessions,days}`, `POST /api/work/sessions/:id/undo` |
+| manager | `CandidateWorkingHour` list-date, list-hour | Time approvals (M-03, and each entry's page) |
+| staff | `CandidateWorkingHour` list-date, list-hour, hours-detail | Work logs (A-12), `GET /api/work/hours/all` |
+| staff | `CandidateWorkingHour` add-hour | "Correct these hours" and "Add missing time" (A-13), `POST /api/work/sessions/:id/correct`, `POST /api/work/appeals/:id/missing-time` |
+| staff | `CandidateWorkingHour` delete-session | "Remove these hours" on the work logs, `POST /api/work/sessions/:id/remove` (added in this sweep; legacy hard-deleted, here a soft delete with who and why, and `restore` puts it back) |
+| staff | `CandidateWorkingHour` delete-day | Remove each of the day's entries. Legacy deleted the `candidate_working_date` row only, leaving its hours; day totals here are a view over the sessions, so there is no day row to remove |
+| staff | `CandidateWorkingHour` appeal-list, appeal-detail, appeal-update, appeal-update-status | A-13 (`/work/appeals?as=staff`, `/work/appeals/:id`), `GET /api/work/appeals`, `POST /api/work/appeals/:id/{updates,status}` |
+| admin | `CandidateWorkingHour` list-date, list-hour | Work logs (A-12) |
+| admin | `CandidateWorkHistory` list | A-12 placements, `PlacementService.history` |
+| admin | `StaffWorkSession` list, list-inactive, view, download-list-excel | Staff time (`/work/staff-time`) and the staff hours export (P-1) |
+| status | `CandidateWorkHistory` list | Not ported: it listed every placement with no sign-in. Placements are shown only to the person, their company and staff |
+
+Legacy had no reply from the person on an appeal: the candidate app could raise an appeal, read it
+and mark staff replies read, and only staff posted updates (`appeal-update`). The contract's
+`appeals.self.comment` is therefore not added; the person replies by raising a new appeal once the
+open one is resolved, as in legacy.
+
+A removed session leaves every total and pay (`lineage` reads its chain as discarded). The
+person's feed keeps the decision notice it had; removal itself sends nothing, like a correction
+(D-WK3).
+
 ## Not yet here
 
 - The rest of A-14 (staff leave and expenses); it depends on the pay lane's settlement (P1, F4).
-- A reply box for the person on an appeal: the contract lists `appeals.self.comment`, but W-6 lets only staff post updates, as legacy did. This is to be confirmed with the legacy rules before it is added.
 - The importer run itself (cutover lane, M-5).
