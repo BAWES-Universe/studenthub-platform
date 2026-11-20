@@ -35,4 +35,13 @@ The evidence is Hermes's read-only usage check against live legacy prod, window 
 
 - U-05 (`/messages` conversations): "chat" is named on the card.
 - U-06 (`/support` tickets): "tickets" is named on the card.
-- A-21 (`/service`: conversations, tickets, voicemail records): conversations (chat) and tickets are named on the card. **Voicemail records are not named.** Khalid needs to confirm whether voicemail records are in scope before A-21 can be waived on this record alone.
+- A-21 (`/service`: conversations, tickets, voicemail records): conversations (chat) and tickets are named on the card. Voicemail records were not on it, so they are covered by the addendum below.
+
+## Addendum 2026-11-20: voicemail
+
+- **Who:** Khalid (user_01JGxPLv6XjfT1DYhtZsSnqn)
+- **When:** 2026-11-20 23:36:18Z
+- **Where:** project chat message `cmsg_017YX3Qwzqx67eG7uwzZ7o6wE5cdsu1MVHxdKkeEJXAdd4`, answering whether voicemail records (the legacy Yeastar voicemail, INT-23) are dropped from the staff service inbox.
+- **His words, verbatim:** "Yeah we don’t use yaestar anymore."
+
+With this addendum, A-21 (conversations, tickets and voicemail records) is covered: chat and tickets by the 10-04 card, voicemail by this message.
