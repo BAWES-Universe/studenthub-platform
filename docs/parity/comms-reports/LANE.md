@@ -17,7 +17,7 @@ Slices, in order (one PR each):
 4. **Morning summary** (P-2, SHU-211 keeps the email): the twelve legacy counters as a registry. Almost every counter reads assignments, requests or transfers, so each counter is switched on when its lane lands; a counter whose source is missing shows "not available", never 0. Digest via the outbox to staff with the morning-report permission at send time, Asia/Kuwait day boundary.
 5. **Revenue roll-ups** (P-4): after the pay lane's transfer types land; legacy's live formula, recomputed not incremented, reconciliation report.
 6. **Statistics** (P-3): after recruit, work and pay land.
-7. **Remaining exports onto P-1**: each lane's export button uses the service; this lane checks all seven legacy exports are covered.
+7. **Remaining exports onto P-1**: each lane's export button uses the service; this lane checks all seven legacy exports are covered. The check is `apps/gateway/test/legacy-exports-coverage.test.ts`: each of the 17 legacy downloads is mapped to a kind the gateway offers, owed by a named lane, or dropped with evidence, and every offered kind must name the download it replaces.
 8. **Webhooks** only if rows exist.
 
 Dependencies: slices 1 and 2 need nothing from other lanes. Slice 3 needs the access lane's reset flow. Slices 4 to 7 consume recruit, work and pay data.
@@ -93,6 +93,8 @@ kinds without touching the routes.
   same as for CSV. A pay kind still needs its `EXPORT_HTTP_KINDS` entry for the request route.
 
 ## S8: ID cards and certificates (2026-11-19)
+
+**Done 2026-11-20:** #555, #558, #559, #560 and #561 are merged. The optional ID card list export (item 5) is skipped: legacy's Excel was never reachable in production (orchestrator agreed 11-20).
 
 Handed to this lane by the orchestrator; no other lane holds it. Spec: project contract
 `queue15-16-people-staff.md`, "S8 ID cards and certificates". Legacy: staff
