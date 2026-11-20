@@ -144,3 +144,25 @@ test("REPORTS_STATISTICS_PG hiring: every assignment is a hire; retained once it
   assert.deepEqual({ hired: now.hired - before.hired, retained: now.retained - before.retained, invitations: now.invitations - before.invitations }, { hired: 5, retained: 2, invitations: 3 });
   assert.equal((await store.hiring("2027-06-02")).retained - laterBefore.retained, 4, "later on, the one still running and the one that ended in 2027 count too");
 });
+
+test("REPORTS_STATISTICS_PG overview: profiles, assignments running on the day, pipeline cards, and sent and delivered KWD requests", async () => {
+  const before = await store.overviewCounts(DAY);
+  const diff = async () => { const now = await store.overviewCounts(DAY); return Object.fromEntries(Object.entries(now).map(([k, v]) => [k, v - before[k]!])); };
+  const person = await principal("profile");
+  await pool.query("INSERT INTO person_profiles(principal_id) VALUES($1)", [person]);
+  await assign("2026-11-01", null); await assign("2026-11-20", "2026-11-20");
+  await assign("2026-11-21", null); await assign("2026-01-01", "2026-11-19"); // not running on the day
+  const open = await request("open");
+  await card(open, "suggested"); await card(open, "placed");
+  await request("draft"); await request("filling");
+  const filled = await request("filling"); await pool.query("UPDATE recruit_requests SET status='filled' WHERE id=$1", [filled]);
+  const fulfilled = await request("filling"); await pool.query("UPDATE recruit_requests SET status='closed', close_reason='fulfilled' WHERE id=$1", [fulfilled]);
+  await request("closed"); // cancelled
+  const usd = `st-usd2-${randomUUID()}`, usdStore = randomUUID();
+  await authz.upsertOrganization(createOrganization({ id: usd, name: usd }));
+  await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Mall',$3,$3)", [usdStore, usd, "a".repeat(64)]);
+  await pool.query("INSERT INTO organization_commercial_terms(org_id,field,value) VALUES($1,'currency_code','USD')", [usd]);
+  await request("open", usd, usdStore);
+  assert.deepEqual(await diff(), { candidates: 1, assigned: 2, suggested: 2, requests: 5, requestsDelivered: 2 });
+  await assert.rejects(store.overviewCounts("nope"), RangeError);
+});

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MORNING_SUMMARY_COUNTERS, STAFF_STATISTICS_COUNTERS, StatisticsService, percent, type StatisticsStore } from "../src/index.js";
+import { MORNING_SUMMARY_COUNTERS, STAFF_STATISTICS_COUNTERS, STATISTICS_OVERVIEW, StatisticsService, percent, type StatisticsStore } from "../src/index.js";
 
 const AVAILABLE = STAFF_STATISTICS_COUNTERS.filter(c => c.source.kind === "available").map(c => c.key);
 
-function rig(raw: Record<string, number>, hiring = { hired: 8, retained: 3, invitations: 40 }) {
+const OVERVIEW = { candidates: 100, assigned: 7, suggested: 20, requests: 9, requestsDelivered: 4 };
+function rig(raw: Record<string, number>, hiring = { hired: 8, retained: 3, invitations: 40 }, overview: Record<string, number> = OVERVIEW) {
   const calls: string[] = [];
-  const store: StatisticsStore = { async staffCounts(day) { calls.push(`counts ${day}`); return raw; }, async hiring(day) { calls.push(`hiring ${day}`); return hiring; } };
+  const store: StatisticsStore = { async staffCounts(day) { calls.push(`counts ${day}`); return raw; }, async hiring(day) { calls.push(`hiring ${day}`); return hiring; }, async overviewCounts() { return overview; } };
   const service = new StatisticsService(store, { isStaff: async id => id === "staff" }, () => new Date("2026-11-20T22:30:00Z"));
   return { service, calls };
 }
@@ -46,4 +47,26 @@ test("REPORTS_STATISTICS an available counter the store did not answer is an err
   assert.deepEqual([empty.hiring.retentionRatio, empty.hiring.recruitmentYield], [null, null]);
   assert.equal(percent(1, 3), 33.3);
   assert.equal(percent(12, 5), 240, "yield can pass 100 (assignments without an invitation)");
+});
+
+test("REPORTS_STATISTICS overview: store, company directory and staff time figures in legacy's order; a source not given or not answering is not available", async () => {
+  const store: StatisticsStore = { async staffCounts() { return full(); }, async hiring() { return { hired: 1, retained: 0, invitations: 2 }; }, async overviewCounts() { return OVERVIEW; } };
+  const isStaff = async (id: string) => id === "staff";
+  const now = () => new Date("2026-11-20T06:00:00Z");
+  const days: string[] = [];
+  const staffTime = { async operatorStaff() { return ["staff", "sara", "omar"]; }, async staffWithSessionOn(day: string) { days.push(day); return new Set(["sara", "left-last-week"]); } };
+  const companies = { async counts(viewer: string) { return viewer === "staff" ? { activeClients: 6, companies: 11 } : undefined; } };
+  const page = (await new StatisticsService(store, { isStaff }, now, { companies, staffTime }).page("staff"))!;
+  assert.deepEqual(page.overview.map(r => r.key), STATISTICS_OVERVIEW.map(f => f.key));
+  const value = (key: string) => page.overview.find(r => r.key === key)!;
+  assert.deepEqual([value("candidates").value, value("assigned").value, value("requestsDelivered").value], [100, 7, 4]);
+  assert.deepEqual([value("activeClients").value, value("companies").value], [6, 11]);
+  assert.deepEqual([value("staff").value, value("staffAttended").value], [3, 1], "someone no longer staff does not count as attending");
+  assert.deepEqual(days, ["2026-11-20"]);
+  for (const key of ["unapproved", "payableCandidates", "staffAbsent", "staffNotAttended"]) { assert.equal(value(key).value, null, key); assert.ok(value(key).waitsOn, key); }
+  assert.ok(!STATISTICS_OVERVIEW.some(f => (f.key as string) === "universitiesToFix"), "the catalogue keeps one name, so nothing to fix");
+  const bare = (await new StatisticsService(store, { isStaff }, now, { companies: { async counts() { return undefined; } } }).page("staff"))!;
+  assert.match(bare.overview.find(r => r.key === "companies")!.waitsOn!, /company directory/);
+  assert.match(bare.overview.find(r => r.key === "staff")!.waitsOn!, /work lane/);
+  await assert.rejects(new StatisticsService({ ...store, async overviewCounts() { return { ...OVERVIEW, requests: undefined as never }; } }, { isStaff }, now).page("staff"), /requests/);
 });

@@ -55,6 +55,51 @@ export const STAFF_STATISTICS_COUNTERS = [
 
 export type StaffStatisticKey = typeof STAFF_STATISTICS_COUNTERS[number]["key"];
 
+/**
+ * The overview figures (slice 2, legacy admin `StatisticController::actionList`), in legacy's
+ * order. Each one names where it comes from: the statistics store (`store`), the company
+ * directory as the viewer sees it (`companies`), or the work lane's staff time (`staffTime`).
+ *
+ * Changes from legacy:
+ * - Companies come from the organizations directory, so "active" uses its one status
+ *   derivation (finding OR-F2) and deleted companies are left out; legacy's KWD-only filter is
+ *   not applied, because a company with no currency on file would silently drop out.
+ * - "Candidates" are people with a profile; "assigned" are people with a store assignment
+ *   running on the Kuwait day (legacy counted anyone who had ever been assigned).
+ * - "Suggested" counts every recruit pipeline card: a card is where a suggestion starts.
+ * - Requests leave out drafts, which no company has sent yet; delivered requests are the filled
+ *   ones and the ones closed as fulfilled. Both keep legacy's KWD filter, like active requests.
+ * - Invitations are shown once, with the hiring figures.
+ * - "Universities to fix" (an English name missing or equal to the Arabic one) has no
+ *   equivalent: the catalogue keeps one name per entry, so there is nothing to fix.
+ */
+export type OverviewSource = "store" | "companies" | "staffTime";
+export interface OverviewFigure { readonly key: string; readonly label: string; readonly source: OverviewSource | { readonly kind: "missing"; readonly waitsOn: string } }
+const NO_LEAVE = "staff leave, which no lane holds yet";
+export const STATISTICS_OVERVIEW = [
+  { key: "candidates", label: "Candidates (people with a profile)", source: "store" },
+  { key: "assigned", label: "Candidates assigned to a store today", source: "store" },
+  { key: "unapproved", label: "Candidates not yet approved", source: { kind: "missing", waitsOn: "profile approval, which no lane holds yet" } },
+  { key: "suggested", label: "Candidates suggested to requests", source: "store" },
+  { key: "activeClients", label: "Active companies", source: "companies" },
+  { key: "companies", label: "All companies", source: "companies" },
+  { key: "requests", label: "Requests", source: "store" },
+  { key: "requestsDelivered", label: "Requests delivered", source: "store" },
+  { key: "payableCandidates", label: "Candidates with a payment due", source: { kind: "missing", waitsOn: "transfers from the pay lane" } },
+  { key: "transfersLocked", label: "Transfers locked", source: { kind: "missing", waitsOn: "transfers from the pay lane" } },
+  { key: "transfersPaymentSent", label: "Transfers with the payment sent", source: { kind: "missing", waitsOn: "transfers from the pay lane" } },
+  { key: "staffSalaryPaid", label: "Staff salary paid", source: { kind: "missing", waitsOn: "staff salaries, which no lane holds yet" } },
+  { key: "staff", label: "StudentHub staff", source: "staffTime" },
+  { key: "staffAttended", label: "Staff who started a work session today", source: "staffTime" },
+  { key: "staffAbsent", label: "Staff on leave today", source: { kind: "missing", waitsOn: NO_LEAVE } },
+  { key: "staffNotAttended", label: "Staff who did not attend today", source: { kind: "missing", waitsOn: NO_LEAVE } },
+] as const satisfies readonly OverviewFigure[];
+
+/** Company totals as the viewer's directory shows them; undefined when the directory does not answer for this viewer. */
+export interface StatisticsCompanies { counts(viewer: string): Promise<{ readonly activeClients: number; readonly companies: number } | undefined> }
+/** The work lane's staff time: who is StudentHub staff, and who started a session on a Kuwait day. */
+export interface StatisticsStaffTime { operatorStaff(): Promise<readonly string[]>; staffWithSessionOn(workDate: string): Promise<ReadonlySet<string>> }
+
 /** The raw hiring numbers the store reads; the ratios are worked out here. */
 export interface HiringCounts { readonly hired: number; readonly retained: number; readonly invitations: number }
 export interface HiringFigures extends HiringCounts {
@@ -68,9 +113,11 @@ export interface StatisticsStore {
   /** The available counters for one Asia/Kuwait day, by key. */
   staffCounts(day: string, now: Date): Promise<Readonly<Record<string, number>>>;
   hiring(day: string): Promise<HiringCounts>;
+  /** The overview figures this store reads (`source: "store"`), by key, for one Asia/Kuwait day. */
+  overviewCounts(day: string): Promise<Readonly<Record<string, number>>>;
 }
 export interface StatisticRow { readonly key: string; readonly label: string; readonly value: number | null; readonly waitsOn: string | null }
-export interface StatisticsPage { readonly day: string; readonly counters: readonly StatisticRow[]; readonly hiring: HiringFigures }
+export interface StatisticsPage { readonly day: string; readonly counters: readonly StatisticRow[]; readonly hiring: HiringFigures; readonly overview: readonly StatisticRow[] }
 
 const count = (n: unknown, key: string): number => {
   if (!Number.isSafeInteger(n) || (n as number) < 0) throw new TypeError(`statistic ${key} has no value`);
@@ -81,19 +128,37 @@ export const percent = (part: number, whole: number): number | null => whole > 0
 
 export class StatisticsService {
   readonly #store: StatisticsStore; readonly #authority: { isStaff(principalId: string): Promise<boolean> }; readonly #now: () => Date;
-  constructor(store: StatisticsStore, authority: { isStaff(principalId: string): Promise<boolean> }, now: () => Date = () => new Date()) {
-    this.#store = store; this.#authority = authority; this.#now = now;
+  readonly #companies: StatisticsCompanies | undefined; readonly #staffTime: StatisticsStaffTime | undefined;
+  /** Without `companies` or `staffTime`, their figures show as not available. */
+  constructor(store: StatisticsStore, authority: { isStaff(principalId: string): Promise<boolean> }, now: () => Date = () => new Date(),
+    sources: { readonly companies?: StatisticsCompanies; readonly staffTime?: StatisticsStaffTime } = {}) {
+    this.#store = store; this.#authority = authority; this.#now = now; this.#companies = sources.companies; this.#staffTime = sources.staffTime;
   }
 
-  /** Every counter in registry order, and the hiring figures; undefined for anyone who is not StudentHub staff. */
+  async #staffToday(day: string): Promise<Record<string, number> | undefined> {
+    if (!this.#staffTime) return undefined;
+    const [staff, attended] = await Promise.all([this.#staffTime.operatorStaff(), this.#staffTime.staffWithSessionOn(day)]);
+    // Only people who are staff now count as attending, so attended never passes the staff total.
+    return { staff: staff.length, staffAttended: staff.filter(id => attended.has(id)).length };
+  }
+
+  /** Every counter in registry order, the hiring figures and the overview; undefined for anyone who is not StudentHub staff. */
   async page(viewer: string): Promise<StatisticsPage | undefined> {
     if (!(await this.#authority.isStaff(viewer))) return undefined;
     const now = this.#now(), day = kuwaitDay(now);
-    const [raw, hiring] = await Promise.all([this.#store.staffCounts(day, now), this.#store.hiring(day)]);
+    const [raw, hiring, stored, companies, staffTime] = await Promise.all([this.#store.staffCounts(day, now), this.#store.hiring(day), this.#store.overviewCounts(day),
+      this.#companies?.counts(viewer), this.#staffToday(day)]);
     const counters = STAFF_STATISTICS_COUNTERS.map(c => c.source.kind === "missing"
       ? { key: c.key, label: c.label, value: null, waitsOn: c.source.waitsOn }
       : { key: c.key, label: c.label, value: count(raw[c.key], c.key), waitsOn: null });
     const h = { hired: count(hiring.hired, "hired"), retained: count(hiring.retained, "retained"), invitations: count(hiring.invitations, "invitations") };
-    return { day, counters, hiring: { ...h, retentionRatio: percent(h.retained, h.hired), recruitmentYield: percent(h.hired, h.invitations) } };
+    const answered: Record<OverviewSource, Readonly<Record<string, number>> | undefined> = { store: stored, companies, staffTime };
+    const unanswered: Record<OverviewSource, string> = { store: "", companies: "the company directory, which did not answer for you", staffTime: "staff time from the work lane, which is not connected here" };
+    const overview = STATISTICS_OVERVIEW.map((f): StatisticRow => {
+      if (typeof f.source !== "string") return { key: f.key, label: f.label, value: null, waitsOn: f.source.waitsOn };
+      const from = answered[f.source];
+      return from ? { key: f.key, label: f.label, value: count(from[f.key], f.key), waitsOn: null } : { key: f.key, label: f.label, value: null, waitsOn: unanswered[f.source] };
+    });
+    return { day, counters, hiring: { ...h, retentionRatio: percent(h.retained, h.hired), recruitmentYield: percent(h.hired, h.invitations) }, overview };
   }
 }

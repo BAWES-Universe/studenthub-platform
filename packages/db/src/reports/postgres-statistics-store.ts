@@ -32,6 +32,15 @@ const HIRING = `SELECT
   (SELECT count(*)::int FROM work_assignments WHERE LEAST(COALESCE(end_date, $1::date), $1::date) - start_date > 365) AS retained,
   (SELECT count(*)::int FROM recruit_invitations) AS invitations`;
 
+// $1 is the Asia/Kuwait day. Requests keep legacy's KWD filter (no currency on file means KWD).
+const KWD_REQUESTS = "recruit_requests r LEFT JOIN organization_commercial_terms t ON t.org_id = r.org_id AND t.field = 'currency_code'";
+const OVERVIEW = `SELECT
+  (SELECT count(*)::int FROM person_profiles) AS candidates,
+  (SELECT count(DISTINCT person_principal_id)::int FROM work_assignments WHERE start_date <= $1::date AND (end_date IS NULL OR end_date >= $1::date)) AS assigned,
+  (SELECT count(*)::int FROM recruit_pipeline_cards) AS suggested,
+  (SELECT count(*)::int FROM ${KWD_REQUESTS} WHERE r.status <> 'draft' AND COALESCE(t.value, 'KWD') = 'KWD') AS requests,
+  (SELECT count(*)::int FROM ${KWD_REQUESTS} WHERE (r.status = 'filled' OR (r.status = 'closed' AND r.close_reason = 'fulfilled')) AND COALESCE(t.value, 'KWD') = 'KWD') AS "requestsDelivered"`;
+
 export class PostgresStatisticsStore {
   readonly #pool: pg.Pool; readonly #owns: boolean; readonly #summary: PostgresMorningSummaryStore;
   constructor(options: { connectionString?: string; pool?: pg.Pool } = {}) {
@@ -53,6 +62,12 @@ export class PostgresStatisticsStore {
       return { activeRequests: shared.activeRequests!, assignedExpiredCivilID: shared.assignedExpiredCivilID!, totalExpiredCards: shared.totalExpiredCards!, id_need_generated: shared.id_need_generated!, ...own };
     } catch (error) { await c.query("ROLLBACK").catch(() => undefined); throw error; }
     finally { c.release(); }
+  }
+
+  /** The overview figures this store reads, as of one Asia/Kuwait day. */
+  async overviewCounts(day: string): Promise<Readonly<Record<string, number>>> {
+    if (!DAY.test(day)) throw new RangeError("invalid day");
+    return (await this.#pool.query<Record<string, number>>(OVERVIEW, [day])).rows[0]!;
   }
 
   /** Hired, retained after a year, and invitations sent, as of one Asia/Kuwait day. */
