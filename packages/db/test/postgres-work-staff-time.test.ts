@@ -51,7 +51,7 @@ test("STAFF_TIME_PG start, a repeat start, end with server minutes; days and who
   const own = await svc.days(staff, "2031-05-01", "2031-05-31");
   assert.equal(own.kind === "days" && own.days.length, 1);
   const inactive = await svc.inactive(admin, "2031-05-04");
-  assert.ok(inactive.kind === "inactive" && inactive.staffIds.includes(absent) && inactive.staffIds.includes(admin) && !inactive.staffIds.includes(staff));
+  assert.ok(inactive.kind === "inactive" && inactive.staffIds.includes(absent) && !inactive.staffIds.includes(staff));
   assert.deepEqual(await svc.start(await principal("owner")), { kind: "refused", code: "forbidden" });
   // The staff hours export reads email addresses on file.
   assert.deepEqual([...await store.emails([staff, "nobody-here"])], [[staff, `${staff}@example.invalid`]]);

@@ -33,8 +33,8 @@ test("WORK_NO_TRUNCATE no work history table can be emptied by TRUNCATE, directl
       client.release();
     }
   }
-  // Each guard is a statement-level BEFORE TRUNCATE trigger that is switched on.
+  // Each guard is a statement-level (bit 1 clear) BEFORE (bit 2) TRUNCATE (bit 32) trigger that is switched on.
   const { rows } = await pool.query<{ table: string }>(
-    "SELECT c.relname AS table FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgname = c.relname || '_no_truncate' AND t.tgenabled = 'O' AND (t.tgtype & 32) <> 0 AND (t.tgtype & 1) = 0 ORDER BY 1");
+    "SELECT c.relname AS table FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgname = c.relname || '_no_truncate' AND t.tgenabled = 'O' AND (t.tgtype & 32) <> 0 AND (t.tgtype & 2) <> 0 AND (t.tgtype & 1) = 0 ORDER BY 1");
   for (const table of TABLES) assert.ok(rows.some((r) => r.table === table), table);
 });
