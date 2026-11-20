@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { checkContract, idsIn, parseContract } from "../src/contract.js";
 import { CONTRACT_PATH, duplicateJsonKeys, jsonIssues, loadContract, loadInventory, loadMatrix, repoRoot } from "../src/files.js";
-import { blockers, checkInventory, checkMatrix, citesDecision, citesEvidence, GATES, isSourceLine, mobileKey, type Matrix, type MobileInventory } from "../src/matrix.js";
+import { blockers, checkInventory, checkMatrix, citesDecision, citesEvidence, GATES, isSourceLine, mobileKey, requirementSubject, type Matrix, type MobileInventory } from "../src/matrix.js";
 import { laneForOwner, seedMatrix } from "../src/seed.js";
 import { isEntryPoint, renderReport, seedIfValid } from "../src/cli.js";
 
@@ -436,6 +436,20 @@ test("seed refuses invalid sources, so a mistyped id cannot drop a row and its e
   assert.ok(refused.issues.length > 0);
   const ok = seedIfValid(contract, inventory, previous);
   assert.deepEqual(ok.matrix!.screens["U-04"]!.gates.built, { state: "done", evidence: "PR #1 at 0123abcd" });
+});
+
+test("M-5 is at requirement r2 (the work table map), so evidence recorded for r1 is stale", () => {
+  const contract = loadContract(root);
+  const inventory = loadInventory(root);
+  assert.equal(requirementSubject("import", "M-5"), "requirement r2");
+  assert.equal(requirementSubject("import", "M-4"), "requirement r1");
+  const matrix = loadMatrix(root);
+  assert.equal(matrix.imports["M-5"]!.subject, "requirement r2");
+  const previous = clone(matrix);
+  (previous.imports["M-5"] as { subject: string }).subject = "requirement r1";
+  (previous.imports["M-5"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "PR #9 at abcdef1" };
+  assert.deepEqual(rules(checkMatrix(previous, contract, inventory)), ["matrix.row.stale"]);
+  assert.deepEqual(seedMatrix(contract, inventory, previous).imports["M-5"]!.gates.built, { state: "open" });
 });
 
 test("a changed import or release requirement reopens its gates; a reworded title does not", () => {
