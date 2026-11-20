@@ -78,13 +78,16 @@ test("REPORTS_STATISTICS_PG work log appeals count only the ones just submitted"
   assert.equal(await delta("workLogAppeals", async () => { await appeal("awaiting_review"); await appeal("in_progress"); await appeal("resolved"); }), 0);
 });
 
-test("REPORTS_STATISTICS_PG minors are people whose birth date is less than 16 years before the Kuwait day", async () => {
-  const born = async (date: string | null) => {
+test("REPORTS_STATISTICS_PG minors are candidates whose birth date is less than 16 years before the Kuwait day", async () => {
+  const born = async (date: string | null, role: "candidate" | "staff" | "admin" | null = "candidate") => {
     const id = await principal("person");
+    if (role) await authz.grantMany(id, [{ orgId: company, role, scope: "self" }]);
     await pool.query("INSERT INTO person_profiles(principal_id,birth_date,birth_date_written_at) VALUES($1,$2::date,CASE WHEN $2::date IS NULL THEN NULL ELSE now() END)", [id, date]);
   };
   assert.equal(await delta("totalMinor", async () => { await born("2010-11-21"); await born("2015-01-01"); }), 2);
   assert.equal(await delta("totalMinor", async () => { await born("2010-11-20"); await born("1999-05-05"); await born(null); }), 0, "16 today, adults and no birth date are not minors");
+  assert.equal(await delta("totalMinor", async () => { await born("2012-03-03", "staff"); await born("2012-03-03", "admin"); await born("2012-03-03", null); }), 0,
+    "an under-16 profile without a candidate grant (staff, admin, no role) is not a candidate");
 });
 
 test("REPORTS_STATISTICS_PG company registrations waiting for review are the pending ones", async () => {
