@@ -168,6 +168,32 @@ test("a later same-name alias is checked against the item, not just the target i
   assert.equal((await store.idMap("currency")).get(`${run}3`), item);
 });
 
+test("a later alias maps only to an active item of the same kind and name: a deleted target holds it, an active one maps", async () => {
+  const run = tag();
+  const bank = (id: string, deleted: number) => ({ bank_id: id, bank_name: `${run} Bank`, bank_swift_code: "NBOKKWKW", bank_iban_code: "NBOK", bank_code_abk: 12, bank_transfer_type: "LCL", deleted });
+  // Snapshot 1: A is deleted in legacy and imports as a deleted item.
+  assert.equal((await store.importItems(mapLegacyCatalogue("bank", [bank(`${run}1`, 1)]).items, NOW)).inserted, 1);
+  const deletedItem = (await store.idMap("bank")).get(`${run}1`);
+  // Snapshot 2: A is reactivated and a new same-name B arrives with the same code and details.
+  const reactivated = mapLegacyCatalogue("bank", [bank(`${run}1`, 0), bank(`${run}2`, 0)]).items;
+  assert.equal(reactivated[1]!.mergedInto, `${run}1`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await store.importItems(reactivated, NOW);
+    assert.equal(result.conflicts.length, 1);
+    assert.deepEqual(result.refused, [{ legacyTable: "bank", legacyId: `${run}2`, code: "name_conflict" }]);
+  }
+  assert.equal((await store.idMap("bank")).has(`${run}2`), false);
+  const { rows } = await pool.query("SELECT status FROM catalogue_items WHERE id = $1", [deletedItem]);
+  assert.equal(rows[0].status, "deleted");
+
+  // Control: when the target was active from the start, a matching alias maps to it.
+  const active = mapLegacyCatalogue("bank", [bank(`${run}3`, 0)]).items.map((i) => ({ ...i, name: `${run} Other`, normalizedName: `${run} other` }));
+  await store.importItems(active, NOW);
+  const alias = { ...mapLegacyCatalogue("bank", [bank(`${run}4`, 0)]).items[0]!, name: `${run} Other`, normalizedName: `${run} other`, mergedInto: `${run}3` };
+  assert.equal((await store.importItems([alias], NOW)).merged, 1);
+  assert.equal((await store.idMap("bank")).get(`${run}4`), (await store.idMap("bank")).get(`${run}3`));
+});
+
 test("bank and currency details are written with the item", async () => {
   const run = tag();
   const banks = mapLegacyCatalogue("bank", [
