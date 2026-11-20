@@ -148,3 +148,19 @@ test("REPORTS_ID_CARDS_PG the public check reads the name, current company, expi
   await assert.rejects(store.verify(0, DAY), /invalid card/);
   await assert.rejects(store.verify(1, "19-11-2026"), /invalid card/);
 });
+
+test("REPORTS_CERTIFICATES_PG work history for certificates: started assignments, latest first, with the trading name and store; one assignment with its person", async () => {
+  const p = await person("Cert");
+  await assign(p, "2025-01-10", "2025-06-30", otherStore); await assign(p, "2026-03-01", "2026-11-30"); await assign(p, "2026-12-01", null);
+  const history = (await store.workHistory(p, DAY))!;
+  assert.equal(history.name, `Cert ${tag}`);
+  assert.deepEqual(history.rows.map(r => [r.company, r.store, r.startDate, r.endDate]), [["Sultan Center", "Avenues", "2026-03-01", "2026-11-30"], ["Sultan Center", "Marina", "2025-01-10", "2025-06-30"]],
+    "the assignment starting in December is not there yet");
+  assert.deepEqual((await store.workHistory(p, "2026-12-01"))!.rows.length, 3);
+  const first = history.rows[0]!;
+  assert.deepEqual(await store.assignment(first.assignmentId), { personId: p, name: `Cert ${tag}`, assignmentId: first.assignmentId, company: "Sultan Center", store: "Avenues", startDate: "2026-03-01", endDate: "2026-11-30" });
+  assert.equal(await store.assignment(randomUUID()), undefined);
+  await assert.rejects(store.assignment("not-a-uuid"), /invalid assignment/);
+  assert.equal(await store.workHistory(`idc-nobody-${randomUUID()}`, DAY), undefined);
+  assert.deepEqual((await store.workHistory(creator, DAY))!.rows, [], "a person with no assignments has an empty history");
+});
