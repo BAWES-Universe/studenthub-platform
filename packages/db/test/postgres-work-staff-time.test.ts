@@ -31,7 +31,9 @@ function service(now: { value: Date }) {
 
 test("STAFF_TIME_PG start, a repeat start, end with server minutes; days and who didn't start", async () => {
   const staff = await principal("staff", [{ orgId: "root", role: "staff", scope: "subtree" }]);
-  const admin = await principal("admin", [{ orgId: "root", role: "admin", scope: "subtree" }]);
+  // One root admin per database (one_root_admin_grant): reuse it when another suite made it first.
+  const admin = (await pool.query<{ principal_id: string }>("SELECT principal_id FROM grants WHERE org_id = 'root' AND role = 'admin' AND scope = 'subtree' LIMIT 1")).rows[0]?.principal_id
+    ?? await principal("admin", [{ orgId: "root", role: "admin", scope: "subtree" }]);
   const absent = await principal("absent", [{ orgId: "root", role: "staff", scope: "subtree" }]);
   const now = { value: new Date("2031-05-04T05:00:00Z") };
   const svc = service(now);
