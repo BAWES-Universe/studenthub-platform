@@ -138,6 +138,28 @@ reported and the batch goes on. Imported decisions then link each decided sessio
 the latest legacy decision with its status. Legacy ids keep their underscores
 (`can_wrk_hr_<uuid>`), which migration 0504 allows.
 
+### Staff time and the stand-up (M-5)
+
+`packages/work/src/legacy-staff.ts` maps the internal staff rows the same way, with the
+legacy id as `legacy_ref` (`work_session_<uuid>`, `question_<uuid>`, `answer_<uuid>`). The
+importer resolves the legacy `staff_id` to a principal; a staff id with no principal is
+reported by the importer, not passed on.
+
+| Legacy | Here | Rules |
+|---|---|---|
+| `staff_work_session` | `work_staff_sessions`, `source = 'import'` | The start is `created_at`; the day is its Kuwait date. Ending a session saved `total_minutes` and `updated_at` together, so `updated_at` is the end when its whole minutes match `total_minutes`; otherwise the end is the start plus `total_minutes` (what legacy showed and exported) and the row is reported as `minutes_mismatch`. No minutes: imported open, as legacy showed it. Negative or fractional minutes are reported, not imported. A second open session on one day is refused (`open_twice`). |
+| `daily_standup_question` | `work_standup_questions` | Trimmed text, 1 to 255 characters, asked (not retired), no author. |
+| `daily_standup_answer` | `work_standup_answers`, `source = 'import'` | The question text as it read, the day as the Kuwait date of `created_at`; repeats on a day are kept. An answer whose question legacy deleted is refused (`no_question`); a blank answer or one over 4,000 characters is reported, not cut. |
+
+`PostgresWorkImportStore.importStaffSessions`, `importStandupQuestions` (run before the
+answers) and `importStandupAnswers` follow the contract above, with the digest stored in
+`legacy_digest` (migration 0508). A session imported open that legacy has since ended gets
+its end once (counted as updated); any other change is a conflict. The import key of a
+staff session or question can't be changed afterwards. `reconcileStaffImport(table,
+legacyRefs)` gives each table's reconciliation by legacy reference only: the legacy and
+imported counts, the legacy refs with no imported row, and imported refs legacy no longer
+holds.
+
 ## Screens: Track, History and Appeals (C-11 to C-13)
 
 `apps/gateway/src/work/pages.ts` serves `/work/track`, `/work/history[/:date]` and `/work/appeals[/:id]`. The pages are rendered on the server with the shared page shell and profile card styles, and they call the same services as the JSON API.
@@ -205,8 +227,8 @@ StudentHub's own staff time their day here (hours are hours). `StaffTimeService`
 - The table refuses edits to a closed session, a second open session for the same day, an end
   before the start, and deletes.
 
-The staff hours export is under Exports below. The legacy rows are imported with the cutover
-lane's importer (M-5).
+The staff hours export is under Exports below. The legacy rows are mapped for the cutover
+lane's importer (M-5) as described under "Staff time and the stand-up".
 
 ## Daily stand-up (legacy daily_standup_question / daily_standup_answer)
 
@@ -234,9 +256,8 @@ The stand-up part of A-14. `StandupService` (`packages/work/src/standup.ts`) ove
   allowed; answers given here may not.
 
 Legacy's emailed stand-up report (`standupReport`) was switched off in its cron and is not ported.
-The legacy rows (`daily_standup_question` → `work_standup_questions.legacy_ref`,
-`daily_standup_answer` → `work_standup_answers` with `source = 'import'`) are for the cutover
-lane's importer.
+The legacy rows are mapped for the cutover lane's importer as described under "Staff time and
+the stand-up".
 
 ## Exports (P-1)
 
@@ -314,4 +335,5 @@ person's feed keeps the decision notice it had; removal itself sends nothing, li
 ## Not yet here
 
 - The rest of A-14 (staff leave and expenses); it depends on the pay lane's settlement (P1, F4).
-- The importer run itself (cutover lane, M-5).
+- The importer run itself (cutover lane, M-5): reading the mirror, resolving staff ids and
+  writing the run's report.

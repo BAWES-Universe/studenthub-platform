@@ -20,8 +20,9 @@ export interface WorkImportResult {
   readonly unchanged: number;
   readonly updated: number;
   readonly conflicts: readonly { readonly legacyRef: string; readonly existingDigest: string; readonly incomingDigest: string }[];
-  readonly refused: readonly { readonly legacyRef: string; readonly code: "overlap" | "no_placement" | "no_session" | "invalid" }[];
+  readonly refused: readonly { readonly legacyRef: string; readonly code: WorkImportRefusal }[];
 }
+export type WorkImportRefusal = "overlap" | "no_placement" | "no_session" | "no_question" | "open_twice" | "invalid";
 export interface WorkImportPlacement {
   readonly legacyRef: string; readonly personId: string; readonly orgId: string; readonly storeId: string;
   readonly startDate: IsoDate; readonly endDate: IsoDate | null; readonly payContractId: string | null;
@@ -42,6 +43,30 @@ export interface WorkImportDecision {
   readonly notePublic: boolean; readonly decidedBy: string | null; readonly legacyDecidedBy: string | null; readonly decidedAt: string | null;
 }
 
+/** Staff time (legacy `staff_work_session`); the staff id is already resolved to a principal. */
+export interface WorkImportStaffSession {
+  readonly legacyRef: string; readonly staffPrincipalId: string; readonly workDate: IsoDate;
+  readonly startedAt: string; readonly endedAt: string | null;
+}
+export interface WorkImportStandupQuestion {
+  readonly legacyRef: string; readonly question: string; readonly createdAt: string; readonly updatedAt: string;
+}
+export interface WorkImportStandupAnswer {
+  readonly legacyRef: string; readonly staffPrincipalId: string; readonly questionLegacyRef: string;
+  readonly question: string; readonly answer: string; readonly workDate: IsoDate; readonly createdAt: string;
+}
+export type StaffImportTable = "work_staff_sessions" | "work_standup_questions" | "work_standup_answers";
+/** Per-table reconciliation by legacy reference only: no names, times or text. */
+export interface StaffImportReconciliation {
+  readonly table: StaffImportTable;
+  readonly legacy: number;
+  readonly imported: number;
+  /** Legacy refs with no imported row. */
+  readonly missing: readonly string[];
+  /** Imported rows whose ref the legacy list no longer holds. */
+  readonly extra: readonly string[];
+}
+
 /** sha256 of canonical JSON (keys sorted at every level). */
 export function workImportDigest(value: unknown): string {
   const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical)
@@ -50,16 +75,19 @@ export function workImportDigest(value: unknown): string {
 }
 
 const isOverlap = (e: unknown) => (e as { code?: string }).code === "23P01";
+const isUnique = (e: unknown) => (e as { code?: string }).code === "23505";
 const isRuleRefusal = (e: unknown) => (e as { code?: string }).code === "23514" || (e as { code?: string }).code === "23503";
 
 class Tally {
   inserted = 0; unchanged = 0; updated = 0;
   conflicts: { legacyRef: string; existingDigest: string; incomingDigest: string }[] = [];
-  refused: { legacyRef: string; code: "overlap" | "no_placement" | "no_session" | "invalid" }[] = [];
+  refused: { legacyRef: string; code: WorkImportRefusal }[] = [];
   result(): WorkImportResult {
     return Object.freeze({ inserted: this.inserted, unchanged: this.unchanged, updated: this.updated, conflicts: Object.freeze(this.conflicts), refused: Object.freeze(this.refused) });
   }
 }
+
+const STAFF_IMPORT_TABLES: readonly StaffImportTable[] = ["work_staff_sessions", "work_standup_questions", "work_standup_answers"];
 
 export class PostgresWorkImportStore {
   readonly #db: PoolOwner;
@@ -150,6 +178,90 @@ export class PostgresWorkImportStore {
           AND (s.decision_id IS NULL OR EXISTS (SELECT 1 FROM work_decisions cur WHERE cur.id = s.decision_id AND cur.legacy_ref IS NOT NULL))`);
     });
     return result;
+  }
+
+  /**
+   * Staff sessions. The digest leaves the end out, so a session imported open
+   * and since ended in legacy is written once (counted as updated); any other
+   * change of the end is a conflict. A second open session on one day is
+   * refused as `open_twice` (one open session per staff member and day).
+   */
+  async importStaffSessions(rows: readonly WorkImportStaffSession[]): Promise<WorkImportResult> {
+    return this.#batch("work_staff_sessions", rows, async (client, row, tally) => {
+      const digest = workImportDigest({ ...row, endedAt: null });
+      const { rows: held } = await client.query<{ id: string; legacy_digest: string; ended_at: Date | null }>(
+        "SELECT id, legacy_digest, ended_at FROM work_staff_sessions WHERE legacy_ref = $1 FOR UPDATE", [row.legacyRef]);
+      const existing = held[0];
+      const end = row.endedAt === null ? null : new Date(row.endedAt).toISOString();
+      if (existing) {
+        const heldEnd = existing.ended_at?.toISOString() ?? null;
+        if (existing.legacy_digest !== digest) { tally.conflicts.push({ legacyRef: row.legacyRef, existingDigest: existing.legacy_digest, incomingDigest: digest }); return; }
+        // Same session, different end: only ending an open one is applied.
+        if (heldEnd !== null && heldEnd !== end) {
+          tally.conflicts.push({ legacyRef: row.legacyRef, existingDigest: workImportDigest({ ...row, endedAt: heldEnd }), incomingDigest: workImportDigest({ ...row, endedAt: end }) });
+          return;
+        }
+        if (heldEnd === end) { tally.unchanged++; return; }
+        await guarded(client, () => client.query("UPDATE work_staff_sessions SET ended_at = $2 WHERE id = $1", [existing.id, end]));
+        tally.updated++;
+        return;
+      }
+      try {
+        await guarded(client, () => client.query(`INSERT INTO work_staff_sessions(id, staff_principal_id, work_date, started_at, ended_at, source, legacy_ref, legacy_digest)
+          VALUES($1,$2,$3::date,$4,$5,'import',$6,$7)`, [randomUUID(), row.staffPrincipalId, row.workDate, row.startedAt, end, row.legacyRef, digest]));
+      } catch (error) {
+        if (isUnique(error) && end === null) { tally.refused.push({ legacyRef: row.legacyRef, code: "open_twice" }); return; }
+        throw error;
+      }
+      tally.inserted++;
+    });
+  }
+
+  /** Stand-up questions, imported as asked (not retired). Run before their answers. */
+  async importStandupQuestions(rows: readonly WorkImportStandupQuestion[]): Promise<WorkImportResult> {
+    return this.#batch("work_standup_questions", rows, async (client, row, tally) => {
+      const digest = workImportDigest(row);
+      const { rows: held } = await client.query<{ legacy_digest: string }>("SELECT legacy_digest FROM work_standup_questions WHERE legacy_ref = $1", [row.legacyRef]);
+      if (held[0]) { this.#same(tally, row.legacyRef, held[0].legacy_digest, digest); return; }
+      await guarded(client, () => client.query(`INSERT INTO work_standup_questions(id, question, created_at, updated_at, legacy_ref, legacy_digest)
+        VALUES($1,$2,$3,$4,$5,$6)`, [randomUUID(), row.question, row.createdAt, row.updatedAt, row.legacyRef, digest]));
+      tally.inserted++;
+    });
+  }
+
+  /**
+   * Stand-up answers. An answer names its question by legacy ref; one whose
+   * question was not imported is refused as `no_question`. Repeats on a day
+   * are kept (the once-a-day rule covers answers given here only).
+   */
+  async importStandupAnswers(rows: readonly WorkImportStandupAnswer[]): Promise<WorkImportResult> {
+    return this.#batch("work_standup_answers", rows, async (client, row, tally) => {
+      const digest = workImportDigest(row);
+      const { rows: held } = await client.query<{ legacy_digest: string }>("SELECT legacy_digest FROM work_standup_answers WHERE legacy_ref = $1", [row.legacyRef]);
+      if (held[0]) { this.#same(tally, row.legacyRef, held[0].legacy_digest, digest); return; }
+      const { rows: question } = await client.query<{ id: string }>("SELECT id FROM work_standup_questions WHERE legacy_ref = $1", [row.questionLegacyRef]);
+      if (!question[0]) { tally.refused.push({ legacyRef: row.legacyRef, code: "no_question" }); return; }
+      await guarded(client, () => client.query(`INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source, legacy_ref, legacy_digest, created_at)
+        VALUES($1,$2,$3,$4,$5,$6::date,'import',$7,$8,date_trunc('milliseconds', $9::timestamptz))`,
+      [randomUUID(), row.staffPrincipalId, question[0].id, row.question, row.answer, row.workDate, row.legacyRef, digest, row.createdAt]));
+      tally.inserted++;
+    });
+  }
+
+  /**
+   * Reconciliation for one table: the legacy refs the importer read against
+   * the rows imported here, by legacy ref only.
+   */
+  async reconcileStaffImport(table: StaffImportTable, legacyRefs: readonly string[]): Promise<StaffImportReconciliation> {
+    if (!STAFF_IMPORT_TABLES.includes(table)) throw new TypeError("unknown staff import table");
+    const { rows } = await this.#db.pool.query<{ legacy_ref: string }>(`SELECT legacy_ref FROM ${table} WHERE legacy_ref IS NOT NULL ORDER BY legacy_ref`);
+    const here = new Set(rows.map((r) => r.legacy_ref));
+    const there = new Set(legacyRefs);
+    return Object.freeze({
+      table, legacy: there.size, imported: here.size,
+      missing: Object.freeze([...there].filter((r) => !here.has(r)).sort()),
+      extra: Object.freeze([...here].filter((r) => !there.has(r)).sort()),
+    });
   }
 
   #same(tally: Tally, legacyRef: string, existing: string, incoming: string): void {

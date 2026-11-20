@@ -96,7 +96,7 @@ test("STANDUP_PG answers page by staff then time; answers are never edited or re
   const staff = await principal("staff", [{ orgId: "root", role: "staff", scope: "subtree" }]);
   const q = await store.insertQuestion({ id: randomUUID(), question: "Paging?", createdBy: admin });
   for (let i = 0; i < 102; i++) {
-    await pool.query("INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source, legacy_ref) VALUES($1,$2,$3,'Paging?',$4,$5::date,'import',$6)",
+    await pool.query("INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source, legacy_ref, legacy_digest) VALUES($1,$2,$3,'Paging?',$4,$5::date,'import',$6,repeat('a',64))",
       [randomUUID(), staff, q.id, `a${i}`, day, `standup-test-${randomUUID()}`]);
   }
   const svc = service(now);
@@ -121,7 +121,7 @@ test("STANDUP_PG neither table can be emptied by TRUNCATE, directly or by a CASC
   const staff = await principal("truncate", [{ orgId: "root", role: "staff", scope: "subtree" }]);
   const q = await store.insertQuestion({ id: randomUUID(), question: "Kept?", createdBy: admin });
   const answerId = randomUUID();
-  await pool.query("INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source, legacy_ref) VALUES($1,$2,$3,'Kept?','yes','2051-01-01','import',$4)", [answerId, staff, q.id, `standup-test-${randomUUID()}`]);
+  await pool.query("INSERT INTO work_standup_answers(id, staff_principal_id, question_id, question, answer, work_date, source, legacy_ref, legacy_digest) VALUES($1,$2,$3,'Kept?','yes','2051-01-01','import',$4,repeat('a',64))", [answerId, staff, q.id, `standup-test-${randomUUID()}`]);
   await store.retireQuestion(q.id);
   for (const statement of ["TRUNCATE work_standup_answers", "TRUNCATE work_standup_questions CASCADE", "TRUNCATE work_standup_answers, work_standup_questions",
     "TRUNCATE principals CASCADE"]) {
