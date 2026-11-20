@@ -15,11 +15,11 @@ import {
 import { pageDocument } from "../web-ui.js";
 import type { WorkHttpServices } from "./http.js";
 import { renderStaffAppeal, staffDone } from "./staff-pages.js";
+import { WORK_COPY, workCopyFor, type WorkCopy } from "./copy.js";
 
 /** Store names for display; optional so a deployment without it shows a generic label. */
 export type StoreNames = (storeIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
 
-const TIME_ZONE = "Asia/Kuwait";
 const FORM_LIMIT = 8 * 1024;
 /**
  * Byte limits for forms that carry long text: a character can take up to 12
@@ -34,47 +34,18 @@ export class FormTooLarge extends Error {
 }
 
 /** The 413 page, or undefined when the error is not a size refusal. */
-export function tooLarge(error: unknown): readonly [number, string] | undefined {
-  return error instanceof FormTooLarge ? plain(413, "Too long", "What you sent is too long. Shorten it and try again.") : undefined;
+export function tooLarge(error: unknown, c: WorkCopy = WORK_COPY.en): readonly [number, string] | undefined {
+  return error instanceof FormTooLarge ? plain(413, ...c.errors.tooLong!, c) : undefined;
 }
 const HISTORY_PAGE_CAP = 20;
 
 export const esc = (value: string) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-const REFUSALS: Readonly<Record<string, string>> = {
-  location_required: "We need your location to clock in or out. Allow location for this site and try again.",
-  not_assigned: "You aren't placed at a store today, so there is nothing to clock in to.",
-  already_working: "You are already clocked in.",
-  session_changed: "Your hours changed in another tab or device. Here they are now; try again if you still need to.",
-  not_working: "You aren't clocked in right now.",
-  overlaps_session: "That time overlaps hours you already logged.",
-  end_before_start: "The end time must be after the start time.",
-  in_future: "You can't log time that hasn't happened yet.",
-  outside_assignment: "You weren't placed at a store on that date.",
-  invalid_input: "Check the times and try again.",
-};
-const DONE: Readonly<Record<string, string>> = {
-  started: "You're clocked in.",
-  stopped: "You're clocked out. Your hours are waiting for approval.",
-  discarded: "That session was discarded.",
-  added: "Your hours were added and are waiting for approval. They are marked as entered late.",
-};
-export const STATUS_LABEL: Readonly<Record<string, string>> = { pending: "Waiting for approval", approved: "Approved", rejected: "Rejected" };
-
-export function clock(iso: string): string {
-  return new Intl.DateTimeFormat("en-GB", { timeZone: TIME_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso));
-}
-export function longDate(date: string): string {
-  return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(`${date}T00:00:00Z`));
-}
-function monthLabel(month: string): string {
-  return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", month: "long", year: "numeric" }).format(new Date(`${month}-01T00:00:00Z`));
-}
-export function duration(seconds: number): string {
-  const total = Math.max(0, Math.floor(seconds / 60));
-  const h = Math.floor(total / 60), m = total % 60;
-  return h === 0 ? `${m}m` : m === 0 ? `${h}h` : `${h}h ${m}m`;
-}
+// The English words and formats, for the screens not yet in Arabic (staff, company and store).
+export const STATUS_LABEL: Readonly<Record<string, string>> = WORK_COPY.en.status;
+export const clock = (iso: string): string => WORK_COPY.en.clock(iso);
+export const longDate = (date: string): string => WORK_COPY.en.longDate(date);
+export const duration = (seconds: number): string => WORK_COPY.en.duration(seconds);
 /** A `datetime-local` value is Kuwait wall time (seconds and milliseconds optional); Kuwait has no daylight saving. */
 export function kuwaitInstant(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
@@ -124,46 +95,50 @@ export function redirect(res: ServerResponse, location: string): void {
 }
 
 type Tab = "assignment" | "track" | "history" | "appeals";
-const TABS: readonly [Tab, string][] = [["assignment", "Placement"], ["track", "Track"], ["history", "History"], ["appeals", "Appeals"]];
-const nav = (current: Tab) =>
-  `<nav class="p-card" aria-label="Work">${TABS.map(([tab, label]) => `<a href="/work/${tab}"${tab === current ? ' aria-current="page"' : ""}>${label}</a>`).join(" · ")}</nav>`;
-function shell(title: string, current: Tab, body: string): string {
-  return pageDocument(title, `<main id="main" class="profile-ui"><div class="p-shell"><div class="p-main p-stack"><header class="p-header"><h1>${esc(title)}</h1></header>${nav(current)}${body}</div></div></main>`);
+const TABS: readonly Tab[] = ["assignment", "track", "history", "appeals"];
+const nav = (current: Tab, c: WorkCopy) =>
+  `<nav class="p-card" aria-label="${esc(c.navLabel)}">${TABS.map((tab) => `<a href="/work/${tab}"${tab === current ? ' aria-current="page"' : ""}>${esc(c.tabs[tab])}</a>`).join(" · ")}</nav>`;
+/** English pages keep the shell's default document language; Arabic ones are marked lang="ar" dir="rtl". */
+export const docLanguage = (c: WorkCopy) => c.lang === "ar" ? "ar" as const : undefined;
+function shell(title: string, current: Tab, body: string, c: WorkCopy): string {
+  return pageDocument(title, `<main id="main" class="profile-ui"><div class="p-shell"><div class="p-main p-stack"><header class="p-header"><h1>${esc(title)}</h1></header>${nav(current, c)}${body}</div></div></main>`, docLanguage(c));
 }
 export const notice = (kind: "success" | "error", message: string) =>
   `<section class="p-notice p-notice-${kind}" role="${kind === "error" ? "alert" : "status"}"><p>${esc(message)}</p></section>`;
-export const plain = (status: number, title: string, message: string) => [status, pageDocument(title, `<main id="main" class="error-page"><h1>${esc(title)}</h1><p>${esc(message)}</p></main>`)] as const;
+export const plain = (status: number, title: string, message: string, c: WorkCopy = WORK_COPY.en) => [status, pageDocument(title, `<main id="main" class="error-page"><h1>${esc(title)}</h1><p>${esc(message)}</p></main>`, docLanguage(c))] as const;
 
 // The only script: fill the location fields of a form marked data-location, then submit it.
-const LOCATION_JS = `document.querySelectorAll("form[data-location]").forEach(function(f){f.addEventListener("submit",function(e){if(f.dataset.located)return;e.preventDefault();var s=document.getElementById("location-status");if(!navigator.geolocation){s.textContent="This browser can't share your location.";return}s.textContent="Getting your location...";navigator.geolocation.getCurrentPosition(function(p){f.elements.latitude.value=String(p.coords.latitude);f.elements.longitude.value=String(p.coords.longitude);f.dataset.located="1";f.submit()},function(){s.textContent="We couldn't get your location. Allow location for this site and try again."},{enableHighAccuracy:true,timeout:20000,maximumAge:0})})})`;
+// The messages go in as JSON strings, escaped for a script element.
+const js = (text: string) => JSON.stringify(text).replace(/</g, "\\u003c");
+const locationJs = (c: WorkCopy) => `document.querySelectorAll("form[data-location]").forEach(function(f){f.addEventListener("submit",function(e){if(f.dataset.located)return;e.preventDefault();var s=document.getElementById("location-status");if(!navigator.geolocation){s.textContent=${js(c.location.unsupported)};return}s.textContent=${js(c.location.getting)};navigator.geolocation.getCurrentPosition(function(p){f.elements.latitude.value=String(p.coords.latitude);f.elements.longitude.value=String(p.coords.longitude);f.dataset.located="1";f.submit()},function(){s.textContent=${js(c.location.failed)}},{enableHighAccuracy:true,timeout:20000,maximumAge:0})})})`;
 
 const locationForm = (action: string, label: string, sessionId?: string) =>
   `<form method="post" action="${action}" data-location>${sessionId ? `<input type="hidden" name="sessionId" value="${sessionId}">` : ""}<input type="hidden" name="latitude"><input type="hidden" name="longitude"><button type="submit">${esc(label)}</button></form>`;
 
-const manualForm = `<section class="p-card" aria-labelledby="manual-heading"><h2 id="manual-heading">Forgot to clock in?</h2><p>Log the time yourself. It is marked as entered late and still needs approval. Times are Kuwait time.</p>
-<form method="post" action="/work/track/manual"><label>Started<input type="datetime-local" name="startedAt" required></label><label>Ended<input type="datetime-local" name="endedAt" required></label><label>Note (optional)<textarea name="note" maxlength="1000"></textarea></label><button type="submit">Add hours</button></form></section>`;
+const manualForm = (c: WorkCopy) => `<section class="p-card" aria-labelledby="manual-heading"><h2 id="manual-heading">${esc(c.manual.heading)}</h2><p>${esc(c.manual.intro)}</p>
+<form method="post" action="/work/track/manual"><label>${esc(c.manual.started)}<input type="datetime-local" name="startedAt" required></label><label>${esc(c.manual.ended)}<input type="datetime-local" name="endedAt" required></label><label>${esc(c.manual.note)}<textarea name="note" maxlength="1000"></textarea></label><button type="submit">${esc(c.manual.submit)}</button></form></section>`;
 
-async function storeName(names: StoreNames | undefined, storeId: string): Promise<string> {
-  return (await names?.([storeId]))?.get(storeId) ?? "your store";
+async function storeName(names: StoreNames | undefined, storeId: string, c: WorkCopy): Promise<string> {
+  return (await names?.([storeId]))?.get(storeId) ?? c.yourStore;
 }
 
-export async function renderTrack(services: WorkHttpServices, names: StoreNames | undefined, person: string, message: { kind: "success" | "error"; text: string } | null, now: Date): Promise<{ html: string; nonce: string }> {
+export async function renderTrack(services: WorkHttpServices, names: StoreNames | undefined, person: string, message: { kind: "success" | "error"; text: string } | null, now: Date, c: WorkCopy = WORK_COPY.en): Promise<{ html: string; nonce: string }> {
   const { open, assignment } = await services.sessions.today(person);
   const nonce = randomBytes(18).toString("base64url");
   let main: string;
   if (open) {
-    const where = await storeName(names, open.storeId);
-    const elapsed = duration((now.getTime() - new Date(open.startedAt).getTime()) / 1000);
-    main = `<section class="p-card" aria-labelledby="now-heading"><h2 id="now-heading">You're clocked in</h2><p>Since ${clock(open.startedAt)} at ${esc(where)} (${elapsed} so far).</p>${locationForm("/work/track/stop", "Clock out", open.id)}
-<form method="post" action="/work/track/discard"><input type="hidden" name="sessionId" value="${open.id}"><p>Clocked in by mistake? Discarding removes this session; it will not count.</p><button type="submit">Discard this session</button></form></section>`;
+    const where = await storeName(names, open.storeId, c);
+    const elapsed = c.duration((now.getTime() - new Date(open.startedAt).getTime()) / 1000);
+    main = `<section class="p-card" aria-labelledby="now-heading"><h2 id="now-heading">${esc(c.track.clockedIn)}</h2><p>${esc(c.track.since(c.clock(open.startedAt), where, elapsed))}</p>${locationForm("/work/track/stop", c.track.clockOut, open.id)}
+<form method="post" action="/work/track/discard"><input type="hidden" name="sessionId" value="${open.id}"><p>${esc(c.track.mistake)}</p><button type="submit">${esc(c.track.discard)}</button></form></section>`;
   } else if (assignment) {
-    const where = await storeName(names, assignment.storeId);
-    main = `<section class="p-card" aria-labelledby="now-heading"><h2 id="now-heading">Not clocked in</h2><p>You're placed at ${esc(where)} today.</p>${locationForm("/work/track/start", "Clock in")}</section>`;
+    const where = await storeName(names, assignment.storeId, c);
+    main = `<section class="p-card" aria-labelledby="now-heading"><h2 id="now-heading">${esc(c.track.notIn)}</h2><p>${esc(c.track.placedAt(where))}</p>${locationForm("/work/track/start", c.track.clockIn)}</section>`;
   } else {
-    main = `<section class="p-card"><div class="p-empty"><p>You aren't placed at a store today, so there is nothing to clock in to.</p></div></section>`;
+    main = `<section class="p-card"><div class="p-empty"><p>${esc(c.track.notPlaced)}</p></div></section>`;
   }
-  const body = `${message ? notice(message.kind, message.text) : ""}${main}<p id="location-status" role="status" aria-live="polite"></p>${manualForm}<script nonce="${nonce}">${LOCATION_JS}</script>`;
-  return { html: shell("Track", "track", body), nonce };
+  const body = `${message ? notice(message.kind, message.text) : ""}${main}<p id="location-status" role="status" aria-live="polite"></p>${manualForm(c)}<script nonce="${nonce}">${locationJs(c)}</script>`;
+  return { html: shell(c.track.title, "track", body, c), nonce };
 }
 
 interface DayTotals { approved: number; pending: number; rejected: number; open: number; count: number }
@@ -187,7 +162,7 @@ function lastDay(month: string): string {
   return `${month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
 }
 
-export async function renderHistory(services: WorkHttpServices, person: string, month: string, current: string): Promise<string> {
+export async function renderHistory(services: WorkHttpServices, person: string, month: string, current: string, c: WorkCopy = WORK_COPY.en): Promise<string> {
   const { rows, totals, truncated } = await monthPages(services, person, `${month}-01`, lastDay(month));
   const days = new Map<string, DayTotals>();
   for (const { session } of rows) {
@@ -197,41 +172,42 @@ export async function renderHistory(services: WorkHttpServices, person: string, 
     else day[session.status] += session.durationSeconds ?? 0;
     days.set(session.workDate, day);
   }
-  const summary = `<section class="p-card" aria-labelledby="month-heading"><h2 id="month-heading">${esc(monthLabel(month))}</h2><dl class="p-fields">
-<div><dt>Approved</dt><dd>${duration(totals.approvedSeconds)}</dd></div><div><dt>Waiting for approval</dt><dd>${duration(totals.pendingSeconds)}</dd></div><div><dt>Rejected</dt><dd>${duration(totals.rejectedSeconds)}</dd></div></dl></section>`;
-  const list = days.size === 0 ? `<section class="p-card"><div class="p-empty"><p>No hours logged in ${esc(monthLabel(month))}.</p></div></section>`
-    : `<section class="p-card" aria-labelledby="days-heading"><h2 id="days-heading">Days</h2><ul>${[...days.entries()].sort(([a], [b]) => b.localeCompare(a)).map(([date, d]) =>
-      `<li><a href="/work/history/${date}">${esc(longDate(date))}</a>: ${d.count} ${d.count === 1 ? "session" : "sessions"}${d.approved ? `, ${duration(d.approved)} approved` : ""}${d.pending ? `, ${duration(d.pending)} waiting` : ""}${d.rejected ? `, ${duration(d.rejected)} rejected` : ""}${d.open ? ", in progress" : ""}</li>`).join("")}</ul>${truncated ? "<p>Only the first part of this month is shown.</p>" : ""}</section>`;
-  const next = month < current ? ` · <a href="/work/history?month=${shiftMonth(month, 1)}">Next month</a>` : "";
-  const pager = `<nav class="p-card" aria-label="Months"><a href="/work/history?month=${shiftMonth(month, -1)}">Previous month</a>${next}</nav>`;
-  return shell("History", "history", summary + list + pager);
+  const h = c.history;
+  const summary = `<section class="p-card" aria-labelledby="month-heading"><h2 id="month-heading">${esc(c.monthLabel(month))}</h2><dl class="p-fields">
+<div><dt>${esc(h.approved)}</dt><dd>${esc(c.duration(totals.approvedSeconds))}</dd></div><div><dt>${esc(h.waiting)}</dt><dd>${esc(c.duration(totals.pendingSeconds))}</dd></div><div><dt>${esc(h.rejected)}</dt><dd>${esc(c.duration(totals.rejectedSeconds))}</dd></div></dl></section>`;
+  const list = days.size === 0 ? `<section class="p-card"><div class="p-empty"><p>${esc(h.none(c.monthLabel(month)))}</p></div></section>`
+    : `<section class="p-card" aria-labelledby="days-heading"><h2 id="days-heading">${esc(h.days)}</h2><ul>${[...days.entries()].sort(([a], [b]) => b.localeCompare(a)).map(([date, d]) =>
+      `<li><a href="/work/history/${date}">${esc(c.longDate(date))}</a>: ${esc(h.sessions(d.count))}${d.approved ? esc(h.approvedPart(c.duration(d.approved))) : ""}${d.pending ? esc(h.waitingPart(c.duration(d.pending))) : ""}${d.rejected ? esc(h.rejectedPart(c.duration(d.rejected))) : ""}${d.open ? esc(h.inProgressPart) : ""}</li>`).join("")}</ul>${truncated ? `<p>${esc(h.truncated)}</p>` : ""}</section>`;
+  const next = month < current ? ` · <a href="/work/history?month=${shiftMonth(month, 1)}">${esc(h.next)}</a>` : "";
+  const pager = `<nav class="p-card" aria-label="${esc(h.months)}"><a href="/work/history?month=${shiftMonth(month, -1)}">${esc(h.previous)}</a>${next}</nav>`;
+  return shell(h.title, "history", summary + list + pager, c);
 }
 
-function sessionItem(session: WorkSession, decision: PersonDecisionView | null, where: string): string {
-  const time = session.endedAt === null ? `${clock(session.startedAt)} to now` : `${clock(session.startedAt)} to ${clock(session.endedAt)} (${duration(session.durationSeconds ?? 0)})`;
-  const status = session.endedAt === null ? "In progress" : STATUS_LABEL[session.status] ?? session.status;
-  const marks = [session.source === "manual" ? "entered late" : null, session.source === "correction" ? "corrected by StudentHub" : null,
-    session.flags.includes("location_missing") ? "no location recorded" : null].filter(Boolean);
-  const reason = decision?.reason ? `<p>Reason: ${esc(decision.reason)}</p>` : "";
-  const note = decision?.note ? `<p>Note: ${esc(decision.note)}</p>` : "";
-  const own = session.note ? `<p>Your note: ${esc(session.note)}</p>` : "";
+function sessionItem(session: WorkSession, decision: PersonDecisionView | null, where: string, c: WorkCopy): string {
+  const s = c.session;
+  const time = session.endedAt === null ? s.toNow(c.clock(session.startedAt)) : s.range(c.clock(session.startedAt), c.clock(session.endedAt), c.duration(session.durationSeconds ?? 0));
+  const status = session.endedAt === null ? s.inProgress : c.status[session.status] ?? session.status;
+  const marks = [session.source === "manual" ? s.enteredLate : null, session.source === "correction" ? s.corrected : null,
+    session.flags.includes("location_missing") ? s.noLocation : null].filter(Boolean);
+  const reason = decision?.reason ? `<p>${esc(s.reason)} ${esc(decision.reason)}</p>` : "";
+  const note = decision?.note ? `<p>${esc(s.note)} ${esc(decision.note)}</p>` : "";
+  const own = session.note ? `<p>${esc(s.yourNote)} ${esc(session.note)}</p>` : "";
   // Legacy offered an appeal on rejected hours only; missing time is added by staff from an appeal.
-  const appeal = session.endedAt === null || session.status !== "rejected" ? "" : `<p><a href="/work/appeals/new?session=${session.id}&amp;date=${session.workDate}">Appeal these hours</a></p>`;
-  return `<li class="p-card"><h3>${esc(time)}</h3><p>${esc(where)} · <strong>${esc(status)}</strong>${marks.length ? ` · ${esc(marks.join(", "))}` : ""}</p>${reason}${note}${own}${appeal}</li>`;
+  const appeal = session.endedAt === null || session.status !== "rejected" ? "" : `<p><a href="/work/appeals/new?session=${session.id}&amp;date=${session.workDate}">${esc(s.appeal)}</a></p>`;
+  return `<li class="p-card"><h3>${esc(time)}</h3><p>${esc(where)} · <strong>${esc(status)}</strong>${marks.length ? ` · ${esc(marks.join(s.list))}` : ""}</p>${reason}${note}${own}${appeal}</li>`;
 }
 
-const APPEAL_STATUS: Readonly<Record<string, string>> = { submitted: "Sent", awaiting_review: "Waiting for review", in_progress: "Being looked at", resolved: "Resolved" };
-const APPEAL_DONE: Readonly<Record<string, string>> = { raised: "Your appeal was sent. StudentHub will look at it and reply here." };
-const sessionTime = (s: WorkSession) => `${longDate(s.workDate)}, ${clock(s.startedAt)} to ${s.endedAt ? clock(s.endedAt) : "now"}`;
-const raisedOn = (iso: string) => longDate(kuwaitDate(new Date(iso)));
+const sessionTime = (s: WorkSession, c: WorkCopy) => c.sessionTime(c.longDate(s.workDate), c.clock(s.startedAt), s.endedAt ? c.clock(s.endedAt) : null);
+const raisedOn = (iso: string, c: WorkCopy) => c.longDate(kuwaitDate(new Date(iso)));
 
-export async function renderAppeals(services: WorkHttpServices, person: string, after: { createdAt: string; id: string } | null): Promise<string> {
+export async function renderAppeals(services: WorkHttpServices, person: string, after: { createdAt: string; id: string } | null, c: WorkCopy = WORK_COPY.en): Promise<string> {
   const appeals = await services.appeals.mine(person, after);
   const last: WorkAppeal | undefined = appeals[appeals.length - 1];
-  const items = appeals.length === 0 ? `<div class="p-empty"><p>You haven't appealed any hours. To appeal, open a day in <a href="/work/history">History</a> and choose "Appeal these hours".</p></div>`
-    : `<ul>${appeals.map((a) => `<li><a href="/work/appeals/${a.id}">Raised ${esc(raisedOn(a.createdAt))}</a>: <strong>${esc(APPEAL_STATUS[a.status] ?? a.status)}</strong>. ${esc(a.reason.length > 120 ? `${a.reason.slice(0, 119)}…` : a.reason)}</li>`).join("")}</ul>`;
-  const older = appeals.length === APPEAL_PAGE_SIZE && last ? `<p><a href="/work/appeals?after=${encodeURIComponent(`${last.createdAt}~${last.id}`)}">Older appeals</a></p>` : "";
-  return shell("Appeals", "appeals", `<section class="p-card">${items}${older}</section>`);
+  const empty = esc(c.appeals.empty("\u0000")).replace("\u0000", `<a href="/work/history">${esc(c.appeals.historyLinkText)}</a>`);
+  const items = appeals.length === 0 ? `<div class="p-empty"><p>${empty}</p></div>`
+    : `<ul>${appeals.map((a) => `<li><a href="/work/appeals/${a.id}">${esc(c.appeals.raised(raisedOn(a.createdAt, c)))}</a>: <strong>${esc(c.appealStatus[a.status] ?? a.status)}</strong>. ${esc(a.reason.length > 120 ? `${a.reason.slice(0, 119)}…` : a.reason)}</li>`).join("")}</ul>`;
+  const older = appeals.length === APPEAL_PAGE_SIZE && last ? `<p><a href="/work/appeals?after=${encodeURIComponent(`${last.createdAt}~${last.id}`)}">${esc(c.appeals.older)}</a></p>` : "";
+  return shell(c.appeals.title, "appeals", `<section class="p-card">${items}${older}</section>`, c);
 }
 
 /**
@@ -247,66 +223,68 @@ async function dayPages(services: WorkHttpServices, person: string, date: string
   return { rows, totals: page.totals, next: page.next };
 }
 
-export async function renderNewAppeal(services: WorkHttpServices, names: StoreNames | undefined, person: string, sessionId: string, date: string, error: string | null): Promise<string | undefined> {
+export async function renderNewAppeal(services: WorkHttpServices, names: StoreNames | undefined, person: string, sessionId: string, date: string, error: string | null, c: WorkCopy = WORK_COPY.en): Promise<string | undefined> {
   // One indexed lookup of the person's own session on that day, wherever it falls in the day's pages.
   const row = await services.views.mineSession(person, date, sessionId);
   const found = row && row.session.endedAt !== null && row.session.status === "rejected" ? row : undefined;
   if (!found) return undefined;
-  const where = await storeName(names, found.session.storeId);
-  return shell("Appeal hours", "appeals", `${error ? notice("error", error) : ""}<section class="p-card"><h2>${esc(sessionTime(found.session))}</h2><p>${esc(where)} · ${esc(STATUS_LABEL[found.session.status] ?? found.session.status)}</p>
-<form method="post" action="/work/appeals"><input type="hidden" name="sessionId" value="${found.session.id}"><input type="hidden" name="date" value="${date}"><label>What is wrong with these hours?<textarea name="reason" required maxlength="2000"></textarea></label><button type="submit">Send appeal</button></form></section>`);
+  const where = await storeName(names, found.session.storeId, c);
+  return shell(c.appeals.newTitle, "appeals", `${error ? notice("error", error) : ""}<section class="p-card"><h2>${esc(sessionTime(found.session, c))}</h2><p>${esc(where)} · ${esc(c.status[found.session.status] ?? found.session.status)}</p>
+<form method="post" action="/work/appeals"><input type="hidden" name="sessionId" value="${found.session.id}"><input type="hidden" name="date" value="${date}"><label>${esc(c.appeals.whatIsWrong)}<textarea name="reason" required maxlength="2000"></textarea></label><button type="submit">${esc(c.appeals.send)}</button></form></section>`, c);
 }
 
-function entryItem(s: WorkSession): string {
-  const kind = s.source === "correction" ? "Corrected to" : "Added";
-  return `<li>${kind} ${esc(sessionTime(s))} (${duration(s.durationSeconds ?? 0)})</li>`;
+function entryItem(s: WorkSession, c: WorkCopy): string {
+  const kind = s.source === "correction" ? c.appeals.correctedTo : c.appeals.added;
+  return `<li>${esc(kind)} ${esc(sessionTime(s, c))} (${esc(c.duration(s.durationSeconds ?? 0))})</li>`;
 }
 
-export async function renderAppeal(services: WorkHttpServices, names: StoreNames | undefined, person: string, detail: AppealDetail, message: string | null): Promise<string> {
+export async function renderAppeal(services: WorkHttpServices, names: StoreNames | undefined, person: string, detail: AppealDetail, message: string | null, c: WorkCopy = WORK_COPY.en): Promise<string> {
   const { appeal, session, updates, entries } = detail;
-  const where = await storeName(names, session.storeId);
-  const head = `<section class="p-card"><h2>${esc(APPEAL_STATUS[appeal.status] ?? appeal.status)}</h2><p>Raised ${esc(raisedOn(appeal.createdAt))} about ${esc(sessionTime(session))} at ${esc(where)}.</p><p>Your reason: ${esc(appeal.reason)}</p></section>`;
-  const fixes = entries.length ? `<section class="p-card"><h2>Changes to your hours</h2><ul>${entries.map(entryItem).join("")}</ul></section>` : "";
-  const replies = updates.length === 0 ? `<div class="p-empty"><p>No reply yet.</p></div>`
-    : `<ul class="p-stack">${updates.map((u) => `<li class="p-card">${u.title ? `<h3>${esc(u.title)}</h3>` : ""}<p>${esc(u.detail)}</p><p>${esc(raisedOn(u.createdAt))}${u.readAt === null && u.authorId !== person ? " · New" : ""}</p></li>`).join("")}</ul>`;
-  return shell("Appeal", "appeals", `${message ? notice("success", message) : ""}${head}${fixes}<section class="p-card" aria-labelledby="replies-heading"><h2 id="replies-heading">Replies from StudentHub</h2>${replies}</section><nav class="p-card"><a href="/work/appeals">All appeals</a></nav>`);
+  const a = c.appeals;
+  const where = await storeName(names, session.storeId, c);
+  const head = `<section class="p-card"><h2>${esc(c.appealStatus[appeal.status] ?? appeal.status)}</h2><p>${esc(a.raisedAbout(raisedOn(appeal.createdAt, c), sessionTime(session, c), where))}</p><p>${esc(a.yourReason)} ${esc(appeal.reason)}</p></section>`;
+  const fixes = entries.length ? `<section class="p-card"><h2>${esc(a.changes)}</h2><ul>${entries.map((e) => entryItem(e, c)).join("")}</ul></section>` : "";
+  const replies = updates.length === 0 ? `<div class="p-empty"><p>${esc(a.noReply)}</p></div>`
+    : `<ul class="p-stack">${updates.map((u) => `<li class="p-card">${u.title ? `<h3>${esc(u.title)}</h3>` : ""}<p>${esc(u.detail)}</p><p>${esc(raisedOn(u.createdAt, c))}${u.readAt === null && u.authorId !== person ? esc(a.newMark) : ""}</p></li>`).join("")}</ul>`;
+  return shell(a.detailTitle, "appeals", `${message ? notice("success", message) : ""}${head}${fixes}<section class="p-card" aria-labelledby="replies-heading"><h2 id="replies-heading">${esc(a.replies)}</h2>${replies}</section><nav class="p-card"><a href="/work/appeals">${esc(a.all)}</a></nav>`, c);
 }
 
-export async function renderDay(services: WorkHttpServices, names: StoreNames | undefined, person: string, date: string, after: HoursCursor | null = null): Promise<string> {
+export async function renderDay(services: WorkHttpServices, names: StoreNames | undefined, person: string, date: string, after: HoursCursor | null = null, c: WorkCopy = WORK_COPY.en): Promise<string> {
   const page = await dayPages(services, person, date, after, HISTORY_PAGE_CAP);
   const storeIds = [...new Set(page.rows.map((r) => r.session.storeId))];
   const known = storeIds.length && names ? await names(storeIds) : new Map<string, string>();
-  const items = page.rows.length === 0 ? `<div class="p-empty"><p>No hours logged on this day.</p></div>`
-    : `<ul class="p-stack">${page.rows.map((r) => sessionItem(r.session, r.decision, known.get(r.session.storeId) ?? "Your store")).join("")}</ul>`;
-  const totals = `<p>Approved ${duration(page.totals.approvedSeconds)} · Waiting ${duration(page.totals.pendingSeconds)} · Rejected ${duration(page.totals.rejectedSeconds)}</p>`;
-  const later = page.next ? `<p><a href="/work/history/${date}?after=${encodeURIComponent(formatCursor(page.next))}">Later sessions on this day</a></p>` : "";
-  return shell(longDate(date), "history", `<section class="p-card">${totals}${items}${later}</section><nav class="p-card"><a href="/work/history?month=${date.slice(0, 7)}">Back to ${esc(monthLabel(date.slice(0, 7)))}</a></nav>`);
+  const items = page.rows.length === 0 ? `<div class="p-empty"><p>${esc(c.day.none)}</p></div>`
+    : `<ul class="p-stack">${page.rows.map((r) => sessionItem(r.session, r.decision, known.get(r.session.storeId) ?? c.YourStore, c)).join("")}</ul>`;
+  const totals = `<p>${esc(c.day.totals(c.duration(page.totals.approvedSeconds), c.duration(page.totals.pendingSeconds), c.duration(page.totals.rejectedSeconds)))}</p>`;
+  const later = page.next ? `<p><a href="/work/history/${date}?after=${encodeURIComponent(formatCursor(page.next))}">${esc(c.day.later)}</a></p>` : "";
+  return shell(c.longDate(date), "history", `<section class="p-card">${totals}${items}${later}</section><nav class="p-card"><a href="/work/history?month=${date.slice(0, 7)}">${esc(c.day.back(c.monthLabel(date.slice(0, 7))))}</a></nav>`, c);
 }
 
-const PLACED_BY: Readonly<Record<string, string>> = { staff: "Placed by StudentHub", request: "Placed at the company's request", recruit: "Placed after recruitment", import: "Placed in the old system" };
-const period = (a: Assignment) => a.endDate ? `${longDate(a.startDate)} to ${longDate(a.endDate)}` : `From ${longDate(a.startDate)}, no end date`;
+const period = (a: Assignment, c: WorkCopy) => a.endDate ? c.placement.period(c.longDate(a.startDate), c.longDate(a.endDate)) : c.placement.openPeriod(c.longDate(a.startDate));
 
 /** C-10: where the person is placed now, next and before (legacy assignment detail). */
-export async function renderPlacements(services: WorkHttpServices, names: StoreNames | undefined, person: string, today: string): Promise<string> {
+export async function renderPlacements(services: WorkHttpServices, names: StoreNames | undefined, person: string, today: string, c: WorkCopy = WORK_COPY.en): Promise<string> {
   const all = await services.placements.mine(person);
   const known = all.length && names ? await names([...new Set(all.map((a) => a.storeId))]) : new Map<string, string>();
-  const where = (a: Assignment) => known.get(a.storeId) ?? "A store";
+  const where = (a: Assignment) => known.get(a.storeId) ?? c.aStore;
+  const p = c.placement;
   const current = all.filter((a) => a.startDate <= today && (a.endDate === null || a.endDate >= today));
   const next = all.filter((a) => a.startDate > today).sort((a, b) => a.startDate.localeCompare(b.startDate));
   const past = all.filter((a) => a.endDate !== null && a.endDate < today).sort((a, b) => b.startDate.localeCompare(a.startDate));
-  const item = (a: Assignment) => `<li><a href="/work/assignment/${a.id}">${esc(where(a))}</a>: ${esc(period(a))}</li>`;
-  const now = current.length === 0 ? `<div class="p-empty"><p>You aren't placed at a store right now.</p></div>`
-    : current.map((a) => `<p><strong>${esc(where(a))}</strong></p><p>${esc(period(a))}</p><p><a href="/work/assignment/${a.id}">Details</a> · <a href="/work/track">Clock in or out</a></p>`).join("");
-  const section = (id: string, title: string, list: readonly Assignment[]) => list.length ? `<section class="p-card" aria-labelledby="${id}"><h2 id="${id}">${title}</h2><ul>${list.map(item).join("")}</ul></section>` : "";
-  return shell("Placement", "assignment", `<section class="p-card" aria-labelledby="current-heading"><h2 id="current-heading">Where you work now</h2>${now}</section>${section("next-heading", "Coming up", next)}${section("past-heading", "Before", past)}`);
+  const item = (a: Assignment) => `<li><a href="/work/assignment/${a.id}">${esc(where(a))}</a>: ${esc(period(a, c))}</li>`;
+  const now = current.length === 0 ? `<div class="p-empty"><p>${esc(p.notNow)}</p></div>`
+    : current.map((a) => `<p><strong>${esc(where(a))}</strong></p><p>${esc(period(a, c))}</p><p><a href="/work/assignment/${a.id}">${esc(p.details)}</a> · <a href="/work/track">${esc(p.clock)}</a></p>`).join("");
+  const section = (id: string, title: string, list: readonly Assignment[]) => list.length ? `<section class="p-card" aria-labelledby="${id}"><h2 id="${id}">${esc(title)}</h2><ul>${list.map(item).join("")}</ul></section>` : "";
+  return shell(p.title, "assignment", `<section class="p-card" aria-labelledby="current-heading"><h2 id="current-heading">${esc(p.nowHeading)}</h2>${now}</section>${section("next-heading", p.next, next)}${section("past-heading", p.past, past)}`, c);
 }
 
-export async function renderPlacement(services: WorkHttpServices, names: StoreNames | undefined, person: string, id: string): Promise<string | undefined> {
+export async function renderPlacement(services: WorkHttpServices, names: StoreNames | undefined, person: string, id: string, c: WorkCopy = WORK_COPY.en): Promise<string | undefined> {
   const a = (await services.placements.mine(person)).find((x) => x.id === id);
   if (!a) return undefined;
-  const where = await storeName(names, a.storeId);
-  return shell(where, "assignment", `<section class="p-card"><dl class="p-fields"><div><dt>Store</dt><dd>${esc(where)}</dd></div><div><dt>Period</dt><dd>${esc(period(a))}</dd></div>
-<div><dt>How</dt><dd>${esc(PLACED_BY[a.source] ?? "Placed")}</dd></div></dl></section><nav class="p-card"><a href="/work/history">Your hours</a> · <a href="/work/assignment">All placements</a></nav>`);
+  const where = await storeName(names, a.storeId, c);
+  const p = c.placement;
+  return shell(where, "assignment", `<section class="p-card"><dl class="p-fields"><div><dt>${esc(p.store)}</dt><dd>${esc(where)}</dd></div><div><dt>${esc(p.periodLabel)}</dt><dd>${esc(period(a, c))}</dd></div>
+<div><dt>${esc(p.how)}</dt><dd>${esc(c.placedBy[a.source] ?? p.placed)}</dd></div></dl></section><nav class="p-card"><a href="/work/history">${esc(p.hours)}</a> · <a href="/work/assignment">${esc(p.all)}</a></nav>`, c);
 }
 
 const PLACEMENT = /^\/work\/assignment\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
@@ -328,64 +306,68 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
   const appeals = path === "/work/appeals" || path === "/work/appeals/new" || APPEAL.test(path);
   const placement = path === "/work/assignment" || PLACEMENT.test(path);
   if (!track && !history && !appeals && !placement) return false;
+  // The browser's language until the person is known, then theirs.
+  let c = await workCopyFor(undefined, undefined, req);
+  const fail = (status: number, key: string) => write(res, ...plain(status, ...c.errors[key]!, c));
   try {
-    if (!services || !origin) { req.resume(); write(res, ...plain(503, "Work is unavailable", "Hours tracking isn't switched on here yet.")); return true; }
+    if (!services || !origin) { req.resume(); fail(503, "unavailable"); return true; }
     const sessionId = sessionCookie(req.headers.cookie);
     const person = sessionId ? await services.personFor(sessionId) : undefined;
-    if (!person) { req.resume(); write(res, ...plain(401, "Sign in", "Sign in to see your hours.")); return true; }
+    if (!person) { req.resume(); fail(401, "signIn"); return true; }
+    c = await workCopyFor(services.language, person, req);
 
     if (req.method === "GET" && path === "/work/track") {
       const done = url.searchParams.get("done");
-      const page = await renderTrack(services, names, person, done && DONE[done] ? { kind: "success", text: DONE[done]! } : null, now());
+      const page = await renderTrack(services, names, person, done && c.done[done] ? { kind: "success", text: c.done[done]! } : null, now(), c);
       write(res, 200, page.html, page.nonce);
       return true;
     }
     if (req.method === "GET" && path === "/work/assignment") {
-      write(res, 200, await renderPlacements(services, names, person, kuwaitDate(now())));
+      write(res, 200, await renderPlacements(services, names, person, kuwaitDate(now()), c));
       return true;
     }
     const placementId = PLACEMENT.exec(path)?.[1];
     if (req.method === "GET" && placementId) {
-      const html = await renderPlacement(services, names, person, placementId);
-      if (html) write(res, 200, html); else write(res, ...plain(404, "Placement not found", "This placement isn't yours or doesn't exist."));
+      const html = await renderPlacement(services, names, person, placementId, c);
+      if (html) write(res, 200, html); else fail(404, "placementNotFound");
       return true;
     }
     if (req.method === "GET" && path === "/work/history") {
       const current = kuwaitDate(now()).slice(0, 7);
       const month = url.searchParams.get("month") ?? current;
-      if (!MONTH.test(month) || month > current) { write(res, ...plain(400, "Month not found", "Choose a month up to this one.")); return true; }
-      write(res, 200, await renderHistory(services, person, month, current));
+      if (!MONTH.test(month) || month > current) { fail(400, "monthNotFound"); return true; }
+      write(res, 200, await renderHistory(services, person, month, current, c));
       return true;
     }
     const day = DAY.exec(path)?.[1];
     if (req.method === "GET" && day) {
-      if (!parseRange(day, day)) { write(res, ...plain(404, "Day not found", "That isn't a valid date.")); return true; }
+      if (!parseRange(day, day)) { fail(404, "dayNotFound"); return true; }
       const after = parseCursor(url.searchParams.get("after"));
-      if (after === undefined || (after && after.workDate !== day)) { write(res, ...plain(400, "Page not found", "That page of the day isn't valid.")); return true; }
-      write(res, 200, await renderDay(services, names, person, day, after));
+      if (after === undefined || (after && after.workDate !== day)) { fail(400, "dayPage"); return true; }
+      write(res, 200, await renderDay(services, names, person, day, after, c));
       return true;
     }
     if (req.method === "GET" && path === "/work/appeals") {
       const after = parseAppealCursor(url.searchParams.get("after"));
-      if (after === undefined) { write(res, ...plain(400, "Page not found", "That list page isn't valid.")); return true; }
-      write(res, 200, await renderAppeals(services, person, after));
+      if (after === undefined) { fail(400, "listPage"); return true; }
+      write(res, 200, await renderAppeals(services, person, after, c));
       return true;
     }
     if (req.method === "GET" && path === "/work/appeals/new") {
       const sessionId = url.searchParams.get("session")?.toLowerCase() ?? "", date = url.searchParams.get("date") ?? "";
-      const html = UUID.test(sessionId) && parseRange(date, date) ? await renderNewAppeal(services, names, person, sessionId, date, null) : undefined;
-      if (html) write(res, 200, html); else write(res, ...plain(404, "Hours not found", "Open the day in History and choose the hours to appeal."));
+      const html = UUID.test(sessionId) && parseRange(date, date) ? await renderNewAppeal(services, names, person, sessionId, date, null, c) : undefined;
+      if (html) write(res, 200, html); else fail(404, "hoursNotFound");
       return true;
     }
     const appealId = APPEAL.exec(path)?.[1];
     if (req.method === "GET" && appealId) {
       const detail = await services.appeals.detail(person, appealId);
-      if ("kind" in detail) { write(res, ...plain(404, "Appeal not found", "This appeal isn't yours or doesn't exist.")); return true; }
+      if ("kind" in detail) { fail(404, "appealNotFound"); return true; }
       // The service shows an appeal to its owner and to staff of its company; staff get the A-13 view.
       if (detail.appeal.personId !== person) { write(res, 200, await renderStaffAppeal(services, detail, staffDone(url.searchParams.get("done")))); return true; }
       const done = url.searchParams.get("done");
       // Render first, so replies are only marked read once the page that shows them is ready.
-      const html = await renderAppeal(services, names, person, detail, done && APPEAL_DONE[done] ? APPEAL_DONE[done]! : null);
+      const html = await renderAppeal(services, names, person, detail, done && c.appealDone[done] ? c.appealDone[done]! : null, c);
       write(res, 200, html);
       // Opening the appeal reads its replies (legacy marked them read from the app). A failed
       // receipt leaves the reply new for next time; it never replaces the page already sent.
@@ -395,19 +377,18 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
       return true;
     }
     const writable = (track && path !== "/work/track") || path === "/work/appeals";
-    if (req.method !== "POST" || !writable) { req.resume(); write(res, ...plain(405, "Not allowed", "This page can't do that.")); return true; }
-    if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); write(res, ...plain(403, "Request refused", "We could not verify this request.")); return true; }
+    if (req.method !== "POST" || !writable) { req.resume(); fail(405, "notAllowed"); return true; }
+    if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); fail(403, "refused"); return true; }
 
     if (path === "/work/appeals") {
       const form = await readForm(req, ["sessionId", "date", "reason"], FORM_LIMITS.appeal);
       const date = form?.date ?? "";
-      if (!form || !parseRange(date, date)) { write(res, ...plain(400, "Appeal not sent", "Open the day in History and try again.")); return true; }
+      if (!form || !parseRange(date, date)) { fail(400, "appealNotSent"); return true; }
       const raised = await services.appeals.raise(person, form.sessionId, form.reason);
       if (raised.kind === "raised") { redirect(res, `/work/appeals/${raised.appeal.id}?done=raised`); return true; }
       const again = UUID.test(form.sessionId ?? "") ? await renderNewAppeal(services, names, person, form.sessionId!.toLowerCase(), date,
-        raised.code === "invalid_input" ? "Tell us what is wrong with these hours."
-          : raised.code === "appeal_open" ? "You already have an open appeal on these hours. Follow it in Appeals." : "These hours can't be appealed.") : undefined;
-      if (again) write(res, 400, again); else write(res, ...plain(404, "Hours not found", "Open the day in History and choose the hours to appeal."));
+        raised.code === "invalid_input" ? c.appeals.invalid : raised.code === "appeal_open" ? c.appeals.open : c.appeals.cannot, c) : undefined;
+      if (again) write(res, 400, again); else fail(404, "hoursNotFound");
       return true;
     }
 
@@ -425,10 +406,10 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
     }
     if (result.kind !== "refused") { redirect(res, `/work/track?done=${result.kind}`); return true; }
     const status = result.code === "already_working" || result.code === "not_working" || result.code === "overlaps_session" || result.code === "session_changed" ? 409 : 400;
-    const page = await renderTrack(services, names, person, { kind: "error", text: REFUSALS[result.code] ?? REFUSALS.invalid_input! }, now());
+    const page = await renderTrack(services, names, person, { kind: "error", text: c.refusals[result.code] ?? c.refusals.invalid_input! }, now(), c);
     write(res, status, page.html, page.nonce);
   } catch (error) {
-    if (!res.headersSent) write(res, ...(tooLarge(error) ?? plain(503, "Work is unavailable", "Something went wrong. Try again in a moment."))); else res.destroy();
+    if (!res.headersSent) write(res, ...(tooLarge(error, c) ?? plain(503, ...c.errors.wrong!, c))); else res.destroy();
   }
   return true;
 }

@@ -600,6 +600,12 @@ export class PostgresWorkHoursViewStore {
     return new Map(rows.filter((r) => r.name).map((r) => [r.id, r.name!]));
   }
 
+  /** The language the person chose on their profile (SHU-84's person_preferences); undefined when they haven't. */
+  async language(personId: string): Promise<"en" | "ar" | undefined> {
+    const { rows } = await this.#db.pool.query<{ language: "en" | "ar" }>("SELECT language FROM person_preferences WHERE principal_id = $1", [personId]);
+    return rows[0]?.language;
+  }
+
   /**
    * D-WK2 (legacy kept): the employer ratings of each person, for other employers'
    * search. Counts the rating of every decision that still stands on a session in
