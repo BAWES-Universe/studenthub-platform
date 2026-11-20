@@ -111,6 +111,9 @@ const mutations = [
   ["days lock in one order", ".sort((x, y) => dayLockKey(x.key) < dayLockKey(y.key) ? -1 : dayLockKey(x.key) > dayLockKey(y.key) ? 1 : 0)", ".sort(() => 0)", "W4_DAY", decisions, decisionSuite],
   ["ancestry read on the transaction client", "scopeFor((orgId) => tx.organizationAncestors(orgId))", "scopeFor((orgId) => this.#store.organizationAncestors(orgId))", "W4_DAY", decisions, decisionSuite],
   ["correction lookup is staff only", "if (!isIsoDate(date) || !isUuid(sessionId) || !(await this.#scope.isOperatorStaff(actorId)))", "if (!isIsoDate(date) || !isUuid(sessionId))", "W5_VIEWS", views, decisionSuite],
+  ["an entry page needs the store in the actor's scope", "if (!(await this.#scope.covers(actorId, orgId, store)))", "if (false)", "W5_VIEWS", views, decisionSuite],
+  ["an entry page reads that store only", "storeIds: [store], sessionIds: [sessionId.toLowerCase()],", "sessionIds: [sessionId.toLowerCase()],", "W5_VIEWS", views, decisionSuite],
+  ["a decision goes back only to an entry on this store's page", "return back.startsWith(`${place.base}/${id}?`) && url.pathname", "return url.pathname", "M-03 entry page: a decision goes back", review, reviewSuite],
   ["private note hidden", "note: d.notePublic ? d.note : null", "note: d.note", "W5_PRIVATE", views, decisionSuite],
   ["stable paging cursor", "next: sessions.length > filter.limit && last ? { workDate: last.workDate, id: last.id } : null", "next: null", "W5_PAGING", views, decisionSuite],
 ];

@@ -2,7 +2,8 @@
 // - O-11 Work review, /organization/:orgId/work: the company's hours with
 //   filters, approve or reject selected sessions, undo a decision;
 // - M-03 Time approvals, /store/:storeId/time-approvals: the same queue for one
-//   store, waiting hours first;
+//   store, waiting hours first; /store/:storeId/time-approvals/:sessionId?date=
+//   opens one entry, decided or undone there;
 // - M-04 Assignment changes, /store/:storeId/assignment-changes: ask for a
 //   person at the store, follow and cancel those requests;
 // - A-12 Work logs, /work/logs: staff see every company's hours (a person
@@ -31,6 +32,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const LOGS = /^\/work\/logs(\/decide)?$/;
 const ORG = /^\/organization\/([A-Za-z0-9._:-]{1,256})\/work(\/decide)?$/;
 const STORE = /^\/store\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(time-approvals|assignment-changes)(?:\/(decide|request|cancel))?$/;
+const STORE_SESSION = /^\/store\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/time-approvals\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const STATUSES: readonly SessionStatus[] = ["pending", "approved", "rejected"];
 
 /** Reads a same-origin form; only `repeated` keys may appear more than once. */
@@ -80,9 +82,23 @@ function filterQuery(f: Filters, place: Place, after: HoursCursor | null = null)
   if (after) q.set("after", formatCursor(after));
   return q.toString();
 }
-/** A post's way back: the screen's own path with its filters, never anywhere else. */
+/** A store's page for one entry, from the queue's base. */
+const sessionHref = (place: Place, s: WorkSession) => `${place.base}/${s.id}?date=${s.workDate}`;
+/** The entry a post came back from, when it came from a store's entry page. */
+function sessionBack(place: Place, back: string): { readonly sessionId: string; readonly date: string } | undefined {
+  if (!place.storeId) return undefined;
+  const url = new URL(back, "http://invalid");
+  const id = url.pathname.slice(place.base.length + 1);
+  const date = url.searchParams.get("date");
+  // The raw value must itself start with the entry's path, so a redirect to it stays on this page.
+  return back.startsWith(`${place.base}/${id}?`) && url.pathname === `${place.base}/${id}` && UUID.test(id) && date !== null && /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? { sessionId: id, date } : undefined;
+}
+/** A post's way back: the screen's own path with its filters (or, on a store, one entry's page), never anywhere else. */
 function backTo(place: Place, value: string | undefined): string {
-  return value !== undefined && (value === place.base || value.startsWith(`${place.base}?`)) && !/[\r\n]/.test(value) ? value : place.base;
+  if (value === undefined || /[\r\n]/.test(value) || value.startsWith("//")) return place.base;
+  if (value === place.base || value.startsWith(`${place.base}?`)) return value;
+  return sessionBack(place, value) ? value : place.base;
 }
 const withDone = (back: string, done: string) => {
   const url = new URL(back, "http://invalid");
@@ -122,7 +138,8 @@ function placesText(s: WorkSession, c: WorkCopy): string {
   return parts.length ? `<p>${parts.join(esc(t.placesJoin))}</p>` : "";
 }
 
-function reviewRow(s: WorkSession, d: EmployerDecisionView | null, people: ReadonlyMap<string, string>, stores: ReadonlyMap<string, string>, staff: boolean, c: WorkCopy): string {
+function reviewRow(s: WorkSession, d: EmployerDecisionView | null, people: ReadonlyMap<string, string>, stores: ReadonlyMap<string, string>, place: Place, c: WorkCopy): string {
+  const staff = place.staff === true;
   const t = teamCopy(c);
   const open = s.endedAt === null;
   const time = t.common.timeRange(c.longDate(s.workDate), c.clock(s.startedAt), open ? null : c.clock(s.endedAt!), open ? null : c.duration(s.durationSeconds ?? 0));
@@ -134,7 +151,9 @@ function reviewRow(s: WorkSession, d: EmployerDecisionView | null, people: Reado
   const undo = !open && s.status !== "pending" ? `<button type="submit" name="undo" value="${s.id}">${esc(t.review.undo)}</button>` : "";
   // Staff correct closed hours (D-WK3); the correction replaces this entry in every total.
   const correct = staff && !open ? `<p><a href="/work/corrections/new?session=${s.id}&amp;date=${s.workDate}">${esc(t.review.correct)}</a></p>` : "";
-  return `<li class="p-card" id="s-${s.id}"><h3>${box} ${esc(who)}</h3><p>${esc(time)} · ${esc(stores.get(s.storeId) ?? t.review.store)}</p><p><strong>${esc(status)}</strong>${marks.length ? ` · ${esc(marks.join(t.review.marksJoin))}` : ""}</p>${placesText(s, c)}${s.note ? `<p>${esc(t.review.theirNote(s.note))}</p>` : ""}${decisionText(d, people, c)}${undo}${correct}</li>`;
+  // A store's queue opens each entry on its own page (M-03).
+  const details = place.storeId ? `<p><a href="${esc(sessionHref(place, s))}">${esc(t.review.details)}</a></p>` : "";
+  return `<li class="p-card" id="s-${s.id}"><h3>${box} ${esc(who)}</h3><p>${esc(time)} · ${esc(stores.get(s.storeId) ?? t.review.store)}</p><p><strong>${esc(status)}</strong>${marks.length ? ` · ${esc(marks.join(t.review.marksJoin))}` : ""}</p>${placesText(s, c)}${s.note ? `<p>${esc(t.review.theirNote(s.note))}</p>` : ""}${decisionText(d, people, c)}${undo}${correct}${details}</li>`;
 }
 
 /**
@@ -175,7 +194,7 @@ export async function renderReview(services: WorkHttpServices, actor: string, pl
   const totals = `<p>${esc(t.review.totals(c.duration(page.totals.approvedSeconds), c.duration(page.totals.pendingSeconds), c.duration(page.totals.rejectedSeconds), page.totals.open))}</p>`;
   const back = `${place.base}?${filterQuery(f, place, f.after)}`;
   const list = page.rows.length === 0 ? `<div class="p-empty"><p>${esc(t.review.none)}</p></div>`
-    : `<ul class="p-stack">${page.rows.map((r) => reviewRow(r.session, r.decision, people, stores, place.staff === true, c)).join("")}</ul>`;
+    : `<ul class="p-stack">${page.rows.map((r) => reviewRow(r.session, r.decision, people, stores, place, c)).join("")}</ul>`;
   const fields = page.rows.length === 0 ? "" : `<fieldset><legend>${esc(t.review.decideLegend)}</legend><label>${esc(t.review.reasonField)}<input name="reason" maxlength="255"></label>
 <label>${esc(t.review.noteField)}<textarea name="note" maxlength="2000"></textarea></label><label><input type="checkbox" name="notePublic" value="on"> ${esc(t.review.shareNote)}</label>
 <label>${esc(t.review.ratingField)}<select name="rating"><option value="">${esc(t.review.noRating)}</option>${[1, 2, 3, 4, 5].map((n) => `<option value="${n}">${esc(t.common.ofFive(n))}</option>`).join("")}</select></label>
@@ -184,6 +203,37 @@ export async function renderReview(services: WorkHttpServices, actor: string, pl
   const decide = `<form method="post" action="${place.base}/decide" class="p-card"><button type="submit" disabled hidden aria-hidden="true" tabindex="-1"></button><input type="hidden" name="back" value="${esc(back)}">${totals}${list}${fields}</form>`;
   const more = page.next ? `<nav class="p-card"><a href="${place.base}?${esc(filterQuery(f, place, page.next))}">${esc(t.review.more)}</a></nav>` : "";
   return reviewShell(place.title, `${message ? notice(message.kind, message.text) : ""}${storeNav(place, "time-approvals", c)}${filterForm}${exportForm(place, f, c)}${decide}${more}`, c);
+}
+
+/** M-03, one entry: `undefined` when it isn't at this store, isn't on that day, or isn't the actor's to review. */
+export async function renderStoreSession(services: WorkHttpServices, actor: string, place: Place & { readonly storeId: string }, date: string, sessionId: string,
+  message: { kind: "success" | "error"; text: string } | null, c: WorkCopy = WORK_COPY.en): Promise<string | undefined> {
+  const row = await services.views.storeSession(actor, place.orgId, place.storeId, date, sessionId);
+  if (!row) return undefined;
+  const t = teamCopy(c);
+  const { session: s, decision: d } = row;
+  const ids = [s.personId, ...(d?.decidedBy ? [d.decidedBy] : [])];
+  const [people, stores] = await Promise.all([
+    services.personNames ? services.personNames(ids) : new Map<string, string>(),
+    services.storeNames ? services.storeNames([s.storeId]) : new Map<string, string>(),
+  ]);
+  const who = people.get(s.personId) ?? t.review.aPerson;
+  const open = s.endedAt === null;
+  const time = t.common.timeRange(c.longDate(s.workDate), c.clock(s.startedAt), open ? null : c.clock(s.endedAt!), open ? null : c.duration(s.durationSeconds ?? 0));
+  const status = open ? t.review.inProgress : c.status[s.status] ?? s.status;
+  const marks = [s.source === "manual" ? t.review.marks.manual : null, s.source === "correction" ? t.review.marks.correction : null, s.source === "import" ? t.review.marks.import : null,
+    s.flags.includes("location_missing") ? t.review.marks.noLocation : null].filter(Boolean);
+  const back = sessionHref(place, s);
+  const entry = `<section class="p-card" aria-labelledby="entry-heading"><h2 id="entry-heading">${esc(who)}</h2><p>${esc(time)} · ${esc(stores.get(s.storeId) ?? t.review.store)}</p><p><strong>${esc(status)}</strong>${marks.length ? ` · ${esc(marks.join(t.review.marksJoin))}` : ""}</p>${placesText(s, c)}${s.note ? `<p>${esc(t.review.theirNote(s.note))}</p>` : ""}${decisionText(d, people, c)}</section>`;
+  // Same form and route as the queue, for this one entry; the default button comes first and is disabled, as there.
+  const decide = open ? `<div class="p-empty"><p>${esc(t.review.stillOpen)}</p></div>`
+    : `<form method="post" action="${place.base}/decide" class="p-card"><button type="submit" disabled hidden aria-hidden="true" tabindex="-1"></button><input type="hidden" name="back" value="${esc(back)}"><input type="hidden" name="sessionId" value="${s.id}">
+<fieldset><legend>${esc(t.review.decideOne)}</legend><label>${esc(t.review.reasonField)}<input name="reason" maxlength="255"></label>
+<label>${esc(t.review.noteField)}<textarea name="note" maxlength="2000"></textarea></label><label><input type="checkbox" name="notePublic" value="on"> ${esc(t.review.shareNote)}</label>
+<label>${esc(t.review.ratingField)}<select name="rating"><option value="">${esc(t.review.noRating)}</option>${[1, 2, 3, 4, 5].map((n) => `<option value="${n}">${esc(t.common.ofFive(n))}</option>`).join("")}</select></label>
+<button type="submit" name="action" value="approve">${esc(t.review.approveOne)}</button> <button type="submit" name="action" value="reject">${esc(t.review.rejectOne)}</button></fieldset>${s.status !== "pending" ? `<button type="submit" name="undo" value="${s.id}">${esc(t.review.undo)}</button>` : ""}</form>`;
+  const nav = `<nav class="p-card"><a href="${place.base}">${esc(t.review.backToQueue)}</a></nav>`;
+  return reviewShell(t.review.sessionTitle(who), `${message ? notice(message.kind, message.text) : ""}${storeNav(place, "time-approvals", c)}${entry}${decide}${nav}`, c);
 }
 
 /** M-04; `undefined` when the actor may not see this store's requests. */
@@ -207,7 +257,10 @@ export async function renderChanges(services: WorkHttpServices, actor: string, p
 export async function handleReviewPages(req: IncomingMessage, res: ServerResponse, services: WorkHttpServices | undefined, origin: string | undefined,
   now: () => Date = () => new Date()): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://invalid");
-  const org = ORG.exec(url.pathname), store = STORE.exec(url.pathname), logs = LOGS.exec(url.pathname);
+  const org = ORG.exec(url.pathname), entry = STORE_SESSION.exec(url.pathname), logs = LOGS.exec(url.pathname);
+  const queue = STORE.exec(url.pathname);
+  // A store screen: its id, which screen, and the post action (an entry's page has none).
+  const store = queue ? { id: queue[1]!, screen: queue[2]!, action: queue[3] } : entry ? { id: entry[1]!, screen: "time-approvals", action: undefined } : null;
   if (!org && !store && !logs) return false;
   // The browser's language until the actor is known, then theirs.
   let c = await workCopyFor(undefined, undefined, req);
@@ -228,17 +281,23 @@ export async function handleReviewPages(req: IncomingMessage, res: ServerRespons
       place = { orgId: org[1]!, base: `/organization/${org[1]!}/work`, title: t.review.titles.company };
       screen = "review"; action = org[2] ? "decide" : undefined;
     } else {
-      const info = await services.storeInfo!(store![1]!);
+      const info = await services.storeInfo!(store!.id);
       if (!info) { req.resume(); write(res, ...plain(404, ...t.review.storeNotFound, c)); return true; }
-      screen = store![2] === "time-approvals" ? "review" : "changes";
-      place = { orgId: info.orgId, storeId: store![1]!, base: `/store/${store![1]!}/${store![2]!}`, title: screen === "review" ? t.review.titles.approvals(info.name) : t.review.titles.changes(info.name) };
-      action = store![3];
+      screen = store!.screen === "time-approvals" ? "review" : "changes";
+      place = { orgId: info.orgId, storeId: store!.id, base: `/store/${store!.id}/${store!.screen}`, title: screen === "review" ? t.review.titles.approvals(info.name) : t.review.titles.changes(info.name) };
+      action = store!.action;
       if ((screen === "review" && action !== undefined && action !== "decide") || (screen === "changes" && action === "decide")) { req.resume(); write(res, ...plain(404, ...t.review.pageNotFound, c)); return true; }
     }
     const denied = () => write(res, ...plain(403, ...t.review.denied, c));
     const done = url.searchParams.get("done");
     const doneMessage = done && t.review.done[done] ? { kind: "success" as const, text: t.review.done[done]! } : null;
 
+    if (entry) {
+      if (req.method !== "GET") { req.resume(); write(res, ...plain(405, ...t.common.notAllowed, c)); return true; }
+      const html = await renderStoreSession(services, actor, place as Place & { storeId: string }, url.searchParams.get("date") ?? "", entry[2]!, doneMessage, c);
+      if (html) write(res, 200, html); else write(res, ...plain(404, ...t.review.sessionNotFound, c));
+      return true;
+    }
     if (req.method === "GET" && action === undefined) {
       if (screen === "changes") {
         const html = await renderChanges(services, actor, place as Place & { storeId: string }, doneMessage, c);
@@ -282,10 +341,16 @@ export async function handleReviewPages(req: IncomingMessage, res: ServerRespons
         : { kind: "refused" as const, code: "invalid_input" };
     }
     if (result.kind === "decided") { redirect(res, withDone(back, fields && one(fields, "undo") !== undefined ? "undone" : "decided")); return true; }
+    const status = result.code === "forbidden" ? 403 : result.code === "invalid_input" || result.code === "too_many" ? 400 : 409;
+    const refusal = { kind: "error" as const, text: t.review.decideRefusals[result.code] ?? t.review.decideRefusals.invalid_input! };
+    // A refusal from an entry's page shows that page again; the entry may be gone by now, then the queue.
+    const from = sessionBack(place, back);
+    const again = from ? await renderStoreSession(services, actor, place as Place & { storeId: string }, from.date, from.sessionId, refusal, c) : undefined;
+    if (again) { write(res, status, again); return true; }
     const f = readFilters(new URL(back, "http://invalid").searchParams, place, now()) ?? readFilters(new URLSearchParams(), place, now())!;
-    const html = await renderReview(services, actor, place, f, { kind: "error", text: t.review.decideRefusals[result.code] ?? t.review.decideRefusals.invalid_input! }, c);
+    const html = await renderReview(services, actor, place, f, refusal, c);
     if (!html) { denied(); return true; }
-    write(res, result.code === "forbidden" ? 403 : result.code === "invalid_input" || result.code === "too_many" ? 400 : 409, html);
+    write(res, status, html);
   } catch (error) {
     if (!res.headersSent) write(res, ...(tooLarge(error, c) ?? plain(503, ...t.common.unavailable, c))); else res.destroy();
   }

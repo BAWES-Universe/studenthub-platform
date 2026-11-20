@@ -439,6 +439,11 @@ test("W5_PG views: the person sees no rating or private note; another company se
   assert.equal((await views.mineSession(w.person, day, b))?.decision?.note, "public note");
   assert.equal(await views.mineSession(w.owner, day, b), undefined);
   assert.equal(await views.mineSession(w.person, "2026-11-01", b), undefined);
+  // The M-03 entry page binds the session id with the company, the store and the day.
+  assert.equal((await views.storeSession(w.owner, w.company, w.store, day, b))?.decision?.note, "public note");
+  for (const [actor, org, store, date] of [[w.rivalOwner, w.company, w.store, day], [w.owner, w.company, w.rivalStore, day], [w.owner, w.company, w.store, "2026-11-01"], [w.person, w.company, w.store, day]] as const) {
+    assert.equal(await views.storeSession(actor, org, store, date, b), undefined, `${actor} ${store} ${date}`);
+  }
   const company = await views.company(w.owner, w.company, range);
   assert.equal("rows" in company && company.rows.find((r) => r.session.id === a)?.decision?.rating, 4);
   assert.deepEqual(await views.company(w.rivalOwner, w.company, range), { kind: "refused", code: "forbidden" });

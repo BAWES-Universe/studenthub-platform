@@ -21,13 +21,14 @@ const ROWS = [
   { session: session({ id: S2, status: "rejected", source: "manual" }), decision: { outcome: "rejected", reason: "late <again>", note: "private word", notePublic: false, rating: 2, decidedBy: "manager", decidedAt: "2026-11-18T10:00:00.000Z" } },
   { session: session({ id: S3, endedAt: null, durationSeconds: null }), decision: null },
 ];
-interface World { language?: "en" | "ar"; rows?: unknown[]; viewRefused?: boolean; decided?: unknown; requests?: unknown[] | null; requestOutcome?: unknown }
+interface World { language?: "en" | "ar"; rows?: unknown[]; entry?: unknown | null; viewRefused?: boolean; decided?: unknown; requests?: unknown[] | null; requestOutcome?: unknown }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const decided = world.decided ?? { kind: "decided", decisions: [], changed: 1 };
   return {
     personFor: async (id: string) => id === SESSION ? "actor" : undefined,
     language: async (personId: string) => personId === "actor" ? world.language : undefined,
     views: { all: async (...args: unknown[]) => { calls.push(["all", ...args]); return world.viewRefused ? { kind: "refused", code: "forbidden" } : { rows: world.rows ?? ROWS, totals: { approvedSeconds: 0, pendingSeconds: 0, rejectedSeconds: 0, open: 0 }, next: null }; },
+      storeSession: async (...args: unknown[]) => { calls.push(["storeSession", ...args]); return world.entry === null ? undefined : world.entry ?? ROWS[1]; },
       company: async (...args: unknown[]) => { calls.push(["company", ...args]); return world.viewRefused ? { kind: "refused", code: "forbidden" } : { rows: world.rows ?? ROWS, totals: { approvedSeconds: 0, pendingSeconds: 9000, rejectedSeconds: 9000, open: 1 }, next: null }; } },
     decisions: {
       decideSessions: async (...args: unknown[]) => { calls.push(["decideSessions", ...args]); return decided; },
@@ -227,4 +228,77 @@ test("WORK_REVIEW in Arabic: the actor's saved language, else the browser's; rig
   const signedOut = await request("/organization/co/work", { cookie: null, acceptLanguage: "ar" });
   assert.deepEqual([signedOut.status, /<h1>تسجيل الدخول<\/h1><p>سجّل الدخول لمراجعة الساعات\.<\/p>/.test(signedOut.html)], [401, true]);
   assert.match((await request("/work/logs", { world: { language: "ar" } })).html, /<h1>سجلات العمل<\/h1>[\s\S]*تصحيح هذه الساعات/);
+});
+
+test("WORK_REVIEW M-03 entry page: one entry from the store's queue, decided or undone in place", async () => {
+  // The store's queue links each entry; the company screen doesn't.
+  const queue = await request(`/store/${STORE}/time-approvals`);
+  assert.match(queue.html, new RegExp(`<a href="/store/${STORE}/time-approvals/${S1}\\?date=2026-11-18">Details</a>`));
+  assert.doesNotMatch((await request("/organization/co/work")).html, />Details</);
+
+  const calls: unknown[][] = [];
+  const page = await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, {}, calls);
+  assert.equal(page.status, 200);
+  assert.deepEqual(calls[0], ["storeSession", "actor", "co", STORE, "2026-11-18", S2]);
+  assert.match(page.html, /<title>Hours: Sara &lt;S&gt;/);
+  assert.match(page.html, /Reason: late &lt;again&gt;/);
+  assert.match(page.html, /Note \(only your company can see it\): private word/);
+  assert.match(page.html, /by Mona/);
+  const form = page.html.slice(page.html.indexOf(`action="/store/${STORE}/time-approvals/decide"`));
+  assert.match(form, /^[^>]*><button type="submit" disabled hidden aria-hidden="true" tabindex="-1"><\/button>/);
+  assert.match(form, new RegExp(`name="back" value="/store/${STORE}/time-approvals/${S2}\\?date=2026-11-18"><input type="hidden" name="sessionId" value="${S2}">`));
+  assert.match(form, new RegExp(`<button type="submit" name="undo" value="${S2}">Undo this decision</button>`));
+  assert.match(page.html, new RegExp(`<a href="/store/${STORE}/time-approvals">Back to time approvals</a>`));
+  assert.equal(page.html.includes("<script"), false);
+
+  // Waiting hours have no undo; hours in progress can't be decided yet.
+  assert.doesNotMatch((await request(`/store/${STORE}/time-approvals/${S1}?date=2026-11-18`, { world: { entry: ROWS[0] } })).html, /name="undo"/);
+  const open = await request(`/store/${STORE}/time-approvals/${S3}?date=2026-11-18`, { world: { entry: ROWS[2] } });
+  assert.match(open.html, /still in progress/);
+  assert.doesNotMatch(open.html, /\/decide"/);
+
+  // Not this store's, not that day, or not the actor's: one answer. Unknown store, a post, signed out.
+  assert.equal((await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, { world: { entry: null } })).status, 404);
+  assert.equal((await request(`/store/${OTHER_STORE}/time-approvals/${S2}?date=2026-11-18`)).status, 404);
+  assert.equal((await post(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, `sessionId=${S2}&action=approve`)).status, 405);
+  assert.equal((await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, { cookie: null })).status, 401);
+  for (const p of [`/store/${STORE}/time-approvals/nope`, `/store/${STORE}/assignment-changes/${S2}`, `/store/${STORE}/time-approvals/${S2}/x`]) assert.equal((await request(p)).handled, false, p);
+});
+
+test("WORK_REVIEW M-03 entry page: a decision goes back to the entry; a refusal shows it again; the way back stays on it", async () => {
+  const entry = `/store/${STORE}/time-approvals/${S2}?date=2026-11-18`;
+  const calls: unknown[][] = [];
+  const done = await post(`/store/${STORE}/time-approvals/decide`, `back=${encodeURIComponent(entry)}&sessionId=${S2}&action=approve&rating=4`, {}, calls);
+  assert.deepEqual([done.status, done.headers.location], [303, `${entry}&done=decided`]);
+  assert.deepEqual(calls.find((c) => c[0] === "decideSessions"), ["decideSessions", "actor", [S2], { decision: "approve", reason: undefined, note: undefined, rating: "4", notePublic: "" }]);
+  const undone = await post(`/store/${STORE}/time-approvals/decide`, `back=${encodeURIComponent(entry)}&undo=${S2}`);
+  assert.equal(undone.headers.location, `${entry}&done=undone`);
+  assert.match((await request(`${entry}&done=decided`)).html, /Your decision was saved\./);
+
+  const refused = await post(`/store/${STORE}/time-approvals/decide`, `back=${encodeURIComponent(entry)}&sessionId=${S2}&action=approve`, { world: { decided: { kind: "refused", code: "session_replaced" } } });
+  assert.equal(refused.status, 409);
+  assert.match(refused.html, /<title>Hours: Sara/);
+  assert.match(refused.html, /Those hours were corrected by StudentHub/);
+  // The entry is gone by the time of the refusal: the store's queue, with the same message.
+  const gone = await post(`/store/${STORE}/time-approvals/decide`, `back=${encodeURIComponent(entry)}&sessionId=${S2}&action=approve`, { world: { decided: { kind: "refused", code: "session_replaced" }, entry: null } });
+  assert.deepEqual([gone.status, /Time approvals: Avenues/.test(gone.html)], [409, true]);
+
+  for (const bad of [`https://evil.invalid/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, `//evil.invalid/store/${STORE}/time-approvals/${S2}?date=2026-11-18`,
+    `/store/${STORE}/time-approvals/${S2}/../../../../x?date=2026-11-18`, `/store/${OTHER_STORE}/time-approvals/${S2}?date=2026-11-18`, `/store/${STORE}/time-approvals/${S2}?date=soon`,
+    `/store/${STORE}/time-approvals/${S2}`]) {
+    const moved = await post(`/store/${STORE}/time-approvals/decide`, `back=${encodeURIComponent(bad)}&sessionId=${S2}&action=approve`);
+    assert.equal(moved.headers.location, `/store/${STORE}/time-approvals?done=decided`, bad);
+  }
+  // The company screen has no entry pages to go back to.
+  const company = await post("/organization/co/work/decide", `back=${encodeURIComponent(`/organization/co/work/${S2}?date=2026-11-18`)}&sessionId=${S2}&action=approve`);
+  assert.equal(company.headers.location, "/organization/co/work?done=decided");
+});
+
+test("WORK_REVIEW M-03 entry page in Arabic", async () => {
+  const page = await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, { world: { language: "ar" } });
+  assert.match(page.html, /<html lang="ar" dir="rtl">/);
+  assert.match(page.html, /<title>ساعات: Sara &lt;S&gt;/);
+  assert.match(page.html, />موافقة<\/button> <button type="submit" name="action" value="reject">رفض<\/button>/);
+  assert.match(page.html, />العودة إلى اعتماد الساعات</);
+  assert.match((await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, { world: { entry: null }, acceptLanguage: "ar" })).html, /الساعات غير موجودة/);
 });

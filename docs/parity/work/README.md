@@ -175,7 +175,7 @@ corrections (A-12, A-13), `/me/work` with its stand-up card, Staff time and the 
 |---|---|---|
 | C-10 Placement | `/work/assignment[/:id]` | Where the person works now, what is coming up and where they worked before |
 | O-11 Work review | `/organization/:orgId/work` | The company's hours by date range, status and store, with names; approve or reject the selected sessions with a reason, note (private unless shared) and rating; undo a decision. Filters survive the post |
-| M-03 Time approvals | `/store/:storeId/time-approvals` | The same queue for one store, waiting hours by default; only that store's manager (or the company, or staff) |
+| M-03 Time approvals | `/store/:storeId/time-approvals`, `/:sessionId?date=` | The same queue for one store, waiting hours by default; only that store's manager (or the company, or staff). Each entry opens on its own page (where it started and stopped, its note, the decision and who made it), and is approved, rejected or undone there. An entry at another store, on another day, or out of the viewer's scope is one "not found" answer |
 | M-04 Assignment changes | `/store/:storeId/assignment-changes` | Ask StudentHub for a person at the store, follow the answer, cancel a waiting request |
 | A-12 Work | `/work/assignments?org=`, `/work/logs` | Staff: a company's placements and waiting requests; place, end or extend, accept or decline. Work logs across companies with a person filter, the same decisions, and "Correct these hours" |
 | A-13 Appeals and corrections | `/work/appeals?as=staff`, `/work/appeals/:id`, `/work/corrections` | Staff list appeals by status; on an appeal, reply, set the status, correct the appealed hours or add missing time (Kuwait time, reason required); correct any closed session from the logs |
@@ -279,6 +279,5 @@ from `/exports/<id>` under the kind's name. Files are CSV; legacy wrote Excel.
 ## Not yet here
 
 - The rest of A-14 (staff leave and expenses); it depends on the pay lane's settlement (P1, F4).
-- A session detail page for M-03 (`/store/:storeId/time-approvals/:sessionId`); each session is decided in the queue for now.
 - A reply box for the person on an appeal: the contract lists `appeals.self.comment`, but W-6 lets only staff post updates, as legacy did. This is to be confirmed with the legacy rules before it is added.
 - The importer run itself (cutover lane, M-5).
