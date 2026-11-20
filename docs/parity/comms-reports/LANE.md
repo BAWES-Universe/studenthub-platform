@@ -150,7 +150,18 @@ Planned PRs, in order (migrations 0602 to 0609):
    cards, stale keys and missing photos all get the same empty 404, and every link shaped like
    a token is looked up whether or not it is signed, so they take the same work.
 4. **Experience certificates** from work history, as PDFs (legacy appreciation certificate:
-   name, company, store, from and to dates).
+   name, company, store, from and to dates). Made on demand from one of the person's
+   `work_assignments` rows (read-only), as legacy made it from `candidate_work_history`;
+   nothing is stored. The person lists and downloads their own at `/profile/certificates`;
+   StudentHub staff list anyone's at `/workspace/certificates?person=<id>` and download them
+   (legacy staff `appreciation-certificate/<id>/<wid>`). The dates run from the start date to
+   the end date, or to today while the assignment runs (legacy printed "now"); an assignment
+   that has not started has no certificate. Someone else's assignment, a missing one and one
+   not yet started all give the same not found, and the staff paths answer not found to anyone
+   who is not staff before anything is read. A4 landscape, laid out after legacy's page, signed
+   "Khalid Almutawa, CEO - StudentHub" as legacy's was. Legacy's stored staff certificates
+   (`candidate_certificate`, with staff-chosen dates; its list, update and delete have no UI)
+   are a later slice if still wanted.
 5. **The ID card list export**, if still wanted: legacy's `CandidateIdCard::createExcel` is
    only called from `createZip`, which nothing calls, so production does not produce that
    Excel today (checked at legacy @ 55119d3).

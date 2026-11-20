@@ -126,3 +126,21 @@ test("REPORTS_ID_CARD_PUBLIC_VIEWS rows are never changed, removed or truncated,
   await assert.rejects(pool.query("TRUNCATE id_card_public_views"), /append-only/);
   assert.equal((await pool.query("SELECT 1 FROM id_card_public_views WHERE card_number=$1", [cardNumber])).rowCount, 1);
 });
+
+test("REPORTS_CERTIFICATES_WIRED the production wiring makes the person's own certificate from their assignment, and staff's for anyone; others get nothing", async () => {
+  const { person } = await cardHolder("idccert");
+  const staff = `idccert-staff-${randomUUID()}`, other = `idccert-other-${randomUUID()}`;
+  for (const id of [staff, other]) await authz.registerPrincipal(createPrincipal({ id, pbuuids: [], email: `${id}@example.invalid` }));
+  const wired = wireStaffMessages({ connectionString: URL, authzStore: { async listGrantsForPrincipal(id: string) { return id === staff ? [{ role: "staff", scope: "subtree", orgId: "root" }] : []; } } as unknown as typeof authz });
+  try {
+    const certificates = wired.http.idCards!.certificates!;
+    const own = await certificates.own(person);
+    assert.equal(own.rows.length, 1);
+    const id = own.rows[0]!.assignmentId, pdf = await certificates.pdf(person, id);
+    assert.match(pdf!.toString("latin1"), /Certificate of Appreciation[\s\S]*Photo Co[\s\S]*Avenues[\s\S]*From 1 January 2020 to /);
+    assert.equal(await certificates.pdf(other, id), undefined, "someone else's");
+    assert.equal(await certificates.staffList(other, person), undefined);
+    assert.deepEqual((await certificates.staffList(staff, person))?.rows.map(r => r.assignmentId), [id], "staff list anyone's");
+    assert.ok(await certificates.pdf(staff, id), "and print it");
+  } finally { await wired.close(); }
+});
