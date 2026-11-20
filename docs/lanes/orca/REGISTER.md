@@ -1,8 +1,8 @@
 # Orca lane register
 
-An Orca bot works only on a GitHub issue listed here with state `active` and an expiry that hasn't passed, read fresh from `main` before it starts, resumes, pushes or publishes. Only a `**Claude → Orca studenthub-universe** · dispatch` comment on the ticket issue, created after the latest commit that changed that ticket's own row, can start work; earlier comments and mentions never can, and edits to other rows don't affect it. The bot finds dispatches by polling this file and the listed issues every 15 minutes (HANDOVER B3). Claude maintains this file. To stop a ticket, Claude sets its state to `revoked`. The rules are in [HANDOVER.md](HANDOVER.md).
+An Orca bot works only on a ticket listed here, read fresh from `main`, and only through the poll tool `tools/orca-lane` (HANDOVER B3). A row authorizes work only if it is the ticket's highest generation (`Gen`), its state is `active`, its expiry hasn't passed, and `Dispatch` names the exact id of a comment on that issue that Claude's GitHub App wrote with the header `**Claude → Orca <bot>** · dispatch · #<issue> gen <gen>`. No other comment or mention can start work. Mode `observe` means: report what you see, do no work. Mode `work` means: claim and work. Editing other rows, or a row's expiry, never changes a binding. To stop a ticket, Claude sets its state to `revoked`. To restart a stopped ticket, Claude adds a new generation with a new dispatch. Claude maintains this file. The rules are in [HANDOVER.md](HANDOVER.md).
 
-| Issue | Slug | Bot | Lease (paths; migrations) | Reviewer | State | Expires (UTC) |
-|---|---|---|---|---|---|---|
-| #581 | `running-tests-guide` | studenthub-universe | `docs/runbooks/running-tests.md` only; no migrations | Claude | active | 2026-11-22 18:00 |
-
+| Issue | Slug | Bot | Gen | Mode | Dispatch | Lease (paths; migrations) | Reviewer | State | Expires (UTC) |
+|---|---|---|---|---|---|---|---|---|---|
+| #581 | `running-tests-guide` | studenthub-universe | 1 | work | `7048993553` | `docs/runbooks/running-tests.md` only; no migrations | Claude | revoked | 2026-11-22 18:00 |
+| #581 | `running-tests-guide` | studenthub-universe | 2 | observe | `7051422072` | `docs/runbooks/running-tests.md` only; no migrations | Claude | active | 2026-11-23 18:00 |
