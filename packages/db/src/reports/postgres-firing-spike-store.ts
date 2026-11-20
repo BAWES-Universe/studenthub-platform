@@ -21,7 +21,9 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 export const firingSpikeEligible = (principal: string, orgs: string) => `(EXISTS (SELECT 1 FROM firing_spike_subscriptions s WHERE s.principal_id = ${principal})
     AND EXISTS (SELECT 1 FROM grants g WHERE g.principal_id = ${principal} AND g.role IN ('staff','admin') AND g.scope = 'subtree' AND g.org_id = ANY(${orgs}::text[]))
     AND NOT EXISTS (SELECT 1 FROM account_pauses p WHERE p.principal_id = ${principal} AND p.resumed_at IS NULL))`;
-const RECIPIENTS = (orgs: string) => `SELECT s.principal_id FROM firing_spike_subscriptions s WHERE ${firingSpikeEligible("s.principal_id", orgs)} ORDER BY s.principal_id`;
+// Someone who switched the class off in their email preferences is suppressed at delivery, so they are no one to tell either.
+const RECIPIENTS = (orgs: string) => `SELECT s.principal_id FROM firing_spike_subscriptions s WHERE ${firingSpikeEligible("s.principal_id", orgs)}
+    AND NOT EXISTS (SELECT 1 FROM email_preferences e WHERE e.principal_id = s.principal_id AND e.class = 'staff.firing_spike' AND NOT e.enabled) ORDER BY s.principal_id`;
 
 export class PostgresFiringSpikeStore {
   readonly #pool: pg.Pool; readonly #owns: boolean; readonly #operatorOrgIds: readonly string[];

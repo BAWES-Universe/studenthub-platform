@@ -115,3 +115,24 @@ test("REPORTS_FIRING_SPIKE_PG every delivery attempt rechecks the recipient: uns
   const delivered = port.sent.filter(m => m.to === `${kept}@example.invalid`);
   assert.equal(delivered[0]?.subject, "Firing spike for Burst Co");
 });
+
+test("REPORTS_FIRING_SPIKE_PG a subscriber who switched the email off in their preferences is no recipient, so the month stays unalerted", async () => {
+  const ops = `fs-ops-${randomUUID()}`;
+  await authz.upsertOrganization(createOrganization({ id: ops, name: "Operator" }));
+  const own = new PostgresFiringSpikeStore({ pool, operatorOrgIds: [ops] });
+  const [off, on] = [await principal("off", [{ orgId: ops, role: "staff", scope: "subtree" }]), await principal("on", [{ orgId: ops, role: "staff", scope: "subtree" }])];
+  await own.setSubscribed(off, true, new Date());
+  await pool.query("INSERT INTO email_preferences(principal_id, class, enabled) VALUES($1, 'staff.firing_spike', false)", [off]);
+  assert.deepEqual(await own.recipients(), []);
+  const orgId = `fs-co-${randomUUID()}`, month = "1999-01";
+  await authz.upsertOrganization(createOrganization({ id: orgId, name: "Muted Co", parentOrgId: ops }));
+  const alert = () => [{ orgId, month, parameters: { company: "Muted Co", month, level: "danger", total: 2, twelveMonthTotal: 2 } }];
+  assert.deepEqual(await own.sendDay(await freshDay(), lastTwelveMonths("1999-01-15"), new Date(), alert), { alerts: 0 });
+  assert.equal((await pool.query("SELECT count(*)::int n FROM firing_spike_alerts WHERE org_id = $1", [orgId])).rows[0].n, 0);
+  await own.setSubscribed(on, true, new Date());
+  assert.deepEqual(await own.recipients(), [on]);
+  assert.deepEqual(await own.sendDay(await freshDay(), lastTwelveMonths("1999-01-15"), new Date(), alert), { alerts: 1 });
+  const queued = (await pool.query("SELECT recipient_principal_id FROM email_outbox WHERE idempotency_key LIKE $1", [`staff.firing_spike:${orgId}:%`])).rows;
+  assert.deepEqual(queued.map(r => r.recipient_principal_id), [on]);
+  await pool.query("UPDATE email_outbox SET state='not_sent' WHERE idempotency_key LIKE $1 AND state='pending'", [`staff.firing_spike:${orgId}:%`]);
+});
