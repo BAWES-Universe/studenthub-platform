@@ -1,5 +1,6 @@
 // Orca lane intake: decides, from GitHub state only, whether an Orca bot may
 // start or resume a ticket. Pure functions here; poll.ts does the I/O.
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -35,6 +36,8 @@ export interface WorkDecision {
   readonly dispatch: number;
   readonly slug: string;
   readonly claimKey: string;
+  /** The lease the claim is taken for; check refuses once the row's lease changes. */
+  readonly lease: string;
   /** Header the start receipt must carry; on "resume" with startReceiptPosted false, post it before any work. */
   readonly startReceiptHeader: string;
   readonly startReceiptPosted: boolean;
@@ -78,15 +81,20 @@ export function parseRegister(markdown: string): RegisterRow[] {
   for (const line of lines.slice(headerAt + 2)) {
     if (!line.trim().startsWith("|")) break;
     const [issue, slug, bot, gen, mode, dispatch, lease, reviewer, state, expires] = cells(line);
-    const issueMatch = /^#(\d+)$/.exec(issue ?? "");
+    const issueMatch = /^#([1-9]\d*)$/.exec(issue ?? "");
     if (!issueMatch) throw new RegisterError(`bad issue cell: ${issue}`);
-    if (!/^\d+$/.test(gen ?? "") || Number(gen) < 1) throw new RegisterError(`bad gen for ${issue}: ${gen}`);
+    if (!/^[1-9]\d*$/.test(gen ?? "")) throw new RegisterError(`bad gen for ${issue}: ${gen}`);
     if (mode !== "observe" && mode !== "work") throw new RegisterError(`bad mode for ${issue}: ${mode}`);
     const dispatchText = unquote(dispatch ?? "");
-    if (dispatchText !== "-" && !/^\d+$/.test(dispatchText)) throw new RegisterError(`bad dispatch for ${issue}: ${dispatch}`);
+    if (dispatchText !== "-" && !/^[1-9]\d*$/.test(dispatchText)) throw new RegisterError(`bad dispatch for ${issue}: ${dispatch}`);
     if (state !== "active" && state !== "revoked" && state !== "done") throw new RegisterError(`bad state for ${issue}: ${state}`);
     const expiry = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})$/.exec(expires ?? "");
     if (!expiry) throw new RegisterError(`bad expiry for ${issue}: ${expires}`);
+    const expiresAt = new Date(`${expiry[1]}T${expiry[2]}:00Z`);
+    // Reject impossible dates (2026-13-01, 2026-02-30) instead of letting them roll over or become NaN.
+    if (!Number.isFinite(expiresAt.getTime()) || expiresAt.toISOString().slice(0, 16) !== `${expiry[1]}T${expiry[2]}`) {
+      throw new RegisterError(`bad expiry for ${issue}: ${expires}`);
+    }
     const key = `${issueMatch[1]}#${gen}`;
     if (seen.has(key)) throw new RegisterError(`duplicate row ${key}`);
     seen.add(key);
@@ -100,7 +108,7 @@ export function parseRegister(markdown: string): RegisterRow[] {
       lease: lease ?? "",
       reviewer: reviewer ?? "",
       state,
-      expires: new Date(`${expiry[1]}T${expiry[2]}:00Z`),
+      expires: expiresAt,
     });
   }
   return rows;
@@ -125,14 +133,15 @@ export const claimKey = (bot: string, issue: number, gen: number): string => `${
  * only if Claude's app wrote it with the header for this issue and generation.
  * A held claim means the ticket is already ours: resume, never start again, and
  * only for the dispatch the claim saved. A row in observe mode never starts work:
- * it only reports what it sees. `claims` maps each held claim key to its dispatch.
+ * it only reports what it sees. `claims` maps each held claim key to the dispatch
+ * and lease it was taken for; a row whose dispatch or lease has changed since is not resumed.
  */
 export function decide(input: {
   readonly rows: readonly RegisterRow[];
   readonly bot: string;
   readonly now: Date;
   readonly comments: ReadonlyMap<number, readonly IssueComment[]>;
-  readonly claims: ReadonlyMap<string, number>;
+  readonly claims: ReadonlyMap<string, ClaimRecord>;
 }): Decision[] {
   const decisions: Decision[] = [];
   const latestGen = new Map<number, number>();
@@ -160,35 +169,52 @@ export function decide(input: {
     }
     const key = claimKey(input.bot, row.issue, row.gen);
     const held = input.claims.get(key);
-    if (held !== undefined && held !== comment.id) { skip(`claim is bound to dispatch ${held}, not ${comment.id}`); continue; }
+    if (held !== undefined && held.dispatch !== comment.id) { skip(`claim is bound to dispatch ${held.dispatch}, not ${comment.id}`); continue; }
+    if (held !== undefined && held.lease !== row.lease) { skip("lease changed since the claim was taken"); continue; }
     const header = startReceiptHeader(input.bot, row.issue, row.gen);
     decisions.push({
-      issue: row.issue, gen: row.gen, action: held === undefined ? "start" : "resume", dispatch: comment.id, slug: row.slug, claimKey: key,
+      issue: row.issue, gen: row.gen, action: held === undefined ? "start" : "resume", dispatch: comment.id, slug: row.slug, claimKey: key, lease: row.lease,
       startReceiptHeader: header, startReceiptPosted: posted(issueComments, header),
     });
   }
   return decisions;
 }
 
+export interface ClaimRecord { readonly dispatch: number; readonly lease: string; readonly at: string }
+
 /**
- * Durable, exclusive claim on this machine. mkdir is atomic: of two concurrent
- * pollers exactly one gets "claimed"; the other gets "held" and must not start.
+ * Publishes a directory holding one file in a single step: the file is written in
+ * a private temp directory, which is then renamed into place. A rename onto an
+ * existing (non-empty) directory fails, so exactly one publisher wins, and a stop
+ * at any point never leaves a half-made directory under the real name.
  */
-export function claim(dir: string, key: string, record: { readonly dispatch: number; readonly at: string }): "claimed" | "held" {
+function publish(dir: string, target: string, file: string, content: string): boolean {
   mkdirSync(dir, { recursive: true });
+  const temp = path.join(dir, `.tmp-${randomUUID()}`);
+  mkdirSync(temp);
+  writeFileSync(path.join(temp, file), content);
   try {
-    mkdirSync(path.join(dir, key));
+    renameSync(temp, target);
+    return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return "held";
+    rmSync(temp, { recursive: true, force: true });
+    if (["EEXIST", "ENOTEMPTY", "EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;
     throw error;
   }
-  writeFileSync(path.join(dir, key, "claim.json"), `${JSON.stringify(record)}\n`);
-  return "claimed";
 }
 
-export function readClaim(dir: string, key: string): { dispatch: number; at: string } | null {
+/**
+ * Durable, exclusive claim on this machine, recording the dispatch and lease it
+ * was taken for. Of two concurrent pollers exactly one gets "claimed"; the other
+ * gets "held" and must not start.
+ */
+export function claim(dir: string, key: string, record: ClaimRecord): "claimed" | "held" {
+  return publish(dir, path.join(dir, key), "claim.json", `${JSON.stringify(record)}\n`) ? "claimed" : "held";
+}
+
+export function readClaim(dir: string, key: string): ClaimRecord | null {
   try {
-    return JSON.parse(readFileSync(path.join(dir, key, "claim.json"), "utf8")) as { dispatch: number; at: string };
+    return JSON.parse(readFileSync(path.join(dir, key, "claim.json"), "utf8")) as ClaimRecord;
   } catch {
     return null;
   }
@@ -206,16 +232,8 @@ const runLockDir = (dir: string, bot: string): string => path.join(dir, `.run-${
  * verified stop) or by recoverRun after the holder is verified stopped.
  */
 export function acquireRun(dir: string, bot: string, key: string, now: Date, token: string): "acquired" | "busy" {
-  mkdirSync(dir, { recursive: true });
-  const lock = runLockDir(dir, bot);
-  try {
-    mkdirSync(lock);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return "busy";
-    throw error;
-  }
-  writeFileSync(path.join(lock, "owner.json"), `${JSON.stringify({ key, token, since: now.toISOString() })}\n`);
-  return "acquired";
+  const owner = `${JSON.stringify({ key, token, since: now.toISOString() })}\n`;
+  return publish(dir, runLockDir(dir, bot), "owner.json", owner) ? "acquired" : "busy";
 }
 
 export function readRun(dir: string, bot: string): RunLock | null {
@@ -259,20 +277,11 @@ export function recoverRun(dir: string, bot: string, key: string): "recovered" |
 export function withGate<T>(dir: string, bot: string, pid: number, isAlive: (pid: number) => boolean, fn: () => T): T | "busy" {
   mkdirSync(dir, { recursive: true });
   const gate = path.join(dir, `.gate-${bot}`);
-  const enter = (): boolean => {
-    try {
-      mkdirSync(gate);
-      writeFileSync(path.join(gate, "pid"), String(pid));
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
-      throw error;
-    }
-  };
+  const enter = (): boolean => publish(dir, gate, "pid", String(pid));
   if (!enter()) {
     let owner = Number.NaN;
     try { owner = Number(readFileSync(path.join(gate, "pid"), "utf8")); } catch { /* being written */ }
-    if (Number.isNaN(owner) || isAlive(owner)) return "busy";
+    if (!Number.isFinite(owner) || isAlive(owner)) return "busy";
     try { renameSync(gate, `${gate}.dead-${owner}-${pid}`); } catch { return "busy"; }
     rmSync(`${gate}.dead-${owner}-${pid}`, { recursive: true, force: true });
     if (!enter()) return "busy";

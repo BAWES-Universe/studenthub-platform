@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { acquireRun, claim, decide, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, withGate, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
+import { acquireRun, claim, type ClaimRecord, decide, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, withGate, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
 
 const REPO = "BAWES-Universe/studenthub-platform";
 const REGISTER = "docs/lanes/orca/REGISTER.md";
@@ -70,13 +70,13 @@ function comments(issue: number): IssueComment[] {
   });
 }
 
-function heldClaims(dir: string): Map<string, number> {
-  const held = new Map<string, number>();
+function heldClaims(dir: string): Map<string, ClaimRecord> {
+  const held = new Map<string, ClaimRecord>();
   let entries: string[] = [];
   try { entries = readdirSync(dir); } catch { entries = []; }
   for (const key of entries.filter((entry) => !entry.startsWith("."))) {
-    // A claim without a readable record binds nothing we can verify: hold it as unbound (-1) so it never resumes.
-    held.set(key, readClaim(dir, key)?.dispatch ?? -1);
+    // Claims are published whole, so an unreadable one means tampering: hold it as unbound so it never resumes.
+    held.set(key, readClaim(dir, key) ?? { dispatch: -1, lease: "", at: "" });
   }
   return held;
 }
@@ -124,7 +124,7 @@ function main(): void {
     const decisions = decisionsFor();
     const next = pickNext(
       decisions,
-      (d) => claim(claims, d.claimKey, { dispatch: d.dispatch, at }),
+      (d) => claim(claims, d.claimKey, { dispatch: d.dispatch, lease: d.lease, at }),
       (d) => { const runToken = randomUUID(); return acquireRun(claims, bot, d.claimKey, now, runToken) === "acquired" ? runToken : null; },
     );
     return { decisions, next };

@@ -15,9 +15,11 @@ const row = (issue: number, gen: number, dispatch: string, state = "active", exp
 const register = (...rows: string[]): string => `# Orca lane register\n\nPreamble.\n\n${HEAD}${rows.join("")}`;
 const dispatch = (id: number, issue: number, gen: number, extra: Partial<IssueComment> = {}): IssueComment =>
   ({ id, body: `${dispatchHeader(BOT, issue, gen)}\n\n@orca-ide ${BOT}`, author: "BAWES", appId: CLAUDE_APP_ID, ...extra });
-// claims: [claimKey, saved dispatch] pairs
-const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: [string, number][] = []) =>
-  decide({ rows: parseRegister(markdown), bot: BOT, now: NOW, comments: new Map(Object.entries(comments).map(([k, v]) => [Number(k), v])), claims: new Map(claims) });
+// claims: [claimKey, saved dispatch, saved lease?] (lease defaults to the test row's lease for that issue)
+const leaseOf = (key: string): string => `\`docs/x-${key.split("--")[1]}.md\` only; no migrations`;
+const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: ([string, number] | [string, number, string])[] = []) =>
+  decide({ rows: parseRegister(markdown), bot: BOT, now: NOW, comments: new Map(Object.entries(comments).map(([k, v]) => [Number(k), v])),
+    claims: new Map(claims.map(([key, dispatch, lease]) => [key, { dispatch, lease: lease ?? leaseOf(key), at: "t" }])) });
 const acquire = (dir: string) => (d: { claimKey: string }) => { const t = `t-${Math.random()}`; return acquireRun(dir, BOT, d.claimKey, NOW, t) === "acquired" ? t : null; };
 
 test("the live register on main parses", () => {
@@ -83,10 +85,28 @@ test("observe mode reports the eligible dispatch but never claims or starts", ()
   assert.equal(pickNext(decisions, () => { throw new Error("must not claim"); }, () => { throw new Error("must not lock"); }), null);
 });
 
+test("a resume stays bound to the lease its claim saved", () => {
+  const md = register(row(581, 1, "`900`"));
+  assert.match(JSON.stringify(run(md, { 581: [dispatch(900, 581, 1)] }, [[claimKey(BOT, 581, 1), 900, "`docs/other.md` only; no migrations"]])), /lease changed/);
+});
+
+test("claims, run locks and the gate are published whole: a leftover temp directory blocks nothing", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-atomic-"));
+  mkdirSync(path.join(dir, ".tmp-leftover"));
+  assert.equal(claim(dir, claimKey(BOT, 581, 1), { dispatch: 900, lease: "l", at: "t" }), "claimed");
+  assert.equal(readClaim(dir, claimKey(BOT, 581, 1))?.lease, "l");
+  assert.equal(acquireRun(dir, BOT, claimKey(BOT, 581, 1), NOW, "A"), "acquired");
+  assert.equal(holdsRun(dir, BOT, claimKey(BOT, 581, 1), "A"), true);
+  assert.equal(withGate(dir, BOT, 1, () => true, () => "picked"), "picked");
+});
+
 test("a malformed register is refused as a whole", () => {
   assert.throws(() => parseRegister(register(row(581, 0, "`900`"))), RegisterError);
   assert.throws(() => parseRegister(register(row(581, 1, "abc"))), RegisterError);
   assert.throws(() => parseRegister(register(row(581, 1, "`900`"), row(581, 1, "`901`"))), RegisterError);
+  assert.throws(() => parseRegister(register(row(581, 1, "`900`"), row(581, "01" as unknown as number, "`901`"))), RegisterError);
+  assert.throws(() => parseRegister(register(row(581, 1, "`900`", "active", "2026-13-22 18:00"))), RegisterError);
+  assert.throws(() => parseRegister(register(row(581, 1, "`900`", "active", "2026-02-30 18:00"))), RegisterError);
   assert.throws(() => parseRegister("# no table"), RegisterError);
   assert.throws(() => parseRegister(register(row(581, 1, "`900`", "active", "2026-11-22 18:00", BOT, "maybe"))), RegisterError);
 });
@@ -94,7 +114,7 @@ test("a malformed register is refused as a whole", () => {
 test("concurrent wakes: exactly one claim wins, the other must not start", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "orca-claims-"));
   const key = claimKey(BOT, 581, 1);
-  const results = await Promise.all(Array.from({ length: 8 }, () => Promise.resolve().then(() => claim(dir, key, { dispatch: 900, at: "t" }))));
+  const results = await Promise.all(Array.from({ length: 8 }, () => Promise.resolve().then(() => claim(dir, key, { dispatch: 900, lease: "l", at: "t" }))));
   assert.equal(results.filter((r) => r === "claimed").length, 1);
   assert.equal(readClaim(dir, key)?.dispatch, 900);
 });
@@ -143,7 +163,7 @@ test("a revoked run that is still alive blocks every new run until it is verifie
   const dir = mkdtempSync(path.join(os.tmpdir(), "orca-fence-"));
   const g1 = claimKey(BOT, 581, 1);
   const g2 = claimKey(BOT, 581, 2);
-  assert.equal(claim(dir, g1, { dispatch: 900, at: "t" }), "claimed");
+  assert.equal(claim(dir, g1, { dispatch: 900, lease: "l", at: "t" }), "claimed");
   assert.equal(acquireRun(dir, BOT, g1, NOW, "A"), "acquired");
   // Claude revokes gen 1 and dispatches gen 2 (and another ticket), while A still runs.
   const md = register(row(581, 1, "`900`", "revoked"), row(581, 2, "`910`"), row(590, 1, "`950`"));
@@ -159,7 +179,7 @@ test("a revoked run that is still alive blocks every new run until it is verifie
   assert.equal(recoverRun(dir, BOT, g2), "no-match");
   // A stops and releases (its verified stop). Now B starts gen 2.
   assert.equal(releaseRun(dir, BOT, g1, "A"), "released");
-  const b = pickNext(decisions, (d) => claim(dir, d.claimKey, { dispatch: d.dispatch, at: "t" }), (d) => acquireRun(dir, BOT, d.claimKey, NOW, "B") === "acquired" ? "B" : null);
+  const b = pickNext(decisions, (d) => claim(dir, d.claimKey, { dispatch: d.dispatch, lease: d.lease, at: "t" }), (d) => acquireRun(dir, BOT, d.claimKey, NOW, "B") === "acquired" ? "B" : null);
   assert.equal(b?.claimKey, g2);
   // A, if it wakes again, cannot write (its key and token no longer hold the lock) and cannot clear B.
   assert.equal(holdsRun(dir, BOT, g1, "A"), false);
