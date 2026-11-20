@@ -459,6 +459,10 @@ test("W5_PG views: the person sees no rating or private note; another company se
   await pool.query("UPDATE principals SET display_name = 'Sara' WHERE id = $1", [w.person]);
   assert.deepEqual([...await viewStore.personNames([w.person, w.owner, "nobody"])], [[w.person, "Sara"]]);
   assert.equal((await viewStore.personNames([])).size, 0);
+  // The person's chosen language, for the work screens.
+  assert.equal(await viewStore.language(w.person), undefined);
+  await pool.query("INSERT INTO person_preferences(principal_id, language) VALUES($1, 'ar')", [w.person]);
+  assert.equal(await viewStore.language(w.person), "ar");
   assert.deepEqual(await viewStore.storesOf(w.company), [{ id: w.store, name: "Avenues" }]);
   assert.deepEqual(await viewStore.storesOf("no-such-company"), []);
   const first = await viewStore.listSessions({ personId: w.person, range, limit: 2 });
