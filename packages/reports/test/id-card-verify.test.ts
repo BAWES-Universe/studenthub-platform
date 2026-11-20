@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ID_CARD_VERIFY_PATH, IdCardVerifier } from "../src/index.js";
+import { ID_CARD_PHOTO_SECONDS, ID_CARD_VERIFY_PATH, IdCardVerifier } from "../src/index.js";
 
 const KEY = Buffer.alloc(32, 7), verifier = new IdCardVerifier(KEY);
 
@@ -30,4 +30,20 @@ test("REPORTS_ID_CARD_VERIFY the key is at least 32 bytes and kept as a copy", (
   assert.deepEqual(v.read(token), { cardNumber: 5, validUntil: "2027-01-01" });
   for (const [n, d] of [[0, "2027-01-01"], [1.5, "2027-01-01"], [Number.MAX_SAFE_INTEGER + 1, "2027-01-01"], [1, "20270101"]] as const)
     assert.throws(() => v.token(n, d), /invalid card/);
+});
+
+test("REPORTS_ID_CARD_VERIFY a photo key is made for one link and lasts ID_CARD_PHOTO_SECONDS", () => {
+  const token = verifier.token(17, "2027-02-19"), other = verifier.token(18, "2027-02-19"), now = 1_800_000_000;
+  const key = verifier.photoKey(token, now);
+  assert.match(key, /^1800000060\.[A-Za-z0-9_-]{22}$/);
+  assert.equal(verifier.photoKeyValid(token, key, now), true);
+  assert.equal(verifier.photoKeyValid(token, key, now + ID_CARD_PHOTO_SECONDS - 1), true);
+  assert.equal(verifier.photoKeyValid(token, key, now + ID_CARD_PHOTO_SECONDS), false, "expired");
+  assert.equal(verifier.photoKeyValid(other, key, now), false, "another card's link");
+  assert.equal(new IdCardVerifier(Buffer.alloc(32, 8)).photoKeyValid(token, key, now), false, "another key");
+  const far = verifier.photoKey(token, now + 3600);
+  assert.equal(verifier.photoKeyValid(token, far, now), false, "a key that lasts longer than a minute from now is not one this server handed out now");
+  for (const bad of ["", "x", `${key}x`, key.replace(/\.[^.]+$/, ".AAAAAAAAAAAAAAAAAAAAAA"), `99999999999.${key.split(".")[1]}`]) assert.equal(verifier.photoKeyValid(token, bad, now), false, bad);
+  assert.deepEqual(verifier.parse("7.20270219.AAAAAAAAAAAAAAAAAAAAAA"), { cardNumber: 7, validUntil: "2027-02-19", signed: false });
+  assert.equal(verifier.parse("not a token"), undefined);
 });

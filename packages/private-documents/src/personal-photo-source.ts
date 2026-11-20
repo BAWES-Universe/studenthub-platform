@@ -24,6 +24,15 @@ export interface PersonalPhotoSource {
   read(personId: string, viewerId: string): Promise<PersonalPhoto | null>;
 }
 
+/** Records an anonymous read from the public card check page, keyed by card and hashed client address. */
+export interface PublicPhotoAuditPort {
+  recordPublicView(view: { cardNumber: number; subjectPrincipalId: string; documentVersion: string; clientHash: string }): Promise<void>;
+}
+export interface PublicPersonalPhotoSource {
+  /** The photo of `personId` for the public check of card `cardNumber`, read by the client `clientHash`, or null. */
+  read(personId: string, view: { readonly cardNumber: number; readonly clientHash: string }): Promise<PersonalPhoto | null>;
+}
+
 const readState = <T>(store: DocumentStore, fn: (state: DocumentState) => Promise<T>) => store.readPath ? store.readPath.read(fn) : store.transaction(fn);
 
 /** The current personal photo of `personId` in `orgId`'s namespace, or null; no audit. */
@@ -50,8 +59,24 @@ export function personalPhotoSource(options: { store: DocumentStore; orgId: stri
   };
 }
 
+/**
+ * The same photo for the public card check page (the QR code). The caller has checked the signed
+ * link and that the card is valid; each read that returns bytes is recorded first, and the caller
+ * rebuilds the image without metadata before sending it.
+ */
+export function publicPersonalPhotoSource(options: { store: DocumentStore; orgId: string; audit: PublicPhotoAuditPort }): PublicPersonalPhotoSource {
+  return {
+    async read(personId, view) {
+      const photo = await readPersonalPhoto(options.store, options.orgId, personId);
+      if (!photo) return null;
+      await options.audit.recordPublicView({ cardNumber: view.cardNumber, subjectPrincipalId: personId, documentVersion: photo.version, clientHash: view.clientHash });
+      return photo;
+    },
+  };
+}
+
 /** Opens the same document storage as the civil ID reads (synthetic files or R2); undefined when none is configured. */
-export async function openPersonalPhotoSourceFromEnv(audit: PersonalPhotoAuditPort, env: NodeJS.ProcessEnv = process.env): Promise<{ source: PersonalPhotoSource; close(): Promise<void> } | undefined> {
+export async function openPersonalPhotoSourceFromEnv(audit: PersonalPhotoAuditPort, env: NodeJS.ProcessEnv = process.env, publicAudit?: PublicPhotoAuditPort): Promise<{ source: PersonalPhotoSource; publicSource?: PublicPersonalPhotoSource; close(): Promise<void> } | undefined> {
   const names = ['DOCUMENT_STORAGE', 'DOCUMENT_ORG_ID', 'DOCUMENT_ROOT', 'DOCUMENT_R2_ACCOUNT_ID', 'DOCUMENT_R2_BUCKET', 'DOCUMENT_R2_ACCESS_KEY_ID', 'DOCUMENT_R2_SECRET_ACCESS_KEY'];
   if (names.every(n => env[n] === undefined)) return undefined;
   let store: DocumentStore; const close: Array<() => Promise<void>> = [];
@@ -61,5 +86,5 @@ export async function openPersonalPhotoSourceFromEnv(audit: PersonalPhotoAuditPo
     const snapshots = new PostgresDocumentSnapshot(env.DATABASE_URL);
     store = new R2DocumentStore(snapshots, objects); close.push(async () => { objects.close(); }, () => snapshots.close());
   } else throw new Error('invalid document configuration');
-  return { source: personalPhotoSource({ store, orgId: env.DOCUMENT_ORG_ID, audit }), close: async () => { await Promise.all(close.map(x => x())); } };
+  return { source: personalPhotoSource({ store, orgId: env.DOCUMENT_ORG_ID, audit }), ...(publicAudit ? { publicSource: publicPersonalPhotoSource({ store, orgId: env.DOCUMENT_ORG_ID, audit: publicAudit }) } : {}), close: async () => { await Promise.all(close.map(x => x())); } };
 }

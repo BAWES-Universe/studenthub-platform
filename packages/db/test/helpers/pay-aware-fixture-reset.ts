@@ -42,6 +42,7 @@ const guards = [
   ["pay_line_audit", "pay_line_audit_no_truncate"],
   ["id_cards", "id_cards_no_truncate"],
   ["id_card_events", "id_card_events_no_truncate"],
+  ["id_card_public_views", "id_card_public_views_no_truncate"],
 ] as const;
 
 export async function resetPayAwareFixture(pool: pg.Pool, statement: string): Promise<void> {

@@ -105,13 +105,13 @@ export class PostgresIdCardsStore {
   }
 
   /** What the public verification page may show for a card number: name, current company, expiry, and whether the holder is still assigned. */
-  async verify(cardNumber: number, today: string): Promise<{ name: string | null; company: string | null; expiresOn: string; assigned: boolean } | undefined> {
+  async verify(cardNumber: number, today: string): Promise<{ personId: string; name: string | null; company: string | null; expiresOn: string; assigned: boolean } | undefined> {
     if (!DAY.test(today) || !Number.isSafeInteger(cardNumber) || cardNumber < 1) throw new RangeError("invalid card");
-    const r = (await this.#pool.query<{ name: string | null; company: string | null; expires_on: string; assigned: boolean }>(`SELECT ${NAME} AS name, placement.company,
+    const r = (await this.#pool.query<{ person_id: string; name: string | null; company: string | null; expires_on: string; assigned: boolean }>(`SELECT c.person_principal_id AS person_id, ${NAME} AS name, placement.company,
         to_char(c.expires_on, 'YYYY-MM-DD') AS expires_on, ${idCardAssigned("c.person_principal_id", "$2")} AS assigned
        FROM id_cards c JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = p.id
        ${PLACEMENT("p.id", "$2")} WHERE c.card_number = $1`, [cardNumber, today])).rows[0];
-    return r && { name: r.name, company: r.company, expiresOn: r.expires_on, assigned: r.assigned };
+    return r && { personId: r.person_id, name: r.name, company: r.company, expiresOn: r.expires_on, assigned: r.assigned };
   }
 
   async counts(today: string): Promise<{ needs: number; expired: number }> {
@@ -124,5 +124,11 @@ export class PostgresIdCardsStore {
   async recordPhotoRender(view: { viewerPrincipalId: string; subjectPrincipalId: string; kind: "id_card_render"; documentType: "personal-photo"; documentVersion: string }): Promise<void> {
     await this.#pool.query(`INSERT INTO staff_person_views(viewer_principal_id, subject_principal_id, kind, document_type, document_version) VALUES ($1::text, $2::text, $3::text, $4::text, $5::uuid)`,
       [view.viewerPrincipalId, view.subjectPrincipalId, view.kind, view.documentType, view.documentVersion]);
+  }
+
+  /** Records one public read of a card holder's photo (id_card_public_views); the photo is sent only after this succeeds. */
+  async recordPublicPhotoView(view: { cardNumber: number; subjectPrincipalId: string; documentVersion: string; clientHash: string }): Promise<void> {
+    await this.#pool.query(`INSERT INTO id_card_public_views(card_number, subject_principal_id, document_type, document_version, client_hash) VALUES ($1::bigint, $2::text, 'personal-photo', $3::uuid, $4::text)`,
+      [view.cardNumber, view.subjectPrincipalId, view.documentVersion, view.clientHash]);
   }
 }
