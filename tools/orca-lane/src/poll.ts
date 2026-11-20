@@ -16,30 +16,43 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { acquireRun, claim, type ClaimRecord, decide, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, withGate, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
+import { acquireRun, claim, type ClaimRecord, decide, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
 
 const REPO = "BAWES-Universe/studenthub-platform";
 const REGISTER = "docs/lanes/orca/REGISTER.md";
 
 export type Next = (WorkDecision & { readonly runToken: string | null }) | null;
 
+/** The ticket work mode would take: an owned ticket (resume) always before a new one (start). */
+export function choose(decisions: readonly Decision[]): WorkDecision | null {
+  const work = decisions.filter((d): d is WorkDecision => d.action === "start" || d.action === "resume");
+  return work.find((d) => d.action === "resume") ?? work.find((d) => d.action === "start") ?? null;
+}
+
 /**
- * At most one ticket per bot: an owned ticket is resumed before anything new starts.
- * A run needs the claim (start) and the run lock; losing either race means do nothing now.
+ * At most one ticket per bot. The bot-wide run lock is taken first, so only one
+ * poll at a time can get past it; decisions are then re-read under the lock, and
+ * the poll goes ahead only if the same ticket is still the one to take. A start
+ * also needs the claim. Losing any step releases the lock and does nothing now.
  * tryRun returns the run token, or null if the lock is busy.
  */
 export function pickNext(
   decisions: readonly Decision[],
   tryClaim: (decision: WorkDecision) => "claimed" | "held",
   tryRun: (decision: WorkDecision) => string | null,
+  undoRun: (decision: WorkDecision, runToken: string) => void = () => {},
+  reread: () => readonly Decision[] = () => decisions,
 ): Next {
-  const work = decisions.filter((d): d is WorkDecision => d.action === "start" || d.action === "resume");
-  const owned = work.find((d) => d.action === "resume");
-  const chosen = owned ?? work.find((d) => d.action === "start");
+  const chosen = choose(decisions);
   if (!chosen) return null;
-  if (chosen.action === "start" && tryClaim(chosen) !== "claimed") return null;
   const runToken = tryRun(chosen);
-  return runToken === null ? null : { ...chosen, runToken };
+  if (runToken === null) return null;
+  const fresh = choose(reread());
+  if (!fresh || fresh.claimKey !== chosen.claimKey || (fresh.action === "start" && tryClaim(fresh) !== "claimed")) {
+    undoRun(chosen, runToken);
+    return null;
+  }
+  return { ...fresh, runToken };
 }
 
 type Mode = "observe" | "work" | "check" | "release" | "recover";
@@ -70,20 +83,21 @@ function comments(issue: number): IssueComment[] {
   });
 }
 
-function heldClaims(dir: string): Map<string, ClaimRecord> {
+export function heldClaims(dir: string): Map<string, ClaimRecord> {
   const held = new Map<string, ClaimRecord>();
   let entries: string[] = [];
-  try { entries = readdirSync(dir); } catch { entries = []; }
+  try {
+    entries = readdirSync(dir);
+  } catch (error) {
+    // No claims directory yet means no claims. Any other read error fails closed.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   for (const key of entries.filter((entry) => !entry.startsWith("."))) {
     // Claims are published whole, so an unreadable one means tampering: hold it as unbound so it never resumes.
     held.set(key, readClaim(dir, key) ?? { dispatch: -1, lease: "", at: "" });
   }
   return held;
 }
-
-const isAlive = (pid: number): boolean => {
-  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
-};
 
 function main(): void {
   const { bot, mode, claims, key, token } = args(process.argv.slice(2));
@@ -105,7 +119,8 @@ function main(): void {
   const decisionsFor = (): Decision[] => decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims) });
 
   if (mode === "check") {
-    const mineNow = decisionsFor().find((d): d is WorkDecision => (d.action === "resume" || d.action === "start") && d.claimKey === key);
+    // A running ticket always holds its claim, so only a matching resume (same dispatch, same lease) passes.
+    const mineNow = decisionsFor().find((d): d is WorkDecision => d.action === "resume" && d.claimKey === key);
     const reason = !mineNow ? "ticket generation no longer eligible" : !holdsRun(claims, bot, key!, token!) ? "run lock not held by this token" : null;
     process.stdout.write(`${JSON.stringify({ mode, bot, at, key, ok: reason === null, reason })}\n`);
     if (reason !== null) process.exitCode = 3;
@@ -120,16 +135,15 @@ function main(): void {
     return;
   }
 
-  const picked = withGate(claims, bot, process.pid, isAlive, () => {
-    const decisions = decisionsFor();
-    const next = pickNext(
-      decisions,
-      (d) => claim(claims, d.claimKey, { dispatch: d.dispatch, lease: d.lease, at }),
-      (d) => { const runToken = randomUUID(); return acquireRun(claims, bot, d.claimKey, now, runToken) === "acquired" ? runToken : null; },
-    );
-    return { decisions, next };
-  });
-  const result = picked === "busy" ? { decisions: [], next: null, gate: "busy" } : picked;
+  const decisions = decisionsFor();
+  const next = pickNext(
+    decisions,
+    (d) => claim(claims, d.claimKey, { dispatch: d.dispatch, lease: d.lease, at }),
+    (d) => { const runToken = randomUUID(); return acquireRun(claims, bot, d.claimKey, now, runToken) === "acquired" ? runToken : null; },
+    (d, runToken) => { releaseRun(claims, bot, d.claimKey, runToken); },
+    decisionsFor,
+  );
+  const result = { decisions, next };
   // When next is null because a run holds the lock, say which run, without its token.
   const held = readRun(claims, bot);
   const runLock = held && result.next === null ? { key: held.key, since: held.since } : null;

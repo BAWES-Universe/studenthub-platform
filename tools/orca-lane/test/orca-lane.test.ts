@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acquireRun, CLAUDE_APP_ID, claim, claimKey, decide, dispatchHeader, holdsRun, parseRegister, readClaim, recoverRun, RegisterError, releaseRun, startReceiptHeader, withGate, type IssueComment } from "../src/lane.js";
-import { pickNext } from "../src/poll.js";
+import { acquireRun, CLAUDE_APP_ID, claim, claimKey, decide, dispatchHeader, holdsRun, parseRegister, readClaim, recoverRun, RegisterError, releaseRun, startReceiptHeader, type IssueComment } from "../src/lane.js";
+import { heldClaims, pickNext } from "../src/poll.js";
 
 const BOT = "studenthub-universe";
 const NOW = new Date("2026-11-21T12:00:00Z");
@@ -90,14 +90,13 @@ test("a resume stays bound to the lease its claim saved", () => {
   assert.match(JSON.stringify(run(md, { 581: [dispatch(900, 581, 1)] }, [[claimKey(BOT, 581, 1), 900, "`docs/other.md` only; no migrations"]])), /lease changed/);
 });
 
-test("claims, run locks and the gate are published whole: a leftover temp directory blocks nothing", () => {
+test("claims and run locks are published whole: a leftover temp directory blocks nothing", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "orca-atomic-"));
   mkdirSync(path.join(dir, ".tmp-leftover"));
   assert.equal(claim(dir, claimKey(BOT, 581, 1), { dispatch: 900, lease: "l", at: "t" }), "claimed");
   assert.equal(readClaim(dir, claimKey(BOT, 581, 1))?.lease, "l");
   assert.equal(acquireRun(dir, BOT, claimKey(BOT, 581, 1), NOW, "A"), "acquired");
   assert.equal(holdsRun(dir, BOT, claimKey(BOT, 581, 1), "A"), true);
-  assert.equal(withGate(dir, BOT, 1, () => true, () => "picked"), "picked");
 });
 
 test("a malformed register is refused as a whole", () => {
@@ -201,15 +200,29 @@ test("a crashed run's lock is cleared only by recover naming its key", () => {
   assert.equal(acquireRun(dir, BOT, g1, NOW, "C"), "acquired");
 });
 
-test("the bot-wide gate lets one poll pick at a time and clears a gate left by a dead poll", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-gate-"));
-  const inner = withGate(dir, BOT, 101, () => true, () => withGate(dir, BOT, 102, () => true, () => "picked"));
-  assert.equal(inner, "busy");
-  assert.equal(withGate(dir, BOT, 103, () => true, () => "picked"), "picked");
-  // A poll killed inside the gate leaves it behind: busy while its pid lives, cleared once it is gone.
-  mkdirSync(path.join(dir, `.gate-${BOT}`));
-  writeFileSync(path.join(dir, `.gate-${BOT}`, "pid"), "104");
-  assert.equal(withGate(dir, BOT, 105, (pid) => pid === 104, () => "picked"), "busy");
-  assert.equal(withGate(dir, BOT, 105, () => false, () => "picked"), "picked");
-  assert.equal(withGate(dir, BOT, 106, () => true, () => "picked"), "picked");
+test("one poll at a time gets past the run lock; a poll whose pick went stale under the lock backs out", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-serial-"));
+  const md1 = register(row(581, 1, "`900`"), row(590, 1, "`950`"));
+  const comments = { 581: [dispatch(900, 581, 1)], 590: [dispatch(950, 590, 1)] };
+  const claimIt = (d: { claimKey: string; dispatch: number; lease: string }) => claim(dir, d.claimKey, { dispatch: d.dispatch, lease: d.lease, at: "t" });
+  const lockIt = (token: string) => (d: { claimKey: string }) => (acquireRun(dir, BOT, d.claimKey, NOW, token) === "acquired" ? token : null);
+  const undo = (d: { claimKey: string }, token: string) => { releaseRun(dir, BOT, d.claimKey, token); };
+  // P1 read decisions before P2 claimed 581 and later released. Under the lock P1 re-reads: 581 is now owned (resume), so P1 takes it as a resume, never a second start.
+  const p1Before = run(md1, comments);
+  const p2 = pickNext(run(md1, comments), claimIt, lockIt("P2"), undo);
+  assert.equal(p2?.claimKey, claimKey(BOT, 581, 1));
+  assert.equal(pickNext(p1Before, claimIt, lockIt("P1"), undo, () => run(md1, comments, [[claimKey(BOT, 581, 1), 900]])), null);
+  assert.equal(releaseRun(dir, BOT, claimKey(BOT, 581, 1), "P2"), "released");
+  // P1's stale pick says start 590 (say 581's row moved after it); under the lock the fresh pick is resume 581: P1 backs out and frees the lock.
+  const stale = run(register(row(590, 1, "`950`")), { 590: [dispatch(950, 590, 1)] });
+  assert.equal(pickNext(stale, claimIt, lockIt("P1"), undo, () => run(md1, comments, [[claimKey(BOT, 581, 1), 900]])), null);
+  assert.equal(readClaim(dir, claimKey(BOT, 590, 1)), null);
+  assert.equal(acquireRun(dir, BOT, claimKey(BOT, 581, 1), NOW, "P3"), "acquired");
+});
+
+test("claims that can't be read fail closed; a missing claims directory means no claims", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-claims-read-"));
+  assert.equal(heldClaims(path.join(dir, "absent")).size, 0);
+  writeFileSync(path.join(dir, "not-a-dir"), "x");
+  assert.throws(() => heldClaims(path.join(dir, "not-a-dir")));
 });

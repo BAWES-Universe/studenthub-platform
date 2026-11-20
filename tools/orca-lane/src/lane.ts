@@ -271,27 +271,3 @@ export function recoverRun(dir: string, bot: string, key: string): "recovered" |
   rmSync(runLockDir(dir, bot), { recursive: true, force: true });
   return "recovered";
 }
-
-/**
- * Bot-wide gate around choosing a ticket, so two polls of one bot never pick at
- * the same time. Held only for the pick. A gate left by a dead poll process (its
- * pid no longer alive) is cleared; a live one means "busy": do nothing now.
- */
-export function withGate<T>(dir: string, bot: string, pid: number, isAlive: (pid: number) => boolean, fn: () => T): T | "busy" {
-  mkdirSync(dir, { recursive: true });
-  const gate = path.join(dir, `.gate-${bot}`);
-  const enter = (): boolean => publish(dir, gate, "pid", String(pid));
-  if (!enter()) {
-    let owner = Number.NaN;
-    try { owner = Number(readFileSync(path.join(gate, "pid"), "utf8")); } catch { /* being written */ }
-    if (!Number.isFinite(owner) || isAlive(owner)) return "busy";
-    try { renameSync(gate, `${gate}.dead-${owner}-${pid}`); } catch { return "busy"; }
-    rmSync(`${gate}.dead-${owner}-${pid}`, { recursive: true, force: true });
-    if (!enter()) return "busy";
-  }
-  try {
-    return fn();
-  } finally {
-    rmSync(gate, { recursive: true, force: true });
-  }
-}
