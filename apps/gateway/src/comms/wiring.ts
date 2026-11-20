@@ -26,7 +26,7 @@ export function idCardVerifyKey(env: NodeJS.ProcessEnv): Buffer | undefined {
 }
 
 /** Staff messages, the per-person email delivery log, the morning summary page and ID cards as production composes them: StudentHub staff (operator staff or admin grant) only, except a person's own ID card. */
-export function wireStaffMessages(options: { readonly connectionString: string; readonly authzStore: Pick<AuthzStore, "listGrantsForPrincipal">; readonly env?: NodeJS.ProcessEnv; readonly idCardVerifyKey?: Buffer }): { readonly http: StaffMessagesHttpService; close(): Promise<void> } {
+export function wireStaffMessages(options: { readonly connectionString: string; readonly authzStore: Pick<AuthzStore, "listGrantsForPrincipal">; readonly env?: NodeJS.ProcessEnv; readonly idCardVerifyKey?: Buffer; readonly warn?: (line: string) => void }): { readonly http: StaffMessagesHttpService; close(): Promise<void> } {
   // One pool for every store here; none owns it, so close ends it once.
   const pool = new pg.Pool({ connectionString: options.connectionString });
   const store = new PostgresStaffMessagesStore({ pool });
@@ -38,6 +38,9 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
   const cards = new PostgresIdCardsStore({ pool }), audit = { recordView: cards.recordPhotoRender.bind(cards) }, publicAudit = { recordPublicView: cards.recordPublicPhotoView.bind(cards) };
   let opened: ReturnType<typeof openPersonalPhotoSourceFromEnv> | undefined;
   const env = options.env;
+  // Behind a load balancer without GATEWAY_TRUSTED_PROXIES every visitor would share the balancer's count on the public check.
+  if (options.idCardVerifyKey && env && !env.GATEWAY_TRUSTED_PROXIES?.trim())
+    (options.warn ?? (line => console.warn(line)))(JSON.stringify({ event: "id_card_verify_no_trusted_proxies", detail: "ID_CARD_VERIFY_KEY is set but GATEWAY_TRUSTED_PROXIES is empty: the public card check counts by socket address, so behind a proxy every visitor shares one limit" }));
   // A failed open (storage briefly down) is forgotten so the next read tries again; that read falls back to no photo.
   const open = async () => {
     const attempt = opened ??= openPersonalPhotoSourceFromEnv(audit, env, publicAudit);

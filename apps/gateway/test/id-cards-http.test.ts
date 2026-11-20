@@ -317,3 +317,15 @@ test("REPORTS_ID_CARD_PUBLIC_PHOTO_HTTP the public photo source records the read
   const failing = publicPersonalPhotoSource({ store: documents, orgId: "org", audit: { async recordPublicView() { throw new Error("db down"); } } });
   await assert.rejects(failing.read(PERSON, { cardNumber: 17, clientHash: "c".repeat(22) }), /db down/, "no bytes without the record");
 });
+
+test("REPORTS_ID_CARD_VERIFY_LIMIT a verify key without GATEWAY_TRUSTED_PROXIES warns once at start", async () => {
+  const key = Buffer.alloc(32, 3), warnings: string[] = [], authzStore = { async listGrantsForPrincipal() { return []; } };
+  const wire = (env: NodeJS.ProcessEnv, withKey = true) => wireStaffMessages({ connectionString: "postgres://nobody@127.0.0.1:9/none", authzStore, env, ...(withKey ? { idCardVerifyKey: key } : {}), warn: line => warnings.push(line) });
+  await wire({}).close();
+  assert.equal(warnings.length, 1); assert.match(warnings[0]!, /id_card_verify_no_trusted_proxies/);
+  await wire({ GATEWAY_TRUSTED_PROXIES: " " }).close();
+  assert.equal(warnings.length, 2, "blank counts as unset");
+  await wire({ GATEWAY_TRUSTED_PROXIES: "10.0.0.0/8" }).close();
+  await wire({}, false).close();
+  assert.equal(warnings.length, 2, "no warning with proxies set, or without a key (no public check)");
+});
