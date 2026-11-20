@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FiringHitMapService, buildFiringHitMap, firingLevel, firingSpikes, lastTwelveMonths, queueFiringSpikesThenDeliver, sendFiringSpikesIfDue, type FiringHitMapStore } from "../src/index.js";
+import { FiringHitMapService, deliverWithDailyStaffEmails, buildFiringHitMap, firingLevel, firingSpikes, lastTwelveMonths, queueFiringSpikesThenDeliver, sendFiringSpikesIfDue, type FiringHitMapStore } from "../src/index.js";
 
 test("REPORTS_FIRINGS the last 12 months run newest first and cross the year", () => {
   assert.deepEqual(lastTwelveMonths("2026-02-10"), ["2026-02", "2026-01", "2025-12", "2025-11", "2025-10", "2025-09", "2025-08", "2025-07", "2025-06", "2025-05", "2025-04", "2025-03"]);
@@ -70,4 +70,18 @@ test("REPORTS_FIRINGS the spike email subscription is staff only and shown on th
   assert.equal(await service.subscribe("staff", true), true);
   assert.equal((await service.page("staff"))!.spikeEmail, true);
   assert.equal((await new FiringHitMapService(store, { isStaff: async () => true }).page("staff"))!.spikeEmail, null, "not wired");
+});
+
+test("REPORTS_FIRINGS the daily staff emails are queued only by a worker that can deliver them", async () => {
+  const days: string[] = [];
+  const summary = { async sendDay(day: string) { days.push(`summary:${day}`); return null; } } as never;
+  const spikes = { async sendDay(day: string) { days.push(`spike:${day}`); return null; } } as never;
+  const at = () => new Date("2026-11-20T06:00:00Z");
+  for (const [production, configured] of [[false, false], [false, true], [true, false]] as const) {
+    let delivered = 0;
+    assert.equal(await deliverWithDailyStaffEmails({ production, configured, async processDue() { return ++delivered; } }, summary, spikes, at), 1);
+  }
+  assert.deepEqual(days, [], "nothing recorded while the email could not go out");
+  assert.equal(await deliverWithDailyStaffEmails({ production: true, configured: true, async processDue() { return 7; } }, summary, spikes, at), 7);
+  assert.deepEqual(days, ["summary:2026-11-20", "spike:2026-11-20"]);
 });

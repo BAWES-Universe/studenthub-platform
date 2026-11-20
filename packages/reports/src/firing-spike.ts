@@ -1,5 +1,5 @@
 import { kuwaitDay, validateTemplateParameters, type EmailTemplateParameters } from "../../notifications/src/index.js";
-import { kuwaitHour } from "./morning-summary.js";
+import { kuwaitHour, queueMorningSummaryThenDeliver, type MorningSummaryStore } from "./morning-summary.js";
 import { buildFiringHitMap, lastTwelveMonths, type FiringCompany, type FiringCount } from "./firing-hit-map.js";
 
 /**
@@ -59,4 +59,16 @@ export async function queueFiringSpikesThenDeliver(store: Pick<FiringSpikeStore,
   const sent = await deliver();
   if (failed) throw failure;
   return sent;
+}
+
+/**
+ * The email delivery job's work. The daily staff emails (morning summary, firing spikes) are queued
+ * only when this worker can deliver them: queueing records the day and each alert for good, so a
+ * worker that would mark the emails not sent must leave them due for one that can send.
+ */
+export function deliverWithDailyStaffEmails(delivery: { readonly production: boolean; readonly configured: boolean; processDue(): Promise<number> },
+  summary: Pick<MorningSummaryStore, "sendDay">, spikes: Pick<FiringSpikeStore, "sendDay">, now: () => Date = () => new Date()): Promise<number> {
+  const deliver = () => delivery.processDue();
+  if (!delivery.production || !delivery.configured) return deliver();
+  return queueMorningSummaryThenDeliver(summary, () => queueFiringSpikesThenDeliver(spikes, deliver, now), now);
 }
