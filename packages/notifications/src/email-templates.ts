@@ -4,7 +4,7 @@
  * 0354) says the same for every class; a db test compares the two.
  */
 import{MORNING_SUMMARY_COUNTERS,MORNING_SUMMARY_HIDDEN_AT_ZERO,MORNING_SUMMARY_KEYS,type MorningSummaryCounts}from"../../reports/src/morning-summary-counters.js";
-export const EMAIL_CLASSES=["account.notice","civil_id.result","staff.morning_summary","staff.firing_spike"] as const;
+export const EMAIL_CLASSES=["account.notice","civil_id.result","staff.morning_summary","staff.firing_spike","recruit.invitation"] as const;
 export type EmailClass=typeof EMAIL_CLASSES[number];
 export interface EmailTemplateParameters {
   readonly "account.notice":{readonly heading:string;readonly message:string};
@@ -12,6 +12,8 @@ export interface EmailTemplateParameters {
   readonly "staff.morning_summary":{readonly day:string;readonly counters:MorningSummaryCounts};
   /** One company's month passed its 12-month average (warning) or twice it (danger); counts are placements ended. */
   readonly "staff.firing_spike":{readonly company:string;readonly month:string;readonly level:"warning"|"danger";readonly total:number;readonly twelveMonthTotal:number};
+  /** The person was invited to apply for a request's position (legacy `candidate/job-invitation`). */
+  readonly "recruit.invitation":{readonly position:string;readonly company:string};
 }
 export interface RenderedEmail{readonly subject:string;readonly body:string}
 export interface EmailTemplate<C extends EmailClass=EmailClass>{readonly required:boolean;render(parameters:EmailTemplateParameters[C]):RenderedEmail}
@@ -36,6 +38,9 @@ function renderMorningSummary(p:EmailTemplateParameters["staff.morning_summary"]
   return{subject:`Morning Report for ${longDay(p.day)}`,body:`Good morning. This is StudentHub on ${longDay(p.day)} (Kuwait time).\n\n${lines.join("\n")}\n\n"Not available" means the data behind that number is not in StudentHub yet. The same numbers, always current, are on the morning summary page in the staff workspace.`};
 }
 /** The company name (1 to 200 characters, no control characters), a real month, a level and the counts that make it that level. */
+/** One line of 1 to 255 characters with no control characters, as a position title or company name is shown. */
+const lineOk=(text:string)=>{const n=[...text].length;return n>=1&&n<=255&&!/[\u0000-\u001f\u007f-\u009f]/.test(text)};
+const recruitInvitation=(value:unknown):value is EmailTemplateParameters["recruit.invitation"]=>exact(value,["position","company"])&&lineOk(value.position)&&lineOk(value.company);
 function firingSpike(value:unknown):value is EmailTemplateParameters["staff.firing_spike"]{
   if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).sort().join("\0")!=="company\0level\0month\0total\0twelveMonthTotal")return false;
   const{company,month,level,total,twelveMonthTotal}=value as Record<string,unknown>;
@@ -56,6 +61,7 @@ export function validateTemplateParameters<C extends EmailClass>(emailClass:C,va
   if(emailClass==="civil_id.result"&&civilIdResult(value))return value as EmailTemplateParameters[C];
   if(emailClass==="staff.morning_summary"&&morningSummary(value))return value as EmailTemplateParameters[C];
   if(emailClass==="staff.firing_spike"&&firingSpike(value))return value as EmailTemplateParameters[C];
+  if(emailClass==="recruit.invitation"&&recruitInvitation(value))return value as EmailTemplateParameters[C];
   throw new TypeError("invalid closed email template parameters");
 }
 export const EMAIL_TEMPLATES:{readonly [C in EmailClass]:EmailTemplate<C>}={
@@ -65,4 +71,5 @@ export const EMAIL_TEMPLATES:{readonly [C in EmailClass]:EmailTemplate<C>}={
     :{subject:"We could not confirm your civil ID",body:`StudentHub staff checked your civil ID and could not confirm it.\n\nReason: ${p.reason}\n\nUpload new photos of the front and back of your civil ID from your profile, and staff will check it again.`}},
   "staff.morning_summary":{required:false,render:renderMorningSummary},
   "staff.firing_spike":{required:false,render:renderFiringSpike},
+  "recruit.invitation":{required:false,render:p=>({subject:"You’re invited to apply for a job opening",body:`You're invited to apply for ${p.position} at ${p.company}.\n\nOpen Invitations in your StudentHub account to accept or decline it.`})},
 };

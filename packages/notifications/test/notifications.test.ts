@@ -56,3 +56,22 @@ test("COMMS_FEED_REGISTRY dates and enums match the database rule exactly",()=>{
  const status=(value:unknown)=>NOTIFICATION_REGISTRY.accepts({kind:"organization.status_changed",subjectReference:"organization:org",parameters:{status:value}});
  assert.deepEqual(["active","under_review","inactive","none","toString","constructor","Active"].map(status),[true,true,true,true,false,false,false]);
 });
+test("COMMS_FEED_RECRUIT each recruit event renders from the request as it is now, links to the right list, and reads its events once a page",async()=>{
+ const events=[{id:"1",event:"invitation.sent"},{id:"2",event:"interview.scheduled"},{id:"3",event:"application.shortlisted"},{id:"4",event:"invitation.accepted"},{id:"5",event:"request_application.received"},{id:"6",event:"request_application.rejected"}].map(e=>({...e,requestId:"9b1c/x",positionTitle:"Cashier",companyName:"Acme"}));
+ const rows=events.map(e=>feedRow(`n${e.id}`,`recruit.${e.event}`,`recruit_outbox:${e.id}`,{})).concat([feedRow("gone","recruit.invitation.sent","recruit_outbox:77",{}),feedRow("swapped","recruit.interview.cancelled","recruit_outbox:2",{})]);
+ const asked:string[][]=[];
+ const service=new NotificationsService({async list(){return rows},async markRead(){return true},async markAllRead(){}},{...emptySubjects,async readRecruitEvents(recipient:string,ids:readonly string[]){asked.push([recipient,...ids]);return events}},noGrants);
+ const page=await service.list("person");
+ assert.deepEqual(page.items.map(i=>[i.id,i.text,i.href]),[
+  ["n1","You're invited to apply for Cashier at Acme.","/recruit/invitations"],
+  ["n2","Your interview for Cashier at Acme is scheduled.","/recruit/my-interviews"],
+  ["n3","You were shortlisted for Cashier at Acme.","/recruit/jobs?applied=1"],
+  ["n4","An invitation to Cashier at Acme was accepted.","/recruit/staff/requests/9b1c%2Fx/invitations"],
+  ["n5","Someone applied for Cashier at Acme.","/recruit/requests/9b1c%2Fx/applications"],
+  ["n6","Your application for Cashier at Acme was not taken forward.","/recruit/open-requests?applied=1"]],"a missing event, or one stored under another kind, is left out");
+ assert.equal(asked.length,7,"one read per recruit kind on the page (seven here), never per row");
+ assert.ok(asked.every(a=>a[0]==="person"));
+ for(const kind of NOTIFICATION_KINDS.filter(k=>k.startsWith("recruit.")))for(const [subjectReference,parameters,ok] of [["recruit_outbox:1",{},true],["recruit_outbox:9223372036854775807",{},true],["recruit_outbox:0",{},false],["recruit_outbox:01",{},false],["recruit_outbox:1",{text:"x"},false],["recruit_outbox:x",{},false],["staff_message:1",{},false]] as const)
+  assert.equal(NOTIFICATION_REGISTRY.accepts({kind,subjectReference,parameters}),ok,`${kind} ${subjectReference}`);
+ assert.equal(NOTIFICATION_KINDS.filter(k=>k.startsWith("recruit.")).length,11);
+});
