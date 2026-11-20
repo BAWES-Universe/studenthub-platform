@@ -29,6 +29,7 @@ company `StoreController` and `StoreAssignmentRequestController`, candidate
 | Open session check only at the current store | One open session per person everywhere (unique index plus overlap trigger) | Second-store defect, double-tap race |
 | `total_time` from a BEFORE UPDATE trigger, negative or null on manual insert | Generated `duration_seconds`, whole seconds truncated like `TIMESTAMPDIFF(SECOND)`; end before start refused | Bad-input defect |
 | Discard and staff delete were hard deletes | Soft delete with who and why; restore possible | W-7 contract |
+| Rows could be wiped with a delete or a `TRUNCATE` | Placements, sessions, decisions, appeals, appeal updates, staff time and the event log refuse `DELETE`, and every one of those tables refuses `TRUNCATE`, directly or by a `CASCADE` from `principals` or `organizations` | Audit; history is never lost |
 | Day totals stored on `candidate_working_date`, rejected time inside `total_time`, day status = last session's status, two repair crons | `work_day_totals` view: approved, pending and rejected seconds and counts, open count; nothing stored, nothing to repair | WK-F3/F4 crons retired; drift impossible by construction |
 | A session past midnight is dated by its start | Same, in Asia/Kuwait | Parity |
 | Save and bulk-save decided any company's sessions (no ownership check) | Every decision is scoped: staff above the company, the company's owners and recruiters (subtree aware), or a store manager for their own store only | Ownership defect |
