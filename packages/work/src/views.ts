@@ -152,6 +152,22 @@ export class HoursViews {
       ...(options.after ? { after: options.after } : {}), limit: PAGE_SIZE }, employerDecisionView);
   }
 
+  /**
+   * One session in force on `date` at one store, by id (the M-03 session page):
+   * for whoever covers that store in that company (its manager, the company,
+   * or staff); undefined otherwise, so a stranger can't tell missing from not theirs.
+   */
+  async storeSession(actorId: string, orgId: string, storeId: string, date: IsoDate, sessionId: string): Promise<HoursRow<EmployerDecisionView> | undefined> {
+    if (!isIsoDate(date) || !isUuid(sessionId) || !isUuid(storeId)) return undefined;
+    if ((await this.#store.organizationAncestors(orgId)) === undefined) return undefined;
+    const store = storeId.toLowerCase();
+    if (!(await this.#scope.covers(actorId, orgId, store))) return undefined;
+    const reach = await this.#scope.companyReach(actorId, orgId);
+    const page = await this.#page({ orgIds: [orgId], includeSubtree: reach === "subtree", storeIds: [store], sessionIds: [sessionId.toLowerCase()],
+      range: { from: date, to: date }, limit: 1 }, employerDecisionView);
+    return page.rows[0];
+  }
+
   /** One session in force on `date`, by id, for operator staff (the A-13 correction form); undefined otherwise. */
   async staffSession(actorId: string, date: IsoDate, sessionId: string): Promise<HoursRow<EmployerDecisionView> | undefined> {
     if (!isIsoDate(date) || !isUuid(sessionId) || !(await this.#scope.isOperatorStaff(actorId))) return undefined;

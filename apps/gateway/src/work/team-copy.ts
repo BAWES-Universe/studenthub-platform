@@ -76,6 +76,11 @@ const en = {
     cancel: "Cancel this request", noRequests: "No requests for this store yet.",
     askHeading: "Ask for a person", askIntro: "StudentHub reviews the request and places the person at this store.",
     theirId: "Their StudentHub ID", optionalNote: "Note (optional)", send: "Send request", requests: "Requests",
+    sessionTitle: (who: string) => `Hours: ${who}`,
+    sessionNotFound: ["Hours not found", "These hours don't exist at this store, or aren't yours to review."] as ErrorPage,
+    details: "Details", backToQueue: "Back to time approvals",
+    decideOne: "Decide these hours", approveOne: "Approve", rejectOne: "Reject",
+    stillOpen: "These hours are still in progress. You can decide them once the person stops.",
   },
   staffTime: {
     off: "Staff time isn't switched on here yet.",
@@ -275,6 +280,11 @@ const ar: TeamCopy = {
     cancel: "إلغاء هذا الطلب", noRequests: "لا توجد طلبات لهذا المتجر بعد.",
     askHeading: "طلب شخص", askIntro: "يراجع فريق StudentHub الطلب ويعيّن الشخص في هذا المتجر.",
     theirId: "رقمه في StudentHub", optionalNote: "ملاحظة (اختيارية)", send: "إرسال الطلب", requests: "الطلبات",
+    sessionTitle: (who) => `ساعات: ${who}`,
+    sessionNotFound: ["الساعات غير موجودة", "هذه الساعات غير موجودة في هذا المتجر، أو ليست لك مراجعتها."],
+    details: "التفاصيل", backToQueue: "العودة إلى اعتماد الساعات",
+    decideOne: "القرار بشأن هذه الساعات", approveOne: "موافقة", rejectOne: "رفض",
+    stillOpen: "هذه الساعات ما زالت جارية. يمكنك اتخاذ القرار بعد أن يتوقف الشخص.",
   },
   staffTime: {
     off: "وقت الموظفين غير مفعّل هنا بعد.",
