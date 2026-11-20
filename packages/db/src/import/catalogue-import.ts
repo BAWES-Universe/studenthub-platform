@@ -9,7 +9,9 @@
 //   no legacy row holds yet is adopted: the map points at that item and nothing is written.
 //   A currency or bank is adopted only when its code and typed details are the same as the
 //   item's (details on one side only are not the same); otherwise it is refused as
-//   name_conflict, nothing is written or mapped, and a re-run refuses it again;
+//   name_conflict, nothing is written or mapped, and a re-run refuses it again. The same check
+//   holds a merged currency or bank row whose target's item differs from it (say, the target
+//   row changed in legacy and its item kept the first import);
 // - each row runs in its own savepoint and one batch is one transaction.
 // Results carry legacy ids, rule codes and digests only.
 
@@ -133,6 +135,12 @@ export class PostgresCatalogueImportStore {
       const { rows: target } = await client.query<{ platform_id: string }>(
         "SELECT platform_id FROM legacy_id_maps WHERE legacy_table = $1 AND legacy_id = $2", [row.legacyTable, row.mergedInto]);
       if (!target[0]) { tally.refused.push({ legacyTable: row.legacyTable, legacyId: row.legacyId, code: "no_merge_target" }); return; }
+      // The target's item may hold older content than this batch's target row (a digest conflict
+      // keeps it), so a currency or bank alias is checked against the item itself.
+      if (!(await this.#sameTypedContent(client, row, target[0].platform_id))) {
+        tally.refused.push({ legacyTable: row.legacyTable, legacyId: row.legacyId, code: "name_conflict" });
+        return;
+      }
       await this.#map(client, row, target[0].platform_id, "merged");
       tally.merged++;
       return;

@@ -143,6 +143,31 @@ test("a same-name currency or bank is adopted only with the same code and detail
   assert.deepEqual({ ...rows[0] }, { symbol: "KD", decimal_places: 3 });
 });
 
+test("a later same-name alias is checked against the item, not just the target id: a changed target holds it, a matching one maps", async () => {
+  const run = tag();
+  const row = (id: string, places: number) => ({ currency_id: id, title: `${run} Dinar`, code: "KWD", currency_symbol: "KD", decimal_place: places, status: 1 });
+  const first = mapLegacyCatalogue("currency", [row(`${run}1`, 3)]).items;
+  assert.equal((await store.importItems(first, NOW)).inserted, 1);
+  const item = (await store.idMap("currency")).get(`${run}1`);
+
+  // Legacy now says 2 places for the first row and for a new same-name row.
+  const changed = mapLegacyCatalogue("currency", [row(`${run}1`, 2), row(`${run}2`, 2)]).items;
+  assert.equal(changed[1]!.mergedInto, `${run}1`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await store.importItems(changed, NOW);
+    assert.equal(result.conflicts.length, 1);
+    assert.deepEqual(result.refused, [{ legacyTable: "currency", legacyId: `${run}2`, code: "name_conflict" }]);
+    assert.equal(result.merged, 0);
+  }
+  assert.equal((await store.idMap("currency")).has(`${run}2`), false);
+
+  // Control: a later alias that matches the item still maps to it.
+  const matching = mapLegacyCatalogue("currency", [row(`${run}1`, 3), row(`${run}3`, 3)]).items;
+  const result = await store.importItems(matching, NOW);
+  assert.deepEqual({ merged: result.merged, unchanged: result.unchanged, refused: result.refused }, { merged: 1, unchanged: 1, refused: [] });
+  assert.equal((await store.idMap("currency")).get(`${run}3`), item);
+});
+
 test("bank and currency details are written with the item", async () => {
   const run = tag();
   const banks = mapLegacyCatalogue("bank", [
