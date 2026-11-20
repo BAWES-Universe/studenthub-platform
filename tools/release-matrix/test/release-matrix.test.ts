@@ -4,10 +4,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { checkContract, idsIn, parseContract } from "../src/contract.js";
-import { CONTRACT_PATH, duplicateJsonKeys, jsonIssues, loadContract, loadInventory, loadMatrix, repoRoot } from "../src/files.js";
-import { blockers, checkInventory, checkMatrix, citesDecision, citesEvidence, GATES, isSourceLine, mobileKey, requirementSubject, type Matrix, type MobileInventory } from "../src/matrix.js";
+import { CONTRACT_PATH, duplicateJsonKeys, gatewaySource, jsonIssues, loadContract, loadInventory, loadMatrix, readRepoFile, repoRoot } from "../src/files.js";
+import { blockers, burndown, checkInventory, checkMatrix, checkServed, citesDecision, citesEvidence, GATES, isSourceLine, mobileKey, requirementSubject, routeParts, type Matrix, type MobileInventory } from "../src/matrix.js";
 import { laneForOwner, seedMatrix } from "../src/seed.js";
-import { isEntryPoint, renderReport, seedIfValid } from "../src/cli.js";
+import { isEntryPoint, renderBurndown, renderReport, seedIfValid } from "../src/cli.js";
 
 const root = repoRoot();
 const markdown = readFileSync(path.join(root, CONTRACT_PATH), "utf8");
@@ -468,4 +468,91 @@ test("a changed import or release requirement reopens its gates; a reworded titl
   const seeded = seedMatrix(contract, inventory, previous);
   assert.deepEqual(seeded.release["SWITCHES"]!.gates.done, { state: "open" });
   assert.deepEqual(seeded.imports["M-1"]!.gates.built, { state: "open" });
+});
+
+const gateway = gatewaySource(root);
+const readFile = (file: string): string | undefined => readRepoFile(root, file);
+
+test("every served route in the committed matrix is in the gateway and requested by the test it cites", () => {
+  assert.deepEqual(checkServed(loadMatrix(root), readFile, gateway), []);
+});
+
+test("route parts split on parameters", () => {
+  assert.deepEqual(routeParts("/store/:storeId/time-approvals"), ["/store/", "/time-approvals"]);
+  assert.deepEqual(routeParts("/work/track"), ["/work/track"]);
+  assert.deepEqual(routeParts("/organization/:orgId/work"), ["/organization/", "/work"]);
+});
+
+test("a built screen proves itself: no served route, a deleted page or a silent test fails the check", () => {
+  const base = loadMatrix(root);
+  const pages: Record<string, string> = {
+    "apps/gateway/test/fake-page.test.ts": 'await get("/fake/page"); await get(`/fake/${id}/detail`);',
+    "apps/gateway/test/silent.test.ts": "assert.ok(true);",
+  };
+  const read = (file: string): string | undefined => pages[file];
+  const source = 'if (path === "/fake/page") page(); const DETAIL = /^\\/fake\\/([^/]+)\\/detail$/;';
+
+  const proven = clone(base);
+  (proven.screens["C-11"] as unknown as Record<string, unknown>).served = [
+    { route: "/fake/page", test: "apps/gateway/test/fake-page.test.ts" },
+    { route: "/fake/:id/detail", test: "apps/gateway/test/fake-page.test.ts" },
+  ];
+  (proven.screens["C-11"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "PR #1 at 0123abcd" };
+  assert.deepEqual(checkServed(proven, read, source).filter((i) => i.detail.startsWith("screen C-11")), []);
+
+  const unproven = clone(proven);
+  delete (unproven.screens["C-11"] as unknown as Record<string, unknown>).served;
+  assert.deepEqual(rules(checkServed(unproven, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.missing"]);
+
+  const empty = clone(proven);
+  (empty.screens["C-11"] as unknown as Record<string, unknown>).served = [];
+  assert.deepEqual(rules(checkServed(empty, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.missing"]);
+
+  const removedPage = 'const OTHER = "/other";';
+  assert.deepEqual(rules(checkServed(proven, read, removedPage).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.notServed"]);
+
+  const silent = clone(proven);
+  (silent.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/fake/page", test: "apps/gateway/test/silent.test.ts" }];
+  assert.deepEqual(rules(checkServed(silent, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.testSilent"]);
+
+  const gone = clone(proven);
+  (gone.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/fake/page", test: "apps/gateway/test/deleted.test.ts" }];
+  assert.deepEqual(rules(checkServed(gone, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.testMissing"]);
+
+  const bad = clone(proven);
+  (bad.screens["C-11"] as unknown as Record<string, unknown>).served = [
+    { route: "fake/page", test: "apps/gateway/test/fake-page.test.ts" },
+    { route: "/fake/page", test: "apps/gateway/src/index.ts" },
+    { route: "/fake/page", test: "apps/gateway/test/../../../etc/passwd.ts" },
+  ];
+  assert.deepEqual(rules(checkServed(bad, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.badRoute", "matrix.served.badTest"]);
+});
+
+test("seeding keeps where a screen is served while its route holds, and drops it when the route changes", () => {
+  const contract = loadContract(root);
+  const inventory = loadInventory(root);
+  const previous = clone(loadMatrix(root));
+  (previous.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/work/track", test: "apps/gateway/test/work-pages.test.ts" }];
+  (previous.screens["C-12"] as unknown as Record<string, unknown>).served = [{ route: "/work/history", test: "apps/gateway/test/work-pages.test.ts" }];
+  (previous.screens["C-12"] as unknown as Record<string, unknown>).subject = "an old route";
+  const seeded = seedMatrix(contract, inventory, previous);
+  assert.deepEqual(seeded.screens["C-11"]!.served, [{ route: "/work/track", test: "apps/gateway/test/work-pages.test.ts" }]);
+  assert.equal(seeded.screens["C-12"]!.served, undefined);
+});
+
+test("burndown counts closed gates and the rate needed to each date", () => {
+  const matrix = clone(loadMatrix(root));
+  for (const row of Object.values(matrix.screens)) (row.gates as Record<string, unknown>).built = { state: "open" };
+  for (const row of Object.values(matrix.release)) (row.gates as Record<string, unknown>).done = { state: "open" };
+  (matrix.screens["C-11"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "PR #1 at 0123abcd" };
+  (matrix.screens["C-12"]!.gates as Record<string, unknown>).built = { state: "waived", decision: "contracts/decisions-2026-10-27.md" };
+  const result = burndown(matrix, "2026-11-30");
+  assert.deepEqual(result.rows.find((r) => r.section === "screen" && r.gate === "built"), { section: "screen", gate: "built", done: 1, waived: 1, total: 77 });
+  const parity = result.due.find((d) => d.date === matrix.dates.remainingParity)!;
+  assert.equal(parity.days, 10);
+  assert.equal(parity.open, 75 + Object.values(matrix.mobile).filter((r) => r.gates.built?.state === "open").length);
+  const retired = result.due.find((d) => d.date === "after cutover")!;
+  assert.equal(retired.days, null);
+  assert.match(renderBurndown(result, "2026-11-30"), /\| screen \| built \| 1 \| 1 \| 77 \|/);
+  assert.match(renderBurndown(result, "2026-11-30"), /\| after cutover \| \d+ \| - \| - \|/);
 });

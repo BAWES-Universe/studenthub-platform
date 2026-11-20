@@ -28,7 +28,23 @@ export interface ScreenRow {
    * evidence no longer applies: `seed` reopens the gates and `check` refuses the old row.
    */
   readonly subject?: string;
+  /**
+   * Screens only: where the screen is served on main and the test that requests it. A
+   * shipped route may differ from the contract's target route (staff pages live under
+   * `/workspace` and `/recruit/staff`); the row says so here instead of hiding it.
+   * `checkServed` proves every entry against the tree on every PR.
+   */
+  readonly served?: readonly ServedRoute[];
   readonly gates: Gates;
+}
+
+/**
+ * One served route: `route` is a path with optional `:param` segments, `test` a
+ * repository-relative test file that requests it.
+ */
+export interface ServedRoute {
+  readonly route: string;
+  readonly test: string;
 }
 
 export interface MobileEndpoint {
@@ -362,4 +378,123 @@ export function blockers(matrix: Matrix, inventory: MobileInventory, phase: Phas
     }
   }
   return list;
+}
+
+/**
+ * The literal parts of a served route: `/store/:storeId/time-approvals` -> `/store/`,
+ * `/time-approvals`. Each part must appear in the gateway source and in the cited test.
+ */
+export function routeParts(route: string): string[] {
+  return route.split(/:[A-Za-z][A-Za-z0-9]*/).filter((part) => part.length > 1 || (part === "/" && route === "/"));
+}
+
+const ROUTE_SHAPE = /^\/[A-Za-z0-9/_:.-]*$/;
+const TEST_PATH = /^(apps|packages|tools)\/[A-Za-z0-9_.-]+\/test\/[A-Za-z0-9_./-]+\.(ts|mjs)$/;
+
+/** A route literal as it is written in source: as a string, or escaped inside a regular expression. */
+function appearsIn(text: string, part: string): boolean {
+  return text.includes(part) || text.includes(part.replace(/\//g, "\\/"));
+}
+
+/**
+ * Built screen gates prove themselves. A screen whose `built` gate is done must list where
+ * it is served; every served route must appear in the gateway source and in the test it
+ * cites, and that test must exist. This runs on every PR, so deleting the page or its test
+ * fails the check: a closed gate cannot silently regress.
+ *
+ * `read(path)` returns a repository file's text or undefined; `gateway` is the gateway
+ * source the routes are looked up in.
+ */
+export function checkServed(matrix: Matrix, read: (file: string) => string | undefined, gateway: string): ContractIssue[] {
+  const issues: ContractIssue[] = [];
+  for (const [id, row] of Object.entries(matrix.screens)) {
+    const served = row.served;
+    const built = row.gates?.built;
+    if (served === undefined) {
+      if (built?.state === "done") issues.push({ rule: "matrix.served.missing", detail: `screen ${id} is built but names no served route and test` });
+      continue;
+    }
+    if (!Array.isArray(served) || served.length === 0) {
+      issues.push({ rule: "matrix.served.missing", detail: `screen ${id} has an empty or malformed served list` });
+      continue;
+    }
+    for (const entry of served as readonly ServedRoute[]) {
+      const where = `screen ${id} served ${String(entry?.route)}`;
+      if (typeof entry?.route !== "string" || !ROUTE_SHAPE.test(entry.route)) {
+        issues.push({ rule: "matrix.served.badRoute", detail: `${where} is not a path` });
+        continue;
+      }
+      if (typeof entry.test !== "string" || !TEST_PATH.test(entry.test) || entry.test.split("/").some((seg: string) => seg === "." || seg === "..")) {
+        issues.push({ rule: "matrix.served.badTest", detail: `${where} cites '${String(entry.test)}', not a test file under apps, packages or tools` });
+        continue;
+      }
+      const parts = routeParts(entry.route);
+      for (const part of parts) {
+        if (!appearsIn(gateway, part)) issues.push({ rule: "matrix.served.notServed", detail: `${where}: '${part}' is not in the gateway source` });
+      }
+      const text = read(entry.test);
+      if (text === undefined) {
+        issues.push({ rule: "matrix.served.testMissing", detail: `${where} cites ${entry.test}, which does not exist` });
+        continue;
+      }
+      for (const part of parts) {
+        if (!appearsIn(text, part)) issues.push({ rule: "matrix.served.testSilent", detail: `${where}: ${entry.test} never requests '${part}'` });
+      }
+    }
+  }
+  return issues;
+}
+
+/** When each gate is due: built gates by remaining parity, the rest by their checkpoint. */
+export function dueDate(matrix: Matrix, section: string, id: string, gate: string): string {
+  const phase = phaseOf(section, id);
+  if (phase === "cutover") return matrix.dates.fullMigrationLive ?? "2027-01-01";
+  if (phase === "retired") return "after cutover";
+  if (gate === "built" && (section === "screen" || section === "mobile")) return matrix.dates.remainingParity ?? "2026-12-10";
+  return matrix.dates.releaseCandidate ?? "2026-12-17";
+}
+
+export interface Burndown {
+  readonly rows: { readonly section: string; readonly gate: string; readonly done: number; readonly waived: number; readonly total: number }[];
+  readonly due: { readonly date: string; readonly open: number; readonly days: number | null; readonly perDay: number | null }[];
+}
+
+/** Closed and open gates by section, and how many must close per day to meet each date. */
+export function burndown(matrix: Matrix, today: string): Burndown {
+  const sections: [string, Readonly<Record<string, ScreenRow>>][] = [
+    ["screen", matrix.screens],
+    ["exclusion", matrix.exclusions],
+    ["mobile", matrix.mobile],
+    ["import", matrix.imports],
+    ["release", matrix.release],
+  ];
+  const rows: Burndown["rows"][number][] = [];
+  const openByDate = new Map<string, number>();
+  for (const [section, entries] of sections) {
+    const tally = new Map<string, { done: number; waived: number; total: number }>();
+    for (const [id, row] of Object.entries(entries)) {
+      for (const [gate, value] of Object.entries(row.gates)) {
+        const t = tally.get(gate) ?? { done: 0, waived: 0, total: 0 };
+        t.total += 1;
+        if (value?.state === "done") t.done += 1;
+        else if (value?.state === "waived") t.waived += 1;
+        else {
+          const date = dueDate(matrix, section, id, gate);
+          openByDate.set(date, (openByDate.get(date) ?? 0) + 1);
+        }
+        tally.set(gate, t);
+      }
+    }
+    for (const [gate, t] of tally) rows.push({ section, gate, ...t });
+  }
+  const start = Date.parse(`${today}T00:00:00Z`);
+  let cumulative = 0;
+  const due = [...openByDate.keys()].sort().map((date) => {
+    cumulative += openByDate.get(date)!;
+    const end = Date.parse(`${date}T00:00:00Z`);
+    if (Number.isNaN(end)) return { date, open: cumulative, days: null, perDay: null };
+    const days = Math.max(0, Math.round((end - start) / 86_400_000));
+    return { date, open: cumulative, days, perDay: days > 0 ? Math.ceil((cumulative / days) * 10) / 10 : null };
+  });
+  return { rows, due };
 }
