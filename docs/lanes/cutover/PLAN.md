@@ -26,6 +26,23 @@ Lane in the full-migration plan agreed on the desk (PR #393, 2026-11-17): verifi
 | 17 Dec | `release candidate` passes: every candidate gate closed with evidence or a recorded waiver; rollback rehearsed |
 | 31 Dec to 1 Jan | final sync (M-7), K-6 go/no-go with Khalid, K-7 switch; `release cutover` passes |
 
+## M-4 catalogue map
+
+`tools/legacy-import/src/m4-catalogue.ts` maps each legacy catalogue table; `PostgresCatalogueImportStore` (`@studenthub/db/import`) writes the items and the id map (`legacy_id_maps`, migration 0650). Names use the catalogue's own normalization. Legacy wall times are read as Asia/Kuwait. A re-run with the same rows writes nothing; a changed row is a conflict with both digests and is never overwritten.
+
+| Legacy table | Catalogue kind | Rules |
+|---|---|---|
+| `country` | `country` | name `country_name_en` |
+| `currency` | `currency` | name `title`, code `code`; `status` 0 imports as deleted; symbol and decimal places go to the currency details when valid |
+| `bank` | `bank` | name `bank_name`; `deleted` imports as deleted; swift, IBAN bank code, ABK code and transfer type (`LCL` local, `SWF` international, `TRF` within bank) go to the payment details when valid |
+| `tag` | `tag` | name `tag` |
+| `brand` | `brand` | name `brand_name_en`; the brand's company link comes with organizations |
+| `mall` | `mall` | name `mall_name_en` |
+| `university` | `university` | name `university_name_en`; `deleted` imports as deleted |
+| `area` | `area` | name `area_name_en`; no area details, because they need a governorate that legacy does not hold (reported per row) |
+
+Two active rows of one kind whose names normalize the same become one item: the lowest legacy id is imported and the others map to it (reported as merged). An active platform item with the same kind and name that no legacy row holds yet is adopted rather than duplicated. Reconciliation is per table: legacy ids against the id map, with reported skips listed apart from unexplained gaps.
+
 ## M-5 table map (work)
 
 Legacy staff ids resolve to the platform principal the same way for every row below; a staff id with no principal is reported by legacy id, not imported. Each table gets its own reconciliation count: legacy rows against imported rows by `legacy_ref`, by legacy id only. Legacy times are Asia/Kuwait wall time: a `work_date` is the Kuwait date read straight from that wall time, with no UTC conversion, so an answer or session at 21:00 to 23:59 keeps its own day.
