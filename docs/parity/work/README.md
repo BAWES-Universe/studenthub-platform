@@ -157,8 +157,10 @@ answers) and `importStandupAnswers` follow the contract above, with the digest s
 its end once (counted as updated); any other change is a conflict. The import key of a
 staff session or question can't be changed afterwards. `reconcileStaffImport(table,
 legacyRefs)` gives each table's reconciliation by legacy reference only: the legacy and
-imported counts, the legacy refs with no imported row, and imported refs legacy no longer
-holds.
+imported counts, the legacy refs with no imported row (split into `skipped`, the rows the
+run reported or refused, and `missing`, the unexplained ones), and imported refs legacy no
+longer holds. Issues and results carry legacy ids, rule codes and numbers only, never row
+text, and importing sends nothing (no notices, outbox rows or emails).
 
 ## Screens: Track, History and Appeals (C-11 to C-13)
 

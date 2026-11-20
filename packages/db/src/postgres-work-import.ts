@@ -61,8 +61,10 @@ export interface StaffImportReconciliation {
   readonly table: StaffImportTable;
   readonly legacy: number;
   readonly imported: number;
-  /** Legacy refs with no imported row. */
+  /** Legacy refs with no imported row that the run did not report: real gaps. */
   readonly missing: readonly string[];
+  /** Legacy refs with no imported row that the run reported or refused (explained). */
+  readonly skipped: readonly string[];
   /** Imported rows whose ref the legacy list no longer holds. */
   readonly extra: readonly string[];
 }
@@ -250,16 +252,20 @@ export class PostgresWorkImportStore {
 
   /**
    * Reconciliation for one table: the legacy refs the importer read against
-   * the rows imported here, by legacy ref only.
+   * the rows imported here, by legacy ref only. `reportedRefs` are the rows
+   * the run reported or refused (mapper issues, `refused`), so a skipped row
+   * reads as explained and only an unexplained one as missing.
    */
-  async reconcileStaffImport(table: StaffImportTable, legacyRefs: readonly string[]): Promise<StaffImportReconciliation> {
+  async reconcileStaffImport(table: StaffImportTable, legacyRefs: readonly string[], reportedRefs: readonly string[] = []): Promise<StaffImportReconciliation> {
     if (!STAFF_IMPORT_TABLES.includes(table)) throw new TypeError("unknown staff import table");
     const { rows } = await this.#db.pool.query<{ legacy_ref: string }>(`SELECT legacy_ref FROM ${table} WHERE legacy_ref IS NOT NULL ORDER BY legacy_ref`);
     const here = new Set(rows.map((r) => r.legacy_ref));
-    const there = new Set(legacyRefs);
+    const there = new Set(legacyRefs), reported = new Set(reportedRefs);
+    const absent = [...there].filter((r) => !here.has(r)).sort();
     return Object.freeze({
       table, legacy: there.size, imported: here.size,
-      missing: Object.freeze([...there].filter((r) => !here.has(r)).sort()),
+      missing: Object.freeze(absent.filter((r) => !reported.has(r))),
+      skipped: Object.freeze(absent.filter((r) => reported.has(r))),
       extra: Object.freeze([...here].filter((r) => !there.has(r)).sort()),
     });
   }

@@ -62,9 +62,13 @@ test("STAFF_IMPORT_PG staff sessions: keyed by legacy ref, an open session ends 
   const both = await Promise.all([imports.importStaffSessions([raced]), imports.importStaffSessions([raced])]);
   assert.deepEqual(both.map((r) => [r.inserted, r.unchanged]).sort(), [[0, 1], [1, 0]]);
 
-  const recon = await imports.reconcileStaffImport("work_staff_sessions", [closed.legacyRef, open.legacyRef, second.legacyRef, raced.legacyRef]);
-  assert.equal(recon.legacy, 4);
-  assert.deepEqual(recon.missing, [second.legacyRef]);
+  const gap = `work_session_${tag}-gap`;
+  const recon = await imports.reconcileStaffImport("work_staff_sessions", [closed.legacyRef, open.legacyRef, second.legacyRef, raced.legacyRef, gap], [second.legacyRef]);
+  assert.equal(recon.legacy, 5);
+  // The refused second open session is explained; the row nobody reported is a gap.
+  assert.deepEqual([recon.skipped, recon.missing], [[second.legacyRef], [gap]]);
+  // A reported row that was imported anyway is neither.
+  assert.deepEqual((await imports.reconcileStaffImport("work_staff_sessions", [closed.legacyRef], [closed.legacyRef])).skipped, []);
   assert.ok(recon.imported >= 3);
   assert.ok(![closed.legacyRef, open.legacyRef, raced.legacyRef].some((r) => recon.extra.includes(r)));
   assert.ok(recon.extra.every((r) => !r.startsWith(`work_session_${tag}`)));
@@ -102,7 +106,7 @@ test("STAFF_IMPORT_PG stand-up questions then answers: repeats on a day kept, mi
       [again.legacyRef, "What did you finish? (as asked)", "2031-04-03", "import", "2031-04-03T20:59:00.000Z", q.legacyRef],
     ]);
     const recon = await imports.reconcileStaffImport("work_standup_answers", [first.legacyRef, again.legacyRef, orphan.legacyRef]);
-    assert.deepEqual([recon.table, recon.legacy, recon.missing], ["work_standup_answers", 3, [orphan.legacyRef]]);
+    assert.deepEqual([recon.table, recon.legacy, recon.missing, recon.skipped], ["work_standup_answers", 3, [orphan.legacyRef], []]);
     const qRecon = await imports.reconcileStaffImport("work_standup_questions", []);
     assert.ok(qRecon.extra.includes(q.legacyRef));
     assert.equal(qRecon.legacy, 0);

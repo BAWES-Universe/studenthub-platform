@@ -3,7 +3,9 @@
 // Pure mapping, like legacy.ts: legacy rows in, records or named issues out.
 // The importer lane reads the mirror, resolves a legacy `staff_id` to a
 // principal (a staff id with no principal is reported by the importer, not
-// here) and calls the work import store. Issues carry legacy ids only.
+// here) and calls the work import store. Issues carry legacy ids, rule codes
+// and numbers only, never row text. Mapping and importing send nothing (no
+// notices, outbox rows or emails).
 //
 // Legacy facts this relies on (Yii2 `studenthub`, m221215_072607_attendance):
 // - datetimes are Asia/Kuwait wall time (UTC+3, no DST);
@@ -51,6 +53,7 @@ export interface StaffImportIssue {
 }
 
 export interface ImportedStaffSession {
+  /** The legacy primary key `work_session_uuid`, as a string (`work_session_<uuid>`). */
   readonly legacyRef: string;
   readonly legacyStaffId: string;
   /** The Kuwait date of the start, as legacy grouped it. */
@@ -60,12 +63,14 @@ export interface ImportedStaffSession {
   readonly endedAt: Date | null;
 }
 export interface ImportedStandupQuestion {
+  /** The legacy primary key `question_uuid`. */
   readonly legacyRef: string;
   readonly question: string;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
 export interface ImportedStandupAnswer {
+  /** The legacy primary key `answer_uuid`. */
   readonly legacyRef: string;
   readonly legacyStaffId: string;
   readonly questionLegacyRef: string;
