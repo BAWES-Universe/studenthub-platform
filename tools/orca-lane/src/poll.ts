@@ -3,10 +3,12 @@
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode work
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode check --key <claimKey> --token <runToken>
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode release --key <claimKey> --token <runToken>
+//   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode recover --key <claimKey>
 // observe never claims or locks; it lists observe-mode rows and what work mode would pick.
-// work claims at most one ticket, takes its run lock and prints it with a run token.
+// work claims at most one ticket, takes the bot-wide run lock and prints it with a run token.
 // check must pass immediately before every push, PR change or comment of a run.
-// release ends a run; it frees the lock only for the matching token.
+// release ends a run; it frees the lock only for the matching key and token.
+// recover clears a lock left by a run verified stopped, only for the key it names.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
@@ -14,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { acquireRun, claim, decide, holdsRun, parseRegister, readClaim, releaseRun, withGate, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
+import { acquireRun, claim, decide, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, withGate, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
 
 const REPO = "BAWES-Universe/studenthub-platform";
 const REGISTER = "docs/lanes/orca/REGISTER.md";
@@ -40,7 +42,7 @@ export function pickNext(
   return runToken === null ? null : { ...chosen, runToken };
 }
 
-type Mode = "observe" | "work" | "check" | "release";
+type Mode = "observe" | "work" | "check" | "release" | "recover";
 
 function args(argv: readonly string[]): { bot: string; mode: Mode; claims: string; key?: string; token?: string } {
   const value = (flag: string): string | undefined => {
@@ -49,12 +51,13 @@ function args(argv: readonly string[]): { bot: string; mode: Mode; claims: strin
   };
   const bot = value("--bot");
   const mode = value("--mode");
-  if (!bot || (mode !== "observe" && mode !== "work" && mode !== "check" && mode !== "release")) {
-    throw new Error("usage: poll --bot <name> --mode observe|work|check|release [--key <claimKey> --token <runToken>] [--claims <dir>]");
+  if (!bot || (mode !== "observe" && mode !== "work" && mode !== "check" && mode !== "release" && mode !== "recover")) {
+    throw new Error("usage: poll --bot <name> --mode observe|work|check|release|recover [--key <claimKey>] [--token <runToken>] [--claims <dir>]");
   }
   const key = value("--key");
   const token = value("--token");
   if ((mode === "check" || mode === "release") && (!key || !token)) throw new Error(`${mode} needs --key and --token`);
+  if (mode === "recover" && !key) throw new Error("recover needs --key");
   return { bot, mode, claims: value("--claims") ?? path.join(os.homedir(), ".orca-lane", "claims"), ...(key ? { key } : {}), ...(token ? { token } : {}) };
 }
 
@@ -85,7 +88,11 @@ const isAlive = (pid: number): boolean => {
 function main(): void {
   const { bot, mode, claims, key, token } = args(process.argv.slice(2));
   if (mode === "release") {
-    process.stdout.write(`${JSON.stringify({ mode, bot, key, result: releaseRun(claims, key!, token!) })}\n`);
+    process.stdout.write(`${JSON.stringify({ mode, bot, key, result: releaseRun(claims, bot, key!, token!) })}\n`);
+    return;
+  }
+  if (mode === "recover") {
+    process.stdout.write(`${JSON.stringify({ mode, bot, key, result: recoverRun(claims, bot, key!) })}\n`);
     return;
   }
   execFileSync("git", ["fetch", "--quiet", "origin", "main"]);
@@ -99,7 +106,7 @@ function main(): void {
 
   if (mode === "check") {
     const mineNow = decisionsFor().find((d): d is WorkDecision => (d.action === "resume" || d.action === "start") && d.claimKey === key);
-    const reason = !mineNow ? "ticket generation no longer eligible" : !holdsRun(claims, key!, token!) ? "run lock not held by this token" : null;
+    const reason = !mineNow ? "ticket generation no longer eligible" : !holdsRun(claims, bot, key!, token!) ? "run lock not held by this token" : null;
     process.stdout.write(`${JSON.stringify({ mode, bot, at, key, ok: reason === null, reason })}\n`);
     if (reason !== null) process.exitCode = 3;
     return;
@@ -118,12 +125,15 @@ function main(): void {
     const next = pickNext(
       decisions,
       (d) => claim(claims, d.claimKey, { dispatch: d.dispatch, at }),
-      (d) => { const runToken = randomUUID(); return acquireRun(claims, d.claimKey, now, runToken) === "acquired" ? runToken : null; },
+      (d) => { const runToken = randomUUID(); return acquireRun(claims, bot, d.claimKey, now, runToken) === "acquired" ? runToken : null; },
     );
     return { decisions, next };
   });
   const result = picked === "busy" ? { decisions: [], next: null, gate: "busy" } : picked;
-  process.stdout.write(`${JSON.stringify({ mode, bot, at, ...result }, null, 2)}\n`);
+  // When next is null because a run holds the lock, say which run, without its token.
+  const held = readRun(claims, bot);
+  const runLock = held && result.next === null ? { key: held.key, since: held.since } : null;
+  process.stdout.write(`${JSON.stringify({ mode, bot, at, ...result, runLock }, null, 2)}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

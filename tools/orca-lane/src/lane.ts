@@ -194,39 +194,61 @@ export function readClaim(dir: string, key: string): { dispatch: number; at: str
   }
 }
 
+export interface RunLock { readonly key: string; readonly token: string; readonly since: string }
+
+const runLockDir = (dir: string, bot: string): string => path.join(dir, `.run-${bot}`);
+
 /**
- * Exclusive run lock for one ticket generation, fenced by a token. There is no
- * takeover by age: a lock is freed only by its owner's release. If a run dies
- * holding it, Claude recovers by revoking the row and dispatching a new
- * generation, which has a new claim and lock; the old token then fails check.
+ * Bot-wide run lock, held for the whole execution of one ticket run and fenced by
+ * a token. While it exists no other ticket, and no other generation of the same
+ * ticket, can start or resume, even after the holder's row is revoked or expired.
+ * It is never taken over by age. It is freed only by the holder's release (its
+ * verified stop) or by recoverRun after the holder is verified stopped.
  */
-export function acquireRun(dir: string, key: string, now: Date, token: string): "acquired" | "busy" {
-  const lock = path.join(dir, key, "run");
-  mkdirSync(path.join(dir, key), { recursive: true });
+export function acquireRun(dir: string, bot: string, key: string, now: Date, token: string): "acquired" | "busy" {
+  mkdirSync(dir, { recursive: true });
+  const lock = runLockDir(dir, bot);
   try {
     mkdirSync(lock);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return "busy";
     throw error;
   }
-  writeFileSync(path.join(lock, "owner.json"), `${JSON.stringify({ token, since: now.toISOString() })}\n`);
+  writeFileSync(path.join(lock, "owner.json"), `${JSON.stringify({ key, token, since: now.toISOString() })}\n`);
   return "acquired";
 }
 
-/** True only if the run lock for this key exists and carries this token. */
-export function holdsRun(dir: string, key: string, token: string): boolean {
+export function readRun(dir: string, bot: string): RunLock | null {
   try {
-    return (JSON.parse(readFileSync(path.join(dir, key, "run", "owner.json"), "utf8")) as { token: string }).token === token;
+    return JSON.parse(readFileSync(path.join(runLockDir(dir, bot), "owner.json"), "utf8")) as RunLock;
   } catch {
-    return false;
+    return null;
   }
 }
 
-/** Frees the run lock only for its owner; any other token changes nothing. */
-export function releaseRun(dir: string, key: string, token: string): "released" | "not-owner" {
-  if (!holdsRun(dir, key, token)) return "not-owner";
-  rmSync(path.join(dir, key, "run"), { recursive: true, force: true });
+/** True only if the bot's run lock is held for this ticket generation with this token. */
+export function holdsRun(dir: string, bot: string, key: string, token: string): boolean {
+  const owner = readRun(dir, bot);
+  return owner !== null && owner.key === key && owner.token === token;
+}
+
+/** Frees the run lock only for its holder; any other key or token changes nothing. */
+export function releaseRun(dir: string, bot: string, key: string, token: string): "released" | "not-owner" {
+  if (!holdsRun(dir, bot, key, token)) return "not-owner";
+  rmSync(runLockDir(dir, bot), { recursive: true, force: true });
   return "released";
+}
+
+/**
+ * Clears a run lock left by a run that is verified stopped (no run of the bot's
+ * automation is active). It names the key it expects, so it never clears a
+ * different, newer run.
+ */
+export function recoverRun(dir: string, bot: string, key: string): "recovered" | "no-match" {
+  const owner = readRun(dir, bot);
+  if (owner === null || owner.key !== key) return "no-match";
+  rmSync(runLockDir(dir, bot), { recursive: true, force: true });
+  return "recovered";
 }
 
 /**

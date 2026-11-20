@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acquireRun, CLAUDE_APP_ID, claim, claimKey, decide, dispatchHeader, holdsRun, parseRegister, readClaim, RegisterError, releaseRun, startReceiptHeader, withGate, type IssueComment } from "../src/lane.js";
+import { acquireRun, CLAUDE_APP_ID, claim, claimKey, decide, dispatchHeader, holdsRun, parseRegister, readClaim, recoverRun, RegisterError, releaseRun, startReceiptHeader, withGate, type IssueComment } from "../src/lane.js";
 import { pickNext } from "../src/poll.js";
 
 const BOT = "studenthub-universe";
@@ -18,7 +18,7 @@ const dispatch = (id: number, issue: number, gen: number, extra: Partial<IssueCo
 // claims: [claimKey, saved dispatch] pairs
 const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: [string, number][] = []) =>
   decide({ rows: parseRegister(markdown), bot: BOT, now: NOW, comments: new Map(Object.entries(comments).map(([k, v]) => [Number(k), v])), claims: new Map(claims) });
-const acquire = (dir: string) => (d: { claimKey: string }) => { const t = `t-${Math.random()}`; return acquireRun(dir, d.claimKey, NOW, t) === "acquired" ? t : null; };
+const acquire = (dir: string) => (d: { claimKey: string }) => { const t = `t-${Math.random()}`; return acquireRun(dir, BOT, d.claimKey, NOW, t) === "acquired" ? t : null; };
 
 test("the live register on main parses", () => {
   const live = readFileSync(path.join(process.cwd(), "docs/lanes/orca/REGISTER.md"), "utf8");
@@ -126,45 +126,57 @@ test("one ticket at a time: an owned ticket blocks new starts; a lost claim race
   assert.equal(pickNext(run(md, comments), () => "held", () => "tok"), null);
 });
 
-test("a second wake while a run holds the lock does nothing; only the owner's release frees it", () => {
+test("a second wake while a run holds the lock does nothing; only the holder's release frees it", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "orca-run-"));
   const key = claimKey(BOT, 581, 1);
-  assert.equal(acquireRun(dir, key, NOW, "A"), "acquired");
-  assert.equal(acquireRun(dir, key, NOW, "B"), "busy");
+  assert.equal(acquireRun(dir, BOT, key, NOW, "A"), "acquired");
+  assert.equal(acquireRun(dir, BOT, key, NOW, "B"), "busy");
   const decisions = run(register(row(581, 1, "`900`")), { 581: [dispatch(900, 581, 1)] }, [[key, 900]]);
   assert.equal(pickNext(decisions, () => "claimed", acquire(dir)), null);
-  assert.equal(releaseRun(dir, key, "B"), "not-owner");
+  assert.equal(releaseRun(dir, BOT, key, "B"), "not-owner");
   assert.equal(pickNext(decisions, () => "claimed", acquire(dir)), null);
-  assert.equal(releaseRun(dir, key, "A"), "released");
+  assert.equal(releaseRun(dir, BOT, key, "A"), "released");
   assert.equal(pickNext(decisions, () => "claimed", acquire(dir))?.action, "resume");
 });
 
-test("a dead run is never taken over by age; recovery is a new generation, and the old run is fenced out", () => {
+test("a revoked run that is still alive blocks every new run until it is verified stopped", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "orca-fence-"));
   const g1 = claimKey(BOT, 581, 1);
   const g2 = claimKey(BOT, 581, 2);
   assert.equal(claim(dir, g1, { dispatch: 900, at: "t" }), "claimed");
-  assert.equal(acquireRun(dir, g1, NOW, "A"), "acquired");
-  // Worker A goes quiet. Any later poll, however late, finds the lock busy: no takeover.
-  const gen1 = register(row(581, 1, "`900`"));
-  const c1 = { 581: [dispatch(900, 581, 1)] };
-  assert.equal(pickNext(run(gen1, c1, [[g1, 900]]), () => "claimed", acquire(dir)), null);
-  // Claude revokes gen 1 and dispatches gen 2. Worker B starts it with its own lock.
-  const gen2 = register(row(581, 1, "`900`", "revoked"), row(581, 2, "`910`"));
-  const c2 = { 581: [dispatch(900, 581, 1), dispatch(910, 581, 2)] };
-  const b = pickNext(run(gen2, c2, [[g1, 900]]), (d) => claim(dir, d.claimKey, { dispatch: d.dispatch, at: "t" }), (d) => acquireRun(dir, d.claimKey, NOW, "B") === "acquired" ? "B" : null);
+  assert.equal(acquireRun(dir, BOT, g1, NOW, "A"), "acquired");
+  // Claude revokes gen 1 and dispatches gen 2 (and another ticket), while A still runs.
+  const md = register(row(581, 1, "`900`", "revoked"), row(581, 2, "`910`"), row(590, 1, "`950`"));
+  const comments = { 581: [dispatch(900, 581, 1), dispatch(910, 581, 2)], 590: [dispatch(950, 590, 1)] };
+  const decisions = run(md, comments, [[g1, 900]]);
+  // A's generation is no longer eligible, so A's pre-write check fails...
+  assert.equal(decisions.some((d) => (d.action === "start" || d.action === "resume") && d.claimKey === g1), false);
+  // ...but while A has not stopped, B is refused for gen 2 and for any other ticket. A late poll still waits: no takeover by age.
+  assert.equal(acquireRun(dir, BOT, g2, new Date(NOW.getTime() + 24 * 3600_000), "B"), "busy");
+  assert.equal(acquireRun(dir, BOT, claimKey(BOT, 590, 1), NOW, "B"), "busy");
+  // Nobody else can clear A's lock: not a wrong token, not a recover naming another key.
+  assert.equal(releaseRun(dir, BOT, g1, "B"), "not-owner");
+  assert.equal(recoverRun(dir, BOT, g2), "no-match");
+  // A stops and releases (its verified stop). Now B starts gen 2.
+  assert.equal(releaseRun(dir, BOT, g1, "A"), "released");
+  const b = pickNext(decisions, (d) => claim(dir, d.claimKey, { dispatch: d.dispatch, at: "t" }), (d) => acquireRun(dir, BOT, d.claimKey, NOW, "B") === "acquired" ? "B" : null);
   assert.equal(b?.claimKey, g2);
-  assert.equal(b?.runToken, "B");
-  // A wakes up: its generation is no longer eligible, so its pre-write check fails...
-  const eligible = (key: string) => run(gen2, c2, [[g1, 900], [g2, 910]]).some((d) => (d.action === "start" || d.action === "resume") && d.claimKey === key);
-  assert.equal(eligible(g1), false);
-  // ...and it cannot clear B's lock, with its own key or B's.
-  assert.equal(releaseRun(dir, g2, "A"), "not-owner");
-  assert.equal(holdsRun(dir, g2, "B"), true);
-  assert.equal(releaseRun(dir, g1, "A"), "released");
-  // B's check still passes; a third wake C is refused while B runs.
-  assert.equal(eligible(g2) && holdsRun(dir, g2, "B"), true);
-  assert.equal(pickNext(run(gen2, c2, [[g1, 900], [g2, 910]]), () => "claimed", acquire(dir)), null);
+  // A, if it wakes again, cannot write (its key and token no longer hold the lock) and cannot clear B.
+  assert.equal(holdsRun(dir, BOT, g1, "A"), false);
+  assert.equal(releaseRun(dir, BOT, g1, "A"), "not-owner");
+  assert.equal(holdsRun(dir, BOT, g2, "B"), true);
+  // A third wake C is refused while B runs.
+  assert.equal(pickNext(decisions, () => "claimed", acquire(dir)), null);
+});
+
+test("a crashed run's lock is cleared only by recover naming its key", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-recover-"));
+  const g1 = claimKey(BOT, 581, 1);
+  assert.equal(acquireRun(dir, BOT, g1, NOW, "A"), "acquired");
+  assert.equal(recoverRun(dir, BOT, claimKey(BOT, 581, 2)), "no-match");
+  assert.equal(holdsRun(dir, BOT, g1, "A"), true);
+  assert.equal(recoverRun(dir, BOT, g1), "recovered");
+  assert.equal(acquireRun(dir, BOT, g1, NOW, "C"), "acquired");
 });
 
 test("the bot-wide gate lets one poll pick at a time and clears a gate left by a dead poll", () => {
