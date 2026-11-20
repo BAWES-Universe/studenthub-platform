@@ -3,12 +3,12 @@
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode work
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode check --key <claimKey> --token <runToken>
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode release --key <claimKey> --token <runToken>
-//   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode recover --key <claimKey>
+//   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode recover --key <runLock.key> --token <runLock.token>
 // observe never claims or locks; it lists observe-mode rows and what work mode would pick.
 // work claims at most one ticket, takes the bot-wide run lock and prints it with a run token.
 // check must pass immediately before every push, PR change or comment of a run.
 // release ends a run; it frees the lock only for the matching key and token.
-// recover clears a lock left by a run verified stopped, only for the key it names.
+// recover frees a lock left by a run verified stopped, only for that exact run (key and token).
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
@@ -69,8 +69,7 @@ function args(argv: readonly string[]): { bot: string; mode: Mode; claims: strin
   }
   const key = value("--key");
   const token = value("--token");
-  if ((mode === "check" || mode === "release") && (!key || !token)) throw new Error(`${mode} needs --key and --token`);
-  if (mode === "recover" && !key) throw new Error("recover needs --key");
+  if ((mode === "check" || mode === "release" || mode === "recover") && (!key || !token)) throw new Error(`${mode} needs --key and --token`);
   return { bot, mode, claims: value("--claims") ?? path.join(os.homedir(), ".orca-lane", "claims"), ...(key ? { key } : {}), ...(token ? { token } : {}) };
 }
 
@@ -106,7 +105,7 @@ function main(): void {
     return;
   }
   if (mode === "recover") {
-    process.stdout.write(`${JSON.stringify({ mode, bot, key, result: recoverRun(claims, bot, key!) })}\n`);
+    process.stdout.write(`${JSON.stringify({ mode, bot, key, result: recoverRun(claims, bot, key!, token!) })}\n`);
     return;
   }
   execFileSync("git", ["fetch", "--quiet", "origin", "main"]);
@@ -144,9 +143,9 @@ function main(): void {
     decisionsFor,
   );
   const result = { decisions, next };
-  // When next is null because a run holds the lock, say which run, without its token.
+  // When next is null because a run holds the lock, say which run (for manual recovery after a verified stop).
   const held = readRun(claims, bot);
-  const runLock = held && result.next === null ? { key: held.key, since: held.since } : null;
+  const runLock = held && result.next === null ? held : null;
   process.stdout.write(`${JSON.stringify({ mode, bot, at, ...result, runLock }, null, 2)}\n`);
 }
 

@@ -177,7 +177,7 @@ test("a revoked run that is still alive blocks every new run until it is verifie
   assert.equal(acquireRun(dir, BOT, claimKey(BOT, 590, 1), NOW, "B"), "busy");
   // Nobody else can clear A's lock: not a wrong token, not a recover naming another key.
   assert.equal(releaseRun(dir, BOT, g1, "B"), "not-owner");
-  assert.equal(recoverRun(dir, BOT, g2), "no-match");
+  assert.equal(recoverRun(dir, BOT, g2, "A"), "not-owner");
   // A stops and releases (its verified stop). Now B starts gen 2.
   assert.equal(releaseRun(dir, BOT, g1, "A"), "released");
   const b = pickNext(decisions, (d) => claim(dir, d.claimKey, { dispatch: d.dispatch, lease: d.lease, at: "t" }), (d) => acquireRun(dir, BOT, d.claimKey, NOW, "B") === "acquired" ? "B" : null);
@@ -190,15 +190,33 @@ test("a revoked run that is still alive blocks every new run until it is verifie
   assert.equal(pickNext(decisions, () => "claimed", acquire(dir)), null);
 });
 
-test("a crashed run's lock is cleared only by recover naming its key", () => {
+test("recovery is bound to the exact run, and a late or repeated release or recovery never clears a successor", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "orca-recover-"));
   const g1 = claimKey(BOT, 581, 1);
   assert.equal(acquireRun(dir, BOT, g1, NOW, "A"), "acquired");
-  assert.equal(recoverRun(dir, BOT, claimKey(BOT, 581, 2)), "no-match");
+  // A crashed. Recovery needs A's exact key and token, as runLock shows them.
+  assert.equal(recoverRun(dir, BOT, claimKey(BOT, 581, 2), "A"), "not-owner");
+  assert.equal(recoverRun(dir, BOT, g1, "other"), "not-owner");
   assert.equal(holdsRun(dir, BOT, g1, "A"), true);
-  assert.equal(recoverRun(dir, BOT, g1), "recovered");
+  assert.equal(recoverRun(dir, BOT, g1, "A"), "recovered");
+  // The same generation runs again as C (same key, new token).
   assert.equal(acquireRun(dir, BOT, g1, NOW, "C"), "acquired");
+  // A delayed duplicate of the recovery, or a late release by A itself, arrives now: C keeps the lock.
+  assert.equal(recoverRun(dir, BOT, g1, "A"), "not-owner");
+  assert.equal(releaseRun(dir, BOT, g1, "A"), "not-owner");
+  assert.equal(holdsRun(dir, BOT, g1, "C"), true);
+  assert.equal(acquireRun(dir, BOT, g1, NOW, "D"), "busy");
+  // C releases once; a repeat does nothing.
+  assert.equal(releaseRun(dir, BOT, g1, "C"), "released");
+  assert.equal(releaseRun(dir, BOT, g1, "C"), "not-owner");
 });
+
+test("two acquirers racing for the next lock slot: exactly one wins", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-slot-race-"));
+  const results = ["A", "B", "C", "D"].map((t) => acquireRun(dir, BOT, claimKey(BOT, 581, 1), NOW, t));
+  assert.equal(results.filter((r) => r === "acquired").length, 1);
+});
+
 
 test("one poll at a time gets past the run lock; a poll whose pick went stale under the lock backs out", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "orca-serial-"));

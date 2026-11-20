@@ -1,7 +1,7 @@
 // Orca lane intake: decides, from GitHub state only, whether an Orca bot may
 // start or resume a ticket. Pure functions here; poll.ts does the I/O.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export const CLAUDE_APP_ID = 1236702;
@@ -225,49 +225,81 @@ export function readClaim(dir: string, key: string): ClaimRecord | null {
 
 export interface RunLock { readonly key: string; readonly token: string; readonly since: string }
 
-const runLockDir = (dir: string, bot: string): string => path.join(dir, `.run-${bot}`);
+/*
+ * The bot-wide run lock is a sequence of numbered slots in `.run-<bot>/`. Each
+ * acquisition publishes the next slot (1, 2, 3, ...) whole, and only if the
+ * latest slot is released; of two acquirers only one can publish a given number.
+ * Releasing writes a `released` marker into the holder's own slot and deletes
+ * nothing. So a late or duplicated release or recovery, with any key or token,
+ * can only ever touch the slot that token owns; it can never clear a successor.
+ */
+const slotsDir = (dir: string, bot: string): string => path.join(dir, `.run-${bot}`);
+
+interface Slot { readonly n: number; readonly owner: RunLock; readonly released: boolean }
+
+function slots(dir: string, bot: string): Slot[] {
+  const base = slotsDir(dir, bot);
+  let names: string[] = [];
+  try {
+    names = readdirSync(base);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  return names.filter((name) => /^[1-9]\d*$/.test(name)).map(Number).sort((a, b) => a - b).map((n) => ({
+    n,
+    owner: JSON.parse(readFileSync(path.join(base, String(n), "owner.json"), "utf8")) as RunLock,
+    released: existsSync(path.join(base, String(n), "released")),
+  }));
+}
 
 /**
  * Bot-wide run lock, held for the whole execution of one ticket run and fenced by
- * a token. While it exists no other ticket, and no other generation of the same
+ * a token. While it is held no other ticket, and no other generation of the same
  * ticket, can start or resume, even after the holder's row is revoked or expired.
- * It is never taken over by age. It is freed only by the holder's release (its
- * verified stop) or by recoverRun after the holder is verified stopped.
+ * It is never taken over by age. Only the holder's key and token free it: by
+ * release at the end of a run, or by recover after the holder is verified stopped.
  */
 export function acquireRun(dir: string, bot: string, key: string, now: Date, token: string): "acquired" | "busy" {
+  const latest = slots(dir, bot).at(-1);
+  if (latest && !latest.released) return "busy";
+  const base = slotsDir(dir, bot);
+  mkdirSync(base, { recursive: true });
   const owner = `${JSON.stringify({ key, token, since: now.toISOString() })}\n`;
-  return publish(dir, runLockDir(dir, bot), "owner.json", owner) ? "acquired" : "busy";
+  return publish(base, path.join(base, String((latest?.n ?? 0) + 1)), "owner.json", owner) ? "acquired" : "busy";
 }
 
+/** The current holder of the run lock, or null if it is free. */
 export function readRun(dir: string, bot: string): RunLock | null {
-  try {
-    return JSON.parse(readFileSync(path.join(runLockDir(dir, bot), "owner.json"), "utf8")) as RunLock;
-  } catch {
-    return null;
-  }
+  const latest = slots(dir, bot).at(-1);
+  return latest && !latest.released ? latest.owner : null;
 }
 
-/** True only if the bot's run lock is held for this ticket generation with this token. */
+/** True only if the bot's run lock is held now for this ticket generation with this token. */
 export function holdsRun(dir: string, bot: string, key: string, token: string): boolean {
   const owner = readRun(dir, bot);
   return owner !== null && owner.key === key && owner.token === token;
 }
 
-/** Frees the run lock only for its holder; any other key or token changes nothing. */
+/** Frees the run lock only for its current holder; any other key or token, or a repeat, changes nothing. */
 export function releaseRun(dir: string, bot: string, key: string, token: string): "released" | "not-owner" {
-  if (!holdsRun(dir, bot, key, token)) return "not-owner";
-  rmSync(runLockDir(dir, bot), { recursive: true, force: true });
+  const latest = slots(dir, bot).at(-1);
+  if (!latest || latest.released || latest.owner.key !== key || latest.owner.token !== token) return "not-owner";
+  try {
+    writeFileSync(path.join(slotsDir(dir, bot), String(latest.n), "released"), "", { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return "not-owner";
+    throw error;
+  }
   return "released";
 }
 
 /**
- * Clears a run lock left by a run that is verified stopped (no run of the bot's
- * automation is active). It names the key it expects, so it never clears a
- * different, newer run.
+ * Frees a run lock left by a run that is verified stopped. Manual only: the bot
+ * pauses its schedule and confirms no run is active first. It is bound to the
+ * exact run (key and token, as the poll's runLock shows them), so it can only
+ * free that run's slot, never a later one.
  */
-export function recoverRun(dir: string, bot: string, key: string): "recovered" | "no-match" {
-  const owner = readRun(dir, bot);
-  if (owner === null || owner.key !== key) return "no-match";
-  rmSync(runLockDir(dir, bot), { recursive: true, force: true });
-  return "recovered";
+export function recoverRun(dir: string, bot: string, key: string, token: string): "recovered" | "not-owner" {
+  return releaseRun(dir, bot, key, token) === "released" ? "recovered" : "not-owner";
 }
