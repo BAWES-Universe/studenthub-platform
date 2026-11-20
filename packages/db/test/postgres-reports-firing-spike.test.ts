@@ -68,6 +68,9 @@ test("REPORTS_FIRING_SPIKE_PG a day's check runs once; each company and month al
   const decide = (d: string) => (data: { companies: readonly { orgId: string; name: string }[]; counts: readonly { orgId: string; month: string; total: number }[] }) =>
     firingSpikes(d, data.companies.filter(c => mine.has(c.orgId)), data.counts);
   const at = new Date(`${day}T06:00:00Z`);
+  // A day with nobody subscribed records nothing, so the month can still alert later.
+  const empty = new PostgresFiringSpikeStore({ pool, operatorOrgIds: [`fs-none-${randomUUID()}`] }), before = await freshDay();
+  assert.deepEqual(await empty.sendDay(before, lastTwelveMonths(before), at, () => [{ orgId: spiky.id, month: ym(day), parameters: { company: "Spiky Co", month: ym(day), level: "danger", total: 2, twelveMonthTotal: 3 } }]), { alerts: 0 });
   assert.deepEqual(await store.sendDay(day, months, at, decide(day)), { alerts: 1 }, "Spiky Co: 2 this month of 3 in 12 is danger; Calm Co is at its average");
   assert.equal(await store.sendDay(day, months, at, decide(day)), null, "the day ran");
   const alert = (await pool.query("SELECT org_id, month, level, total, twelve_month_total, recipients FROM firing_spike_alerts WHERE org_id = ANY($1::text[])", [[...mine]])).rows;

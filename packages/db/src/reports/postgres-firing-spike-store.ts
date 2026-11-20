@@ -43,7 +43,8 @@ export class PostgresFiringSpikeStore {
       const alerts = decide(await readFirings(c, this.#operatorOrgIds, day, months));
       const recipients = (await c.query<{ principal_id: string }>(RECIPIENTS("$1"), [this.#operatorOrgIds])).rows.map(r => r.principal_id);
       let alerted = 0;
-      for (const a of alerts) {
+      // With nobody to tell, nothing is recorded: the month can still alert once someone turns the email on.
+      for (const a of recipients.length ? alerts : []) {
         // A company and month alerts once (legacy's is_alerted), even if it gets worse later in the month.
         const fresh = await c.query(`INSERT INTO firing_spike_alerts(org_id, month, level, total, twelve_month_total, recipients, alerted_at)
           VALUES($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (org_id, month) DO NOTHING`, [a.orgId, a.month, a.parameters.level, a.parameters.total, a.parameters.twelveMonthTotal, recipients.length, at]);
