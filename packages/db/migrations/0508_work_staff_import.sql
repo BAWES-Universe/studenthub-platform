@@ -6,12 +6,25 @@
 -- staff session legacy still showed open that legacy has since ended
 -- (incremental sync): the end is written once, as the timer would.
 
-ALTER TABLE work_staff_sessions ADD COLUMN legacy_digest text CHECK (legacy_digest IS NULL OR legacy_digest ~ '^[0-9a-f]{64}$'),
- ADD CONSTRAINT work_staff_sessions_legacy_digest CHECK ((legacy_digest IS NULL) = (legacy_ref IS NULL));
-ALTER TABLE work_standup_questions ADD COLUMN legacy_digest text CHECK (legacy_digest IS NULL OR legacy_digest ~ '^[0-9a-f]{64}$'),
- ADD CONSTRAINT work_standup_questions_legacy_digest CHECK ((legacy_digest IS NULL) = (legacy_ref IS NULL));
-ALTER TABLE work_standup_answers ADD COLUMN legacy_digest text CHECK (legacy_digest IS NULL OR legacy_digest ~ '^[0-9a-f]{64}$'),
- ADD CONSTRAINT work_standup_answers_legacy_digest CHECK ((legacy_digest IS NULL) = (legacy_ref IS NULL));
+ALTER TABLE work_staff_sessions ADD COLUMN legacy_digest text CHECK (legacy_digest IS NULL OR legacy_digest ~ '^[0-9a-f]{64}$');
+ALTER TABLE work_standup_questions ADD COLUMN legacy_digest text CHECK (legacy_digest IS NULL OR legacy_digest ~ '^[0-9a-f]{64}$');
+ALTER TABLE work_standup_answers ADD COLUMN legacy_digest text CHECK (legacy_digest IS NULL OR legacy_digest ~ '^[0-9a-f]{64}$');
+
+-- Rows 0505/0506 already allowed with a legacy_ref were written with no record
+-- of what was imported, so their digest can't be known. They get the all-zero
+-- digest, which no import ever produces: a re-run reports each one as a
+-- conflict (zeros against the incoming digest) and never overwrites it. This
+-- runs before the triggers below freeze the digest; answers are frozen since
+-- 0506, so their trigger is off for this one statement only.
+UPDATE work_staff_sessions SET legacy_digest = repeat('0', 64) WHERE legacy_ref IS NOT NULL;
+UPDATE work_standup_questions SET legacy_digest = repeat('0', 64) WHERE legacy_ref IS NOT NULL;
+ALTER TABLE work_standup_answers DISABLE TRIGGER work_standup_answers_frozen;
+UPDATE work_standup_answers SET legacy_digest = repeat('0', 64) WHERE legacy_ref IS NOT NULL;
+ALTER TABLE work_standup_answers ENABLE TRIGGER work_standup_answers_frozen;
+
+ALTER TABLE work_staff_sessions ADD CONSTRAINT work_staff_sessions_legacy_digest CHECK ((legacy_digest IS NULL) = (legacy_ref IS NULL));
+ALTER TABLE work_standup_questions ADD CONSTRAINT work_standup_questions_legacy_digest CHECK ((legacy_digest IS NULL) = (legacy_ref IS NULL));
+ALTER TABLE work_standup_answers ADD CONSTRAINT work_standup_answers_legacy_digest CHECK ((legacy_digest IS NULL) = (legacy_ref IS NULL));
 
 -- The import key of a staff session or question is fixed once written.
 CREATE OR REPLACE FUNCTION enforce_work_staff_session() RETURNS trigger LANGUAGE plpgsql AS $$
