@@ -4,8 +4,8 @@ import { EMAIL_CLASSES, EMAIL_TEMPLATES, EMAIL_VOLUME_THRESHOLD, EmailOutboxServ
   type ClaimedEmail, type EmailFailureCode, type EmailOutboxStore, type EmailVolumeCrossing, type EmailVolumeStore } from "../src/index.js";
 
 test("COMMS_EMAIL_CLASSES the class table says which classes are transactional", () => {
-  assert.deepEqual([...EMAIL_CLASSES], ["account.notice", "civil_id.result", "staff.morning_summary", "staff.firing_spike"]);
-  assert.deepEqual(EMAIL_CLASSES.map(c => [c, EMAIL_TEMPLATES[c].required]), [["account.notice", false], ["civil_id.result", true], ["staff.morning_summary", false], ["staff.firing_spike", false]]);
+  assert.deepEqual([...EMAIL_CLASSES], ["account.notice", "civil_id.result", "staff.morning_summary", "staff.firing_spike", "recruit.invitation"]);
+  assert.deepEqual(EMAIL_CLASSES.map(c => [c, EMAIL_TEMPLATES[c].required]), [["account.notice", false], ["civil_id.result", true], ["staff.morning_summary", false], ["staff.firing_spike", false], ["recruit.invitation", false]]);
 });
 
 test("COMMS_EMAIL_CIVIL_ID_RESULT parameters are closed and follow the staff decision rule", () => {
@@ -126,4 +126,16 @@ test("COMMS_EMAIL_CLASSES the firing spike email takes a closed shape whose leve
   assert.equal(mail.subject, "Firing spike for Acme");
   assert.match(mail.body, /^Acme: 3 placements ended in November 2026 so far, more than twice its 12-month average of 1 a month\./);
   assert.match(EMAIL_TEMPLATES["staff.firing_spike"].render({ ...ok, level: "warning", total: 1, twelveMonthTotal: 7 }).body, /1 placement ended .* more than its 12-month average of 0\.58 a month/);
+});
+
+test("COMMS_EMAIL_RECRUIT_INVITATION parameters are closed one-line texts, and the email names the position and company", () => {
+  assert.deepEqual(validateTemplateParameters("recruit.invitation", { position: "Cashier", company: "Acme" }), { position: "Cashier", company: "Acme" });
+  for (const bad of [{ position: "Cashier" }, { position: "", company: "Acme" }, { position: "Cashier", company: "a".repeat(256) }, { position: "Line\nbreak", company: "Acme" },
+    { position: "Cashier", company: "Acme", url: "https://x" }, { position: 1, company: "Acme" }, null, []])
+    assert.throws(() => validateTemplateParameters("recruit.invitation", bad), /closed/, JSON.stringify(bad));
+  assert.deepEqual(validateTemplateParameters("recruit.invitation", { position: "😀".repeat(255), company: "Acme" }).position, "😀".repeat(255));
+  const mail = EMAIL_TEMPLATES["recruit.invitation"].render({ position: "Cashier", company: "Acme" });
+  assert.equal(mail.subject, "You’re invited to apply for a job opening");
+  assert.match(mail.body, /apply for Cashier at Acme\./);
+  assert.match(mail.body, /accept or decline/);
 });
