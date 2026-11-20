@@ -494,8 +494,8 @@ test("a built screen proves itself: no served route, a deleted page or a silent 
 
   const proven = clone(base);
   (proven.screens["C-11"] as unknown as Record<string, unknown>).served = [
-    { route: "/fake/page", test: "apps/gateway/test/fake-page.test.ts" },
-    { route: "/fake/:id/detail", test: "apps/gateway/test/fake-page.test.ts" },
+    { route: "/fake/page", test: "apps/gateway/test/fake-page.test.ts", via: "handler" },
+    { route: "/fake/:id/detail", test: "apps/gateway/test/fake-page.test.ts", via: "handler" },
   ];
   (proven.screens["C-11"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "PR #1 at 0123abcd" };
   assert.deepEqual(checkServed(proven, read, source).filter((i) => i.detail.startsWith("screen C-11")), []);
@@ -512,31 +512,41 @@ test("a built screen proves itself: no served route, a deleted page or a silent 
   assert.deepEqual(rules(checkServed(proven, read, removedPage).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.notServed"]);
 
   const silent = clone(proven);
-  (silent.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/fake/page", test: "apps/gateway/test/silent.test.ts" }];
+  (silent.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/fake/page", test: "apps/gateway/test/silent.test.ts", via: "handler" }];
   assert.deepEqual(rules(checkServed(silent, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.testSilent"]);
 
   const gone = clone(proven);
-  (gone.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/fake/page", test: "apps/gateway/test/deleted.test.ts" }];
+  (gone.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/fake/page", test: "apps/gateway/test/deleted.test.ts", via: "handler" }];
   assert.deepEqual(rules(checkServed(gone, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.testMissing"]);
 
   const bad = clone(proven);
   (bad.screens["C-11"] as unknown as Record<string, unknown>).served = [
-    { route: "fake/page", test: "apps/gateway/test/fake-page.test.ts" },
-    { route: "/fake/page", test: "apps/gateway/src/index.ts" },
-    { route: "/fake/page", test: "apps/gateway/test/../../../etc/passwd.ts" },
+    { route: "fake/page", test: "apps/gateway/test/fake-page.test.ts", via: "handler" },
+    { route: "/fake/page", test: "apps/gateway/src/index.ts", via: "handler" },
+    { route: "/fake/page", test: "apps/gateway/test/../../../etc/passwd.ts", via: "handler" },
   ];
   assert.deepEqual(rules(checkServed(bad, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.badRoute", "matrix.served.badTest"]);
+
+  const claimsWiring = clone(proven);
+  (claimsWiring.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/fake/page", test: "apps/gateway/test/fake-page.test.ts", via: "gateway" }];
+  assert.deepEqual(rules(checkServed(claimsWiring, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.notThroughGateway"]);
+  const wired: Record<string, string> = { ...pages, "apps/gateway/test/fake-page.test.ts": `const server = createGatewayServer(); ${pages["apps/gateway/test/fake-page.test.ts"]}` };
+  assert.deepEqual(checkServed(claimsWiring, (file) => wired[file], source).filter((i) => i.detail.startsWith("screen C-11")), []);
+
+  const noVia = clone(proven);
+  (noVia.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/fake/page", test: "apps/gateway/test/fake-page.test.ts" }];
+  assert.deepEqual(rules(checkServed(noVia, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.badVia"]);
 });
 
 test("seeding keeps where a screen is served while its route holds, and drops it when the route changes", () => {
   const contract = loadContract(root);
   const inventory = loadInventory(root);
   const previous = clone(loadMatrix(root));
-  (previous.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/work/track", test: "apps/gateway/test/work-pages.test.ts" }];
-  (previous.screens["C-12"] as unknown as Record<string, unknown>).served = [{ route: "/work/history", test: "apps/gateway/test/work-pages.test.ts" }];
+  (previous.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/work/track", test: "apps/gateway/test/work-pages.test.ts", via: "handler" }];
+  (previous.screens["C-12"] as unknown as Record<string, unknown>).served = [{ route: "/work/history", test: "apps/gateway/test/work-pages.test.ts", via: "handler" }];
   (previous.screens["C-12"] as unknown as Record<string, unknown>).subject = "an old route";
   const seeded = seedMatrix(contract, inventory, previous);
-  assert.deepEqual(seeded.screens["C-11"]!.served, [{ route: "/work/track", test: "apps/gateway/test/work-pages.test.ts" }]);
+  assert.deepEqual(seeded.screens["C-11"]!.served, [{ route: "/work/track", test: "apps/gateway/test/work-pages.test.ts", via: "handler" }]);
   assert.equal(seeded.screens["C-12"]!.served, undefined);
 });
 

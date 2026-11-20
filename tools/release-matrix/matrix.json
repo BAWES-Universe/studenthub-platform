@@ -82,7 +82,8 @@
       "served": [
         {
           "route": "/workspace",
-          "test": "apps/gateway/test/context-navigation.test.ts"
+          "test": "apps/gateway/test/context-navigation.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -101,11 +102,13 @@
       "served": [
         {
           "route": "/login/universe",
-          "test": "apps/gateway/test/web-ui.test.ts"
+          "test": "apps/gateway/test/web-ui.test.ts",
+          "via": "gateway"
         },
         {
           "route": "/login/callback",
-          "test": "apps/gateway/test/web-ui.test.ts"
+          "test": "apps/gateway/test/web-ui.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -137,7 +140,8 @@
       "served": [
         {
           "route": "/notifications",
-          "test": "packages/notifications/test/notifications.test.ts"
+          "test": "packages/notifications/test/notifications.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -195,7 +199,8 @@
       "served": [
         {
           "route": "/workspace",
-          "test": "apps/gateway/test/context-navigation.test.ts"
+          "test": "apps/gateway/test/context-navigation.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -214,7 +219,8 @@
       "served": [
         {
           "route": "/profile",
-          "test": "apps/gateway/test/profile-journey.test.ts"
+          "test": "apps/gateway/test/profile-journey.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -233,7 +239,8 @@
       "served": [
         {
           "route": "/profile/edit",
-          "test": "apps/gateway/test/profile-journey.test.ts"
+          "test": "apps/gateway/test/profile-journey.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -252,7 +259,8 @@
       "served": [
         {
           "route": "/profile/background",
-          "test": "apps/gateway/test/profile-records-http.test.ts"
+          "test": "apps/gateway/test/profile-records-http.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -271,7 +279,8 @@
       "served": [
         {
           "route": "/profile/documents",
-          "test": "apps/gateway/test/web-ui.test.ts"
+          "test": "apps/gateway/test/web-ui.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -290,7 +299,8 @@
       "served": [
         {
           "route": "/profile/civil-id",
-          "test": "apps/gateway/test/civil-id-http.test.ts"
+          "test": "apps/gateway/test/civil-id-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -309,7 +319,8 @@
       "served": [
         {
           "route": "/recruit/jobs",
-          "test": "apps/gateway/test/recruit-jobs-http.test.ts"
+          "test": "apps/gateway/test/recruit-jobs-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -341,7 +352,8 @@
       "served": [
         {
           "route": "/recruit/invitations",
-          "test": "apps/gateway/test/recruit-invitations-http.test.ts"
+          "test": "apps/gateway/test/recruit-invitations-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -360,7 +372,8 @@
       "served": [
         {
           "route": "/recruit/my-interviews",
-          "test": "apps/gateway/test/recruit-interviews-http.test.ts"
+          "test": "apps/gateway/test/recruit-interviews-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -379,7 +392,8 @@
       "served": [
         {
           "route": "/work/assignment",
-          "test": "apps/gateway/test/work-pages.test.ts"
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -398,7 +412,8 @@
       "served": [
         {
           "route": "/work/track",
-          "test": "apps/gateway/test/work-pages.test.ts"
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -417,7 +432,8 @@
       "served": [
         {
           "route": "/work/history",
-          "test": "apps/gateway/test/work-pages.test.ts"
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -436,7 +452,8 @@
       "served": [
         {
           "route": "/work/appeals",
-          "test": "apps/gateway/test/work-pages.test.ts"
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -494,7 +511,8 @@
       "served": [
         {
           "route": "/companies/register",
-          "test": "apps/gateway/test/company-registration.test.ts"
+          "test": "apps/gateway/test/company-registration.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -539,7 +557,8 @@
       "served": [
         {
           "route": "/workspace/companies/:orgId/team",
-          "test": "apps/gateway/test/company-team.test.ts"
+          "test": "apps/gateway/test/company-team.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -597,7 +616,8 @@
       "served": [
         {
           "route": "/recruit/requests",
-          "test": "apps/gateway/test/recruit-requests-http.test.ts"
+          "test": "apps/gateway/test/recruit-requests-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -629,7 +649,8 @@
       "served": [
         {
           "route": "/recruit/requests/:requestId/interviews",
-          "test": "apps/gateway/test/recruit-interviews-http.test.ts"
+          "test": "apps/gateway/test/recruit-interviews-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -648,7 +669,8 @@
       "served": [
         {
           "route": "/organization/:orgId/work",
-          "test": "apps/gateway/test/work-review-pages.test.ts"
+          "test": "apps/gateway/test/work-review-pages.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -706,7 +728,8 @@
       "served": [
         {
           "route": "/workspace/my-stores",
-          "test": "apps/gateway/test/store-manager.test.ts"
+          "test": "apps/gateway/test/store-manager.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -738,7 +761,13 @@
       "served": [
         {
           "route": "/store/:storeId/time-approvals",
-          "test": "apps/gateway/test/work-review-pages.test.ts"
+          "test": "apps/gateway/test/work-review-pages.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/store/:storeId/time-approvals/:sessionId",
+          "test": "apps/gateway/test/work-review-pages.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -757,7 +786,8 @@
       "served": [
         {
           "route": "/store/:storeId/assignment-changes",
-          "test": "apps/gateway/test/work-review-pages.test.ts"
+          "test": "apps/gateway/test/work-review-pages.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -789,7 +819,8 @@
       "served": [
         {
           "route": "/workspace/people",
-          "test": "apps/gateway/test/people-directory.test.ts"
+          "test": "apps/gateway/test/people-directory.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -821,7 +852,8 @@
       "served": [
         {
           "route": "/workspace/civil-ids",
-          "test": "apps/gateway/test/civil-id-review-http.test.ts"
+          "test": "apps/gateway/test/civil-id-review-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -840,7 +872,8 @@
       "served": [
         {
           "route": "/workspace/id-cards",
-          "test": "apps/gateway/test/id-cards-http.test.ts"
+          "test": "apps/gateway/test/id-cards-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -859,7 +892,8 @@
       "served": [
         {
           "route": "/workspace/companies",
-          "test": "apps/gateway/test/company-directory.test.ts"
+          "test": "apps/gateway/test/company-directory.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -904,7 +938,8 @@
       "served": [
         {
           "route": "/recruit/staff/requests",
-          "test": "apps/gateway/test/recruit-pipeline-http.test.ts"
+          "test": "apps/gateway/test/recruit-pipeline-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -923,7 +958,8 @@
       "served": [
         {
           "route": "/recruit/staff/people",
-          "test": "apps/gateway/test/recruit-search-http.test.ts"
+          "test": "apps/gateway/test/recruit-search-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -942,7 +978,8 @@
       "served": [
         {
           "route": "/recruit/staff/jobs",
-          "test": "apps/gateway/test/recruit-jobs-http.test.ts"
+          "test": "apps/gateway/test/recruit-jobs-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -974,11 +1011,13 @@
       "served": [
         {
           "route": "/work/assignments",
-          "test": "apps/gateway/test/work-staff-pages.test.ts"
+          "test": "apps/gateway/test/work-staff-pages.test.ts",
+          "via": "handler"
         },
         {
           "route": "/work/logs",
-          "test": "apps/gateway/test/work-staff-pages.test.ts"
+          "test": "apps/gateway/test/work-staff-pages.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -997,11 +1036,13 @@
       "served": [
         {
           "route": "/work/appeals",
-          "test": "apps/gateway/test/work-staff-pages.test.ts"
+          "test": "apps/gateway/test/work-staff-pages.test.ts",
+          "via": "handler"
         },
         {
           "route": "/work/corrections",
-          "test": "apps/gateway/test/work-staff-pages.test.ts"
+          "test": "apps/gateway/test/work-staff-pages.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -1033,7 +1074,8 @@
       "served": [
         {
           "route": "/admin/access",
-          "test": "apps/gateway/test/access-admin.test.ts"
+          "test": "apps/gateway/test/access-admin.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -1052,7 +1094,8 @@
       "served": [
         {
           "route": "/admin/access/people/:principalId/view",
-          "test": "apps/gateway/test/staff-view.test.ts"
+          "test": "apps/gateway/test/staff-view.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -1175,7 +1218,8 @@
       "served": [
         {
           "route": "/workspace/statistics",
-          "test": "apps/gateway/test/statistics-http.test.ts"
+          "test": "apps/gateway/test/statistics-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -1194,7 +1238,8 @@
       "served": [
         {
           "route": "/workspace/lists",
-          "test": "apps/gateway/test/list-exports-http.test.ts"
+          "test": "apps/gateway/test/list-exports-http.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {

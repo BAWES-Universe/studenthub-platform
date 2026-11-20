@@ -45,6 +45,12 @@ export interface ScreenRow {
 export interface ServedRoute {
   readonly route: string;
   readonly test: string;
+  /**
+   * How the cited test reaches the page: `gateway` requests it through `createGatewayServer`
+   * (the route is wired), `handler` calls the page handler directly (implemented and tested,
+   * wiring not proven by this test).
+   */
+  readonly via: "gateway" | "handler";
 }
 
 export interface MobileEndpoint {
@@ -397,10 +403,12 @@ function appearsIn(text: string, part: string): boolean {
 }
 
 /**
- * Built screen gates prove themselves. A screen whose `built` gate is done must list where
- * it is served; every served route must appear in the gateway source and in the test it
- * cites, and that test must exist. This runs on every PR, so deleting the page or its test
- * fails the check: a closed gate cannot silently regress.
+ * A reference lint for built screen gates, not a proof. A screen whose `built` gate is done
+ * must list where it is served; every literal part of each route must appear in the gateway
+ * source and in the cited test, the test must exist, and an entry that claims `via:
+ * "gateway"` must cite a test that starts `createGatewayServer`. Fragments can still match
+ * unrelated strings, so the evidence is the reviewed PR; this catches stale references (a
+ * renamed route, a deleted or rewritten test) on every PR.
  *
  * `read(path)` returns a repository file's text or undefined; `gateway` is the gateway
  * source the routes are looked up in.
@@ -428,6 +436,9 @@ export function checkServed(matrix: Matrix, read: (file: string) => string | und
         issues.push({ rule: "matrix.served.badTest", detail: `${where} cites '${String(entry.test)}', not a test file under apps, packages or tools` });
         continue;
       }
+      if (entry.via !== "gateway" && entry.via !== "handler") {
+        issues.push({ rule: "matrix.served.badVia", detail: `${where} must say via gateway or handler` });
+      }
       const parts = routeParts(entry.route);
       for (const part of parts) {
         if (!appearsIn(gateway, part)) issues.push({ rule: "matrix.served.notServed", detail: `${where}: '${part}' is not in the gateway source` });
@@ -439,6 +450,9 @@ export function checkServed(matrix: Matrix, read: (file: string) => string | und
       }
       for (const part of parts) {
         if (!appearsIn(text, part)) issues.push({ rule: "matrix.served.testSilent", detail: `${where}: ${entry.test} never requests '${part}'` });
+      }
+      if (entry.via === "gateway" && !text.includes("createGatewayServer")) {
+        issues.push({ rule: "matrix.served.notThroughGateway", detail: `${where} claims gateway wiring but ${entry.test} never starts createGatewayServer` });
       }
     }
   }
