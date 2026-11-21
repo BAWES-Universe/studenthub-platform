@@ -426,6 +426,18 @@ test("one poll at a time gets past the run lock; a poll whose pick went stale un
   assert.equal(acquireRun(dir, BOT, claimKey(BOT, 581, 1), NOW, "P3"), "acquired");
 });
 
+test("a reread that fails under the run lock releases the lock and rethrows", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-reread-fail-"));
+  const md = register(row(581, 1, "`900`"));
+  const comments = { 581: [dispatch(900, 581, 1)] };
+  const claimIt = (d: { claimKey: string; dispatch: number; lease: string }) => claim(dir, d.claimKey, { dispatch: d.dispatch, lease: d.lease, at: "t" });
+  const lockIt = (d: { claimKey: string }) => (acquireRun(dir, BOT, d.claimKey, NOW, "P1") === "acquired" ? "P1" : null);
+  const undo = (d: { claimKey: string }, token: string) => { releaseRun(dir, BOT, d.claimKey, token); };
+  assert.throws(() => pickNext(run(md, comments), claimIt, lockIt, undo, () => { throw new Error("gh api: 502"); }), /gh api: 502/);
+  assert.equal(readClaim(dir, claimKey(BOT, 581, 1)), null);
+  assert.equal(acquireRun(dir, BOT, claimKey(BOT, 581, 1), NOW, "P2"), "acquired");
+});
+
 test("claims that can't be read fail closed; a missing claims directory means no claims", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "orca-claims-read-"));
   assert.equal(heldClaims(path.join(dir, "absent")).size, 0);

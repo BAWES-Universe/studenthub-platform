@@ -49,8 +49,16 @@ export function pickNext(
   if (!chosen) return null;
   const runToken = tryRun(chosen);
   if (runToken === null) return null;
-  const fresh = choose(reread());
-  if (!fresh || fresh.claimKey !== chosen.claimKey || (fresh.action === "start" && tryClaim(fresh) !== "claimed")) {
+  let fresh: WorkDecision | null;
+  try {
+    // A failed reread (e.g. a GitHub API error) must not leave the run lock held.
+    fresh = choose(reread());
+    if (fresh && fresh.claimKey === chosen.claimKey && fresh.action === "start" && tryClaim(fresh) !== "claimed") fresh = null;
+  } catch (error) {
+    undoRun(chosen, runToken);
+    throw error;
+  }
+  if (!fresh || fresh.claimKey !== chosen.claimKey) {
     undoRun(chosen, runToken);
     return null;
   }
