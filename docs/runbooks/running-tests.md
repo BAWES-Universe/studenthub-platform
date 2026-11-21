@@ -74,6 +74,8 @@ Use a fresh UTF-8 PostgreSQL 17 database with synthetic fixtures. [Platform CI](
 
 Set `DATABASE_URL` in the shell running the tests to your disposable database. For example, a local connection string can have the form `postgresql://test_user:<local-password>@127.0.0.1:55432/studenthub_test`. Substitute the database, user, password, and port for your scratch instance. Keep the connection string out of Git and point it only at a database you can discard.
 
+Some fixture-reset tests also require the exact same URL in `TEST_DISPOSABLE_DATABASE_URL` to attest that it is a disposable local database. Set it only for the scratch instance. These tests accept a loopback address and reject PostgreSQL system databases. See [pay-aware-fixture-reset.ts](../../packages/db/test/helpers/pay-aware-fixture-reset.ts).
+
 `npm run test:db` includes the PostgreSQL suites (run serially), the other database Node tests, database mutation scripts, and the R2 PostgreSQL document test. `npm run test:documents:r2:postgres` selects that R2 store test alone. See [run.mjs](../../tools/test-runner/run.mjs) and [r2-postgres.test.mjs](../../packages/private-documents/test/r2-postgres.test.mjs). A skipped database test is not database verification.
 
 The root [.gitignore](../../.gitignore) ignores `*.sql`. When a change adds an intended migration, stage that specific file with `git add -f` and verify the staged path. Apply this only to the new migration file.
