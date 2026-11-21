@@ -5,4 +5,4 @@ An Orca bot works only on a ticket listed here, read fresh from `main`, and only
 | Issue | Slug | Bot | Gen | Mode | Dispatch | Lease (paths; migrations) | Reviewer | State | Expires (UTC) |
 |---|---|---|---|---|---|---|---|---|---|
 | #581 | `running-tests-guide` | studenthub-universe | 1 | work | `7048993553` | `docs/runbooks/running-tests.md` only; no migrations | Claude | revoked | 2026-11-22 18:00 |
-| #581 | `running-tests-guide` | studenthub-universe | 2 | observe | `7051422072` | `docs/runbooks/running-tests.md` only; no migrations | Claude | active | 2026-11-23 18:00 |
+| #581 | `running-tests-guide` | studenthub-universe | 2 | work | `7051422072` | `docs/runbooks/running-tests.md` only; no migrations | Claude | active | 2026-11-23 18:00 |

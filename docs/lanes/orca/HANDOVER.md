@@ -16,7 +16,7 @@ Markers used below: **[FACT]** checked on 2026-11-20 · **[DEFAULT]** what we do
 1. **Protect `main` for the bot's identity.** The bot pushes with your GitHub login, so the rules must stop *you* from pushing straight to `main`, not just ask the bot not to. In GitHub, studenthub-platform → Settings → Rules → `main-protected-v1.2`: turn on "Require a pull request before merging" (0 required approvals is fine), with the bypass list empty. If you'd rather not, the pilot stays read-only. Claude then confirms it from the API before dispatch (Part D, pre-dispatch check).
 2. Keep the PC on and Orca running during the pilot (about 2 days). Orca bots work only while it is.
 3. Paste the remit in Part C into the bot's chat once, so it saves it in its `SOUL.md`. Its current remit ("assess delivery") is reviewer-style; this makes it an implementation worker with our rules.
-3a. GitHub mentions from our shared `BAWES` account don't wake the bot, so it finds jobs by running the poll tool (B3). Paste the **observe prompt** below Part C once: the bot runs the poll a single time, by hand, and can only post one observe receipt. Later, when Claude and GPT clear work mode, Claude sends you the **work prompt**, which sets up the 15-minute schedule.
+3a. GitHub mentions from our shared `BAWES` account don't wake the bot, so it finds jobs by running the poll tool (B3). Paste the **observe prompt** below Part C once: the bot runs the poll a single time, by hand, and can only post one observe receipt. Later, when Claude and GPT clear work mode, Claude sends you the **first work prompt**, a single manual work run with no schedule. Only after that run's start receipt, lease-scoped PR and released lock check out, and Claude and GPT agree, does Claude send the **schedule prompt**, which sets up the 15-minute schedule.
 4. When 1 to 3 are done, say **"start the Orca pilot"** in project chat. Nothing is dispatched to the bot before you say that.
 
 After that you relay nothing, dispatch nothing, answer no routine technical question and merge nothing. **Claude owns each ticket from dispatch to landing:** it registers the lease, opens the issue, triggers the bot, reviews the final commit, squash-merges and closes the issue. The bot works and reports on GitHub; GPT corroborates and can raise findings there directly. If Claude is unavailable, the ticket waits for an eligible reviewer and merge operator; it never comes to you.
@@ -81,7 +81,7 @@ Read, in order: `README.md`, `docs/acceptance-record.md`, `docs/parity/`, `docs/
 
 **You find work only by polling, with the poll tool.** Claude, GPT and you all post as `BAWES`. Orca documents that its own account's GitHub activity does not start automations, and the first P1 dispatch (a mention from `BAWES`) did not wake you. **The poll is the only thing that can claim or start work.** A mention never starts, resumes, claims or polls anything.
 
-**There is no schedule yet.** Run the poll only when a prompt from Khalid tells you to: the observe prompt runs `--mode observe` once, by hand. The 15-minute `--mode work` schedule starts only with the work prompt, sent after Claude and GPT clear work mode. A mention never runs the poll.
+**There is no schedule yet.** Run the poll only when a prompt from Khalid tells you to: the observe prompt runs `--mode observe` once, by hand. The first `--mode work` run is a single manual run from the first work prompt, sent after Claude and GPT clear work mode. The 15-minute schedule starts only with the later schedule prompt. A mention never runs the poll.
 
 The poll, run from a clone of this repository with `main` built (`npm ci && npm run build`):
 
@@ -207,10 +207,16 @@ Reply "remit saved" and wait for the first Orca lane issue.
 Run this once, now, by hand, and do not schedule anything: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then run `node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode observe`. Follow the observe rules in section B3 of docs/lanes/orca/HANDOVER.md on main: for each entry in "observe" whose receiptPosted is false, post its receiptBody exactly as one comment on that issue, and nothing else. Then reply "observe done" with the poll's output.
 ```
 
-**Work prompt** (Claude sends it later, after Claude and GPT clear work mode; not before):
+**First work prompt** (Claude sends it after Claude and GPT clear work mode; one manual run, no schedule):
 
 ```
-Schedule an automation that runs every 15 minutes while you are online and never overlaps itself: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then follow section B3 of docs/lanes/orca/HANDOVER.md on main in work mode, using the poll tool exactly as written there. The poll alone decides whether you may work. If it gives you nothing to do, post nothing. Then run it once now and reply "poll scheduled" with the schedule you set and the poll's output.
+Run this once, now, by hand, and do not schedule anything: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then follow section B3 of docs/lanes/orca/HANDOVER.md on main in work mode, using the poll tool exactly as written there. The poll alone decides whether you may work. If it gives you nothing to do, post nothing. Carry the ticket it gives you through to a ready PR, then release the run lock as B3 says. Reply "work run done" with the poll output, the PR link and the release output.
+```
+
+**Schedule prompt** (Claude sends it only after the first work run's start receipt, lease-scoped PR and released lock check out, and Claude and GPT agree to schedule):
+
+```
+Schedule an automation that runs every 15 minutes while you are online and never overlaps itself: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then follow section B3 of docs/lanes/orca/HANDOVER.md on main in work mode, using the poll tool exactly as written there. The poll alone decides whether you may work. If it gives you nothing to do, post nothing. Reply "poll scheduled" with the schedule you set.
 ```
 
 ---
@@ -239,7 +245,8 @@ Agreed shape (GPT's baseline): prove one ticket end to end, then two disjoint ti
 - [ ] The issue body carries no live trigger; the only trigger is the dispatch comment whose exact id the row binds, and that id goes in the stage record
 - [ ] The poll tool's tests pass on `main` (`tools/orca-lane/test`). They cover: only the exact bound comment authorizes work; an old generation's dispatch stays ineligible after reactivation; ticket A survives an edit to B's row; concurrent wakes, where one claim wins and a poll whose pick went stale under the lock backs out; claims that can't be read fail closed; restart after an ambiguous receipt, which resumes, stays bound to the saved dispatch and posts a missing start receipt; and a bot-wide, token-fenced run lock held through execution: no takeover by age; a revoked run that is still alive blocks every new run until its release; a stale run can neither pass `check` nor release the new run's lock; recovery is bound to the exact run (key and token), and a late or repeated release or recovery never clears a successor; and a third wake is refused.
 - [ ] Each new ticket runs one poll in `observe` mode, and its observe receipt names the bound dispatch, before Claude switches the row to `work`.
-- [ ] The work prompt goes to Khalid only after GPT's PASS on work mode and one verified observe receipt; the observe receipt comes from a single manual run with no schedule.
+- [ ] The first work prompt goes to Khalid only after GPT's PASS on work mode and one verified observe receipt; the observe receipt comes from a single manual run with no schedule.
+- [ ] The first work run is also manual, with no schedule. The schedule prompt goes only after its start receipt names the bound dispatch, its PR stays inside the lease, its run lock is released, and Claude and GPT agree.
 
 **What GitHub enforces and what it doesn't.** [FACT 2026-11-20] On `main`, GitHub requires four status checks for everyone, admins included: `repository-policy`, `coordinator-future-clock`, `fast-checks`, `gateway-image-smoke`. The ruleset blocks deletion and force-push and requires linear history. Since 2026-11-20 18:05Z it also requires a pull request with no bypass actors, allowing merge and squash (setup step A1); because linear history is also required, only **squash** actually lands. It requires no approving review. Claude, GPT and the bot all act as `BAWES`, so GitHub cannot tell them apart. Headers attribute messages and an exact-commit `PASS` records a verdict, but neither is enforced: in this pilot "only Claude merges" and "independent PASS before merge" are **operating rules**, checked by the post-merge audit (Part E). If we later want GitHub to enforce them, the writer and the reviewer/merge operator need distinct GitHub identities (for example a bot account or GitHub App for Orca) and a required review from the reviewer's identity. That never means Khalid merging each ticket by hand.
 
