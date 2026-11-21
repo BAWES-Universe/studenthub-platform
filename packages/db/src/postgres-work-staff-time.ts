@@ -30,7 +30,7 @@ const fromRow = (r: Row): WorkStaffSessionRecord => Object.freeze({
 });
 
 /** Legacy `staff.hours_per_day` default: a staff record nobody set reads as 8 hours. */
-export const DEFAULT_STAFF_HOURS_PER_DAY = 8;
+const DEFAULT_STAFF_HOURS_PER_DAY = 8;
 
 /** The operator organizations whose staff and admins time their day (as in the work package). */
 const OPERATOR_ORG_IDS = ["root"];

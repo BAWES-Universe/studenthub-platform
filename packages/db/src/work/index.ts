@@ -8,7 +8,7 @@ export type {
   NewWorkSessionRecord, WorkAssignmentRecord, WorkDecisionRecord, WorkDecisionTransaction, WorkSessionFilter, WorkAssignmentRequestRecord, WorkDayTotal, WorkEventRecord, WorkLocation,
   WorkPlacementTransaction, WorkSessionRecord, WorkSessionTransaction,
 } from "../postgres-work-store.js";
-export { DEFAULT_STAFF_HOURS_PER_DAY, PostgresWorkStaffTimeStore } from "../postgres-work-staff-time.js";
+export { PostgresWorkStaffTimeStore } from "../postgres-work-staff-time.js";
 export type { WorkStaffDayRecord, WorkStaffSessionRecord } from "../postgres-work-staff-time.js";
 export { PostgresWorkStandupStore } from "../postgres-work-standup.js";
 export type { WorkStandupAnswerRecord, WorkStandupQuestionRecord } from "../postgres-work-standup.js";

@@ -4,7 +4,7 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
-import { DEFAULT_STAFF_HOURS_PER_DAY, PostgresWorkImportStore, PostgresWorkStaffTimeStore } from "@studenthub/db/work";
+import { PostgresWorkImportStore, PostgresWorkStaffTimeStore } from "@studenthub/db/work";
 import { mapLegacyStaffHours } from "../../work/src/index.js";
 
 // Staff hours per day (0509): legacy `staff.hours_per_day` imported per principal, read by the
@@ -57,7 +57,7 @@ test("STAFF_HOURS_PG a second legacy record for one person, a bad number or bad 
   assert.deepEqual(result, { ...empty, inserted: 2, refused: [{ legacyRef: "bad ref", code: "invalid" }, { legacyRef: twin.legacyRef, code: "invalid" },
     { legacyRef: half.legacyRef, code: "invalid" }, { legacyRef: over.legacyRef, code: "invalid" }] });
   // Smallint would round 7.5 to 8: the half hour is refused before it is written.
-  assert.deepEqual(Object.fromEntries(await time.hoursPerDay([a, b, c])), { [a]: 8, [b]: DEFAULT_STAFF_HOURS_PER_DAY, [c]: 5 });
+  assert.deepEqual(Object.fromEntries(await time.hoursPerDay([a, b, c])), { [a]: 8, [b]: 8, [c]: 5 });
   assert.equal((await pool.query("SELECT 1 FROM work_staff_hours_per_day WHERE staff_principal_id = $1", [b])).rowCount, 0);
 });
 
@@ -84,7 +84,6 @@ test("STAFF_HOURS_PG the table holds whole hours 0 to 24, an import carries its 
 test("STAFF_HOURS_PG the export port reads each staff member's hours, legacy's 8 when none is held, and nothing for nobody", async () => {
   const [held, none] = [await principal(), await principal()];
   await imports.importStaffHours([row(held, 5)]);
-  assert.equal(DEFAULT_STAFF_HOURS_PER_DAY, 8);
   assert.deepEqual([...(await time.hoursPerDay([none, held]))], [[none, 8], [held, 5]]);
   assert.equal((await time.hoursPerDay([])).size, 0);
 });
