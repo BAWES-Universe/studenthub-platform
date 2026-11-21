@@ -126,12 +126,14 @@ function main(): void {
   for (const branch of new Set(mine.map((row) => ticketBranch(bot, row.slug)))) pulls.set(branch, branchPulls(branch));
   const now = new Date();
   const at = now.toISOString();
-  const decisionsFor = (): Decision[] => decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims), pulls });
+  const decisionsFor = (running?: string): Decision[] => decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims), pulls, ...(running ? { running } : {}) });
 
   if (mode === "check") {
     // A running ticket always holds its claim, so only a matching resume (same dispatch, same lease) passes.
-    const mineNow = decisionsFor().find((d): d is WorkDecision => d.action === "resume" && d.claimKey === key);
-    const reason = !mineNow ? "ticket generation no longer eligible" : !holdsRun(claims, bot, key!, token!) ? "run lock not held by this token" : null;
+    // Only the lock holder may see its own revision's head move after a hand-back.
+    const holds = holdsRun(claims, bot, key!, token!);
+    const mineNow = decisionsFor(holds ? key : undefined).find((d): d is WorkDecision => d.action === "resume" && d.claimKey === key);
+    const reason = !mineNow ? "ticket generation no longer eligible" : !holds ? "run lock not held by this token" : null;
     process.stdout.write(`${JSON.stringify({ mode, bot, at, key, ok: reason === null, reason })}\n`);
     if (reason !== null) process.exitCode = 3;
     return;
@@ -151,7 +153,7 @@ function main(): void {
     (d) => claim(claims, d.claimKey, { dispatch: d.dispatch, lease: d.lease, at }),
     (d) => { const runToken = randomUUID(); return acquireRun(claims, bot, d.claimKey, now, runToken) === "acquired" ? runToken : null; },
     (d, runToken) => { releaseRun(claims, bot, d.claimKey, runToken); },
-    decisionsFor,
+    () => decisionsFor(),
   );
   const result = { decisions, next };
   // When next is null because a run holds the lock, say which run (for manual recovery after a verified stop).

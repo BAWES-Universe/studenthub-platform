@@ -164,6 +164,8 @@ export function reviewWait(input: {
   readonly gen: number;
   readonly dispatch: number;
   readonly pulls: readonly BranchPull[] | undefined;
+  /** True only inside the run that holds the bot's run lock for this ticket (check mode, verified by token). */
+  readonly running?: boolean;
 }): ReviewWait | null {
   const { bot, issue, gen } = input;
   const first = (c: IssueComment): string => c.body.split("\n")[0]!.trim();
@@ -176,8 +178,10 @@ export function reviewWait(input: {
   if (pulls.length !== 1) return { state: "held", reason: `ready at ${head} but ${pulls.length} open PRs on the branch: held for Claude's review` };
   const pull = pulls[0]!;
   if (pull.base !== "main" || pull.draft) return { state: "held", reason: `ready at ${head} but PR #${pull.number} is ${pull.draft ? "a draft" : `into ${pull.base}`}: held for Claude's review` };
-  if (pull.head !== head) return { state: "held", reason: `ready at ${head} but PR #${pull.number} head is ${pull.head}: held for Claude's review` };
   const changes = sorted.find((c) => c.id > lastReady.id && c.author === DISPATCH_AUTHOR && c.appId === CLAUDE_APP_ID && first(c) === changesHeader(bot, issue, gen, head));
+  // The run that was handed back may move the head while it revises its own PR; anyone else sees that as drift.
+  const revising = changes !== undefined && input.running === true;
+  if (pull.head !== head && !revising) return { state: "held", reason: `ready at ${head} but PR #${pull.number} head is ${pull.head}: held for Claude's review` };
   return changes ? { state: "sent-back", head, pull: pull.number, changes: changes.id } : { state: "parked", head };
 }
 
@@ -202,6 +206,8 @@ export function decide(input: {
   readonly claims: ReadonlyMap<string, ClaimRecord>;
   /** Open PRs per ticket branch (ticketBranch). Only needed once a ticket has a ready receipt; missing means none. */
   readonly pulls?: ReadonlyMap<string, readonly BranchPull[]>;
+  /** The claim key of the run this process holds the run lock for (check mode only, verified by token). */
+  readonly running?: string;
 }): Decision[] {
   const decisions: Decision[] = [];
   const latestGen = new Map<number, number>();
@@ -231,7 +237,7 @@ export function decide(input: {
     const held = input.claims.get(key);
     if (held !== undefined && held.dispatch !== comment.id) { skip(`claim is bound to dispatch ${held.dispatch}, not ${comment.id}`); continue; }
     if (held !== undefined && held.lease !== row.lease) { skip("lease changed since the claim was taken"); continue; }
-    const wait = reviewWait({ comments: issueComments, bot: input.bot, issue: row.issue, gen: row.gen, dispatch: comment.id, pulls: input.pulls?.get(ticketBranch(input.bot, row.slug)) });
+    const wait = reviewWait({ comments: issueComments, bot: input.bot, issue: row.issue, gen: row.gen, dispatch: comment.id, pulls: input.pulls?.get(ticketBranch(input.bot, row.slug)), running: input.running === key });
     if (wait?.state === "held") { skip(wait.reason); continue; }
     if (wait?.state === "parked") { skip(`waiting for review at ${wait.head}`); continue; }
     if (wait && held === undefined) { skip("ready receipt posted but no claim held here: never start twice"); continue; }

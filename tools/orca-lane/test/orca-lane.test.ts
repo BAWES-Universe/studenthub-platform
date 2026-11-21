@@ -17,8 +17,8 @@ const dispatch = (id: number, issue: number, gen: number, extra: Partial<IssueCo
   ({ id, body: `${dispatchHeader(BOT, issue, gen)}\n\n@orca-ide ${BOT}`, author: "BAWES", appId: CLAUDE_APP_ID, ...extra });
 // claims: [claimKey, saved dispatch, saved lease?] (lease defaults to the test row's lease for that issue)
 const leaseOf = (key: string): string => `\`docs/x-${key.split("--")[1]}.md\` only; no migrations`;
-const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: ([string, number] | [string, number, string])[] = [], pulls: Record<string, BranchPull[]> = {}) =>
-  decide({ rows: parseRegister(markdown), bot: BOT, now: NOW, comments: new Map(Object.entries(comments).map(([k, v]) => [Number(k), v])),
+const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: ([string, number] | [string, number, string])[] = [], pulls: Record<string, BranchPull[]> = {}, running?: string) =>
+  decide({ ...(running ? { running } : {}), rows: parseRegister(markdown), bot: BOT, now: NOW, comments: new Map(Object.entries(comments).map(([k, v]) => [Number(k), v])),
     claims: new Map(claims.map(([key, dispatch, lease]) => [key, { dispatch, lease: lease ?? leaseOf(key), at: "t" }])),
     pulls: new Map(Object.entries(pulls)) });
 const acquire = (dir: string) => (d: { claimKey: string }) => { const t = `t-${Math.random()}`; return acquireRun(dir, BOT, d.claimKey, NOW, t) === "acquired" ? t : null; };
@@ -223,6 +223,49 @@ test("review wait: a stale head, a missing or extra PR, a draft or another base 
   // A ready receipt from before the bound dispatch doesn't count at all: the ticket is not in review.
   const early = run(md, { 581: [ready(890, 581, 1, HEAD_1), dispatch(900, 581, 1)], 590: [dispatch(950, 590, 1)] }, [[claimKey(BOT, 581, 1), 900]]);
   assert.equal(early.find((d) => d.issue === 581)!.action, "resume");
+});
+
+test("review wait: full revision cycle from parked to changes to a new ready head, release and re-park; unexplained drift still holds", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-cycle-"));
+  const md = register(row(581, 1, "`900`"), row(590, 1, "`950`"));
+  const keyA = claimKey(BOT, 581, 1);
+  const claims: [string, number][] = [[keyA, 900]];
+  const a = [dispatch(900, 581, 1), { id: 905, body: `${startReceiptHeader(BOT, 581, 1)}\n\ndispatch 900`, author: "BAWES", appId: null } as IssueComment, ready(910, 581, 1, HEAD_1)];
+  const b = [dispatch(950, 590, 1), ready(960, 590, 1, HEAD_2)];
+  const prB = { [ticketBranch(BOT, "slug-590")]: [{ number: 701, head: HEAD_2, base: "main", draft: false }] };
+  const pulls = (headA: string) => ({ ...prA(headA), ...prB });
+  const fresh = (headA: string) => run(md, { 581: a, 590: b }, claims, pulls(headA)).find((d) => d.issue === 581)!;
+  // Same rule as poll --mode check: a resume for this key, under the run lock held by this token.
+  const check = (headA: string, token: string) =>
+    holdsRun(dir, BOT, keyA, token) && run(md, { 581: a, 590: b }, claims, pulls(headA), keyA).some((d) => d.action === "resume" && d.claimKey === keyA);
+
+  // 1. Parked at HEAD_1.
+  assert.match(JSON.stringify(fresh(HEAD_1)), /waiting for review/);
+  // 2. Claude sends it back at HEAD_1: a fresh poll resumes A and takes the lock.
+  a.push(changes(920, 581, 1, HEAD_1));
+  const next = pickNext(run(md, { 581: a, 590: b }, claims, pulls(HEAD_1)), () => "claimed", acquire(dir));
+  assert.equal(next?.issue, 581);
+  assert.equal(next?.action, "resume");
+  const token = next!.runToken!;
+  assert.ok(check(HEAD_1, token));
+  // 3. The run pushes its revision: its own checks still pass; any fresh poll (and any other token) sees drift and holds.
+  const HEAD_3 = "3".repeat(40);
+  assert.ok(check(HEAD_3, token));
+  assert.equal(check(HEAD_3, "other-token"), false);
+  assert.match(JSON.stringify(fresh(HEAD_3)), /held for Claude's review/);
+  // 4. The run posts its new ready receipt at the new head: parked again, so no further writes pass.
+  a.push(ready(930, 581, 1, HEAD_3));
+  assert.equal(check(HEAD_3, token), false);
+  // 5. It releases the lock; fresh polls see it parked at the new head and nothing to pick (B is parked too).
+  assert.equal(releaseRun(dir, BOT, keyA, token), "released");
+  assert.match(JSON.stringify(fresh(HEAD_3)), new RegExp(`waiting for review at ${HEAD_3}`));
+  assert.equal(pickNext(run(md, { 581: a, 590: b }, claims, pulls(HEAD_3)), () => "claimed", acquire(dir)), null);
+  // 6. Unexplained drift after that (no new changes request) holds the ticket, even for a lock holder.
+  const HEAD_4 = "4".repeat(40);
+  assert.match(JSON.stringify(fresh(HEAD_4)), /held for Claude's review/);
+  const t2 = `t-${Math.random()}`;
+  assert.equal(acquireRun(dir, BOT, keyA, NOW, t2), "acquired");
+  assert.equal(check(HEAD_4, t2), false);
 });
 
 test("a resume stays bound to the dispatch its claim saved", () => {
