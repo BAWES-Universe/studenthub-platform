@@ -83,6 +83,7 @@
     "dist/tools/fixtures/test/fixtures.test.js",
     "dist/tools/legacy-import/test/dry-run.test.js",
     "dist/tools/legacy-import/test/import.test.js",
+    "dist/tools/orca-lane/test/orca-lane.test.js",
     "dist/tools/reconciliation/test/reconciliation.test.js",
     "dist/tools/search-bakeoff/test/search-bakeoff.test.js"
   ],

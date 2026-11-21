@@ -4,7 +4,7 @@
  * 0354) says the same for every class; a db test compares the two.
  */
 import{MORNING_SUMMARY_COUNTERS,MORNING_SUMMARY_HIDDEN_AT_ZERO,MORNING_SUMMARY_KEYS,type MorningSummaryCounts}from"../../reports/src/morning-summary-counters.js";
-export const EMAIL_CLASSES=["account.notice","civil_id.result","staff.morning_summary","staff.firing_spike","recruit.invitation"] as const;
+export const EMAIL_CLASSES=["account.notice","civil_id.result","staff.morning_summary","staff.firing_spike","recruit.invitation","person.birthday","person.civil_id_expired","person.civil_id_expiring"] as const;
 export type EmailClass=typeof EMAIL_CLASSES[number];
 export interface EmailTemplateParameters {
   readonly "account.notice":{readonly heading:string;readonly message:string};
@@ -14,6 +14,12 @@ export interface EmailTemplateParameters {
   readonly "staff.firing_spike":{readonly company:string;readonly month:string;readonly level:"warning"|"danger";readonly total:number;readonly twelveMonthTotal:number};
   /** The person was invited to apply for a request's position (legacy `candidate/job-invitation`). */
   readonly "recruit.invitation":{readonly position:string;readonly company:string};
+  /** Legacy `birthday`: on the person's birthday. `name` is their first name, or empty when there is none. */
+  readonly "person.birthday":{readonly name:string};
+  /** Legacy `civil-expired`: a placed person's civil ID expires today. */
+  readonly "person.civil_id_expired":{readonly name:string};
+  /** Legacy `candidate/civil-id-expiring` (the 15th and 28th): a placed person's civil ID expires within 25 days, or already has. */
+  readonly "person.civil_id_expiring":{readonly name:string;readonly expiry:string;readonly status:"expiring"|"expired"};
 }
 export interface RenderedEmail{readonly subject:string;readonly body:string}
 export interface EmailTemplate<C extends EmailClass=EmailClass>{readonly required:boolean;render(parameters:EmailTemplateParameters[C]):RenderedEmail}
@@ -41,6 +47,13 @@ function renderMorningSummary(p:EmailTemplateParameters["staff.morning_summary"]
 /** One line of 1 to 255 characters with no control characters, as a position title or company name is shown. */
 const lineOk=(text:string)=>{const n=[...text].length;return n>=1&&n<=255&&!/[\u0000-\u001f\u007f-\u009f]/.test(text)};
 const recruitInvitation=(value:unknown):value is EmailTemplateParameters["recruit.invitation"]=>exact(value,["position","company"])&&lineOk(value.position)&&lineOk(value.company);
+/** A first name: up to 255 characters, no control characters; empty when the person has none. */
+const nameOk=(name:string)=>[...name].length<=255&&!/[\u0000-\u001f\u007f-\u009f]/.test(name);
+const personName=(value:unknown):value is {name:string}=>exact(value,["name"])&&nameOk(value.name);
+function civilIdExpiring(value:unknown):value is EmailTemplateParameters["person.civil_id_expiring"]{
+  return exact(value,["name","expiry","status"])&&nameOk(value.name)&&realDay(value.expiry)&&(value.status==="expiring"||value.status==="expired");
+}
+const dear=(name:string)=>name?`Dear ${name},`:"Hello,";
 function firingSpike(value:unknown):value is EmailTemplateParameters["staff.firing_spike"]{
   if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).sort().join("\0")!=="company\0level\0month\0total\0twelveMonthTotal")return false;
   const{company,month,level,total,twelveMonthTotal}=value as Record<string,unknown>;
@@ -62,6 +75,8 @@ export function validateTemplateParameters<C extends EmailClass>(emailClass:C,va
   if(emailClass==="staff.morning_summary"&&morningSummary(value))return value as EmailTemplateParameters[C];
   if(emailClass==="staff.firing_spike"&&firingSpike(value))return value as EmailTemplateParameters[C];
   if(emailClass==="recruit.invitation"&&recruitInvitation(value))return value as EmailTemplateParameters[C];
+  if((emailClass==="person.birthday"||emailClass==="person.civil_id_expired")&&personName(value))return value as EmailTemplateParameters[C];
+  if(emailClass==="person.civil_id_expiring"&&civilIdExpiring(value))return value as EmailTemplateParameters[C];
   throw new TypeError("invalid closed email template parameters");
 }
 export const EMAIL_TEMPLATES:{readonly [C in EmailClass]:EmailTemplate<C>}={
@@ -72,4 +87,7 @@ export const EMAIL_TEMPLATES:{readonly [C in EmailClass]:EmailTemplate<C>}={
   "staff.morning_summary":{required:false,render:renderMorningSummary},
   "staff.firing_spike":{required:false,render:renderFiringSpike},
   "recruit.invitation":{required:false,render:p=>({subject:"You’re invited to apply for a job opening",body:`You're invited to apply for ${p.position} at ${p.company}.\n\nOpen Invitations in your StudentHub account to accept or decline it.`})},
+  "person.birthday":{required:false,render:p=>({subject:"Happy Birthday from StudentHub",body:`Happy Birthday${p.name?`, ${p.name}`:""}!\n\nFrom all of us at StudentHub, we wish you the happiest birthday. New dreams, new hopes, new experiences and new joys, we wish you all the best!`})},
+  "person.civil_id_expired":{required:false,render:p=>({subject:"Please update your civil ID",body:`${dear(p.name)}\n\nThe civil ID on file in your StudentHub account expired today. Please add your new civil ID from your profile to keep your account up to date.`})},
+  "person.civil_id_expiring":{required:false,render:p=>({subject:"Civil ID is expiring",body:`${dear(p.name)}\n\nThe civil ID on file in your StudentHub account ${p.status==="expired"?"expired on":"expires on"} ${longDay(p.expiry)}. Please add your new civil ID from your profile to keep your account up to date.`})},
 };

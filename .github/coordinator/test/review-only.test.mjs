@@ -29,6 +29,10 @@ import { buildClaudePrompt } from "../adapters/claude-code.mjs";
 import { supervisorOrder } from "../supervisor-dispatch.mjs";
 import { SUPERVISOR_PROTOCOL_VERSION } from "../supervisor.mjs";
 import { deriveIncidentEvent } from "../incident-reporting.mjs";
+import { reviewVerdictOf, reviewStatus, publishVerdict, publishPending, verdictCommentBody, isVerdictComment, receiptFindings,
+  summariseReviewMetrics, reviewMetricsLine, appendReviewMetric, readReviewMetrics, publishStatusOn, REVIEW_STATUS_CONTEXT, REVIEW_COMMENT_MARKER,
+  REVIEW_STATUS_DESCRIPTION_MAX } from "../service/review-verdict.mjs";
+import { resolveQueueConfigReview } from "../workspace-scope.mjs";
 
 const COORDINATOR_DIR = fileURLToPath(new URL("..", import.meta.url));
 const CONFIG = JSON.parse(fs.readFileSync(join(COORDINATOR_DIR, "config.json"), "utf8"));
@@ -699,4 +703,214 @@ test("SHU-303 H2: review_base_sha belongs only on a review receipt, is a real ba
   assert.match(writer.errors.join(";"), /review_base_sha belongs only on a review receipt/);
   assert.match(validateReceipt({ ...made, review_base_sha: HEAD }).errors.join(";"), /invalid review_base_sha/);
   assert.match(validateReceipt({ ...made, review_base_sha: "x" }).errors.join(";"), /invalid review_base_sha/);
+});
+
+// ---------------------------------------------------------------------------
+// M18 G1 + G5: the verdict on the pull request, and one metrics line a review
+// ---------------------------------------------------------------------------
+
+const ACTIVATION = "shu-304-run-20261009T120000Z";
+const reviewRun = (over = {}) => ({ kind: "review", card: DESK, activation_id: ACTIVATION, outcome: "REVIEW_PASS",
+  reason: `review-only verdict PASS at ${HEAD} — the episode is complete`, review: { pr: 240, head: HEAD, base: BASE }, ...over });
+
+// GitHub as the landing token sees it: every write and read recorded.
+function fakeGitHubWrites({ comments = [], refuse = () => null } = {}) {
+  const gh = { statuses: [], posted: [], reads: 0 };
+  const respond = (status, json) => ({ ok: status < 300, status, headers: { get: () => null }, json: async () => json });
+  gh.io = { fetch: async (url, options = {}) => {
+    assert.equal(options.headers?.Authorization, "Bearer land-token");
+    const refused = refuse(url, options);
+    if (refused) return respond(refused, { message: "Resource not accessible by integration" });
+    const status = /\/statuses\/([0-9a-f]{40})$/.exec(url);
+    if (status && options.method === "POST") { gh.statuses.push({ sha: status[1], ...JSON.parse(options.body) }); return respond(201, {}); }
+    if (/\/issues\/240\/comments\?per_page=100&page=\d+$/.test(url)) { gh.reads += 1; return respond(200, structuredClone([...comments, ...gh.posted])); }
+    if (/\/issues\/240\/comments$/.test(url) && options.method === "POST") {
+      const comment = { body: JSON.parse(options.body).body, html_url: `https://github.com/x/pull/240#issuecomment-${gh.posted.length + 1}` };
+      gh.posted.push(comment);
+      return respond(201, comment);
+    }
+    return respond(500, null);
+  }, delay: async () => {} };
+  return gh;
+}
+const publish = (gh, over = {}) => publishVerdict({ io: gh.io, token: "land-token", repo: REPO, pr: 240, verdict: "PASS", sha: HEAD,
+  summary: "Looks right.", links: [], card: DESK, activationId: ACTIVATION, timeoutMs: 1000, ...over });
+
+test("M18 G1: a PASS sets success on the exact reviewed head only, and posts one comment headed PASS at the full SHA", async () => {
+  assert.deepEqual(reviewVerdictOf(reviewRun()), { verdict: "PASS", sha: HEAD });
+  // The tick naming any other SHA than the armed head is no verdict.
+  const other = "9".repeat(40);
+  assert.equal(reviewVerdictOf(reviewRun({ reason: `review-only verdict PASS at ${other} — the episode is complete` })).verdict, "HOLD");
+  assert.equal(reviewVerdictOf(reviewRun({ outcome: "STOPPED" })).verdict, "HOLD", "the outcome and the line must agree");
+  assert.equal(reviewVerdictOf({ ...reviewRun(), kind: "card" }), null);
+  const gh = fakeGitHubWrites();
+  const done = await publish(gh);
+  assert.deepEqual(done, { status: "success", comment: "posted", warnings: [] });
+  assert.deepEqual(gh.statuses, [{ sha: HEAD, state: "success", description: `PASS at ${HEAD.slice(0, 7)}`, context: REVIEW_STATUS_CONTEXT,
+    target_url: "https://github.com/x/pull/240#issuecomment-1" }]);
+  assert.equal(gh.posted.length, 1);
+  const body = gh.posted[0].body;
+  assert.equal(body.split("\n")[0], `PASS at ${HEAD}`);
+  assert.match(body, /Looks right\./);
+  assert.ok(body.trimEnd().split("\n").at(-1).includes(REVIEW_COMMENT_MARKER), "the footer names the orchestrator");
+  assert.match(body.trimEnd().split("\n").at(-1), /orchestrator/);
+  // A SHA that is not a full SHA publishes nothing.
+  const none = fakeGitHubWrites();
+  assert.deepEqual((await publish(none, { sha: "abc" })).warnings, ["no verdict to publish"]);
+  assert.deepEqual(none.statuses, []);
+  assert.equal(reviewStatus({ verdict: "PASS", sha: "abc" }), null);
+});
+
+test("M18 G1: a BLOCK sets failure with the findings' first line trimmed to 140 characters, and its comment carries the findings and evidence", async () => {
+  const long = `  The migration drops   a column\n${"x".repeat(300)}`;
+  const status = reviewStatus({ verdict: "BLOCKED", sha: HEAD, summary: `\n${"word ".repeat(60)}\nsecond line` });
+  assert.equal(status.state, "failure");
+  assert.ok(status.description.startsWith(`BLOCK at ${HEAD.slice(0, 7)}: word word`), status.description);
+  assert.equal(status.description.length, REVIEW_STATUS_DESCRIPTION_MAX);
+  assert.ok(status.description.endsWith("…"));
+  assert.equal(reviewStatus({ verdict: "BLOCKED", sha: HEAD, summary: null }).description, `BLOCK at ${HEAD.slice(0, 7)}`);
+  const gh = fakeGitHubWrites();
+  const done = await publish(gh, { verdict: "BLOCKED", summary: long, links: ["src/a.ts@abc:1-4", "https://example.test/log"] });
+  assert.equal(done.status, "failure");
+  assert.equal(gh.statuses[0].description, `BLOCK at ${HEAD.slice(0, 7)}: The migration drops a column`);
+  const body = gh.posted[0].body;
+  assert.equal(body.split("\n")[0], `BLOCK at ${HEAD}`);
+  assert.match(body, /^- src\/a\.ts@abc:1-4$/m);
+  assert.match(body, /^- https:\/\/example\.test\/log$/m);
+  // The findings are read from the terminal receipt: a BLOCK's own, a PASS's note.
+  assert.deepEqual(receiptFindings({ verdict_stage: "BLOCKED", review_findings: { summary: "bad", links: ["l1"] }, evidence_links: ["e1"] }),
+    { summary: "bad", links: ["l1", "e1"] });
+  assert.deepEqual(receiptFindings({ verdict_stage: "PASS", notes: ["x", 'reviewer summary: "fine"'], evidence_links: [] }), { summary: "fine", links: [] });
+  // Reviewer text never notifies anyone and never closes the marker.
+  const quoted = verdictCommentBody({ verdict: "BLOCKED", sha: HEAD, summary: "ask @someone --> now" });
+  assert.equal(quoted.includes("@someone"), false);
+  assert.equal(quoted.split(REVIEW_COMMENT_MARKER).length, 2);
+});
+
+test("M18 G1: a HOLD posts no comment and never success; it sets error only over the run's own pending status", async () => {
+  const held = fakeGitHubWrites();
+  assert.deepEqual(await publish(held, { verdict: "HOLD", pendingSet: false }), { status: null, comment: null, warnings: [] });
+  assert.deepEqual(held.statuses, []);
+  assert.equal(held.reads + held.posted.length, 0, "a HOLD reads and posts no comment");
+  const pending = fakeGitHubWrites();
+  assert.deepEqual(await publishPending({ io: pending.io, token: "land-token", repo: REPO, sha: HEAD, timeoutMs: 1000 }), { set: true });
+  const done = await publish(pending, { verdict: "HOLD", pendingSet: true });
+  assert.equal(done.status, "error");
+  assert.deepEqual(pending.statuses.map((entry) => [entry.sha, entry.state, entry.description]),
+    [[HEAD, "pending", "review running"], [HEAD, "error", "no verdict, will retry"]]);
+  assert.deepEqual(pending.posted, []);
+  assert.equal(reviewStatus({ verdict: "HOLD", sha: HEAD }).state, "error");
+  assert.equal(reviewStatus({ verdict: "NONSENSE", sha: HEAD }), null);
+});
+
+test("M18 G1: a refused or failed publish never throws and never changes the verdict; with no token it only warns", async () => {
+  const refused = fakeGitHubWrites({ refuse: (url, options) => (options.method === "POST" ? 403 : null) });
+  const done = await publish(refused);
+  assert.equal(done.status, null);
+  assert.equal(done.comment, null);
+  assert.equal(done.warnings.length, 2, JSON.stringify(done));
+  assert.match(done.warnings.join(";"), /HTTP 403/);
+  const thrown = { io: { fetch: async () => { throw new Error("boom"); }, delay: async () => {} } };
+  const crashed = await publish(thrown);
+  assert.equal(crashed.status, null);
+  assert.match(crashed.warnings.join(";"), /boom/);
+  assert.deepEqual(await publishPending({ io: thrown.io, token: "land-token", repo: REPO, sha: HEAD, timeoutMs: 1000 }), { set: false, warning: "boom" });
+  const tokenless = await publishVerdict({ io: thrown.io, token: null, repo: REPO, pr: 240, verdict: "PASS", sha: HEAD, timeoutMs: 1000 });
+  assert.deepEqual(tokenless, { status: null, comment: null, warnings: ["no landing token, so the verdict was not published on GitHub"] });
+  // The switch: absent or true is on, false is off, anything else is refused.
+  const policy = (extra) => ({ ...CONFIG, queue_config_review: { ...CONFIG.queue_config_review, ...extra } });
+  assert.equal(publishStatusOn(CONFIG), true);
+  assert.equal(publishStatusOn(policy({ publish_status: false })), false);
+  assert.ok(resolveQueueConfigReview(policy({ publish_status: false })));
+  assert.throws(() => resolveQueueConfigReview(policy({ publish_status: "no" })), /publish_status must be true or false/);
+});
+
+test("M18 G1: a verdict already on the pull request is never posted again, and an unreadable comment list posts nothing", async () => {
+  const gh = fakeGitHubWrites();
+  await publish(gh);
+  const again = await publish(gh);
+  assert.equal(again.comment, "exists");
+  assert.equal(gh.posted.length, 1, "one comment for one verdict at one SHA");
+  assert.equal(gh.statuses.length, 2, "the status is set again, which GitHub keeps as one");
+  assert.equal(gh.statuses[1].target_url, gh.posted[0].html_url);
+  // A person's "PASS at" line without the orchestrator's marker is not ours.
+  const human = fakeGitHubWrites({ comments: [{ body: `PASS at ${HEAD}\nby hand` }] });
+  assert.equal((await publish(human)).comment, "posted");
+  assert.equal(isVerdictComment(`PASS at ${HEAD}\n${REVIEW_COMMENT_MARKER}`, "PASS", HEAD), true);
+  assert.equal(isVerdictComment(`BLOCK at ${HEAD}\n${REVIEW_COMMENT_MARKER}`, "PASS", HEAD), false);
+  // The comments of a second page are read too.
+  const many = fakeGitHubWrites({ comments: Array.from({ length: 100 }, (_, i) => ({ body: `note ${i}` })) });
+  const io = many.io;
+  many.io = { ...io, fetch: async (url, options) => (/page=2$/.test(url)
+    ? { ok: true, status: 200, headers: { get: () => null }, json: async () => [{ body: verdictCommentBody({ verdict: "PASS", sha: HEAD }) }] }
+    : io.fetch(url, options)) };
+  assert.equal((await publish(many)).comment, "exists");
+  const unreadable = fakeGitHubWrites({ refuse: (url, options) => (options.method !== "POST" ? 502 : null) });
+  const done = await publish(unreadable);
+  assert.equal(done.comment, null);
+  assert.deepEqual(unreadable.posted, [], "no list, no post");
+  assert.equal(done.status, "success", "the status still goes out");
+});
+
+test("M18 G5: every review writes one metrics line, and the report line gives the last day's count, PASS share, median, p90 and drops", () => {
+  const files = new Map();
+  const io = { now: () => new Date("2026-10-10T14:00:00.000Z"), fs: {
+    appendFileSync: (file, text) => files.set(file, (files.get(file) ?? "") + text),
+    lstatSync: (file) => { if (!files.has(file)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); return { isFile: () => true, isSymbolicLink: () => false }; },
+    readFileSync: (file) => files.get(file),
+  } };
+  assert.equal(readReviewMetrics(io, "/state"), null, "no log, no line");
+  const at = (minutes) => new Date(Date.parse("2026-10-10T11:00:00.000Z") + minutes * 60000).toISOString();
+  const pushed = "2026-10-10T10:00:00.000Z";
+  // Head to verdict: 60, 70, 80, 90, 100, 110, 120, 130, 140, 150 minutes and a HOLD.
+  for (let i = 0; i < 10; i += 1) {
+    appendReviewMetric(io, "/state", { pr: 240 + i, head_sha: HEAD, head_pushed_at: pushed, review_started_at: at(i * 10 - 5), verdict_at: at(i * 10),
+      verdict: i < 7 ? "PASS" : "BLOCKED", slot: 1 });
+  }
+  appendReviewMetric(io, "/state", { pr: 251, head_sha: HEAD, head_pushed_at: null, review_started_at: at(1), verdict_at: at(2), verdict: "HOLD", slot: 2 });
+  // Older than a day, and a broken line: neither counts.
+  appendReviewMetric(io, "/state", { pr: 1, head_sha: HEAD, head_pushed_at: "2026-10-01T00:00:00.000Z", verdict_at: "2026-10-01T01:00:00.000Z", verdict: "PASS", slot: 1 });
+  files.set("/state/review-metrics.jsonl", `${files.get("/state/review-metrics.jsonl")}{broken\n`);
+  const lines = files.get("/state/review-metrics.jsonl").trim().split("\n");
+  assert.deepEqual(JSON.parse(lines[0]), { pr: 240, head_sha: HEAD, head_pushed_at: pushed, review_started_at: at(-5), verdict_at: at(0), verdict: "PASS", slot: 1, dropped: false });
+  assert.equal(JSON.parse(lines[10]).dropped, true, "a HOLD is a dropped review");
+  const metrics = readReviewMetrics(io, "/state");
+  assert.deepEqual(metrics, { reviews: 11, verdicts: 10, pass: 7, dropped: 1, median_ms: 105 * 60000, p90_ms: 140 * 60000, timed: 10 });
+  assert.equal(reviewMetricsLine(metrics), "Reviews: 11 in the last 24 hours, 70% PASS; head to verdict median 105 min, p90 140 min (10 timed); 1 dropped with no verdict.");
+  assert.equal(reviewMetricsLine(summariseReviewMetrics("", Date.now())), "Reviews: 0 in the last 24 hours, no verdicts; head to verdict median n/a, p90 n/a (0 timed); 0 dropped with no verdict.");
+  assert.equal(reviewMetricsLine(null), null);
+});
+
+// M18 G2: review slots. max_parallel absent is one slot, the policy's lane;
+// more slots name one standing review card each, the policy's lane first, and
+// every one must be a committed, reviewed review-only lane.
+test("M18 G2: max_parallel is 1 to 8 and absent is one slot, and slot_lanes names that many committed review-only lanes, the policy's lane first", () => {
+  const policy = CONFIG.queue_config_review;
+  const resolve = (edit) => resolveQueueConfigReview({ ...CONFIG, queue_config_review: { ...policy, ...edit } });
+  const shape = (resolved) => [resolved.maxParallel, [...resolved.slotLanes]];
+  assert.deepEqual(shape(resolveQueueConfigReview(CONFIG)), [1, [policy.lane]]);
+  assert.deepEqual(shape(resolve({ max_parallel: 1 })), [1, [policy.lane]]);
+  assert.deepEqual(shape(resolve({ max_parallel: 1, slot_lanes: [policy.lane] })), [1, [policy.lane]]);
+  assert.equal(Object.isFrozen(resolveQueueConfigReview(CONFIG).slotLanes), true);
+  for (const [label, edit] of [
+    ["zero slots", { max_parallel: 0 }],
+    ["nine slots", { max_parallel: 9, slot_lanes: Array.from({ length: 9 }, () => policy.lane) }],
+    ["a string", { max_parallel: "2" }],
+    ["a fraction", { max_parallel: 1.5 }],
+    ["slot lanes without max_parallel", { slot_lanes: [policy.lane] }],
+    ["two slots without slot lanes", { max_parallel: 2 }],
+    ["fewer lanes than slots", { max_parallel: 2, slot_lanes: [policy.lane] }],
+    ["more lanes than slots", { max_parallel: 1, slot_lanes: [policy.lane, "SHU-998"] }],
+    ["another lane first", { max_parallel: 1, slot_lanes: ["SHU-998"] }],
+    ["one card in two slots", { max_parallel: 2, slot_lanes: [policy.lane, policy.lane] }],
+    ["a lane that is no review card", { max_parallel: 2, slot_lanes: [policy.lane, "SHU-998"] }],
+    ["a build card as a slot", { max_parallel: 2, slot_lanes: [policy.lane, CONFIG.card_lanes?.[0]?.id ?? "SHU-301"] }],
+    ["not a list", { max_parallel: 1, slot_lanes: policy.lane }],
+  ]) {
+    assert.throws(() => resolve(edit), /queue_config_review\.(max_parallel|slot_lanes)/, label);
+  }
+  // Each refusal names its own rule.
+  assert.throws(() => resolve({ max_parallel: 9, slot_lanes: Array.from({ length: 9 }, () => policy.lane) }), /max_parallel must be 1 to 8/);
+  assert.throws(() => resolve({ max_parallel: 2 }), /max_parallel above 1 needs slot_lanes/);
+  assert.throws(() => resolve({ slot_lanes: [policy.lane] }), /slot_lanes needs max_parallel/);
 });
