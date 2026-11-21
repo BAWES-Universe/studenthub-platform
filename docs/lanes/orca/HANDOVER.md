@@ -215,15 +215,16 @@ Run this once, now, by hand, and do not schedule anything: in your studenthub-pl
 Run this once, now, by hand, and do not schedule anything: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then follow section B3 of docs/lanes/orca/HANDOVER.md on main in work mode, using the poll tool exactly as written there. The poll alone decides whether you may work. If it gives you nothing to do, post nothing. Carry the ticket it gives you through to a ready PR, then release the run lock as B3 says. Reply "work run done" with the poll output, the PR link and the release output.
 ```
 
-**Schedule prompt: superseded.** The open-ended 15-minute schedule is retired. Every schedule is now bounded: it names its tickets and a cutoff, and Khalid's paste is his opt-in for exactly those tickets. The stage 2 prompt, sent on 2026-11-21:
+**Schedule prompt: superseded.** The open-ended 15-minute schedule is retired. Every schedule is now bounded: it names its tickets and a cutoff, and Khalid's paste is his opt-in for exactly those tickets. The stage 2 prompt, sent on 2026-11-21 (recurrence end added the same day):
 
 ```
-Schedule an automation that runs every 15 minutes while you are online and never overlaps itself. Each run: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then follow section B3 of docs/lanes/orca/HANDOVER.md on main in work mode, using the poll tool exactly as written there. The poll alone decides whether you may work. If it gives you nothing to do, post nothing. This schedule covers only issues #603 and #604. Delete the schedule yourself as soon as both are closed, or at 24 Nov 18:00 UTC, whichever comes first. If the poll or its check ever refuses because of a lease or run-lock problem, delete the schedule and post `stopped` on that issue. Reply "poll scheduled" with the schedule you set.
+Schedule an automation that runs every 15 minutes while you are online and never overlaps itself. Set its recurrence to end before 24 Nov 18:00 UTC (no run at or after that time) and to skip missed runs rather than catch them up. Each run: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then follow section B3 of docs/lanes/orca/HANDOVER.md on main in work mode, using the poll tool exactly as written there. The poll alone decides whether you may work. If it gives you nothing to do, post nothing. This schedule covers only issues #603 and #604. Delete the schedule yourself as soon as both are closed, or at 24 Nov 18:00 UTC, whichever comes first. If the poll or its check ever refuses because of a lease or run-lock problem, delete the schedule and post `stopped` on that issue. Reply "poll scheduled" with the schedule you set.
 ```
 
 How the bot reads it:
 - **Quiet skips are not problems.** The run lock being busy, a parked ticket, or nothing to do: post nothing, keep the schedule.
 - **Stop the pilot** (delete the schedule and post `stopped`) only on lost ownership (`check` refuses on your own running ticket, or `release` reports `not-owner`) or a lease violation.
+- **Scope is the register.** The poll picks from every eligible row for the bot, so the register is what keeps a schedule to its tickets: while a bounded schedule is active, Claude registers no other `active` row for that bot.
 - **Set the recurrence to end before the cutoff.** No occurrence at or after 2026-11-24 18:00 UTC, and no catch-up of missed runs past it. A prompt can't stop a scheduler while the PC sleeps, so the end has to be in the schedule itself. Reply with the stored recurrence; Claude checks it.
 
 ---
