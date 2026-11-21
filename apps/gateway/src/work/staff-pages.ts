@@ -17,62 +17,32 @@ import {
 } from "../../../../packages/work/src/index.js";
 import { pageDocument } from "../web-ui.js";
 import type { WorkHttpServices } from "./http.js";
-import { clock, duration, esc, FORM_LIMITS, kuwaitInstant, longDate, notice, plain, readForm, redirect, sessionCookie, STATUS_LABEL, tooLarge, write } from "./pages.js";
+import { docLanguage, esc, FORM_LIMITS, kuwaitInstant, notice, plain, readForm, redirect, sessionCookie, tooLarge, write } from "./pages.js";
+import { WORK_COPY, workCopyFor, type WorkCopy } from "./copy.js";
+import { teamCopy } from "./team-copy.js";
 
 const ORG_ID = /^[A-Za-z0-9._:-]{1,256}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const APPEAL_POST = /^\/work\/appeals\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(reply|status|missing-time)$/;
 const ASSIGNMENT_POST = /^\/work\/assignments\/(place|end|request)$/;
 
-const APPEAL_STATUS: Readonly<Record<string, string>> = { submitted: "New", awaiting_review: "Waiting for review", in_progress: "In progress", resolved: "Resolved" };
-const REQUEST_STATUS: Readonly<Record<string, string>> = { pending: "Waiting", accepted: "Placed", rejected: "Declined", cancelled: "Cancelled" };
-const PLACED_BY: Readonly<Record<string, string>> = { staff: "placed by staff", request: "from a company request", recruit: "from recruitment", import: "from the old system" };
-const WARNINGS: Readonly<Record<string, string>> = {
-  civil_id_missing: "No civil ID on file", civil_id_expires_before_start: "Civil ID expires before the start date", no_pay_contract: "No pay contract matched",
-};
-const REFUSALS: Readonly<Record<string, string>> = {
-  invalid_input: "Check the form and try again.",
-  forbidden: "You can't do that for this company.",
-  store_not_found: "That store doesn't exist.",
-  store_removed: "That store has been removed.",
-  person_not_found: "We couldn't find that person.",
-  person_paused: "This person's StudentHub access is paused. Resume their access before placing them.",
-  overlaps_assignment: "The person is already placed somewhere for part of those dates.",
-  ambiguous_contract: "More than one pay contract matches. Choose the contract.",
-  contract_not_applicable: "That pay contract doesn't apply to this placement.",
-  end_before_start: "The end must be after the start.",
-  open_session: "The person is clocked in there. They need to clock out before the placement ends.",
-  sessions_after_end: "Hours are recorded after that date. Choose a later end date, or remove those hours first.",
-  assignment_not_found: "That placement no longer exists.",
-  request_not_found: "That request no longer exists.",
-  request_not_pending: "That request was already answered.",
-  session_not_found: "Those hours no longer exist, or aren't in a company you look after.",
-  session_open: "Hours still in progress can't be corrected.",
-  session_replaced: "Those hours were already corrected. Correct the newer entry instead.",
-  appeal_not_found: "That appeal doesn't match these hours.",
-  appeal_open: "The person has another open appeal on these hours. Resolve that one first.",
-  outside_assignment: "The person wasn't placed there on that date.",
-  overlaps_session: "Those times overlap other hours of the person.",
-  in_future: "Hours can't be in the future.",
-};
-const DONE: Readonly<Record<string, string>> = {
-  placed: "The person was placed.", ended: "The placement end date was saved.", extended: "The placement end date was saved.", unchanged: "Nothing changed.",
-  accepted: "The request was accepted and the person placed.", rejected: "The request was declined.",
-  posted: "Your reply was sent.", updated: "The appeal status was saved.", entered: "The hours were saved and approved.",
-};
-
 /** The appeal list for staff, kept to one company when the staff member covers only that company. */
 const appealList = (org?: string) => `/work/appeals?as=staff${org ? `&amp;org=${encodeURIComponent(org)}` : ""}`;
 
-function staffShell(title: string, current: "assignments" | "logs" | "appeals", body: string, org?: string): string {
-  const tab = (path: string, key: string, label: string) => `<a href="${path}"${key === current ? ' aria-current="page"' : ""}>${label}</a>`;
-  const nav = `<nav class="p-card" aria-label="Staff work">${tab("/work/assignments", "assignments", "Placements")} · ${tab("/work/logs", "logs", "Work logs")} · ${tab(appealList(org), "appeals", "Appeals")}</nav>`;
-  return pageDocument(title, `<main id="main" class="profile-ui"><div class="p-shell"><div class="p-main p-stack"><header class="p-header"><h1>${esc(title)}</h1></header>${nav}${body}</div></div></main>`);
+function staffShell(title: string, current: "assignments" | "logs" | "appeals", body: string, c: WorkCopy, org?: string): string {
+  const t = teamCopy(c).staff;
+  const tab = (path: string, key: string, label: string) => `<a href="${path}"${key === current ? ' aria-current="page"' : ""}>${esc(label)}</a>`;
+  const nav = `<nav class="p-card" aria-label="${esc(t.nav)}">${tab("/work/assignments", "assignments", t.placementsTab)} · ${tab("/work/logs", "logs", t.logsTab)} · ${tab(appealList(org), "appeals", t.appealsTab)}</nav>`;
+  return pageDocument(title, `<main id="main" class="profile-ui"><div class="p-shell"><div class="p-main p-stack"><header class="p-header"><h1>${esc(title)}</h1></header>${nav}${body}</div></div></main>`, docLanguage(c));
 }
 const message = (m: { kind: "success" | "error"; text: string } | null) => m ? notice(m.kind, m.text) : "";
-const refusal = (code: string) => ({ kind: "error" as const, text: REFUSALS[code] ?? REFUSALS.invalid_input! });
-const sessionTime = (s: WorkSession) => `${longDate(s.workDate)}, ${clock(s.startedAt)} to ${s.endedAt ? `${clock(s.endedAt)} (${duration(s.durationSeconds ?? 0)})` : "now"}`;
-const shortDate = (iso: string) => longDate(kuwaitDate(new Date(iso)));
+const refusal = (code: string, c: WorkCopy) => {
+  const refusals = teamCopy(c).staff.refusals;
+  return { kind: "error" as const, text: refusals[code] ?? refusals.invalid_input! };
+};
+const sessionTime = (s: WorkSession, c: WorkCopy) =>
+  teamCopy(c).common.timeRange(c.longDate(s.workDate), c.clock(s.startedAt), s.endedAt ? c.clock(s.endedAt) : null, s.endedAt ? c.duration(s.durationSeconds ?? 0) : null);
+const shortDate = (iso: string, c: WorkCopy) => c.longDate(kuwaitDate(new Date(iso)));
 /** A Kuwait wall time for a `datetime-local` field. */
 /** Keeps seconds and milliseconds (when present), so an untouched time is submitted unchanged. */
 const localValue = (iso: string) => {
@@ -86,14 +56,16 @@ async function names(services: WorkHttpServices, ids: Iterable<string>): Promise
 }
 
 /** Success messages for the staff appeal screen, which pages.ts renders when the actor isn't the appellant. */
-export function staffDone(done: string | null): { kind: "success"; text: string } | null {
-  return done && DONE[done] ? { kind: "success", text: DONE[done]! } : null;
+export function staffDone(done: string | null, c: WorkCopy = WORK_COPY.en): { kind: "success"; text: string } | null {
+  const words = teamCopy(c).staff.done;
+  return done && words[done] ? { kind: "success", text: words[done]! } : null;
 }
 
 /** A-12 placements for one company; `undefined` when the actor isn't staff or the company there. */
-export async function renderAssignments(services: WorkHttpServices, actor: string, orgId: string | null, m: { kind: "success" | "error"; text: string } | null): Promise<string | undefined> {
-  const pick = `<form method="get" action="/work/assignments" class="p-card" aria-label="Company"><label>Company ID<input name="org" value="${esc(orgId ?? "")}" required maxlength="256"></label><button type="submit">Open</button></form>`;
-  if (orgId === null) return staffShell("Placements", "assignments", `${message(m)}${pick}<section class="p-card"><div class="p-empty"><p>Open a company to see its placements and requests.</p></div></section>`);
+export async function renderAssignments(services: WorkHttpServices, actor: string, orgId: string | null, m: { kind: "success" | "error"; text: string } | null, c: WorkCopy = WORK_COPY.en): Promise<string | undefined> {
+  const t = teamCopy(c).staff;
+  const pick = `<form method="get" action="/work/assignments" class="p-card" aria-label="${esc(t.companyLabel)}"><label>${esc(t.companyId)}<input name="org" value="${esc(orgId ?? "")}" required maxlength="256"></label><button type="submit">${esc(t.open)}</button></form>`;
+  if (orgId === null) return staffShell(t.placementsTab, "assignments", `${message(m)}${pick}<section class="p-card"><div class="p-empty"><p>${esc(t.openCompany)}</p></div></section>`, c);
   const [placements, requests] = await Promise.all([services.placements.forOrganization(actor, orgId), services.placements.requestsFor(actor, orgId, { status: "pending" })]);
   if (!placements || !requests) return undefined;
   const [people, stores, storeList] = await Promise.all([
@@ -104,24 +76,25 @@ export async function renderAssignments(services: WorkHttpServices, actor: strin
   const today = kuwaitDate(new Date());
   const hidden = `<input type="hidden" name="org" value="${esc(orgId)}">`;
   const person = (id: string) => esc(people.get(id) ?? id);
-  const store = (id: string) => esc(stores.get(id) ?? "A store");
+  const store = (id: string) => esc(stores.get(id) ?? t.aStore);
   const placementItem = (a: Assignment) => {
-    const warnings = a.warnings.map((w) => WARNINGS[w] ?? w);
-    const state = a.endDate !== null && a.endDate < today ? "Ended" : a.startDate > today ? "Starts later" : "Current";
-    return `<li class="p-card"><h3>${person(a.personId)}</h3><p>${store(a.storeId)} · ${esc(longDate(a.startDate))} to ${a.endDate ? esc(longDate(a.endDate)) : "no end date"} · <strong>${state}</strong> · ${esc(PLACED_BY[a.source] ?? a.source)}</p>${warnings.length ? `<p>Check: ${esc(warnings.join("; "))}</p>` : ""}
-<form method="post" action="/work/assignments/end">${hidden}<input type="hidden" name="assignmentId" value="${a.id}"><label>End date<input type="date" name="endDate" value="${a.endDate ?? ""}"></label><button type="submit">Save end date</button></form></li>`;
+    const warnings = a.warnings.map((w) => t.warnings[w] ?? w);
+    const state = a.endDate !== null && a.endDate < today ? t.stateEnded : a.startDate > today ? t.stateLater : t.stateCurrent;
+    return `<li class="p-card"><h3>${person(a.personId)}</h3><p>${store(a.storeId)} · ${esc(t.period(c.longDate(a.startDate), a.endDate ? c.longDate(a.endDate) : null))} · <strong>${esc(state)}</strong> · ${esc(t.placedBy[a.source] ?? a.source)}</p>${warnings.length ? `<p>${esc(t.check(warnings.join(t.checkJoin)))}</p>` : ""}
+<form method="post" action="/work/assignments/end">${hidden}<input type="hidden" name="assignmentId" value="${a.id}"><label>${esc(t.endDate)}<input type="date" name="endDate" value="${a.endDate ?? ""}"></label><button type="submit">${esc(t.saveEnd)}</button></form></li>`;
   };
-  const requestItem = (r: AssignmentRequest) => `<li class="p-card"><h3>${person(r.personId)}</h3><p>${store(r.storeId)} · asked ${esc(shortDate(r.requestedAt))} · ${esc(REQUEST_STATUS[r.status] ?? r.status)}</p>${r.note ? `<p>Their note: ${esc(r.note)}</p>` : ""}
-<form method="post" action="/work/assignments/request">${hidden}<input type="hidden" name="requestId" value="${r.id}"><label>Start date (optional)<input type="date" name="startDate"></label><label>Pay contract ID (only when more than one matches)<input name="payContractId" maxlength="36"></label><label>Reason (optional)<input name="reason" maxlength="500"></label><button type="submit" name="decision" value="accept">Accept and place</button> <button type="submit" name="decision" value="reject">Decline</button></form></li>`;
-  const storeField = storeList ? `<label>Store<select name="storeId" required>${storeList.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select></label>` : `<label>Store ID<input name="storeId" required maxlength="36"></label>`;
-  const place = `<section class="p-card" aria-labelledby="place-heading"><h2 id="place-heading">Place a person</h2><form method="post" action="/work/assignments/place">${hidden}<label>Their StudentHub ID<input name="personId" required maxlength="256"></label>${storeField}
-<label>Start date<input type="date" name="startDate" required></label><label>End date (optional)<input type="date" name="endDate"></label><label>Pay contract ID (only when more than one matches)<input name="payContractId" maxlength="36"></label><button type="submit">Place</button></form></section>`;
-  const list = (title: string, id: string, items: string[], empty: string) => `<section class="p-card" aria-labelledby="${id}"><h2 id="${id}">${title}</h2>${items.length ? `<ul class="p-stack">${items.join("")}</ul>` : `<div class="p-empty"><p>${empty}</p></div>`}</section>`;
-  return staffShell("Placements", "assignments", `${message(m)}${pick}${list("Requests waiting", "requests-heading", requests.map(requestItem), "No requests are waiting.")}${place}${list("Placements", "placements-heading", placements.map(placementItem), "Nobody is placed at this company.")}`, orgId);
+  const requestItem = (r: AssignmentRequest) => `<li class="p-card"><h3>${person(r.personId)}</h3><p>${store(r.storeId)} · ${esc(t.asked(shortDate(r.requestedAt, c)))} · ${esc(t.requestStatus[r.status] ?? r.status)}</p>${r.note ? `<p>${esc(t.theirNote(r.note))}</p>` : ""}
+<form method="post" action="/work/assignments/request">${hidden}<input type="hidden" name="requestId" value="${r.id}"><label>${esc(t.startOptional)}<input type="date" name="startDate"></label><label>${esc(t.contractId)}<input name="payContractId" maxlength="36"></label><label>${esc(t.reasonOptional)}<input name="reason" maxlength="500"></label><button type="submit" name="decision" value="accept">${esc(t.accept)}</button> <button type="submit" name="decision" value="reject">${esc(t.decline)}</button></form></li>`;
+  const storeField = storeList ? `<label>${esc(t.store)}<select name="storeId" required>${storeList.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select></label>` : `<label>${esc(t.storeId)}<input name="storeId" required maxlength="36"></label>`;
+  const place = `<section class="p-card" aria-labelledby="place-heading"><h2 id="place-heading">${esc(t.placeHeading)}</h2><form method="post" action="/work/assignments/place">${hidden}<label>${esc(t.theirId)}<input name="personId" required maxlength="256"></label>${storeField}
+<label>${esc(t.startDate)}<input type="date" name="startDate" required></label><label>${esc(t.endOptional)}<input type="date" name="endDate"></label><label>${esc(t.contractId)}<input name="payContractId" maxlength="36"></label><button type="submit">${esc(t.place)}</button></form></section>`;
+  const list = (title: string, id: string, items: string[], empty: string) => `<section class="p-card" aria-labelledby="${id}"><h2 id="${id}">${esc(title)}</h2>${items.length ? `<ul class="p-stack">${items.join("")}</ul>` : `<div class="p-empty"><p>${esc(empty)}</p></div>`}</section>`;
+  return staffShell(t.placementsTab, "assignments", `${message(m)}${pick}${list(t.requestsWaiting, "requests-heading", requests.map(requestItem), t.noRequests)}${place}${list(t.placements, "placements-heading", placements.map(placementItem), t.nobody)}`, c, orgId);
 }
 
 /** A-13 list; `undefined` when the actor isn't staff. */
-export async function renderStaffAppeals(services: WorkHttpServices, actor: string, query: URLSearchParams): Promise<string | undefined> {
+export async function renderStaffAppeals(services: WorkHttpServices, actor: string, query: URLSearchParams, c: WorkCopy = WORK_COPY.en): Promise<string | undefined> {
+  const tc = teamCopy(c), t = tc.staff;
   const status = query.get("status") ?? "", after = parseAppealCursor(query.get("after")), org = query.get("org")?.trim() || "";
   if (after === undefined || (org !== "" && !ORG_ID.test(org))) return undefined;
   // Staff of one company list that company's appeals; operator staff may leave the company out.
@@ -129,33 +102,34 @@ export async function renderStaffAppeals(services: WorkHttpServices, actor: stri
   if (!Array.isArray(list)) return undefined;
   const appeals = list as readonly WorkAppeal[];
   const people = await names(services, appeals.map((a) => a.personId));
-  const option = (value: string, label: string) => `<option value="${value}"${status === value ? " selected" : ""}>${label}</option>`;
-  const filter = `<form method="get" action="/work/appeals" class="p-card" aria-label="Filter"><input type="hidden" name="as" value="staff"><label>Company ID (optional)<input name="org" value="${esc(org)}" maxlength="256"></label><label>Status<select name="status">${option("", "All")}${APPEAL_STATUSES.map((s) => option(s, APPEAL_STATUS[s]!)).join("")}</select></label><button type="submit">Show</button></form>`;
-  const items = appeals.length === 0 ? `<div class="p-empty"><p>No appeals match.</p></div>`
-    : `<ul>${appeals.map((a) => `<li><a href="/work/appeals/${a.id}">${esc(people.get(a.personId) ?? a.personId)}</a>, raised ${esc(shortDate(a.createdAt))}: <strong>${esc(APPEAL_STATUS[a.status] ?? a.status)}</strong>. ${esc(a.reason.length > 120 ? `${a.reason.slice(0, 119)}…` : a.reason)}</li>`).join("")}</ul>`;
+  const option = (value: string, label: string) => `<option value="${value}"${status === value ? " selected" : ""}>${esc(label)}</option>`;
+  const filter = `<form method="get" action="/work/appeals" class="p-card" aria-label="${esc(tc.common.filter)}"><input type="hidden" name="as" value="staff"><label>${esc(t.companyOptional)}<input name="org" value="${esc(org)}" maxlength="256"></label><label>${esc(tc.common.status)}<select name="status">${option("", tc.common.all)}${APPEAL_STATUSES.map((s) => option(s, t.appealStatus[s]!)).join("")}</select></label><button type="submit">${esc(tc.common.show)}</button></form>`;
+  const items = appeals.length === 0 ? `<div class="p-empty"><p>${esc(t.noAppeals)}</p></div>`
+    : `<ul>${appeals.map((a) => `<li><a href="/work/appeals/${a.id}">${esc(people.get(a.personId) ?? a.personId)}</a>${esc(t.appealLine(shortDate(a.createdAt, c)))}<strong>${esc(t.appealStatus[a.status] ?? a.status)}</strong>. ${esc(a.reason.length > 120 ? `${a.reason.slice(0, 119)}…` : a.reason)}</li>`).join("")}</ul>`;
   const last = appeals[appeals.length - 1];
-  const older = appeals.length === 50 && last ? `<p><a href="/work/appeals?as=staff&amp;status=${encodeURIComponent(status)}${org ? `&amp;org=${encodeURIComponent(org)}` : ""}&amp;after=${encodeURIComponent(`${last.createdAt}~${last.id}`)}">Older appeals</a></p>` : "";
-  return staffShell("Appeals", "appeals", `${filter}<section class="p-card">${items}${older}</section>`, org || undefined);
+  const older = appeals.length === 50 && last ? `<p><a href="/work/appeals?as=staff&amp;status=${encodeURIComponent(status)}${org ? `&amp;org=${encodeURIComponent(org)}` : ""}&amp;after=${encodeURIComponent(`${last.createdAt}~${last.id}`)}">${esc(t.olderAppeals)}</a></p>` : "";
+  return staffShell(t.appealsTitle, "appeals", `${filter}<section class="p-card">${items}${older}</section>`, c, org || undefined);
 }
 
 /** A-13 detail for staff; the service has already checked the actor may see this appeal. */
 export async function renderStaffAppeal(services: WorkHttpServices, detail: AppealDetail, m: { kind: "success" | "error"; text: string } | null,
-  refill: { readonly form: "correct" | "missing"; readonly values: EntryValues } | null = null): Promise<string> {
+  refill: { readonly form: "correct" | "missing"; readonly values: EntryValues } | null = null, c: WorkCopy = WORK_COPY.en): Promise<string> {
+  const tc = teamCopy(c), t = tc.staff;
   const { appeal, session, updates, entries } = detail;
   const people = await names(services, [appeal.personId, ...updates.map((u) => u.authorId).filter((id): id is string => id !== null)]);
-  const where = services.storeNames ? (await services.storeNames([session.storeId])).get(session.storeId) ?? "A store" : "A store";
+  const where = services.storeNames ? (await services.storeNames([session.storeId])).get(session.storeId) ?? t.aStore : t.aStore;
   const base = `/work/appeals/${appeal.id}`;
-  const head = `<section class="p-card"><h2>${esc(people.get(appeal.personId) ?? appeal.personId)}: ${esc(APPEAL_STATUS[appeal.status] ?? appeal.status)}</h2><p>Raised ${esc(shortDate(appeal.createdAt))} about ${esc(sessionTime(session))} at ${esc(where)} (${esc(STATUS_LABEL[session.status] ?? session.status)}).</p><p>Their reason: ${esc(appeal.reason)}</p></section>`;
-  const done = entries.length ? `<section class="p-card"><h2>Changes made</h2><ul>${entries.map((e) => `<li>${e.source === "correction" ? "Corrected to" : "Added"} ${esc(sessionTime(e))}</li>`).join("")}</ul></section>` : "";
-  const replies = updates.length === 0 ? `<div class="p-empty"><p>No replies yet.</p></div>`
-    : `<ul class="p-stack">${updates.map((u) => `<li class="p-card">${u.title ? `<h3>${esc(u.title)}</h3>` : ""}<p>${esc(u.detail)}</p><p>${esc(shortDate(u.createdAt))}${u.authorId ? ` · ${esc(people.get(u.authorId) ?? "Staff")}` : ""}${u.readAt ? " · Read" : ""}</p></li>`).join("")}</ul>`;
-  const reply = `<form method="post" action="${base}/reply"><label>Title (optional)<input name="title" maxlength="255"></label><label>Reply to the person<textarea name="detail" required maxlength="5000"></textarea></label><button type="submit">Send reply</button></form>`;
-  const status = `<form method="post" action="${base}/status"><label>Status<select name="status">${APPEAL_STATUSES.map((s) => `<option value="${s}"${s === appeal.status ? " selected" : ""}>${APPEAL_STATUS[s]}</option>`).join("")}</select></label><button type="submit">Save status</button></form>`;
+  const head = `<section class="p-card"><h2>${esc(people.get(appeal.personId) ?? appeal.personId)}: ${esc(t.appealStatus[appeal.status] ?? appeal.status)}</h2><p>${esc(t.raisedAbout(shortDate(appeal.createdAt, c), sessionTime(session, c), where, c.status[session.status] ?? session.status))}</p><p>${esc(t.theirReason(appeal.reason))}</p></section>`;
+  const done = entries.length ? `<section class="p-card"><h2>${esc(t.changesMade)}</h2><ul>${entries.map((e) => `<li>${esc(e.source === "correction" ? t.correctedTo : t.added)} ${esc(sessionTime(e, c))}</li>`).join("")}</ul></section>` : "";
+  const replies = updates.length === 0 ? `<div class="p-empty"><p>${esc(t.noReplies)}</p></div>`
+    : `<ul class="p-stack">${updates.map((u) => `<li class="p-card">${u.title ? `<h3>${esc(u.title)}</h3>` : ""}<p>${esc(u.detail)}</p><p>${esc(shortDate(u.createdAt, c))}${u.authorId ? ` · ${esc(people.get(u.authorId) ?? t.staffName)}` : ""}${u.readAt ? esc(t.read) : ""}</p></li>`).join("")}</ul>`;
+  const reply = `<form method="post" action="${base}/reply"><label>${esc(t.titleOptional)}<input name="title" maxlength="255"></label><label>${esc(t.replyField)}<textarea name="detail" required maxlength="5000"></textarea></label><button type="submit">${esc(t.sendReply)}</button></form>`;
+  const status = `<form method="post" action="${base}/status"><label>${esc(tc.common.status)}<select name="status">${APPEAL_STATUSES.map((s) => `<option value="${s}"${s === appeal.status ? " selected" : ""}>${esc(t.appealStatus[s]!)}</option>`).join("")}</select></label><button type="submit">${esc(t.saveStatus)}</button></form>`;
   const fixValues = refill?.form === "correct" ? refill.values : {}, missingValues = refill?.form === "missing" ? refill.values : {};
-  const fixes = session.endedAt === null ? "" : `<section class="p-card" aria-labelledby="fix-heading"><h2 id="fix-heading">Fix the hours</h2><p>Times are Kuwait time. A correction replaces the appealed entry in every total and in pay; the original stays on record. Both are approved by you.</p>
-<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${session.id}"><input type="hidden" name="appealId" value="${appeal.id}">${entryFields(fixValues.startedAt ?? localValue(session.startedAt), fixValues.endedAt ?? localValue(session.endedAt), fixValues)}<button type="submit">Correct these hours</button></form>
-<form method="post" action="${base}/missing-time">${entryFields(missingValues.startedAt ?? "", missingValues.endedAt ?? "", missingValues)}<button type="submit">Add missing time</button></form></section>`;
-  return staffShell("Appeal", "appeals", `${message(m)}${head}${done}<section class="p-card" aria-labelledby="replies-heading"><h2 id="replies-heading">Replies</h2>${replies}${reply}${status}</section>${fixes}<nav class="p-card"><a href="${appealList(appeal.orgId)}">All appeals</a></nav>`, appeal.orgId);
+  const fixes = session.endedAt === null ? "" : `<section class="p-card" aria-labelledby="fix-heading"><h2 id="fix-heading">${esc(t.fixHeading)}</h2><p>${esc(t.fixIntro)}</p>
+<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${session.id}"><input type="hidden" name="appealId" value="${appeal.id}">${entryFields(fixValues.startedAt ?? localValue(session.startedAt), fixValues.endedAt ?? localValue(session.endedAt), fixValues, c)}<button type="submit">${esc(t.correct)}</button></form>
+<form method="post" action="${base}/missing-time">${entryFields(missingValues.startedAt ?? "", missingValues.endedAt ?? "", missingValues, c)}<button type="submit">${esc(t.addMissing)}</button></form></section>`;
+  return staffShell(t.appealTitle, "appeals", `${message(m)}${head}${done}<section class="p-card" aria-labelledby="replies-heading"><h2 id="replies-heading">${esc(t.replies)}</h2>${replies}${reply}${status}</section>${fixes}<nav class="p-card"><a href="${appealList(appeal.orgId)}">${esc(t.allAppeals)}</a></nav>`, c, appeal.orgId);
 }
 
 /** Values a refused form sends back, so staff fix one field instead of retyping the rest. */
@@ -163,20 +137,22 @@ export interface EntryValues { readonly startedAt?: string; readonly endedAt?: s
 
 /** A-13 correction form for one session; `undefined` when the actor can't see it or it can't be corrected. */
 export async function renderCorrection(services: WorkHttpServices, actor: string, sessionId: string, date: string, m: { kind: "success" | "error"; text: string } | null,
-  values: EntryValues = {}): Promise<string | undefined> {
+  values: EntryValues = {}, c: WorkCopy = WORK_COPY.en): Promise<string | undefined> {
   if (!parseRange(date, date) || !UUID.test(sessionId)) return undefined;
+  const t = teamCopy(c).staff;
   // One indexed lookup by id, wherever the session falls in the day's pages.
   const row = await services.views.staffSession(actor, date, sessionId);
   const s = row?.session;
   if (!s || s.endedAt === null) return undefined;
   const who = (await names(services, [s.personId])).get(s.personId) ?? s.personId;
-  return staffShell("Correct hours", "logs", `${message(m)}<section class="p-card"><h2>${esc(who)}</h2><p>${esc(sessionTime(s))} · ${esc(STATUS_LABEL[s.status] ?? s.status)}</p><p>Times are Kuwait time. The correction replaces this entry in every total and in pay, approved by you; the original stays on record.</p>
-<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${s.id}"><input type="hidden" name="date" value="${date}">${entryFields(values.startedAt ?? localValue(s.startedAt), values.endedAt ?? localValue(s.endedAt), values)}<button type="submit">Save correction</button></form></section>`);
+  return staffShell(t.correctTitle, "logs", `${message(m)}<section class="p-card"><h2>${esc(who)}</h2><p>${esc(sessionTime(s, c))} · ${esc(c.status[s.status] ?? s.status)}</p><p>${esc(t.correctIntro)}</p>
+<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${s.id}"><input type="hidden" name="date" value="${date}">${entryFields(values.startedAt ?? localValue(s.startedAt), values.endedAt ?? localValue(s.endedAt), values, c)}<button type="submit">${esc(t.saveCorrection)}</button></form></section>`, c);
 }
 
 /** The time, reason and note fields of a correction or missing-time form, refilled from `values`. */
-function entryFields(start: string, end: string, values: EntryValues): string {
-  return `<label>Started<input type="datetime-local" step="0.001" name="startedAt" value="${esc(start)}" required></label><label>Ended<input type="datetime-local" step="0.001" name="endedAt" value="${esc(end)}" required></label><label>Reason (required)<input name="reason" required maxlength="255" value="${esc(values.reason ?? "")}"></label><label>Note (optional)<textarea name="note" maxlength="1000">${esc(values.note ?? "")}</textarea></label>`;
+function entryFields(start: string, end: string, values: EntryValues, c: WorkCopy): string {
+  const t = teamCopy(c).staff;
+  return `<label>${esc(t.started)}<input type="datetime-local" step="0.001" name="startedAt" value="${esc(start)}" required></label><label>${esc(t.ended)}<input type="datetime-local" step="0.001" name="endedAt" value="${esc(end)}" required></label><label>${esc(t.reasonRequired)}<input name="reason" required maxlength="255" value="${esc(values.reason ?? "")}"></label><label>${esc(t.noteOptional)}<textarea name="note" maxlength="1000">${esc(values.note ?? "")}</textarea></label>`;
 }
 
 /** The submitted entry fields, kept as typed (escaped when rendered). */
@@ -199,49 +175,54 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
   const appealList = path === "/work/appeals" && url.searchParams.get("as") === "staff";
   const appealPost = APPEAL_POST.exec(path);
   if (!assignments && !corrections && !appealList && !appealPost) return false;
+  // The browser's language until the actor is known, then theirs.
+  let c = await workCopyFor(undefined, undefined, req);
+  let t = teamCopy(c);
   try {
-    if (!services || !origin) { req.resume(); write(res, ...plain(503, "Work is unavailable", "Hours tracking isn't switched on here yet.")); return true; }
+    if (!services || !origin) { req.resume(); write(res, ...plain(503, t.common.unavailable[0], t.staff.off, c)); return true; }
     const sessionId = sessionCookie(req.headers.cookie);
     const actor = sessionId ? await services.personFor(sessionId) : undefined;
-    if (!actor) { req.resume(); write(res, ...plain(401, "Sign in", "Sign in to continue.")); return true; }
-    const denied = () => write(res, ...plain(403, "Staff only", "This page is for StudentHub staff who look after this company."));
+    if (!actor) { req.resume(); write(res, ...plain(401, t.common.signIn, t.staff.signIn, c)); return true; }
+    c = await workCopyFor(services.language, actor, req);
+    t = teamCopy(c);
+    const denied = () => write(res, ...plain(403, ...t.staff.denied, c));
     const done = url.searchParams.get("done");
-    const doneMessage = done && DONE[done] ? { kind: "success" as const, text: DONE[done]! } : null;
+    const doneMessage = staffDone(done, c);
 
     if (req.method === "GET") {
       if (path === "/work/assignments") {
         const org = url.searchParams.get("org")?.trim() || null;
-        if (org !== null && !ORG_ID.test(org)) { write(res, ...plain(400, "Company not valid", "Check the company ID.")); return true; }
-        const html = await renderAssignments(services, actor, org, doneMessage);
+        if (org !== null && !ORG_ID.test(org)) { write(res, ...plain(400, ...t.staff.badCompany, c)); return true; }
+        const html = await renderAssignments(services, actor, org, doneMessage, c);
         if (html) write(res, 200, html); else denied();
         return true;
       }
       if (appealList) {
         const org = url.searchParams.get("org")?.trim() ?? "";
-        if (parseAppealCursor(url.searchParams.get("after")) === undefined || (org !== "" && !ORG_ID.test(org))) { write(res, ...plain(400, "Page not found", "That list page isn't valid.")); return true; }
-        const html = await renderStaffAppeals(services, actor, url.searchParams);
+        if (parseAppealCursor(url.searchParams.get("after")) === undefined || (org !== "" && !ORG_ID.test(org))) { write(res, ...plain(400, ...t.staff.badListPage, c)); return true; }
+        const html = await renderStaffAppeals(services, actor, url.searchParams, c);
         if (html) write(res, 200, html); else denied();
         return true;
       }
       if (path === "/work/corrections/new") {
-        const html = await renderCorrection(services, actor, url.searchParams.get("session")?.toLowerCase() ?? "", url.searchParams.get("date") ?? "", null);
-        if (html) write(res, 200, html); else write(res, ...plain(404, "Hours not found", "Open the hours from Work logs and choose \"Correct these hours\"."));
+        const html = await renderCorrection(services, actor, url.searchParams.get("session")?.toLowerCase() ?? "", url.searchParams.get("date") ?? "", null, {}, c);
+        if (html) write(res, 200, html); else write(res, ...plain(404, ...t.staff.hoursNotFound, c));
         return true;
       }
-      if (path === "/work/corrections" && done && DONE[done]) {
-        write(res, 200, staffShell("Correct hours", "logs", `${notice("success", DONE[done]!)}<nav class="p-card"><a href="/work/logs">Back to work logs</a></nav>`));
+      if (path === "/work/corrections" && doneMessage) {
+        write(res, 200, staffShell(t.staff.correctTitle, "logs", `${notice("success", doneMessage.text)}<nav class="p-card"><a href="/work/logs">${esc(t.staff.backToLogs)}</a></nav>`, c));
         return true;
       }
     }
-    if (req.method !== "POST" || appealList || path === "/work/corrections/new" || path === "/work/assignments") { req.resume(); write(res, ...plain(405, "Not allowed", "This page can't do that.")); return true; }
-    if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); write(res, ...plain(403, "Request refused", "We could not verify this request.")); return true; }
+    if (req.method !== "POST" || appealList || path === "/work/corrections/new" || path === "/work/assignments") { req.resume(); write(res, ...plain(405, ...t.common.notAllowed, c)); return true; }
+    if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); write(res, ...plain(403, ...t.common.refused, c)); return true; }
 
     if (assignments) {
       const action = ASSIGNMENT_POST.exec(path)![1]!;
       const form = await readForm(req, action === "place" ? ["org", "personId", "storeId", "startDate", "endDate", "payContractId"]
         : action === "end" ? ["org", "assignmentId", "endDate"] : ["org", "requestId", "decision", "startDate", "payContractId", "reason"]);
       const org = form?.org?.trim() ?? "";
-      if (!form || !ORG_ID.test(org)) { write(res, ...plain(400, "Not saved", "Open the company again and retry.")); return true; }
+      if (!form || !ORG_ID.test(org)) { write(res, ...plain(400, t.staff.notSaved, t.staff.reopenCompany, c)); return true; }
       let result: { kind: string; code?: string };
       if (action === "place") {
         const input = parsePlacementInput({
@@ -261,7 +242,7 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
           : { kind: "refused", code: "invalid_input" };
       }
       if (result.kind !== "refused") { redirect(res, `/work/assignments?org=${encodeURIComponent(org)}&done=${result.kind}`); return true; }
-      const html = await renderAssignments(services, actor, org, refusal(result.code ?? "invalid_input"));
+      const html = await renderAssignments(services, actor, org, refusal(result.code ?? "invalid_input", c), c);
       if (!html) { denied(); return true; }
       write(res, result.code === "forbidden" ? 403 : result.code && /overlaps|ambiguous|open_session|sessions_after_end|not_pending|person_paused/.test(result.code) ? 409 : 400, html);
       return true;
@@ -282,12 +263,12 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
       if (form?.appealId && UUID.test(form.appealId.toLowerCase())) {
         const detail = await services.appeals.detail(actor, form.appealId.toLowerCase());
         // The appellant may read their appeal, but only staff get the staff view.
-        if ("kind" in detail || detail.appeal.personId === actor) { write(res, ...plain(404, "Appeal not found", "This appeal doesn't exist or isn't in a company you look after.")); return true; }
-        write(res, result.code === "session_not_found" ? 404 : 400, await renderStaffAppeal(services, detail, refusal(result.code), { form: "correct", values }));
+        if ("kind" in detail || detail.appeal.personId === actor) { write(res, ...plain(404, ...t.staff.appealNotFound, c)); return true; }
+        write(res, result.code === "session_not_found" ? 404 : 400, await renderStaffAppeal(services, detail, refusal(result.code, c), { form: "correct", values }, c));
         return true;
       }
-      const html = form?.date ? await renderCorrection(services, actor, sessionId, form.date, refusal(result.code), values) : undefined;
-      if (html) write(res, 400, html); else write(res, ...plain(result.code === "session_not_found" ? 404 : 400, "Not saved", REFUSALS[result.code] ?? REFUSALS.invalid_input!));
+      const html = form?.date ? await renderCorrection(services, actor, sessionId, form.date, refusal(result.code, c), values, c) : undefined;
+      if (html) write(res, 400, html); else write(res, ...plain(result.code === "session_not_found" ? 404 : 400, t.staff.notSaved, refusal(result.code, c).text, c));
       return true;
     }
 
@@ -301,11 +282,11 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
     else result = await services.appeals.addMissing(actor, appealId, { startedAt: kuwaitInstant(form.startedAt), endedAt: kuwaitInstant(form.endedAt), reason: form.reason, ...(form.note ? { note: form.note } : {}) });
     if (result.kind !== "refused") { redirect(res, `/work/appeals/${appealId}?done=${result.kind}`); return true; }
     const detail = await services.appeals.detail(actor, appealId);
-    if ("kind" in detail || detail.appeal.personId === actor) { write(res, ...plain(404, "Appeal not found", "This appeal doesn't exist or isn't in a company you look after.")); return true; }
-    write(res, result.code === "forbidden" ? 403 : result.code === "appeal_open" ? 409 : 400, await renderStaffAppeal(services, detail, refusal(result.code ?? "invalid_input"),
-      action === "missing-time" ? { form: "missing", values: entryValues(form) } : null));
+    if ("kind" in detail || detail.appeal.personId === actor) { write(res, ...plain(404, ...t.staff.appealNotFound, c)); return true; }
+    write(res, result.code === "forbidden" ? 403 : result.code === "appeal_open" ? 409 : 400, await renderStaffAppeal(services, detail, refusal(result.code ?? "invalid_input", c),
+      action === "missing-time" ? { form: "missing", values: entryValues(form) } : null, c));
   } catch (error) {
-    if (!res.headersSent) write(res, ...(tooLarge(error) ?? plain(503, "Work is unavailable", "Something went wrong. Try again in a moment."))); else res.destroy();
+    if (!res.headersSent) write(res, ...(tooLarge(error, c) ?? plain(503, ...t.common.unavailable, c))); else res.destroy();
   }
   return true;
 }

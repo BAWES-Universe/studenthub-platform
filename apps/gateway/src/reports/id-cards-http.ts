@@ -7,6 +7,7 @@ import type { PublicPhoto } from "../../../../packages/reports/src/public-photo.
 import type { IdCardAction, IdCardCheck, IdCardListRow, IdCardView, IdCardWriteResult, OwnIdCard } from "../../../../packages/reports/src/id-cards.js";
 import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 import { handleCertificates, type CertificatesHttpService } from "./certificates-http.js";
+import { handleStatistics, type StatisticsHttpService } from "./statistics-http.js";
 
 /**
  * S8 ID cards on the web.
@@ -43,6 +44,8 @@ export interface IdCardsHttpService {
   publicPhoto?(token: string, key: string, clientHash: string): Promise<PublicPhoto | null>;
   /** S8 experience certificates, sharing this service's staff check. */
   certificates?: CertificatesHttpService;
+  /** P-3 staff statistics, sharing this service's staff check. */
+  statistics?: StatisticsHttpService;
   /** The per-address brake on the public check; absent means no limit (tests, no key). */
   publicLimit?: PublicCheckLimit;
 }
@@ -255,7 +258,9 @@ export async function handleIdCards(req: IncomingMessage, res: ServerResponse, s
   const path = new URL(req.url ?? "/", "http://gateway.invalid").pathname;
   // The public check needs no session, so none is read.
   if (path.startsWith(ID_CARD_VERIFY_PATH)) return verifyPage(req, res, service, path);
-  if (await handleCertificates(req, res, service?.certificates, path, async () => { const s = cookie(req.headers.cookie); return s ? authorize(s).catch(() => undefined) : undefined; }, viewer => service!.isStaff(viewer))) return true;
+  const signedIn = async () => { const s = cookie(req.headers.cookie); return s ? authorize(s).catch(() => undefined) : undefined; };
+  if (await handleCertificates(req, res, service?.certificates, path, signedIn, viewer => service!.isStaff(viewer))) return true;
+  if (await handleStatistics(req, res, service?.statistics, path, signedIn, viewer => service!.isStaff(viewer), origin)) return true;
   if (path !== ID_CARDS_PATH && path !== PRINT_PATH && path !== OWN_ID_CARD_PATH && path !== OWN_PDF_PATH) return false;
   const session = cookie(req.headers.cookie), viewer = service && session ? await authorize(session).catch(() => undefined) : undefined;
   if (path === OWN_ID_CARD_PATH || path === OWN_PDF_PATH) { if (!service) { req.resume(); return notFound(req, res); } return path === OWN_PDF_PATH ? ownPdf(req, res, service, viewer, origin) : ownPage(req, res, service, viewer); }

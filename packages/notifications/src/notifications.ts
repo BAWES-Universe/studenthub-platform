@@ -1,10 +1,14 @@
 import type {AuthzStore,RoleGrant} from "@studenthub/contracts";
 import {isStaffMessageKind,renderStaffMessage,type StaffMessageKind} from "../../comms/src/staff-messages.js";
 
-export const NOTIFICATION_KINDS=Object.freeze(["organization.status_changed","staff.message","work.session_approved","work.session_rejected"] as const);
+/** The recruit lane's outbox events, each its own feed kind (`recruit.<event>`), legacy candidate notification types 0, 10 and 11 and their recruiter side. */
+export const RECRUIT_EVENTS=Object.freeze(["invitation.sent","invitation.accepted","invitation.declined","invitation.withdrawn","interview.scheduled","interview.cancelled","application.shortlisted","application.rejected","request_application.received","request_application.accepted","request_application.rejected"] as const);
+export type RecruitEvent=typeof RECRUIT_EVENTS[number];
+type RecruitKind=`recruit.${RecruitEvent}`;
+export const NOTIFICATION_KINDS=Object.freeze(["organization.status_changed","staff.message","work.session_approved","work.session_rejected",...RECRUIT_EVENTS.map(e=>`recruit.${e}` as RecruitKind)] as const);
 export type NotificationKind=typeof NOTIFICATION_KINDS[number];
-export type NotificationParameters={readonly "organization.status_changed":{readonly status:"active"|"under_review"|"inactive"|"none"};readonly "staff.message":Readonly<Record<string,never>>;readonly "work.session_approved":{readonly workDate:string};readonly "work.session_rejected":{readonly workDate:string}};
-export type NotificationSubjectReference={readonly "organization.status_changed":`organization:${string}`;readonly "staff.message":`staff_message:${string}`;readonly "work.session_approved":`work_session:${string}`;readonly "work.session_rejected":`work_session:${string}`};
+export type NotificationParameters={readonly "organization.status_changed":{readonly status:"active"|"under_review"|"inactive"|"none"};readonly "staff.message":Readonly<Record<string,never>>;readonly "work.session_approved":{readonly workDate:string};readonly "work.session_rejected":{readonly workDate:string}}&{readonly [K in RecruitKind]:Readonly<Record<string,never>>};
+export type NotificationSubjectReference={readonly "organization.status_changed":`organization:${string}`;readonly "staff.message":`staff_message:${string}`;readonly "work.session_approved":`work_session:${string}`;readonly "work.session_rejected":`work_session:${string}`}&{readonly [K in RecruitKind]:`recruit_outbox:${string}`};
 type EventOf<K extends NotificationKind>={readonly id:string;readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly createdAt:Date|string;readonly readAt:Date|string|null};
 export type NotificationEvent<K extends NotificationKind=NotificationKind>={[P in K]:EventOf<P>}[K];
 /** A stored feed row as the registry sees it: any registered kind, its parameters still unchecked. */
@@ -12,8 +16,10 @@ export interface FeedRow{readonly id:string;readonly recipientPrincipalId:string
 export interface NotificationEventStore{list(recipient:string,limit:number,offset:number,kinds?:readonly string[]):Promise<readonly FeedRow[]>;countVisibleUnread?(recipient:string):Promise<number>;markRead(recipient:string,id:string):Promise<boolean>;markAllRead(recipient:string):Promise<void>}
 export interface NotificationOrganization{readonly id:string;readonly name:string;readonly parentOrgId?:string}
 export interface StoredStaffMessage{readonly id:string;readonly kind:StaffMessageKind;readonly body:string|null}
+/** One recruit outbox event addressed to the recipient, with its request's current position title and company name. */
+export interface StoredRecruitEvent{readonly id:string;readonly event:string;readonly requestId:string;readonly positionTitle:string;readonly companyName:string}
 /** readStaffMessages must return only messages addressed to the recipient; a feed row whose message is missing is not shown. */
-export interface NotificationSubjectStore{readOrganizations(ids:readonly string[]):Promise<readonly NotificationOrganization[]>;liveOrganizationIds(ids:readonly string[]):Promise<ReadonlySet<string>>;readStaffMessages?(recipient:string,ids:readonly string[]):Promise<readonly StoredStaffMessage[]>}
+export interface NotificationSubjectStore{readOrganizations(ids:readonly string[]):Promise<readonly NotificationOrganization[]>;liveOrganizationIds(ids:readonly string[]):Promise<ReadonlySet<string>>;readStaffMessages?(recipient:string,ids:readonly string[]):Promise<readonly StoredStaffMessage[]>;/** Only events addressed to the recipient; a feed row whose event is missing is not shown. */readRecruitEvents?(recipient:string,ids:readonly string[]):Promise<readonly StoredRecruitEvent[]>}
 export interface RenderedNotification{readonly id:string;readonly text:string;readonly href:string;readonly createdAt:string;readonly read:boolean}
 export interface NotificationPage{readonly items:readonly RenderedNotification[];readonly unreadCount:number;readonly page:number}
 export interface NotificationLine{readonly text:string;readonly href:string}
@@ -77,7 +83,30 @@ const workDecisionKind=(decision:"approved"|"rejected"):NotificationKindDefiniti
  async render(rows){return new Map(rows.map(row=>{const workDate=(row.parameters as {workDate:string}).workDate;return[row.id,{text:`Your hours for ${workDate} were ${decision}.`,href:workHistoryHref(workDate)}]}))}
 });
 export const workSessionApprovedKind=workDecisionKind("approved"),workSessionRejectedKind=workDecisionKind("rejected");
-export const NOTIFICATION_REGISTRY=new NotificationKindRegistry([organizationStatusChangedKind,staffMessageKind,workSessionApprovedKind,workSessionRejectedKind]);
+const recruitSubject=prefixed("recruit_outbox:",/^[1-9][0-9]{0,18}$/);
+const requestPath=(id:string)=>encodeURIComponent(id);
+/** What each recruit event says and where it leads, from the request as it is now. The person's events open their own lists; the recruiter's open the request. */
+const RECRUIT_LINES:{readonly [E in RecruitEvent]:(e:StoredRecruitEvent)=>NotificationLine}={
+ "invitation.sent":e=>({text:`You're invited to apply for ${e.positionTitle} at ${e.companyName}.`,href:"/recruit/invitations"}),
+ "invitation.withdrawn":e=>({text:`Your invitation to ${e.positionTitle} at ${e.companyName} was withdrawn.`,href:"/recruit/invitations"}),
+ "invitation.accepted":e=>({text:`An invitation to ${e.positionTitle} at ${e.companyName} was accepted.`,href:`/recruit/staff/requests/${requestPath(e.requestId)}/invitations`}),
+ "invitation.declined":e=>({text:`An invitation to ${e.positionTitle} at ${e.companyName} was declined.`,href:`/recruit/staff/requests/${requestPath(e.requestId)}/invitations`}),
+ "interview.scheduled":e=>({text:`Your interview for ${e.positionTitle} at ${e.companyName} is scheduled.`,href:"/recruit/my-interviews"}),
+ "interview.cancelled":e=>({text:`Your interview for ${e.positionTitle} at ${e.companyName} was cancelled.`,href:"/recruit/my-interviews"}),
+ "application.shortlisted":e=>({text:`You were shortlisted for ${e.positionTitle} at ${e.companyName}.`,href:"/recruit/jobs?applied=1"}),
+ "application.rejected":e=>({text:`Your application for ${e.positionTitle} at ${e.companyName} was not taken forward.`,href:"/recruit/jobs?applied=1"}),
+ "request_application.received":e=>({text:`Someone applied for ${e.positionTitle} at ${e.companyName}.`,href:`/recruit/requests/${requestPath(e.requestId)}/applications`}),
+ "request_application.accepted":e=>({text:`Your application for ${e.positionTitle} at ${e.companyName} was accepted.`,href:"/recruit/open-requests?applied=1"}),
+ "request_application.rejected":e=>({text:`Your application for ${e.positionTitle} at ${e.companyName} was not taken forward.`,href:"/recruit/open-requests?applied=1"}),
+};
+const recruitKind=(event:RecruitEvent):NotificationKindDefinition=>({
+ kind:`recruit.${event}`,
+ subject:recruitSubject,
+ parameters:value=>plainObject(value)&&Object.keys(value).length===0,
+ async render(rows,{recipient,subjects}){const ids=[...new Set(rows.map(r=>recruitSubject(r.subjectReference)!))];const events=subjects.readRecruitEvents?await subjects.readRecruitEvents(recipient,ids):[];const byId=new Map(events.map(e=>[e.id,e])),lines=new Map<string,NotificationLine>();for(const row of rows){const stored=byId.get(recruitSubject(row.subjectReference)!);if(!stored||stored.event!==event)continue;lines.set(row.id,RECRUIT_LINES[event](stored))}return lines}
+});
+export const RECRUIT_KINDS=RECRUIT_EVENTS.map(recruitKind);
+export const NOTIFICATION_REGISTRY=new NotificationKindRegistry([organizationStatusChangedKind,staffMessageKind,workSessionApprovedKind,workSessionRejectedKind,...RECRUIT_KINDS]);
 
 export interface NotificationRecordPort{record<K extends NotificationKind>(event:{readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly dedupeKey:string}):Promise<void>}
 export async function recordNotification<K extends NotificationKind>(port:NotificationRecordPort,event:{readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly dedupeKey:string},registry:NotificationKindRegistry=NOTIFICATION_REGISTRY):Promise<void>{if(!registry.accepts(event))throw new TypeError("unknown notification kind or payload");await port.record({...event,dedupeKey:event.dedupeKey})}

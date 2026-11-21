@@ -25,7 +25,7 @@ function snapshotJson(value: unknown, ancestors = new Set<object>()): JsonValue 
     return Object.freeze(Object.fromEntries(Object.entries(value).map(([key, item]) => [key, snapshotJson(item, ancestors)])));
   } finally { ancestors.delete(value); }
 }
-function snapshotLine(line: PayLineDraft): PayLineDraft {
+export function snapshotPayLine(line: PayLineDraft): PayLineDraft {
   const { id, personId, storeId, currencyCode, candidateTotal, companyTotal, note, calculation } = line;
   if (![id, personId, storeId, currencyCode, candidateTotal, companyTotal, note].every(value => typeof value === "string")) throw new RangeError("invalid_line");
   const json = snapshotJson(calculation);
@@ -60,27 +60,37 @@ export class PostgresPayLinesStore {
     return this.write(actorId,transferId,expectedVersion,[line],true);
   }
   private async write(actorId: string, transferId: string, expectedVersion: number, lines: readonly PayLineDraft[], edit: boolean): Promise<number> {
+    const snapshot = this.prepare(expectedVersion, lines);
+    return this.transaction(c => this.writeSnapshot(c, actorId, transferId, expectedVersion, snapshot, edit));
+  }
+  /** The caller owns the transaction and must commit or roll it back. */
+  async appendLinesInTransaction(c: pg.PoolClient, actorId: string, transferId: string, expectedVersion: number, lines: readonly PayLineDraft[]): Promise<number> {
+    const snapshot = this.prepare(expectedVersion, lines);
+    return this.writeSnapshot(c, actorId, transferId, expectedVersion, snapshot, false);
+  }
+  private prepare(expectedVersion: number, lines: readonly PayLineDraft[]): readonly PayLineDraft[] {
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || !lines.length) throw new RangeError("invalid_batch");
-    const snapshot = Object.freeze(Array.from(lines, snapshotLine));
+    const snapshot = Object.freeze(Array.from(lines, snapshotPayLine));
     snapshot.forEach(line => this.validateLine(line));
-    return this.transaction(async c => {
-      const t = (await c.query("SELECT *, period_start::text AS start_text, period_end::text AS end_text FROM pay_transfers WHERE id=$1 FOR UPDATE",[transferId])).rows[0];
-      if (!t || !await this.mayWrite(c,actorId,t.company_id)) throw Error("not_found");
-      if (t.status !== "draft" || t.deleted) throw Error("transfer_not_draft");
-      if (t.version !== expectedVersion) throw Error("version_conflict");
-      for (const line of snapshot) {
-        if (line.currencyCode !== t.currency_code) throw Error("currency_mismatch");
-        // Lock the applicable assignment against an ending correction during this write.
-        const assigned = await c.query("SELECT id FROM work_assignments WHERE person_principal_id=$1 AND store_id=$2::uuid AND org_id=$3 AND start_date <= $5::date AND (end_date IS NULL OR end_date >= $4::date) FOR SHARE",[line.personId,line.storeId,t.company_id,t.start_text,t.end_text]);
-        if (!assigned.rowCount) throw Error("person_not_assigned");
-        const before = edit ? (await c.query("SELECT * FROM pay_transfer_lines WHERE id=$1 AND transfer_id=$2 AND person_id=$3 AND store_id=$4::uuid FOR UPDATE",[line.id,transferId,line.personId,line.storeId])).rows[0] : null;
-        if (edit && !before) throw Error("line_not_found");
-        if (edit) await c.query("UPDATE pay_transfer_lines SET candidate_total=$3,company_total=$4,note=$5,calculation=$6 WHERE id=$1 AND transfer_id=$2",[line.id,transferId,line.candidateTotal,line.companyTotal,line.note,JSON.stringify(line.calculation)]);
-        else await c.query("INSERT INTO pay_transfer_lines(id,transfer_id,person_id,store_id,currency_code,candidate_total,company_total,note,calculation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",[line.id,transferId,line.personId,line.storeId,line.currencyCode,line.candidateTotal,line.companyTotal,line.note,JSON.stringify(line.calculation)]);
-        await c.query("INSERT INTO pay_line_audit(transfer_id,line_id,actor_id,operation,before_value,after_value) VALUES($1,$2,$3,$4,$5,$6)",[transferId,line.id,actorId,edit?"edit_line":"add_line",before?JSON.stringify(before):null,JSON.stringify(line)]);
-      }
-      await c.query("UPDATE pay_transfers SET version=version+1 WHERE id=$1",[transferId]);
-      return expectedVersion+1;
-    });
+    return snapshot;
+  }
+  private async writeSnapshot(c: pg.PoolClient, actorId: string, transferId: string, expectedVersion: number, snapshot: readonly PayLineDraft[], edit: boolean): Promise<number> {
+    const t = (await c.query("SELECT *, period_start::text AS start_text, period_end::text AS end_text FROM pay_transfers WHERE id=$1 FOR UPDATE",[transferId])).rows[0];
+    if (!t || !await this.mayWrite(c,actorId,t.company_id)) throw Error("not_found");
+    if (t.status !== "draft" || t.deleted) throw Error("transfer_not_draft");
+    if (t.version !== expectedVersion) throw Error("version_conflict");
+    for (const line of snapshot) {
+      if (line.currencyCode !== t.currency_code) throw Error("currency_mismatch");
+      // Lock the applicable assignment against an ending correction during this write.
+      const assigned = await c.query("SELECT id FROM work_assignments WHERE person_principal_id=$1 AND store_id=$2::uuid AND org_id=$3 AND start_date <= $5::date AND (end_date IS NULL OR end_date >= $4::date) FOR SHARE",[line.personId,line.storeId,t.company_id,t.start_text,t.end_text]);
+      if (!assigned.rowCount) throw Error("person_not_assigned");
+      const before = edit ? (await c.query("SELECT * FROM pay_transfer_lines WHERE id=$1 AND transfer_id=$2 AND person_id=$3 AND store_id=$4::uuid FOR UPDATE",[line.id,transferId,line.personId,line.storeId])).rows[0] : null;
+      if (edit && !before) throw Error("line_not_found");
+      if (edit) await c.query("UPDATE pay_transfer_lines SET candidate_total=$3,company_total=$4,note=$5,calculation=$6 WHERE id=$1 AND transfer_id=$2",[line.id,transferId,line.candidateTotal,line.companyTotal,line.note,JSON.stringify(line.calculation)]);
+      else await c.query("INSERT INTO pay_transfer_lines(id,transfer_id,person_id,store_id,currency_code,candidate_total,company_total,note,calculation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",[line.id,transferId,line.personId,line.storeId,line.currencyCode,line.candidateTotal,line.companyTotal,line.note,JSON.stringify(line.calculation)]);
+      await c.query("INSERT INTO pay_line_audit(transfer_id,line_id,actor_id,operation,before_value,after_value) VALUES($1,$2,$3,$4,$5,$6)",[transferId,line.id,actorId,edit?"edit_line":"add_line",before?JSON.stringify(before):null,JSON.stringify(line)]);
+    }
+    await c.query("UPDATE pay_transfers SET version=version+1 WHERE id=$1",[transferId]);
+    return expectedVersion+1;
   }
 }

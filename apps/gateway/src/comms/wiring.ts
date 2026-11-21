@@ -3,9 +3,10 @@ import pg from "pg";
 import type { AuthzStore } from "@studenthub/contracts";
 import { PostgresStaffMessagesStore } from "@studenthub/db/comms";
 import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
-import { PostgresIdCardsStore, PostgresMorningSummaryStore } from "@studenthub/db/reports";
-import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
-import { CertificatesService, IdCardsService, IdCardVerifier, MorningSummaryService, type IdCardPhotoSource, type IdCardPublicPhotoSource } from "../../../../packages/reports/src/index.js";
+import { PostgresWorkStaffTimeStore } from "@studenthub/db/work";
+import { PostgresFiringSpikeStore, PostgresIdCardsStore, PostgresMorningSummaryStore, PostgresStatisticsStore } from "@studenthub/db/reports";
+import { DEFAULT_OPERATOR_ORG_IDS, type OrganizationDirectory } from "@studenthub/organizations";
+import { CertificatesService, IdCardsService, IdCardVerifier, MorningSummaryService, StatisticsService, FiringHitMapService, type IdCardPhotoSource, type StatisticsCompanies, type IdCardPublicPhotoSource } from "../../../../packages/reports/src/index.js";
 import { openPersonalPhotoSourceFromEnv } from "../../../../packages/private-documents/src/personal-photo-source.js";
 import { StaffMessagesService } from "../../../../packages/comms/src/staff-messages.js";
 import { blockListOf, parseTrustedProxies } from "../../../../packages/access/src/index.js";
@@ -25,8 +26,27 @@ export function idCardVerifyKey(env: NodeJS.ProcessEnv): Buffer | undefined {
   return key;
 }
 
+/**
+ * Company totals for the statistics page, read through the organizations directory as the
+ * viewer, under the operator grant they hold (staff, else admin), so the counts match the
+ * company list they can open. Undefined when the directory answers neither.
+ */
+export function directoryCompanyCounts(directory: Pick<OrganizationDirectory, "listOrganizations">): StatisticsCompanies {
+  return { async counts(viewer) {
+    for (const role of ["staff", "admin"]) {
+      const list = (status?: "active") => directory.listOrganizations({ principalId: viewer, orgId: DEFAULT_OPERATOR_ORG_IDS[0]!, role, ...(status ? { filters: { status } } : {}), page: 1 });
+      const all = await list();
+      if (all.kind !== "found") continue;
+      const active = await list("active");
+      if (active.kind !== "found") return undefined;
+      return { activeClients: active.directory.total, companies: all.directory.total };
+    }
+    return undefined;
+  } };
+}
+
 /** Staff messages, the per-person email delivery log, the morning summary page and ID cards as production composes them: StudentHub staff (operator staff or admin grant) only, except a person's own ID card. */
-export function wireStaffMessages(options: { readonly connectionString: string; readonly authzStore: Pick<AuthzStore, "listGrantsForPrincipal">; readonly env?: NodeJS.ProcessEnv; readonly idCardVerifyKey?: Buffer; readonly warn?: (line: string) => void }): { readonly http: StaffMessagesHttpService; close(): Promise<void> } {
+export function wireStaffMessages(options: { readonly connectionString: string; readonly authzStore: Pick<AuthzStore, "listGrantsForPrincipal">; readonly env?: NodeJS.ProcessEnv; readonly idCardVerifyKey?: Buffer; readonly warn?: (line: string) => void; readonly organizations?: Pick<OrganizationDirectory, "listOrganizations"> }): { readonly http: StaffMessagesHttpService; close(): Promise<void> } {
   // One pool for every store here; none owns it, so close ends it once.
   const pool = new pg.Pool({ connectionString: options.connectionString });
   const store = new PostgresStaffMessagesStore({ pool });
@@ -56,12 +76,18 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
   const idCards = new IdCardsService(cards, authority, undefined, photos,
     options.idCardVerifyKey ? new IdCardVerifier(options.idCardVerifyKey) : undefined, publicPhotos);
   const certificates = new CertificatesService(cards, authority);
+  const companies = options.organizations && directoryCompanyCounts(options.organizations);
+  // Staff time is the work lane's: read through its exported store, never its table.
+  const statisticsStore = new PostgresStatisticsStore({ pool, operatorOrgIds: DEFAULT_OPERATOR_ORG_IDS });
+  const statistics = new StatisticsService(statisticsStore, authority, undefined, { companies, staffTime: new PostgresWorkStaffTimeStore(pool) });
+  const firings = new FiringHitMapService(statisticsStore, authority, undefined, new PostgresFiringSpikeStore({ pool, operatorOrgIds: DEFAULT_OPERATOR_ORG_IDS }));
   return { http: { isStaff: authority.isStaff, send: (sender, input) => service.send(sender, input),
     deliveryLog: (person, offset, limit) => emails.deliveryLog(person, offset, limit),
     morningSummary: { today: viewer => summary.today(viewer), subscribe: (viewer, on) => summary.subscribe(viewer, on) },
     idCards: { isStaff: authority.isStaff, list: (viewer, view, name, page) => idCards.list(viewer, view, name, page), write: (viewer, action, people) => idCards.write(viewer, action, people), own: person => idCards.own(person),
       ownPdf: (person, origin) => idCards.ownPdf(person, origin), staffPdf: (viewer, people, origin) => idCards.staffPdf(viewer, people, origin), check: token => idCards.check(token),
-      certificates: { own: person => certificates.own(person), staffList: (viewer, person) => certificates.staffList(viewer, person), pdf: (viewer, assignment) => certificates.pdf(viewer, assignment) }, publicPhoto: (token, key, client) => idCards.publicPhoto(token, key, client),
+      certificates: { own: person => certificates.own(person), staffList: (viewer, person) => certificates.staffList(viewer, person), pdf: (viewer, assignment) => certificates.pdf(viewer, assignment) },
+      statistics: { page: viewer => statistics.page(viewer), firingHitMap: viewer => firings.page(viewer), firingSpikeEmail: (viewer, on) => firings.subscribe(viewer, on) }, publicPhoto: (token, key, client) => idCards.publicPhoto(token, key, client),
       // The public check is limited per client address, read behind the same trusted proxies as the abuse gate.
       publicLimit: options.idCardVerifyKey && env ? publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies(env.GATEWAY_TRUSTED_PROXIES)),
         // A key derived from the verification key, so the recorded client hash is the same across gateway processes and restarts.

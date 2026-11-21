@@ -27,6 +27,8 @@ export interface WorkHttpServices {
   readonly staffTime?: StaffTimeService;
   /** The daily stand-up (legacy daily_standup_question/answer); absent means its parts of the staff screens are left out. */
   readonly standup?: StandupService;
+  /** The person's saved language (the profile's preference); absent or undefined means their browser's. */
+  readonly language?: (personId: string) => Promise<"en" | "ar" | undefined>;
   /** Staff email addresses for the staff hours export; absent means none. */
   readonly staffEmails?: (staffIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
   /**
@@ -203,6 +205,10 @@ const ROUTES: readonly Route[] = [
   { method: "POST", pattern: new RegExp(`^/api/work/appeals/(${UUID})/missing-time$`), handle: async (p, { params, body }, s) =>
     outcome(await s.appeals.addMissing(p, params[0], { startedAt: body.startedAt, endedAt: body.endedAt, reason: body.reason, note: body.note })) },
   { method: "POST", pattern: new RegExp(`^/api/work/appeal-updates/(${UUID})/read$`), handle: async (p, { params }, s) => outcome(await s.appeals.markRead(p, params[0])) },
+  { method: "POST", pattern: new RegExp(`^/api/work/sessions/(${UUID})/remove$`), handle: async (p, { params, body }, s) =>
+    outcome(await s.appeals.remove(p, params[0], body.reason)) },
+  { method: "POST", pattern: new RegExp(`^/api/work/sessions/(${UUID})/restore$`), handle: async (p, { params }, s) =>
+    outcome(await s.appeals.restore(p, params[0])) },
   { method: "POST", pattern: new RegExp(`^/api/work/sessions/(${UUID})/correct$`), handle: async (p, { params, body }, s) =>
     outcome(await s.appeals.correct(p, params[0], { startedAt: body.startedAt, endedAt: body.endedAt, reason: body.reason, note: body.note, appealId: body.appealId })) },
 ];

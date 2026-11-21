@@ -59,7 +59,7 @@ const CASES = [
   {
     name: "M8 let narrowQueueScope accept any review lane",
     file: "single-run-activation.mjs",
-    from: "record.target_issue_id === queueConfigReviewLane(config)",
+    from: "queueConfigReviewLanes(config).includes(record.target_issue_id)",
     to: "resolveReviewOnlyLane(config, record.target_issue_id) /* SHU321-M8 */",
     pattern: "SHU-321 R6:",
   },
@@ -71,8 +71,8 @@ const CASES = [
   },
   {
     name: "M10 drop the pause recheck before arming",
-    from: "  if (pausedNow) return skip(",
-    to: "  if (false) return skip( // SHU321-M10\n",
+    from: '  if (pausedNow) return { skipped: "PAUSED",',
+    to: '  if (false) return { skipped: "PAUSED", // SHU321-M10\n',
     pattern: "SHU-321 R5:",
   },
   {
@@ -110,6 +110,85 @@ const CASES = [
     from: "  if (!commits.every((entry) => SESSION_TRAILER_RE.test(",
     to: "  if (false && !commits.every((entry) => SESSION_TRAILER_RE.test( // SHU321-M11\n",
     pattern: "SHU-321 R1:",
+  },
+  // M18 G2: review slots, oldest head first, verdict-only cap, give-back, ticks.
+  {
+    name: "M17 review a pull request whose review is still in flight",
+    from: "    if (claims.inFlight) continue;",
+    to: "    // SHU321-M17",
+    pattern: "M18 G2 S1:",
+  },
+  {
+    name: "M18 take a slot whose review is still running",
+    from: "  const slots = policy.slotLanes.map((lane, i) => ({ slot: i + 1, lane, busy: busy.has(lane) }));",
+    to: "  const slots = policy.slotLanes.map((lane, i) => ({ slot: i + 1, lane, busy: false })); // SHU321-M18",
+    pattern: "M18 G2 S1:",
+  },
+  {
+    name: "M19 claim a review outside the selection lock",
+    from: "  const release = cardWorkers(config) > 1 ? await takeSelectLock(io, paths, limits) : () => {};",
+    to: "  const release = () => {}; // SHU321-M19",
+    pattern: "M18 G2 S1:",
+  },
+  {
+    name: "M20 take a slot another worker has armed",
+    from: '    if (typeof record?.target_issue_id === "string") busy.add(record.target_issue_id);',
+    to: "    // SHU321-M20",
+    pattern: "M18 G2 S1:",
+  },
+  {
+    name: "M21 count a review that reached no verdict",
+    from: "    if (!claimCounts(claim)) continue;",
+    to: "    // SHU321-M21",
+    pattern: "M18 G2 S2:",
+  },
+  {
+    name: "M22 count only claims that recorded a verdict",
+    from: "const claimCounts = (claim) => claim?.verdict !== REVIEW_NO_VERDICT;",
+    to: 'const claimCounts = (claim) => ["PASS", "BLOCKED"].includes(claim?.verdict); // SHU321-M22',
+    pattern: "M18 G2 S2:",
+  },
+  {
+    name: "M23 read an unknown ending as no verdict",
+    from: '  return "UNKNOWN";\n}',
+    to: "  return REVIEW_NO_VERDICT; // SHU321-M23\n}",
+    pattern: "M18 G2 S2:",
+  },
+  {
+    name: "M24 keep the claim of a review whose pull request moved",
+    from: "    if (movedTo) {",
+    to: "    if (false) { // SHU321-M24",
+    pattern: "M18 G2 S3:",
+  },
+  {
+    name: "M25 give back a claim whose pull request did not move",
+    from: "    return SHA_RE.test(now ?? \"\") && now !== head ? now : null;",
+    to: "    return SHA_RE.test(now ?? \"\") ? now : null; // SHU321-M25",
+    pattern: "M18 G2 S3:",
+  },
+  {
+    name: "M26 give back the claim of a review with a verdict",
+    from: "  if (verdict === REVIEW_NO_VERDICT) {",
+    to: "  if (true) { // SHU321-M26",
+    pattern: "M18 G2 S3:",
+  },
+  {
+    name: "M27 review the lowest number first, whatever a head's age",
+    from: "  waiting.sort((a, b) => (a.since === b.since ? 0 : a.since < b.since ? -1 : 1) || a.pull.number - b.pull.number);",
+    to: "  waiting.sort((a, b) => a.pull.number - b.pull.number); // SHU321-M27",
+    pattern: "M18 G2: the head that has waited longest",
+  },
+  {
+    name: "M28 tick a review on the card interval",
+    from: '      const tickEvery = plan.kind === "review" ?',
+    to: '      const tickEvery = false /* SHU321-M28 */ ?',
+    pattern: "M18 G2 S5:",
+  },
+  {
+    name: "M29 read Linear or GitHub pull requests while every slot is busy",
+    from: "  if (!free) return { busy:",
+    to: "  if (false) return { busy: // SHU321-M29\n",
+    pattern: "M18 G2 S4:",
   },
 ];
 
