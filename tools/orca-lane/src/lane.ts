@@ -164,8 +164,11 @@ export function reviewWait(input: {
   readonly gen: number;
   readonly dispatch: number;
   readonly pulls: readonly BranchPull[] | undefined;
-  /** True only inside the run that holds the bot's run lock for this ticket (check mode, verified by token). */
-  readonly running?: boolean;
+  /**
+   * Set only inside the run that holds the bot's run lock for this ticket (check mode, verified by token):
+   * the successor head that run declared before pushing (expectHead), or null if it declared none.
+   */
+  readonly running?: { readonly expected: string | null };
 }): ReviewWait | null {
   const { bot, issue, gen } = input;
   const first = (c: IssueComment): string => c.body.split("\n")[0]!.trim();
@@ -179,8 +182,9 @@ export function reviewWait(input: {
   const pull = pulls[0]!;
   if (pull.base !== "main" || pull.draft) return { state: "held", reason: `ready at ${head} but PR #${pull.number} is ${pull.draft ? "a draft" : `into ${pull.base}`}: held for Claude's review` };
   const changes = sorted.find((c) => c.id > lastReady.id && c.author === DISPATCH_AUTHOR && c.appId === CLAUDE_APP_ID && first(c) === changesHeader(bot, issue, gen, head));
-  // The run that was handed back may move the head while it revises its own PR; anyone else sees that as drift.
-  const revising = changes !== undefined && input.running === true;
+  // The run that was handed back may move the head only to the successor it declared before pushing;
+  // any other movement (a branch sync, someone else's push), and any movement seen by anyone else, is drift.
+  const revising = changes !== undefined && input.running !== undefined && input.running.expected === pull.head;
   if (pull.head !== head && !revising) return { state: "held", reason: `ready at ${head} but PR #${pull.number} head is ${pull.head}: held for Claude's review` };
   return changes ? { state: "sent-back", head, pull: pull.number, changes: changes.id } : { state: "parked", head };
 }
@@ -206,8 +210,8 @@ export function decide(input: {
   readonly claims: ReadonlyMap<string, ClaimRecord>;
   /** Open PRs per ticket branch (ticketBranch). Only needed once a ticket has a ready receipt; missing means none. */
   readonly pulls?: ReadonlyMap<string, readonly BranchPull[]>;
-  /** The claim key of the run this process holds the run lock for (check mode only, verified by token). */
-  readonly running?: string;
+  /** The run this process holds the run lock for (check mode only, verified by token), and its declared successor head. */
+  readonly running?: { readonly key: string; readonly expected: string | null };
 }): Decision[] {
   const decisions: Decision[] = [];
   const latestGen = new Map<number, number>();
@@ -237,7 +241,7 @@ export function decide(input: {
     const held = input.claims.get(key);
     if (held !== undefined && held.dispatch !== comment.id) { skip(`claim is bound to dispatch ${held.dispatch}, not ${comment.id}`); continue; }
     if (held !== undefined && held.lease !== row.lease) { skip("lease changed since the claim was taken"); continue; }
-    const wait = reviewWait({ comments: issueComments, bot: input.bot, issue: row.issue, gen: row.gen, dispatch: comment.id, pulls: input.pulls?.get(ticketBranch(input.bot, row.slug)), running: input.running === key });
+    const wait = reviewWait({ comments: issueComments, bot: input.bot, issue: row.issue, gen: row.gen, dispatch: comment.id, pulls: input.pulls?.get(ticketBranch(input.bot, row.slug)), ...(input.running?.key === key ? { running: { expected: input.running.expected } } : {}) });
     if (wait?.state === "held") { skip(wait.reason); continue; }
     if (wait?.state === "parked") { skip(`waiting for review at ${wait.head}`); continue; }
     if (wait && held === undefined) { skip("ready receipt posted but no claim held here: never start twice"); continue; }
@@ -360,6 +364,32 @@ export function releaseRun(dir: string, bot: string, key: string, token: string)
     throw error;
   }
   return "released";
+}
+
+/**
+ * Declares, before a push, the exact head the run is about to put on its PR. Only
+ * the holder of the run lock can declare it, it lives in that run's own slot, and
+ * a later declaration replaces an earlier one. A handed-back run's check accepts
+ * the PR head moving only to this head.
+ */
+export function expectHead(dir: string, bot: string, key: string, token: string, sha: string): "recorded" | "not-owner" | "bad-sha" {
+  if (!new RegExp(`^${SHA}$`).test(sha)) return "bad-sha";
+  const latest = slots(dir, bot).at(-1);
+  if (!latest || latest.released || latest.owner.key !== key || latest.owner.token !== token) return "not-owner";
+  writeFileSync(path.join(slotsDir(dir, bot), String(latest.n), "expected"), `${sha}\n`);
+  return "recorded";
+}
+
+/** The successor head the current run declared, only for the current holder; otherwise null. */
+export function readExpected(dir: string, bot: string, key: string, token: string): string | null {
+  const latest = slots(dir, bot).at(-1);
+  if (!latest || latest.released || latest.owner.key !== key || latest.owner.token !== token) return null;
+  try {
+    const sha = readFileSync(path.join(slotsDir(dir, bot), String(latest.n), "expected"), "utf8").trim();
+    return new RegExp(`^${SHA}$`).test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

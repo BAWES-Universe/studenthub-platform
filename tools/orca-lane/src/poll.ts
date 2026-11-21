@@ -2,6 +2,7 @@
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode observe
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode work
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode check --key <claimKey> --token <runToken>
+//   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode expect --key <claimKey> --token <runToken> --sha <head about to be pushed>
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode release --key <claimKey> --token <runToken>
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode recover --key <runLock.key> --token <runLock.token>
 // observe never claims or locks; it lists observe-mode rows and what work mode would pick.
@@ -16,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { acquireRun, type BranchPull, claim, type ClaimRecord, decide, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, ticketBranch, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
+import { acquireRun, type BranchPull, claim, type ClaimRecord, decide, expectHead, readExpected, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, ticketBranch, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
 
 const REPO = "BAWES-Universe/studenthub-platform";
 const REGISTER = "docs/lanes/orca/REGISTER.md";
@@ -55,22 +56,24 @@ export function pickNext(
   return { ...fresh, runToken };
 }
 
-type Mode = "observe" | "work" | "check" | "release" | "recover";
+type Mode = "observe" | "work" | "check" | "expect" | "release" | "recover";
 
-function args(argv: readonly string[]): { bot: string; mode: Mode; claims: string; key?: string; token?: string } {
+function args(argv: readonly string[]): { bot: string; mode: Mode; claims: string; key?: string; token?: string; sha?: string } {
   const value = (flag: string): string | undefined => {
     const at = argv.indexOf(flag);
     return at >= 0 ? argv[at + 1] : undefined;
   };
   const bot = value("--bot");
   const mode = value("--mode");
-  if (!bot || (mode !== "observe" && mode !== "work" && mode !== "check" && mode !== "release" && mode !== "recover")) {
-    throw new Error("usage: poll --bot <name> --mode observe|work|check|release|recover [--key <claimKey>] [--token <runToken>] [--claims <dir>]");
+  if (!bot || (mode !== "observe" && mode !== "work" && mode !== "check" && mode !== "expect" && mode !== "release" && mode !== "recover")) {
+    throw new Error("usage: poll --bot <name> --mode observe|work|check|expect|release|recover [--key <claimKey>] [--token <runToken>] [--sha <sha>] [--claims <dir>]");
   }
   const key = value("--key");
   const token = value("--token");
-  if ((mode === "check" || mode === "release" || mode === "recover") && (!key || !token)) throw new Error(`${mode} needs --key and --token`);
-  return { bot, mode, claims: value("--claims") ?? path.join(os.homedir(), ".orca-lane", "claims"), ...(key ? { key } : {}), ...(token ? { token } : {}) };
+  if ((mode === "check" || mode === "expect" || mode === "release" || mode === "recover") && (!key || !token)) throw new Error(`${mode} needs --key and --token`);
+  const sha = value("--sha");
+  if (mode === "expect" && !sha) throw new Error("expect needs --sha");
+  return { bot, mode, claims: value("--claims") ?? path.join(os.homedir(), ".orca-lane", "claims"), ...(key ? { key } : {}), ...(token ? { token } : {}), ...(sha ? { sha } : {}) };
 }
 
 function comments(issue: number): IssueComment[] {
@@ -108,7 +111,13 @@ export function heldClaims(dir: string): Map<string, ClaimRecord> {
 }
 
 function main(): void {
-  const { bot, mode, claims, key, token } = args(process.argv.slice(2));
+  const { bot, mode, claims, key, token, sha } = args(process.argv.slice(2));
+  if (mode === "expect") {
+    const result = expectHead(claims, bot, key!, token!, sha!);
+    process.stdout.write(`${JSON.stringify({ mode, bot, key, sha, result })}\n`);
+    if (result !== "recorded") process.exitCode = 3;
+    return;
+  }
   if (mode === "release") {
     process.stdout.write(`${JSON.stringify({ mode, bot, key, result: releaseRun(claims, bot, key!, token!) })}\n`);
     return;
@@ -126,13 +135,13 @@ function main(): void {
   for (const branch of new Set(mine.map((row) => ticketBranch(bot, row.slug)))) pulls.set(branch, branchPulls(branch));
   const now = new Date();
   const at = now.toISOString();
-  const decisionsFor = (running?: string): Decision[] => decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims), pulls, ...(running ? { running } : {}) });
+  const decisionsFor = (running?: { key: string; expected: string | null }): Decision[] => decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims), pulls, ...(running ? { running } : {}) });
 
   if (mode === "check") {
     // A running ticket always holds its claim, so only a matching resume (same dispatch, same lease) passes.
-    // Only the lock holder may see its own revision's head move after a hand-back.
+    // Only the lock holder may see its own revision's head move after a hand-back, and only to the head it declared.
     const holds = holdsRun(claims, bot, key!, token!);
-    const mineNow = decisionsFor(holds ? key : undefined).find((d): d is WorkDecision => d.action === "resume" && d.claimKey === key);
+    const mineNow = decisionsFor(holds ? { key: key!, expected: readExpected(claims, bot, key!, token!) } : undefined).find((d): d is WorkDecision => d.action === "resume" && d.claimKey === key);
     const reason = !mineNow ? "ticket generation no longer eligible" : !holds ? "run lock not held by this token" : null;
     process.stdout.write(`${JSON.stringify({ mode, bot, at, key, ok: reason === null, reason })}\n`);
     if (reason !== null) process.exitCode = 3;

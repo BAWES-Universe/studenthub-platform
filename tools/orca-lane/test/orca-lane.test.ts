@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acquireRun, CLAUDE_APP_ID, changesHeader, claim, claimKey, decide, dispatchHeader, holdsRun, parseRegister, readClaim, recoverRun, RegisterError, readyReceiptHeader, releaseRun, startReceiptHeader, ticketBranch, type BranchPull, type IssueComment } from "../src/lane.js";
+import { acquireRun, CLAUDE_APP_ID, changesHeader, claim, claimKey, decide, dispatchHeader, expectHead, readExpected, holdsRun, parseRegister, readClaim, recoverRun, RegisterError, readyReceiptHeader, releaseRun, startReceiptHeader, ticketBranch, type BranchPull, type IssueComment } from "../src/lane.js";
 import { heldClaims, pickNext } from "../src/poll.js";
 
 const BOT = "studenthub-universe";
@@ -17,7 +17,7 @@ const dispatch = (id: number, issue: number, gen: number, extra: Partial<IssueCo
   ({ id, body: `${dispatchHeader(BOT, issue, gen)}\n\n@orca-ide ${BOT}`, author: "BAWES", appId: CLAUDE_APP_ID, ...extra });
 // claims: [claimKey, saved dispatch, saved lease?] (lease defaults to the test row's lease for that issue)
 const leaseOf = (key: string): string => `\`docs/x-${key.split("--")[1]}.md\` only; no migrations`;
-const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: ([string, number] | [string, number, string])[] = [], pulls: Record<string, BranchPull[]> = {}, running?: string) =>
+const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: ([string, number] | [string, number, string])[] = [], pulls: Record<string, BranchPull[]> = {}, running?: { key: string; expected: string | null }) =>
   decide({ ...(running ? { running } : {}), rows: parseRegister(markdown), bot: BOT, now: NOW, comments: new Map(Object.entries(comments).map(([k, v]) => [Number(k), v])),
     claims: new Map(claims.map(([key, dispatch, lease]) => [key, { dispatch, lease: lease ?? leaseOf(key), at: "t" }])),
     pulls: new Map(Object.entries(pulls)) });
@@ -237,7 +237,8 @@ test("review wait: full revision cycle from parked to changes to a new ready hea
   const fresh = (headA: string) => run(md, { 581: a, 590: b }, claims, pulls(headA)).find((d) => d.issue === 581)!;
   // Same rule as poll --mode check: a resume for this key, under the run lock held by this token.
   const check = (headA: string, token: string) =>
-    holdsRun(dir, BOT, keyA, token) && run(md, { 581: a, 590: b }, claims, pulls(headA), keyA).some((d) => d.action === "resume" && d.claimKey === keyA);
+    holdsRun(dir, BOT, keyA, token) &&
+    run(md, { 581: a, 590: b }, claims, pulls(headA), { key: keyA, expected: readExpected(dir, BOT, keyA, token) }).some((d) => d.action === "resume" && d.claimKey === keyA);
 
   // 1. Parked at HEAD_1.
   assert.match(JSON.stringify(fresh(HEAD_1)), /waiting for review/);
@@ -248,11 +249,20 @@ test("review wait: full revision cycle from parked to changes to a new ready hea
   assert.equal(next?.action, "resume");
   const token = next!.runToken!;
   assert.ok(check(HEAD_1, token));
-  // 3. The run pushes its revision: its own checks still pass; any fresh poll (and any other token) sees drift and holds.
+  // 3. The run declares its successor head, then pushes it: its own checks still pass; any fresh poll
+  //    (and any other token) sees drift and holds. Movement it didn't declare holds even the run.
   const HEAD_3 = "3".repeat(40);
+  const HEAD_5 = "5".repeat(40);
+  assert.equal(check(HEAD_3, token), false); // pushed without declaring first
+  assert.equal(expectHead(dir, BOT, keyA, "other-token", HEAD_3), "not-owner");
+  assert.equal(expectHead(dir, BOT, keyA, token, "abc"), "bad-sha");
+  assert.equal(expectHead(dir, BOT, keyA, token, HEAD_3), "recorded");
+  assert.ok(check(HEAD_1, token)); // declared but not pushed yet
   assert.ok(check(HEAD_3, token));
+  assert.equal(check(HEAD_5, token), false); // an unrelated head (a branch sync) mid-revision
   assert.equal(check(HEAD_3, "other-token"), false);
   assert.match(JSON.stringify(fresh(HEAD_3)), /held for Claude's review/);
+  assert.match(JSON.stringify(fresh(HEAD_5)), /held for Claude's review/);
   // 4. The run posts its new ready receipt at the new head: parked again, so no further writes pass.
   a.push(ready(930, 581, 1, HEAD_3));
   assert.equal(check(HEAD_3, token), false);
