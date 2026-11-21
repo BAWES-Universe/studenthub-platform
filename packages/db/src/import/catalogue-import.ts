@@ -141,7 +141,7 @@ export class PostgresCatalogueImportStore {
       // so the alias is held by its legacy id rather than mapped to it. The row stays locked until
       // the batch commits, so an app rename, delete or details write cannot slip in before the map.
       const { rows: [item] } = await client.query<{ id: string }>(
-        `SELECT id::text FROM catalogue_items WHERE id::text = $1 AND status = 'active' AND catalogue_type = $2 AND normalized_name = $3
+        `SELECT id::text FROM catalogue_items WHERE id = $1::uuid AND status = 'active' AND catalogue_type = $2 AND normalized_name = $3
           FOR UPDATE`,
         [target[0].platform_id, row.type, row.normalizedName]);
       if (!item) { tally.refused.push({ legacyTable: row.legacyTable, legacyId: row.legacyId, code: "name_conflict" }); return; }
@@ -205,12 +205,12 @@ export class PostgresCatalogueImportStore {
    */
   async #sameTypedContent(client: PoolClient, row: CatalogueImportRow, itemId: string): Promise<boolean> {
     if (row.type !== "currency" && row.type !== "bank") return true;
-    const { rows: [item] } = await client.query<{ code: string | null }>("SELECT code FROM catalogue_items WHERE id::text = $1", [itemId]);
+    const { rows: [item] } = await client.query<{ code: string | null }>("SELECT code FROM catalogue_items WHERE id = $1::uuid", [itemId]);
     if (!item || (item.code ?? null) !== row.code) return false;
     const { rows: [c] } = await client.query<{ symbol: string; decimal_places: number }>(
-      "SELECT symbol, decimal_places FROM catalogue_currency_details WHERE currency_id::text = $1 FOR SHARE", [itemId]);
+      "SELECT symbol, decimal_places FROM catalogue_currency_details WHERE currency_id = $1::uuid FOR SHARE", [itemId]);
     const { rows: [b] } = await client.query<{ swift_code: string; iban_bank_code: string; abk_code: string; transfer_type: string }>(
-      "SELECT swift_code, iban_bank_code, abk_code, transfer_type FROM catalogue_bank_payment_details WHERE bank_id::text = $1 FOR SHARE", [itemId]);
+      "SELECT swift_code, iban_bank_code, abk_code, transfer_type FROM catalogue_bank_payment_details WHERE bank_id = $1::uuid FOR SHARE", [itemId]);
     const currency = c ? { symbol: c.symbol, decimalPlaces: Number(c.decimal_places) } : null;
     const bank = b ? { swiftCode: b.swift_code, ibanBankCode: b.iban_bank_code, abkCode: b.abk_code, transferType: b.transfer_type } : null;
     const same = (x: object | null, y: object | null) => x === null || y === null ? x === y
