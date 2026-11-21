@@ -2788,7 +2788,7 @@
     "SHU-303 mutation M38 post the same verdict comment again",
     "SHU-303 mutation M39 post a verdict comment when the comments cannot be read",
     "SHU-303 mutation M40 count a HOLD as a review with a verdict",
-    "SHU-303 mutation M41 publish a verdict the review card's receipt contradicts",
+    "SHU-303 mutation M41 publish a verdict the review card's receipt does not confirm",
     "SHU-303 mutation M42 let a refused status escape the publish",
     "SHU-303 mutation M43 let max_parallel run past eight slots",
     "SHU-303 mutation M44 let a slot lane be any card",
@@ -22435,7 +22435,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-303 mutation M41 publish a verdict the review card's receipt contradicts",
+      "name": "SHU-303 mutation M41 publish a verdict the review card's receipt does not confirm",
       "capabilities": []
     },
     {
