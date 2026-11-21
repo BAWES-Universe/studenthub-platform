@@ -2781,7 +2781,7 @@
     "SHU-303 mutation M38 post the same verdict comment again",
     "SHU-303 mutation M39 post a verdict comment when the comments cannot be read",
     "SHU-303 mutation M40 count a HOLD as a review with a verdict",
-    "SHU-303 mutation M41 publish a verdict the review card's receipt contradicts",
+    "SHU-303 mutation M41 publish a verdict the review card's receipt does not confirm",
     "SHU-303 mutation M42 let a refused status escape the publish",
     "SHU-303 P6: a review the supervisor finished after its pull request moved or its activation ended is held, by status only, with no verdict",
     "SHU-303 P7: any other supervisor answer, or a pull request that cannot be read, keeps the slot and writes nothing",
@@ -22384,7 +22384,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-303 mutation M41 publish a verdict the review card's receipt contradicts",
+      "name": "SHU-303 mutation M41 publish a verdict the review card's receipt does not confirm",
       "capabilities": []
     },
     {
