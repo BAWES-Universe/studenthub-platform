@@ -336,9 +336,13 @@ from `/exports/<id>` under the kind's name. Files are CSV; legacy wrote Excel.
   page by page and stops one row past the cap: the detailed and who-worked-where files never
   hold more than that, and the summary and staff hours files keep only per-person totals
   (staff hours stops once there are more than 10,000 staff members; a range is at most 366 days).
-- Staff hours: legacy counted a session with no end as the staff record's hours per day. That
-  comes from the `staffHoursPerDay` port (`wireWork` option), absent until the staff record
-  exists; while it is absent a day not ended adds nothing. The release matrix gates cutover on
+- Staff hours: legacy used the staff record's hours per day for a staff/day row whose minutes
+  were empty or zero (its query grouped by staff and day without summing, so a day with several
+  sessions showed one arbitrary row). Here a day counts the hours once when a session is still
+  open or its sessions add up to zero minutes (all closed inside the minute); duplicate open
+  sessions on a day count once, and a day with closed minutes and one still open keeps its
+  minutes and adds the hours. The hours come from the `staffHoursPerDay` port (`wireWork`
+  option), absent until the staff record exists; while it is absent such a day adds nothing. The release matrix gates cutover on
   wiring it (the cutover lane's STAFF-HOURS-FALLBACK step). The button is on `/work/staff-time`.
 
 ## Legacy parity sweep (legacy @ 55119d3, 2026-11-20)
