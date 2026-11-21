@@ -289,6 +289,8 @@ test("the privacy check refuses any report field that could carry a value", () =
     ["outcome", (r) => { r.journeys[0].people[2].outcome = "match"; }],
     ["revision", (r) => { r.revision = "main"; }],
     ["screens", (r) => { r.journeys[0].screens = ["C-12 /work"]; }],
+    ["legacyId", (r) => { r.journeys[0].people[1].legacyId = "01"; }],
+    ["people.duplicate", (r) => { r.journeys[0].people[1].legacyId = "1"; }],
   ];
   for (const [field, mutate] of breaks) {
     const copy = JSON.parse(JSON.stringify(ok));
@@ -357,6 +359,7 @@ test("the walker registry maps each journey to screens the release matrix knows"
   assert.equal(walkedRevisionMatchesTree("main", () => 0), false, "a revision must be a full commit");
   assert.equal(walkedRevisionMatchesTree(REVISION, (args) => (args[0] === "merge-base" ? 1 : 0)), false, "not in this tree");
   assert.equal(walkedRevisionMatchesTree(REVISION, (args) => (args[0] === "diff" ? 1 : 0)), false, "walker changed since");
+  assert.equal(walkedRevisionMatchesTree(REVISION, (args) => (args[0] === "diff" && args[2] === "HEAD" ? 1 : 0)), false, "uncommitted walker edits");
   assert.equal(walkedRevisionMatchesTree(REVISION, () => 0), true);
 });
 
@@ -378,9 +381,11 @@ test("legacy queries bind integers and real ISO dates only, and are single SELEC
   assert.throws(() => parseRows("[1]\n"), /twin.legacy.badRow/);
 });
 
-function fakeBrowser(responses: Record<string, { status: number; finalPath?: string; html?: string }>, log: string[]): BrowserLike {
+type RouteHandler = Parameters<Awaited<ReturnType<BrowserLike["newContext"]>>["route"]>[1];
+function fakeBrowser(responses: Record<string, { status: number; finalPath?: string; html?: string }>, log: string[], routes: RouteHandler[] = []): BrowserLike {
   return {
     newContext: async () => ({
+      route: async (_url, handler) => { routes.push(handler); },
       addCookies: async (cookies) => { log.push(`cookie ${cookies[0]!.name} ${cookies[0]!.domain} secure=${cookies[0]!.secure}`); },
       newPage: async () => {
         let at = "";
@@ -399,13 +404,22 @@ test("the staging app signs one person in for their pages only, and always remov
   const log: string[] = [];
   const sessions = { put: async (r: { id: string; personId: string }) => { log.push(`put ${r.personId}`); }, delete: async () => { log.push("delete"); } };
   assert.throws(() => stagingApp(fakeBrowser({}, log), sessions, async () => "p", "https://studenthub.co"), /twin.app.notStaging/);
-  const staging = stagingApp(fakeBrowser({ "/work/history": { status: 200, html: "<html>ok</html>" }, "/expired": { status: 200, finalPath: "/login/universe" }, "/missing": { status: 404 }, "/refused": { status: 401 }, "/away": { status: 200, finalPath: "https://elsewhere.example/page" } }, log), sessions, async () => "p");
+  const staging = stagingApp(fakeBrowser({ "/work/history": { status: 200, html: "<html>ok</html>" }, "/expired": { status: 200, finalPath: "/login/universe" }, "/missing": { status: 404 }, "/refused": { status: 401 }, "/elsewhere-day": { status: 200, finalPath: "/work/history/2026-10-03" }, "/away": { status: 200, finalPath: "https://elsewhere.example/page" } }, log), sessions, async () => "p");
   assert.deepEqual(await staging.open("p-1", ["/work/history"]), ["<html>ok</html>"]);
   assert.deepEqual(log, ["put p-1", "cookie __Host-studenthub_session staging.studenthub.co secure=true", "goto /work/history", "close", "delete"]);
-  for (const [path, code] of [["/expired", "sign_in_failed"], ["/refused", "sign_in_failed"], ["/missing", "page_failed"], ["/timeout", "timeout"], ["//evil.example", "page_failed"], ["/away", "page_failed"]] as const) {
+  for (const [path, code] of [["/expired", "sign_in_failed"], ["/refused", "sign_in_failed"], ["/elsewhere-day", "page_failed"], ["/missing", "page_failed"], ["/timeout", "timeout"], ["//evil.example", "page_failed"], ["/away", "page_failed"]] as const) {
     log.length = 0;
     await assert.rejects(staging.open("p-1", [path]), (e: unknown) => e instanceof WalkFailure && e.code === code, path);
     assert.deepEqual(log.slice(-2), ["close", "delete"], `${path}: session removed`);
+  }
+  // Every request the page makes goes through the route guard: staging continues, anything else is aborted.
+  const routes: RouteHandler[] = [];
+  await stagingApp(fakeBrowser({ "/work/history": { status: 200 } }, [], routes), sessions, async () => "p").open("p-1", ["/work/history"]);
+  assert.equal(routes.length, 1);
+  for (const [url, expected] of [[`${STAGING_ORIGIN}/assets/app.css`, "continue"], ["https://tracker.example/beacon", "abort"], ["https://staging.studenthub.co.evil.example/x", "abort"], ["not a url", "abort"]] as const) {
+    let did = "";
+    await routes[0]!({ request: () => ({ url: () => url }), abort: async () => { did = "abort"; }, continue: async () => { did = "continue"; } });
+    assert.equal(did, expected, url);
   }
   log.length = 0;
   const broken: BrowserLike = { newContext: async () => { throw new Error("browser gone"); } };

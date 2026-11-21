@@ -103,7 +103,9 @@ async function runWalk(env: NodeJS.ProcessEnv): Promise<number> {
 export function walkedRevisionMatchesTree(revision: string, git = (args: string[]) => spawnSync("git", args, { cwd: ROOT, stdio: "ignore" }).status): boolean {
   if (!/^[0-9a-f]{40}$/.test(revision)) return false;
   if (git(["merge-base", "--is-ancestor", revision, "HEAD"]) !== 0) return false;
-  return git(["diff", "--quiet", revision, "HEAD", "--", "tools/legacy-import/src/twin", "tools/legacy-import/twin-explanations.json"]) === 0;
+  const twin = ["tools/legacy-import/src/twin", "tools/legacy-import/twin-explanations.json"];
+  // Committed changes since the walk, then uncommitted ones: the code that closes must be the code that walked.
+  return git(["diff", "--quiet", revision, "HEAD", "--", ...twin]) === 0 && git(["diff", "--quiet", "HEAD", "--", ...twin]) === 0;
 }
 
 function runClose(reportFile: string | undefined, evidence: string | undefined): number {

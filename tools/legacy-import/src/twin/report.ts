@@ -61,7 +61,8 @@ export function verdictOf(result: JourneyResult, minimumPeople: number): Journey
   return { verdict: "verified", walked };
 }
 
-const LEGACY_ID = /^\d{1,20}$/;
+/** Canonical, so one person cannot appear twice as "1" and "01". */
+const LEGACY_ID = /^[1-9]\d{0,19}$/;
 const SCREEN = /^[A-Z]-\d{2}$/;
 const JOURNEY = /^[a-z][a-z0-9-]{1,40}$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
@@ -81,8 +82,12 @@ export function assertPrivate(report: TwinReport): void {
     keys(j, ["journey", "screens", "people"], "journey");
     if (!JOURNEY.test(j.journey)) fail("journey");
     if (j.screens.length === 0 || !j.screens.every((s) => SCREEN.test(s))) fail("screens");
+    const seen = new Set<string>();
     for (const p of j.people) {
       if (!LEGACY_ID.test(p.legacyId)) fail("legacyId");
+      // Each person counts once toward the floor.
+      if (seen.has(p.legacyId)) fail("people.duplicate");
+      seen.add(p.legacyId);
       if (p.outcome === "error") {
         keys(p, ["legacyId", "outcome", "code"], "person");
         if (!(WALK_CODES as readonly string[]).includes(p.code)) fail("code");

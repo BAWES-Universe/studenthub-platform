@@ -73,6 +73,7 @@ export interface BrowserLike {
   newContext(options: { serviceWorkers: "block"; viewport: { width: number; height: number }; locale: string }): Promise<{
     addCookies(cookies: { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly: boolean; sameSite: "Lax" }[]): Promise<void>;
     newPage(): Promise<{ goto(url: string, o: { waitUntil: "load"; timeout: number }): Promise<{ status(): number } | null>; content(): Promise<string>; url(): string }>;
+    route(url: string, handler: (route: { request(): { url(): string }; abort(): Promise<void>; continue(): Promise<void> }) => Promise<void>): Promise<void>;
     close(): Promise<void>;
   }>;
 }
@@ -103,6 +104,12 @@ export function stagingApp(browser: BrowserLike, sessions: SessionPort, people: 
       let context: Awaited<ReturnType<BrowserLike["newContext"]>> | undefined;
       try {
         try { context = await browser.newContext({ serviceWorkers: "block", viewport: { width: 1280, height: 900 }, locale: "en-GB" }); } catch { throw new WalkFailure("page_failed"); }
+        // Nothing leaves staging: any request to another origin (a redirect, an asset, a beacon) is aborted.
+        await context.route("**/*", async (route) => {
+          let allowed = false;
+          try { allowed = new URL(route.request().url()).origin === origin; } catch { allowed = false; }
+          await (allowed ? route.continue() : route.abort());
+        });
         await context.addCookies([{ name: SESSION_COOKIE, value: token, domain: host, path: "/", secure: true, httpOnly: true, sameSite: "Lax" }]);
         const page = await context.newPage();
         const html: string[] = [];
@@ -118,6 +125,8 @@ export function stagingApp(browser: BrowserLike, sessions: SessionPort, people: 
           if (final.origin !== origin) throw new WalkFailure("page_failed");
           // A redirect to sign-in means the session was not accepted.
           if (final.pathname.startsWith("/login")) throw new WalkFailure("sign_in_failed");
+          // Any other redirect (another day, another month) would be read as the page asked for.
+          if (`${final.pathname}${final.search}` !== path) throw new WalkFailure("page_failed");
           html.push(await page.content());
         }
         return html;
