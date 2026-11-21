@@ -215,23 +215,28 @@ Run this once, now, by hand, and do not schedule anything: in your studenthub-pl
 Run this once, now, by hand, and do not schedule anything: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then follow section B3 of docs/lanes/orca/HANDOVER.md on main in work mode, using the poll tool exactly as written there. The poll alone decides whether you may work. If it gives you nothing to do, post nothing. Carry the ticket it gives you through to a ready PR, then release the run lock as B3 says. Reply "work run done" with the poll output, the PR link and the release output.
 ```
 
-**Schedule prompt** (Claude sends it only after the first work run's start receipt, lease-scoped PR and released lock check out, and Claude and GPT agree to schedule):
+**Schedule prompt: superseded.** The open-ended 15-minute schedule is retired. Every schedule is now bounded: it names its tickets and a cutoff, and Khalid's paste is his opt-in for exactly those tickets. The stage 2 prompt, sent on 2026-11-21:
 
 ```
-Schedule an automation that runs every 15 minutes while you are online and never overlaps itself: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then follow section B3 of docs/lanes/orca/HANDOVER.md on main in work mode, using the poll tool exactly as written there. The poll alone decides whether you may work. If it gives you nothing to do, post nothing. Reply "poll scheduled" with the schedule you set.
+Schedule an automation that runs every 15 minutes while you are online and never overlaps itself. Each run: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then follow section B3 of docs/lanes/orca/HANDOVER.md on main in work mode, using the poll tool exactly as written there. The poll alone decides whether you may work. If it gives you nothing to do, post nothing. This schedule covers only issues #603 and #604. Delete the schedule yourself as soon as both are closed, or at 24 Nov 18:00 UTC, whichever comes first. If the poll or its check ever refuses because of a lease or run-lock problem, delete the schedule and post `stopped` on that issue. Reply "poll scheduled" with the schedule you set.
 ```
+
+How the bot reads it:
+- **Quiet skips are not problems.** The run lock being busy, a parked ticket, or nothing to do: post nothing, keep the schedule.
+- **Stop the pilot** (delete the schedule and post `stopped`) only on lost ownership (`check` refuses on your own running ticket, or `release` reports `not-owner`) or a lease violation.
+- **Set the recurrence to end before the cutoff.** No occurrence at or after 2026-11-24 18:00 UTC, and no catch-up of missed runs past it. A prompt can't stop a scheduler while the PC sleeps, so the end has to be in the schedule itself. Reply with the stored recurrence; Claude checks it.
 
 ---
 
 ## Part D. The plan: pilot, then scale
 
-Agreed shape (GPT's baseline): prove one ticket end to end, then two disjoint tickets in parallel, then add bots only when they own distinct work or add real review capacity.
+Agreed shape (GPT's baseline): prove one ticket end to end, then two disjoint tickets on one bot in sequence, then add bots only when they own distinct work or add real review capacity.
 
 | Stage | What runs | Enter when | Exit (pass) when | Stop and fix if |
 |---|---|---|---|---|
 | **0. Setup** | `main` requires PRs with no bypass (Khalid, A1), remit saved, this file and `REGISTER.md` on `main`, label `lane:orca` exists | Consensus (done) | All of that is true **and Khalid says "start the Orca pilot"** | Protection can't be confirmed: stay read-only |
 | **1. One ticket** | Ticket P1 (below), one at a time | Stage 0 passed; lease rechecked against open PRs on the day | The trigger is confirmed to start the bot; bot acknowledged on the issue unaided; draft PR inside the lease; ready with evidence; Claude PASS within 2 rounds; merged; zero rule breaches | Any rule breach (B0, B4, B5), or no acknowledgment within 2 h of dispatch while the PC is on |
-| **2. Two in parallel** | Two disjoint tickets on the same bot | Stage 1 passed | Both merged; neither waited on the other; zero breaches; Claude's review turnaround stayed under 1 working day | Overlap, a breach, or a stalled review stops the other ticket |
+| **2. Two in sequence** | Two disjoint tickets on the same bot, one run at a time (B can start while A is parked for review, never both at once) | Stage 1 passed, and Khalid's bounded opt-in | Both merged; neither blocked the other beyond the run lock; no active-run overlap; zero breaches; Claude's review turnaround stayed under 1 working day | Overlap, a breach, or a stalled review stops the other ticket |
 | **3. Second bot** | A second Orca bot, own name and header, own lease area | Stage 2 passed and there are ≥ 4 ready tickets nobody owns | Over 1 week: ≥ 80% of dispatched tickets merged, median ≤ 2 review rounds, zero breaches | Review backlog over 1 day, or rework rate above 30% |
 | **4. N bots** | One more bot at a time | Previous step's bar held for a week | Same bars, per bot and in total | Same, and stop adding when review turnaround passes 1 day |
 
