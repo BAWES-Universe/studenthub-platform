@@ -138,6 +138,72 @@ reported and the batch goes on. Imported decisions then link each decided sessio
 the latest legacy decision with its status. Legacy ids keep their underscores
 (`can_wrk_hr_<uuid>`), which migration 0504 allows.
 
+### Staff time and the stand-up (M-5)
+
+`packages/work/src/legacy-staff.ts` maps the internal staff rows the same way, with the
+legacy id as `legacy_ref` (`work_session_<uuid>`, `question_<uuid>`, `answer_<uuid>`). The
+importer resolves the legacy `staff_id` to a principal; a staff id with no principal is
+reported by the importer, not passed on.
+
+| Legacy | Here | Rules |
+|---|---|---|
+| `staff_work_session` | `work_staff_sessions`, `source = 'import'` | The start is `created_at`; the day is its Kuwait date. Ending a session saved `total_minutes` and `updated_at` together, so `updated_at` is the end when its whole minutes match `total_minutes`; otherwise the end is the start plus `total_minutes` (what legacy showed and exported) and the row is reported as `minutes_mismatch`. No minutes: imported open, as legacy showed it. Negative or fractional minutes are reported, not imported. A second open session on one day is refused (`open_twice`). |
+| `daily_standup_question` | `work_standup_questions` | Trimmed text, 1 to 255 characters, asked (not retired), no author. |
+| `daily_standup_answer` | `work_standup_answers`, `source = 'import'` | The question text as it read, the day as the Kuwait date of `created_at`; repeats on a day are kept. An answer whose question legacy deleted is refused (`no_question`); a blank answer, one over 4,000 characters, or text holding a NUL character (which Postgres can't store) is reported, not cut. |
+
+`PostgresWorkImportStore.importStaffSessions`, `importStandupQuestions` (run before the
+answers) and `importStandupAnswers` follow the contract above, with the digest stored in
+`legacy_digest` (migration 0508). A session imported open that legacy has since ended gets
+its end once (counted as updated); any other change is a conflict. The import key of a
+staff session or question can't be changed afterwards. Imported questions stay editable and retirable here, so a replay compares the stored question
+too: one edited or retired since import is a conflict, never unchanged. A session the timer
+ended here is never reopened or moved by a later legacy replay (a conflict); legacy agreeing
+with that end is unchanged. Rows that already had a
+`legacy_ref` before 0508 keep a NULL digest (unknown: nothing is made up for them); they
+keep working, a timer can still end an open one, and a re-run refuses each of them as
+`unknown_digest` without comparing or overwriting it. Rows imported from 0508 on must carry
+their digest. Within a batch, ends are applied
+before new open sessions, and each staff member's day is locked with the refs, so two
+batches can't deadlock. `reconcileStaffImport(table, legacyRefs, reportedRefs, heldRefs)` gives each table's reconciliation by legacy reference only: the legacy and
+imported counts, the legacy refs with no imported row (split into `skipped`, the refs the
+run passes in `reportedRefs` because it reported or refused them, and `missing`, the
+unexplained ones; without `reportedRefs` every absent ref is `missing`), and imported refs legacy no
+longer holds. ID coverage and content are kept apart: `covered` counts the legacy refs that have a row,
+`held` lists the covered refs whose content is not accepted (the run's conflicts and
+`unknown_digest` refusals passed as `heldRefs`, plus any row whose digest is unknown here),
+`verified` is the rest, and `clean` is true only when nothing is held, skipped, missing or
+extra. Issues and results carry legacy ids, rule codes and numbers only, never row
+text, and importing sends nothing (no notices, outbox rows or emails).
+
+#### M-5 rules on record
+
+1. **Writer clock.** Legacy wrote these stamps with MySQL `NOW()` in the connection's session
+   zone (stand-up answers) or `created_at`/`updated_at` behaviours, for all rows since
+   `m221215_072607_attendance` (15 Dec 2022). The app sets Asia/Kuwait, but that does not prove
+   the session zone of the writer. The mapper reads every stamp as Asia/Kuwait wall time
+   (UTC+3, no DST). That is an assumption until the legacy connection's `time_zone` is read
+   from the mirror (read-only) and recorded with the interval it covers.
+2. **Day.** `work_date` is the Asia/Kuwait calendar day of the instant, never the UTC date (a
+   Kuwait `2026-11-20 00:01:00` stays on 20 Nov and is stored as `2026-11-19T21:01:00Z`). Under a
+   Kuwait writer clock this equals the legacy stored day. The literal legacy value is not kept
+   apart from the instant; if the clock proves to be another zone, the mapper converts from
+   that zone and the stored-day grouping is re-checked before any write.
+3. **Unknown history holds.** Until rule 1 is proven, the M-5 import gate stays open: runs are
+   dry runs, nothing is written. Rows whose content can't be accepted are held by ref
+   (`unknown_digest`, conflicts) and the table is never `clean` while any is held.
+4. **Answer shapes.** The prompt comes from `daily_standup_answer.question`, the copy legacy
+   kept, never the current question row. A null, blank, NUL-holding or over-255 prompt is
+   `bad_text:question`; a null, blank (spaces, tabs, newlines only), NUL-holding or
+   over-4,000-character answer is `bad_text:answer`; an answer whose question was not imported
+   is `no_question`. Each is reported by legacy id, not imported, and counted as `skipped`
+   (explained), never cut, filled in or dropped silently. Repeats on a day are separate rows.
+5. **Two open sessions for one person and day.** Within a snapshot ends are applied first, so
+   a session legacy closed and a new one it opened both load. Two still open is a real
+   exception: the second is refused as `open_twice` by its own ref, counted as `skipped`, and the
+   first keeps its ref; neither is ended or merged. Minutes: when `updated_at` disagrees with
+   the stored `total_minutes`, the stored minutes win (what legacy showed and exported) and
+   the row is reported as `minutes_mismatch`; no end is invented for an open session.
+
 ## Screens: Track, History and Appeals (C-11 to C-13)
 
 `apps/gateway/src/work/pages.ts` serves `/work/track`, `/work/history[/:date]` and `/work/appeals[/:id]`. The pages are rendered on the server with the shared page shell and profile card styles, and they call the same services as the JSON API.
@@ -205,8 +271,8 @@ StudentHub's own staff time their day here (hours are hours). `StaffTimeService`
 - The table refuses edits to a closed session, a second open session for the same day, an end
   before the start, and deletes.
 
-The staff hours export is under Exports below. The legacy rows are imported with the cutover
-lane's importer (M-5).
+The staff hours export is under Exports below. The legacy rows are mapped for the cutover
+lane's importer (M-5) as described under "Staff time and the stand-up".
 
 ## Daily stand-up (legacy daily_standup_question / daily_standup_answer)
 
@@ -234,9 +300,8 @@ The stand-up part of A-14. `StandupService` (`packages/work/src/standup.ts`) ove
   allowed; answers given here may not.
 
 Legacy's emailed stand-up report (`standupReport`) was switched off in its cron and is not ported.
-The legacy rows (`daily_standup_question` → `work_standup_questions.legacy_ref`,
-`daily_standup_answer` → `work_standup_answers` with `source = 'import'`) are for the cutover
-lane's importer.
+The legacy rows are mapped for the cutover lane's importer as described under "Staff time and
+the stand-up".
 
 ## Exports (P-1)
 
@@ -314,4 +379,5 @@ person's feed keeps the decision notice it had; removal itself sends nothing, li
 ## Not yet here
 
 - The rest of A-14 (staff leave and expenses); it depends on the pay lane's settlement (P1, F4).
-- The importer run itself (cutover lane, M-5).
+- The importer run itself (cutover lane, M-5): reading the mirror, resolving staff ids and
+  writing the run's report.
