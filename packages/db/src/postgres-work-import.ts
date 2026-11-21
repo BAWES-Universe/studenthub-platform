@@ -56,7 +56,11 @@ export interface WorkImportStandupAnswer {
   readonly legacyRef: string; readonly staffPrincipalId: string; readonly questionLegacyRef: string;
   readonly question: string; readonly answer: string; readonly workDate: IsoDate; readonly createdAt: string;
 }
-export type StaffImportTable = "work_staff_sessions" | "work_standup_questions" | "work_standup_answers";
+/** A legacy staff record's hours per day (`staff.hours_per_day`); the staff id is already resolved to a principal. */
+export interface WorkImportStaffHours {
+  readonly legacyRef: string; readonly staffPrincipalId: string; readonly hours: number;
+}
+export type StaffImportTable = "work_staff_sessions" | "work_standup_questions" | "work_standup_answers" | "work_staff_hours_per_day";
 /** Per-table reconciliation by legacy reference only: no names, times or text. */
 export interface StaffImportReconciliation {
   readonly table: StaffImportTable;
@@ -105,7 +109,7 @@ class Tally {
   }
 }
 
-const STAFF_IMPORT_TABLES: readonly StaffImportTable[] = ["work_staff_sessions", "work_standup_questions", "work_standup_answers"];
+const STAFF_IMPORT_TABLES: readonly StaffImportTable[] = ["work_staff_sessions", "work_standup_questions", "work_standup_answers", "work_staff_hours_per_day"];
 
 export class PostgresWorkImportStore {
   readonly #db: PoolOwner;
@@ -286,6 +290,38 @@ export class PostgresWorkImportStore {
       [randomUUID(), row.staffPrincipalId, question[0].id, row.question, row.answer, row.workDate, row.legacyRef, digest, row.createdAt]));
       tally.inserted++;
     });
+  }
+
+  /**
+   * Staff hours per day, one row per principal. The number stays editable
+   * here, so a replay compares the stored hours, not only the digest: a row
+   * changed since (here or in legacy) is a conflict, never overwritten. A
+   * principal that already holds hours under another legacy ref (two legacy
+   * staff records resolved to one person) is refused as `invalid`.
+   */
+  async importStaffHours(rows: readonly WorkImportStaffHours[]): Promise<WorkImportResult> {
+    // The principal is locked with the refs, so two batches naming one person under different refs wait for each other.
+    const people = rows.map((r) => `staff ${r.staffPrincipalId}`);
+    return this.#batch("work_staff_hours_per_day", rows, async (client, row, tally) => {
+      const digest = workImportDigest(row);
+      // A row with a legacy ref always carries its digest here (0509 checks it on insert).
+      const { rows: held } = await client.query<{ legacy_digest: string; staff_principal_id: string; hours: number }>(
+        "SELECT legacy_digest, staff_principal_id, hours FROM work_staff_hours_per_day WHERE legacy_ref = $1", [row.legacyRef]);
+      const stored = held[0];
+      if (stored) {
+        if (stored.legacy_digest !== digest) { this.#same(tally, row.legacyRef, stored.legacy_digest, digest); return; }
+        if (stored.hours === row.hours) { tally.unchanged++; return; }
+        const now = { legacyRef: row.legacyRef, staffPrincipalId: stored.staff_principal_id, hours: stored.hours };
+        tally.conflicts.push({ legacyRef: row.legacyRef, existingDigest: workImportDigest(now), incomingDigest: digest });
+        return;
+      }
+      if (!Number.isInteger(row.hours) || row.hours < 0 || row.hours > 24) { tally.refused.push({ legacyRef: row.legacyRef, code: "invalid" }); return; }
+      const { rows: taken } = await client.query("SELECT 1 FROM work_staff_hours_per_day WHERE staff_principal_id = $1", [row.staffPrincipalId]);
+      if (taken.length > 0) { tally.refused.push({ legacyRef: row.legacyRef, code: "invalid" }); return; }
+      await guarded(client, () => client.query(`INSERT INTO work_staff_hours_per_day(staff_principal_id, hours, legacy_ref, legacy_digest)
+        VALUES($1,$2,$3,$4)`, [row.staffPrincipalId, row.hours, row.legacyRef, digest]));
+      tally.inserted++;
+    }, undefined, people);
   }
 
   /**

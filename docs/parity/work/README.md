@@ -150,15 +150,17 @@ reported by the importer, not passed on.
 | `staff_work_session` | `work_staff_sessions`, `source = 'import'` | The start is `created_at`; the day is its Kuwait date. Ending a session saved `total_minutes` and `updated_at` together, so `updated_at` is the end when its whole minutes match `total_minutes`; otherwise the end is the start plus `total_minutes` (what legacy showed and exported) and the row is reported as `minutes_mismatch`. No minutes: imported open, as legacy showed it. Negative or fractional minutes are reported, not imported. A second open session on one day is refused (`open_twice`). |
 | `daily_standup_question` | `work_standup_questions` | Trimmed text, 1 to 255 characters, asked (not retired), no author. |
 | `daily_standup_answer` | `work_standup_answers`, `source = 'import'` | The question text as it read, the day as the Kuwait date of `created_at`; repeats on a day are kept. An answer whose question legacy deleted is refused (`no_question`); a blank answer, one over 4,000 characters, or text holding a NUL character (which Postgres can't store) is reported, not cut. |
+| `staff.hours_per_day` | `work_staff_hours_per_day` (0509), `legacy_ref` `staff:<staff_id>` | A whole number of hours, 0 to 24 (legacy: tinyint, default 8). A missing or other value is reported as `bad_hours`, not read as the default. One row per principal: a second legacy staff record resolved to the same person is refused (`invalid`). |
 
 `PostgresWorkImportStore.importStaffSessions`, `importStandupQuestions` (run before the
-answers) and `importStandupAnswers` follow the contract above, with the digest stored in
+answers), `importStandupAnswers` and `importStaffHours` follow the contract above, with the digest stored in
 `legacy_digest` (migration 0508). A session imported open that legacy has since ended gets
 its end once (counted as updated); any other change is a conflict. The import key of a
 staff session or question can't be changed afterwards. Imported questions stay editable and retirable here, so a replay compares the stored question
 too: one edited or retired since import is a conflict, never unchanged. A session the timer
 ended here is never reopened or moved by a later legacy replay (a conflict); legacy agreeing
-with that end is unchanged. Rows that already had a
+with that end is unchanged. The hours per day can be changed here too, so their replay compares the
+stored hours: a number changed since import is a conflict, never overwritten. Rows that already had a
 `legacy_ref` before 0508 keep a NULL digest (unknown: nothing is made up for them); they
 keep working, a timer can still end an open one, and a re-run refuses each of them as
 `unknown_digest` without comparing or overwriting it. Rows imported from 0508 on must carry
@@ -341,9 +343,10 @@ from `/exports/<id>` under the kind's name. Files are CSV; legacy wrote Excel.
   sessions showed one arbitrary row). Here a day counts the hours once when a session is still
   open or its sessions add up to zero minutes (all closed inside the minute); duplicate open
   sessions on a day count once, and a day with closed minutes and one still open keeps its
-  minutes and adds the hours. The hours come from the `staffHoursPerDay` port (`wireWork`
-  option), absent until the staff record exists; while it is absent such a day adds nothing. The release matrix gates cutover on
-  wiring it (the cutover lane's STAFF-HOURS-FALLBACK step). The button is on `/work/staff-time`.
+  minutes and adds the hours. The hours come from `work_staff_hours_per_day` (0509, one row
+  per principal, 0 to 24); a staff member with no row reads as legacy's default, 8. `wireWork`
+  wires it unless a `staffHoursPerDay` port is given. The rows come from legacy
+  `staff.hours_per_day` (see "Staff time and the stand-up (M-5)" above). The button is on `/work/staff-time`.
 
 ## Legacy parity sweep (legacy @ 55119d3, 2026-11-20)
 
