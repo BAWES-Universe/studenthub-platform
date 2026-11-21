@@ -134,6 +134,17 @@ test("restart after an ambiguous receipt resumes the claimed ticket instead of s
   assert.ok(after[0]!.action === "resume" && after[0]!.startReceiptPosted === true);
 });
 
+test("a done ticket whose claim is still held never resumes ahead of a new eligible ticket", () => {
+  const md = register(row(581, 2, "`900`", "done"), row(600, 1, "`960`"));
+  const comments = { 581: [dispatch(900, 581, 2)], 600: [dispatch(960, 600, 1)] };
+  const decisions = run(md, comments, [[claimKey(BOT, 581, 2), 900]]);
+  assert.deepEqual(decisions.map((d) => [d.issue, d.action]), [[581, "skip"], [600, "start"]]);
+  assert.match(JSON.stringify(decisions[0]), /state done/);
+  assert.equal(pickNext(decisions, () => "claimed", () => "tok")?.issue, 600);
+  // Closed out with nothing else eligible: the held claim stays idle, nothing to pick.
+  assert.equal(pickNext(run(register(row(581, 2, "`900`", "done")), comments, [[claimKey(BOT, 581, 2), 900]]), () => "claimed", () => "tok"), null);
+});
+
 test("a resume stays bound to the dispatch its claim saved", () => {
   const md = register(row(581, 1, "`901`"));
   assert.match(JSON.stringify(run(md, { 581: [dispatch(901, 581, 1)] }, [[claimKey(BOT, 581, 1), 900]])), /claim is bound to dispatch 900/);
