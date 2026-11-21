@@ -77,6 +77,22 @@ export function checkRun(mine: WorkDecision | undefined, holds: boolean, purpose
     : { ok: true, reason: null };
 }
 
+/**
+ * Whether a handed-back run may declare its revision now. `mine` is this run's
+ * resume decision made with no declaration, so a PR head that already moved
+ * makes it held (undefined). The declaration must answer the live hand-back on
+ * its PR and name a new head.
+ */
+export function admitDeclaration(mine: WorkDecision | undefined, holds: boolean, declaration: ExpectedHead): { ok: true } | { ok: false; reason: string } {
+  if (!holds) return { ok: false, reason: "run lock not held by this token" };
+  if (!mine) return { ok: false, reason: "ticket not resumable now (PR head moved, or not eligible)" };
+  const back = mine.changesRequested;
+  if (!back || mine.completeOnly) return { ok: false, reason: "no open hand-back to revise" };
+  if (declaration.pull !== back.pull || declaration.changes !== back.comment) return { ok: false, reason: "declaration does not match the hand-back's PR and changes request" };
+  if (declaration.sha === back.head) return { ok: false, reason: "declared head is the sent-back head" };
+  return { ok: true };
+}
+
 type Mode = "observe" | "work" | "check" | "expect" | "release" | "recover";
 
 function args(argv: readonly string[]): { bot: string; mode: Mode; claims: string; key?: string; token?: string; sha?: string; pull?: number; changes?: number; purpose: "write" | "ready" } {
@@ -138,12 +154,6 @@ export function heldClaims(dir: string): Map<string, ClaimRecord> {
 
 function main(): void {
   const { bot, mode, claims, key, token, sha, pull, changes, purpose } = args(process.argv.slice(2));
-  if (mode === "expect") {
-    const result = expectHead(claims, bot, key!, token!, { sha: sha!, pull: pull!, changes: changes! });
-    process.stdout.write(`${JSON.stringify({ mode, bot, key, sha, pull, changes, result })}\n`);
-    if (result !== "recorded") process.exitCode = 3;
-    return;
-  }
   if (mode === "release") {
     process.stdout.write(`${JSON.stringify({ mode, bot, key, result: releaseRun(claims, bot, key!, token!) })}\n`);
     return;
@@ -155,13 +165,32 @@ function main(): void {
   execFileSync("git", ["fetch", "--quiet", "origin", "main"]);
   const rows = parseRegister(execFileSync("git", ["show", `origin/main:${REGISTER}`], { encoding: "utf8" }));
   const mine = rows.filter((row) => row.bot === bot && row.state === "active");
-  const byIssue = new Map<number, IssueComment[]>();
-  for (const issue of new Set(mine.map((row) => row.issue))) byIssue.set(issue, comments(issue));
-  const pulls = new Map<string, BranchPull[]>();
-  for (const branch of new Set(mine.map((row) => ticketBranch(bot, row.slug)))) pulls.set(branch, branchPulls(branch));
+  // GitHub state (comments, open PRs) is read fresh each time decisions are made, including the re-read under the run lock.
+  const remote = (): { byIssue: Map<number, IssueComment[]>; pulls: Map<string, BranchPull[]> } => {
+    const byIssue = new Map<number, IssueComment[]>();
+    for (const issue of new Set(mine.map((row) => row.issue))) byIssue.set(issue, comments(issue));
+    const pulls = new Map<string, BranchPull[]>();
+    for (const branch of new Set(mine.map((row) => ticketBranch(bot, row.slug)))) pulls.set(branch, branchPulls(branch));
+    return { byIssue, pulls };
+  };
   const now = new Date();
   const at = now.toISOString();
-  const decisionsFor = (running?: { key: string; expected: ExpectedHead | null }): Decision[] => decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims), pulls, ...(running ? { running } : {}) });
+  const decisionsFor = (running?: { key: string; expected: ExpectedHead | null }): Decision[] => {
+    const { byIssue, pulls } = remote();
+    return decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims), pulls, ...(running ? { running } : {}) });
+  };
+
+  if (mode === "expect") {
+    // Admitted only while the hand-back still stands and the PR is still at the sent-back head.
+    const holds = holdsRun(claims, bot, key!, token!);
+    const declaration = { sha: sha!, pull: pull!, changes: changes! };
+    const mineNow = decisionsFor(holds ? { key: key!, expected: null } : undefined).find((d): d is WorkDecision => d.action === "resume" && d.claimKey === key);
+    const admitted = admitDeclaration(mineNow, holds, declaration);
+    const result = admitted.ok ? expectHead(claims, bot, key!, token!, declaration) : admitted.reason;
+    process.stdout.write(`${JSON.stringify({ mode, bot, key, sha, pull, changes, result })}\n`);
+    if (result !== "recorded") process.exitCode = 3;
+    return;
+  }
 
   if (mode === "check") {
     // A running ticket always holds its claim, so only a matching resume (same dispatch, same lease) passes.

@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { acquireRun, CLAUDE_APP_ID, changesHeader, claim, claimKey, decide, dispatchHeader, expectHead, readExpected, holdsRun, parseRegister, readClaim, recoverRun, RegisterError, readyReceiptHeader, releaseRun, startReceiptHeader, ticketBranch, type BranchPull, type ExpectedHead, type IssueComment } from "../src/lane.js";
-import { checkRun, heldClaims, pickNext } from "../src/poll.js";
+import { admitDeclaration, checkRun, heldClaims, pickNext } from "../src/poll.js";
 import type { WorkDecision } from "../src/lane.js";
 
 const BOT = "studenthub-universe";
@@ -299,6 +299,27 @@ test("review wait: full revision cycle from parked to changes to a new ready hea
   const t2 = `t-${Math.random()}`;
   assert.equal(acquireRun(dir, BOT, keyA, NOW, t2), "acquired");
   assert.equal(check(HEAD_4, t2), false);
+});
+
+test("expect is admitted only for the lock holder, at the sent-back head, for that hand-back's PR and changes request", () => {
+  const md = register(row(581, 1, "`900`"), row(590, 1, "`950`"));
+  const keyA = claimKey(BOT, 581, 1);
+  const a = [dispatch(900, 581, 1), ready(910, 581, 1, HEAD_1), changes(920, 581, 1, HEAD_1)];
+  const HEAD_3 = "3".repeat(40);
+  const declared = { sha: HEAD_3, pull: 700, changes: 920 };
+  // As the CLI computes it: under the lock, before any declaration exists.
+  const mine = (headA: string) => run(md, { 581: a, 590: [dispatch(950, 590, 1)] }, [[keyA, 900]], prA(headA), { key: keyA, expected: null })
+    .find((d): d is WorkDecision => d.action === "resume" && d.claimKey === keyA);
+  assert.deepEqual(admitDeclaration(mine(HEAD_1), true, declared), { ok: true });
+  assert.equal(admitDeclaration(mine(HEAD_1), false, declared).ok, false); // lock not held
+  assert.equal(admitDeclaration(mine(HEAD_3), true, declared).ok, false); // already pushed before declaring: held
+  assert.equal(admitDeclaration(mine(HEAD_1), true, { ...declared, pull: 701 }).ok, false);
+  assert.equal(admitDeclaration(mine(HEAD_1), true, { ...declared, changes: 919 }).ok, false);
+  assert.equal(admitDeclaration(mine(HEAD_1), true, { ...declared, sha: HEAD_1 }).ok, false);
+  // Parked (no hand-back): nothing to revise.
+  const parked = run(md, { 581: a.slice(0, 2), 590: [dispatch(950, 590, 1)] }, [[keyA, 900]], prA(HEAD_1), { key: keyA, expected: null })
+    .find((d): d is WorkDecision => d.action === "resume" && d.claimKey === keyA);
+  assert.equal(admitDeclaration(parked, true, declared).ok, false);
 });
 
 test("a resume stays bound to the dispatch its claim saved", () => {
