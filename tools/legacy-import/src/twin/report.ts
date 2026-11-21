@@ -37,6 +37,9 @@ export interface TwinReport {
   readonly journeys: readonly JourneyResult[];
 }
 
+/** No journey is verified on fewer people than this, whatever a walk was configured with. */
+export const MINIMUM_PEOPLE_FLOOR = 5;
+
 export function outcomeOf(c: Comparison): "match" | "explained" | "regression" {
   return c.regressions.length > 0 ? "regression" : c.explained.length > 0 ? "explained" : "match";
 }
@@ -113,16 +116,41 @@ export interface GateChange {
   readonly change: "closed" | "already_closed" | "built_open" | "not_verified";
 }
 
+/** What `close` checks a report against: the code's journeys, the walked revision, the floor of people. */
+export interface CloseRules {
+  /** The journeys this code defines (JOURNEYS), each with exactly the screens it verifies. */
+  readonly registry: readonly { readonly id: string; readonly screens: readonly string[] }[];
+  /** The 40-character platform revision the walk must have run against. */
+  readonly revision: string;
+  /** The fewest people a journey may be verified with; a report may ask for more, never fewer. */
+  readonly minimumPeople: number;
+}
+
 /**
  * Closes `verified` on each screen of each verified journey, citing `evidence` (where the
- * report was published: `PR #n comment <id>` or a run URL). A screen whose `built` gate is
- * still open is left alone: a walk cannot verify a page the matrix does not call built.
- * A screen shared by several journeys closes only when every journey naming it is verified.
- * Returns the new screens object and what happened to each screen; the input is unchanged.
+ * report was published: `PR #n comment <id>` or a run URL).
+ *
+ * The report is not trusted to describe itself. Every journey in it must be one the code
+ * defines, with exactly that journey's screens; a journey may appear once; the walked
+ * revision must be the expected one; and its minimum must not be below the floor. A
+ * screen closes only when every journey the code says verifies it is in the report and
+ * verified, so leaving a co-owning journey out of a report cannot close a screen.
+ * A screen whose `built` gate is still open is left alone. The input is unchanged.
  */
-export function closeVerified<T extends ScreenRowLike>(screens: Readonly<Record<string, T>>, report: TwinReport, evidence: string): { screens: Record<string, T>; changes: GateChange[] } {
+export function closeVerified<T extends ScreenRowLike>(screens: Readonly<Record<string, T>>, report: TwinReport, evidence: string, rules: CloseRules): { screens: Record<string, T>; changes: GateChange[] } {
   if (!citesEvidence(evidence) || /[\r\n]/.test(evidence)) throw new Error("twin.gate.evidenceUnsourced");
   assertPrivate(report);
+  if (!/^[0-9a-f]{40}$/.test(rules.revision) || report.revision !== rules.revision) throw new Error("twin.gate.staleRevision");
+  if (report.minimumPeople < rules.minimumPeople) throw new Error("twin.gate.minimumTooLow");
+  const known = new Map(rules.registry.map((j) => [j.id, j.screens]));
+  const seen = new Set<string>();
+  for (const j of report.journeys) {
+    const expected = known.get(j.journey);
+    if (!expected) throw new Error("twin.gate.unknownJourney");
+    if (seen.has(j.journey)) throw new Error("twin.gate.duplicateJourney");
+    seen.add(j.journey);
+    if (expected.length !== j.screens.length || expected.some((s, i) => s !== j.screens[i])) throw new Error("twin.gate.screensMismatch");
+  }
   const out: Record<string, T> = { ...screens };
   const changes: GateChange[] = [];
   const verdicts = new Map(report.journeys.map((j) => [j.journey, verdictOf(j, report.minimumPeople)]));
@@ -130,11 +158,13 @@ export function closeVerified<T extends ScreenRowLike>(screens: Readonly<Record<
     for (const screen of j.screens) {
       const row = out[screen];
       if (!row) throw new Error("twin.gate.unknownScreen");
-      const naming = report.journeys.filter((other) => other.screens.includes(screen));
-      if (!naming.every((other) => verdicts.get(other.journey)!.verdict === "verified")) { changes.push({ screen, journey: j.journey, change: "not_verified" }); continue; }
+      // Who verifies this screen comes from the code, not from the report.
+      const owners = rules.registry.filter((other) => other.screens.includes(screen)).map((other) => other.id);
+      if (owners.some((id) => !verdicts.has(id))) throw new Error("twin.gate.coOwnerMissing");
+      if (!owners.every((id) => verdicts.get(id)!.verdict === "verified")) { changes.push({ screen, journey: j.journey, change: "not_verified" }); continue; }
       if (row.gates.built?.state !== "done") { changes.push({ screen, journey: j.journey, change: "built_open" }); continue; }
       if (row.gates.verified?.state === "done") { changes.push({ screen, journey: j.journey, change: "already_closed" }); continue; }
-      const walked = naming.map((other) => `${other.journey} (${(verdicts.get(other.journey) as { walked: number }).walked} people)`).join(", ");
+      const walked = owners.map((id) => `${id} (${(verdicts.get(id) as { walked: number }).walked} people)`).join(", ");
       out[screen] = { ...row, gates: { ...row.gates, verified: { state: "done", evidence: `legacy twin walk at ${report.revision.slice(0, 12)}: ${walked}; ${evidence}` } } };
       changes.push({ screen, journey: j.journey, change: "closed" });
     }

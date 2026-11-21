@@ -6,7 +6,8 @@
  *          Reads the refreshed copy and the staging app, writes the private-safe report to
  *          TWIN_REPORT_PATH (mode 600) and prints one line per journey. Nothing is printed
  *          or written that a person typed.
- *   close  In a lane's PR, after the report is posted on a pull request:
+ *   close  In a lane's PR, after the report is posted on a pull request (the report's revision
+ *          must be in this tree with the walker unchanged since):
  *            node dist/tools/legacy-import/src/twin/cli.js close <report.json> "PR #n comment <id>"
  *          Closes `verified` in tools/release-matrix/matrix.json for every screen whose
  *          journeys all passed and whose `built` gate is already done.
@@ -17,18 +18,19 @@
  *   TWIN_REVISION           the 40-character platform commit staging is running
  *   TWIN_MONTH              YYYY-MM to walk; default the last finished month in Kuwait
  *   TWIN_JOURNEYS           comma-separated journey ids; default all
- *   TWIN_LIMIT              people per journey, default 10; TWIN_MINIMUM_PEOPLE default 5
+ *   TWIN_LIMIT              people per journey, default 10; TWIN_MINIMUM_PEOPLE default and floor 5
  *   TWIN_REPORT_PATH        default /var/lib/legacy-twin/last-walk.json
  *   LEGACY_REFRESH_REPORT   the refresh's last-run.json; the walk refuses unless it says ok
  */
 
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseDatabaseUrl, DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH } from "../refresh.js";
 import { validateExplanations, type Explanation } from "./compare.js";
 import { JOURNEYS } from "./journeys/index.js";
-import { closeVerified, verdictOf, type TwinReport } from "./report.js";
+import { closeVerified, MINIMUM_PEOPLE_FLOOR, verdictOf, type TwinReport } from "./report.js";
 import { linkedPerson, mirrorReader, stagingApp, type BrowserLike } from "./staging.js";
 import { walk } from "./walk.js";
 
@@ -75,7 +77,7 @@ async function runWalk(env: NodeJS.ProcessEnv): Promise<number> {
     const sessions = new PostgresLoginStore(pool).sessions;
     const app = stagingApp(browser as unknown as BrowserLike, sessions, (legacyId, persona) => linkedPerson(pool, legacyId, persona));
     const report = await walk(journeys, legacy, app, { month }, {
-      revision, limit: positive(env.TWIN_LIMIT, 10, "limit"), minimumPeople: positive(env.TWIN_MINIMUM_PEOPLE, 5, "minimumPeople"),
+      revision, limit: positive(env.TWIN_LIMIT, 10, "limit"), minimumPeople: Math.max(MINIMUM_PEOPLE_FLOOR, positive(env.TWIN_MINIMUM_PEOPLE, MINIMUM_PEOPLE_FLOOR, "minimumPeople")),
       explanations: loadExplanations(), now: () => new Date(),
     });
     const out = env.TWIN_REPORT_PATH || "/var/lib/legacy-twin/last-walk.json";
@@ -94,11 +96,24 @@ async function runWalk(env: NodeJS.ProcessEnv): Promise<number> {
   }
 }
 
+/**
+ * The revision a report claims must be in this tree, and the walker's code and
+ * explanations must be unchanged since it, so a report from older journey code is refused.
+ */
+export function walkedRevisionMatchesTree(revision: string, git = (args: string[]) => spawnSync("git", args, { cwd: ROOT, stdio: "ignore" }).status): boolean {
+  if (!/^[0-9a-f]{40}$/.test(revision)) return false;
+  if (git(["merge-base", "--is-ancestor", revision, "HEAD"]) !== 0) return false;
+  return git(["diff", "--quiet", revision, "HEAD", "--", "tools/legacy-import/src/twin", "tools/legacy-import/twin-explanations.json"]) === 0;
+}
+
 function runClose(reportFile: string | undefined, evidence: string | undefined): number {
   if (!reportFile || !evidence) { console.error("usage: close <report.json> \"PR #n comment <id>\""); return 2; }
   const report = JSON.parse(readFileSync(reportFile, "utf8")) as TwinReport;
+  if (!walkedRevisionMatchesTree(String(report.revision))) { console.error("legacy-twin: twin.gate.staleRevision"); return 2; }
   const matrix = JSON.parse(readFileSync(MATRIX, "utf8")) as { screens: Record<string, { gates: Record<string, { state: string }> }> };
-  const { screens, changes } = closeVerified(matrix.screens, report, evidence);
+  const { screens, changes } = closeVerified(matrix.screens, report, evidence, {
+    registry: JOURNEYS.map((j) => ({ id: j.id, screens: j.screens })), revision: report.revision, minimumPeople: MINIMUM_PEOPLE_FLOOR,
+  });
   writeFileSync(MATRIX, `${JSON.stringify({ ...matrix, screens }, null, 2)}\n`);
   for (const c of changes) console.log(`legacy-twin: ${c.screen} ${c.journey} ${c.change}`);
   return 0;

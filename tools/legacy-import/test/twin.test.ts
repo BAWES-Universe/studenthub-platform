@@ -8,7 +8,9 @@ import { parseDuration, SheetBuilder, type FactSheet } from "../src/twin/facts.j
 import { parseHtml, query, queryAll, textOf } from "../src/twin/html.js";
 import type { LegacyParam, LegacyReader } from "../src/twin/journey.js";
 import { workHistory } from "../src/twin/journeys/work-history.js";
-import { assertPrivate, closeVerified, verdictOf, type TwinReport } from "../src/twin/report.js";
+import { assertPrivate, closeVerified, MINIMUM_PEOPLE_FLOOR, verdictOf, type TwinReport } from "../src/twin/report.js";
+import { walkedRevisionMatchesTree } from "../src/twin/cli.js";
+import { JOURNEYS } from "../src/twin/journeys/index.js";
 import { bind, parseRows, stagingApp, STAGING_ORIGIN, type BrowserLike } from "../src/twin/staging.js";
 import { walk, WalkFailure, type NewApp } from "../src/twin/walk.js";
 
@@ -227,23 +229,67 @@ test("the privacy check refuses any report field that could carry a value", () =
   }
 });
 
+const REGISTRY = [
+  { id: "work-history", screens: ["C-12", "C-11"] },
+  { id: "approvals", screens: ["M-03"] },
+  { id: "staff-logs", screens: ["A-12"] },
+  { id: "staff-logs-two", screens: ["A-12"] },
+];
+const RULES = { registry: REGISTRY, revision: REVISION, minimumPeople: 2 };
+const EVIDENCE = "PR #600 comment 7000000001";
+const gates = (built: string) => ({ gates: { built: built === "done" ? { state: "done", evidence: "PR #588 at 4581829" } : { state: "open" }, verified: { state: "open" } } });
+const SCREENS = { "C-12": gates("done"), "C-11": gates("open"), "M-03": gates("done"), "A-12": gates("done") };
+const FULL = () => report([
+  { journey: "work-history", screens: ["C-12", "C-11"], people: [person("1"), person("2")] },
+  { journey: "approvals", screens: ["M-03"], people: [person("1")] },
+  { journey: "staff-logs", screens: ["A-12"], people: [person("1"), person("2", "explained")] },
+  { journey: "staff-logs-two", screens: ["A-12"], people: [person("1"), person("2", "regression")] },
+]);
+
 test("closing gates: only built screens of verified journeys close, citing the published report", () => {
-  const gates = (built: string) => ({ gates: { built: built === "done" ? { state: "done", evidence: "PR #588 at 4581829" } : { state: "open" }, verified: { state: "open" } } });
-  const screens = { "C-12": gates("done"), "C-11": gates("open"), "M-03": gates("done"), "A-12": gates("done") };
-  const r = report([
-    { journey: "work-history", screens: ["C-12", "C-11"], people: [person("1"), person("2")] },
-    { journey: "approvals", screens: ["M-03"], people: [person("1")] },
-    { journey: "staff-logs", screens: ["A-12"], people: [person("1"), person("2", "explained")] },
-    { journey: "staff-logs-two", screens: ["A-12"], people: [person("1"), person("2", "regression")] },
-  ]);
-  assert.throws(() => closeVerified(screens, r, "the walk on staging"), /twin.gate.evidenceUnsourced/);
-  const { screens: out, changes } = closeVerified(screens, r, "PR #600 comment 7000000001");
+  const r = FULL();
+  assert.throws(() => closeVerified(SCREENS, r, "the walk on staging", RULES), /twin.gate.evidenceUnsourced/);
+  const { screens: out, changes } = closeVerified(SCREENS, r, EVIDENCE, RULES);
   assert.deepEqual(changes.map((c) => `${c.screen} ${c.journey} ${c.change}`), [
     "C-12 work-history closed", "C-11 work-history built_open", "M-03 approvals not_verified", "A-12 staff-logs not_verified", "A-12 staff-logs-two not_verified",
   ]);
-  assert.deepEqual(out["C-12"]!.gates.verified, { state: "done", evidence: `legacy twin walk at ${REVISION.slice(0, 12)}: work-history (2 people); PR #600 comment 7000000001` });
-  assert.deepEqual(screens["C-12"].gates.verified, { state: "open" }, "the input is not changed");
-  assert.equal(closeVerified(out, r, "PR #600 comment 7000000001").changes[0]!.change, "already_closed");
+  assert.deepEqual(out["C-12"]!.gates.verified, { state: "done", evidence: `legacy twin walk at ${REVISION.slice(0, 12)}: work-history (2 people); ${EVIDENCE}` });
+  assert.deepEqual(SCREENS["C-12"].gates.verified, { state: "open" }, "the input is not changed");
+  assert.equal(closeVerified(out, r, EVIDENCE, RULES).changes[0]!.change, "already_closed");
+});
+
+test("closing gates: a report is checked against the code's journeys, revision and floor, not trusted to describe itself", () => {
+  const without = (id: string) => ({ ...FULL(), journeys: FULL().journeys.filter((j) => j.journey !== id) });
+  const passingTwo = { ...FULL(), journeys: FULL().journeys.map((j) => j.journey === "staff-logs-two" ? { ...j, people: [person("1"), person("2")] } : j) };
+  const cases: [string, TwinReport, RegExp][] = [
+    ["unknown journey", { ...FULL(), journeys: [...FULL().journeys, { journey: "made-up", screens: ["C-12"], people: [person("1"), person("2")] }] }, /twin.gate.unknownJourney/],
+    ["altered mapping (extra screen)", { ...FULL(), journeys: FULL().journeys.map((j) => j.journey === "approvals" ? { ...j, screens: ["M-03", "A-12"] } : j) }, /twin.gate.screensMismatch/],
+    ["altered mapping (screen dropped)", { ...FULL(), journeys: FULL().journeys.map((j) => j.journey === "work-history" ? { ...j, screens: ["C-12"] } : j) }, /twin.gate.screensMismatch/],
+    ["duplicate journey", { ...FULL(), journeys: [...FULL().journeys, FULL().journeys[0]!] }, /twin.gate.duplicateJourney/],
+    ["omitted co-owner", without("staff-logs-two"), /twin.gate.coOwnerMissing/],
+    ["stale revision", { ...FULL(), revision: "b".repeat(40) }, /twin.gate.staleRevision/],
+    ["minimum below the floor", { ...FULL(), minimumPeople: 1 }, /twin.gate.minimumTooLow/],
+  ];
+  for (const [name, r, error] of cases) assert.throws(() => closeVerified(SCREENS, r, EVIDENCE, RULES), error, name);
+  assert.throws(() => closeVerified(SCREENS, FULL(), EVIDENCE, { ...RULES, revision: "main" }), /twin.gate.staleRevision/);
+  // With both co-owners in the report and verified, the shared screen closes, naming both.
+  const both = closeVerified(SCREENS, passingTwo, EVIDENCE, RULES);
+  assert.match(String((both.screens["A-12"]!.gates.verified as { evidence?: string }).evidence), /staff-logs \(2 people\), staff-logs-two \(2 people\)/);
+  // A journey the report leaves out entirely is fine when it shares no screen with the ones present.
+  assert.equal(closeVerified(SCREENS, without("approvals"), EVIDENCE, RULES).changes.some((c) => c.screen === "M-03"), false);
+});
+
+test("the walker registry maps each journey to screens the release matrix knows", () => {
+  for (const j of JOURNEYS) {
+    assert.ok(j.screens.length > 0 && j.screens.every((s) => /^[A-Z]-\d{2}$/.test(s)), j.id);
+    assert.deepEqual(validateExplanations([], [j.id]), []);
+  }
+  assert.equal(new Set(JOURNEYS.map((j) => j.id)).size, JOURNEYS.length, "journey ids are unique");
+  assert.ok(MINIMUM_PEOPLE_FLOOR >= 5);
+  assert.equal(walkedRevisionMatchesTree("main", () => 0), false, "a revision must be a full commit");
+  assert.equal(walkedRevisionMatchesTree(REVISION, (args) => (args[0] === "merge-base" ? 1 : 0)), false, "not in this tree");
+  assert.equal(walkedRevisionMatchesTree(REVISION, (args) => (args[0] === "diff" ? 1 : 0)), false, "walker changed since");
+  assert.equal(walkedRevisionMatchesTree(REVISION, () => 0), true);
 });
 
 // ---- staging adapters --------------------------------------------------------------------
