@@ -1,0 +1,13 @@
+{
+  "require": {
+    "yiisoft/yii2": "2.0.51",
+    "phpoffice/phpspreadsheet": "4.0.0",
+    "maennchen/zipstream-php": "3.1.2",
+    "markbaker/complex": "3.0.2",
+    "markbaker/matrix": "3.0.1"
+  },
+  "replace": {
+    "bower-asset/jquery": "*", "bower-asset/inputmask": "*", "bower-asset/punycode": "*", "bower-asset/yii2-pjax": "*"
+  },
+  "config": {"allow-plugins": false}
+}
