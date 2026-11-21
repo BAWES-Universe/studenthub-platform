@@ -237,7 +237,11 @@ async function staffTotals(services: WorkHttpServices, actor: string, f: StaffHo
     for (const d of page.days) {
       const t = totals.get(d.staffId) ?? { minutes: 0, open: 0 };
       t.minutes += d.minutes;
-      if (d.open) t.open++;
+      // Legacy used the staff record's hours per day for a staff/day row with no minutes or zero
+      // minutes: a day not ended, or one whose sessions all closed inside the minute. Each such day
+      // counts once, however many sessions it holds. A day with closed minutes and a session still
+      // open (legacy showed one arbitrary row's minutes) keeps its minutes and adds the hours.
+      if (d.open || d.minutes === 0) t.open++;
       totals.set(d.staffId, t);
     }
     if (!page.next || totals.size > EXPORT_ROW_CAP) return totals;
@@ -249,9 +253,9 @@ async function staffTotals(services: WorkHttpServices, actor: string, f: StaffHo
  * Internal staff time (legacy staff-work-session/download-list-excel): minutes per
  * staff member over the range. An admin exports everyone or one staff member; a
  * staff member who isn't an admin, only themself (the service decides). Legacy
- * counted a session with no end as the staff record's hours per day; that comes
- * from `staffHoursPerDay`, and while it is absent a day still in progress adds
- * nothing (the cutover lane's release gate wires it before cutover).
+ * counted a day with no minutes (a session not ended, or ended inside the minute)
+ * as the staff record's hours per day; that comes from `staffHoursPerDay`, and
+ * while it is absent such a day adds nothing (wired before cutover).
  */
 export function staffHoursExport(services: WorkHttpServices): ExportKind<StaffHoursExportFilters> {
   return {
