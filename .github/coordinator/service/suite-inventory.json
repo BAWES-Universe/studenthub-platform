@@ -2261,7 +2261,7 @@
     "M18 G2 S2: the cap counts only reviews with a verdict, a crashed or unknown one counts, and it holds under a race",
     "M18 G2 S3: a review whose pull request moved gives its claim back, so the dropped review spends no cap round and the new head is reviewed next",
     "M18 G2 S4: max_parallel absent is today's one slot: SHU-304, one review per start, and a start that finds it busy or nothing to review writes nothing",
-    "M18 G2 S5: a review run ticks every minute by default and a card run keeps its five minutes, both from the limits",
+    "M18 G2 S5: a review run ticks every three minutes by default and a card run keeps its five minutes, both from the limits",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -19349,7 +19349,7 @@
       "capabilities": []
     },
     {
-      "name": "M18 G2 S5: a review run ticks every minute by default and a card run keeps its five minutes, both from the limits",
+      "name": "M18 G2 S5: a review run ticks every three minutes by default and a card run keeps its five minutes, both from the limits",
       "capabilities": []
     },
     {

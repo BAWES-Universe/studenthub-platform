@@ -217,9 +217,13 @@ export const CARD_RUN_LIMITS = Object.freeze({
   // workers near 2,000,000 an hour; a stage takes tens of minutes, so a tick
   // that lands up to five minutes later costs little.
   tickIntervalMs: 5 * 60 * 1000,
-  // M18 G2: a review run ticks every minute, so its verdict is read within a
-  // minute of the reviewer's end. Card (builder) runs keep tickIntervalMs.
-  reviewTickIntervalMs: 60 * 1000,
+  // M18 G2: a review run ticks every three minutes, so its verdict is read
+  // within three minutes of the reviewer's end. At the board read's cost a
+  // review that stays active spends about 1,600,000 points an hour, inside
+  // the key's 3,000,000; every minute would spend 4,800,000. More than one
+  // review slot needs a narrower per-tick board read first. Card (builder)
+  // runs keep tickIntervalMs.
+  reviewTickIntervalMs: 3 * 60 * 1000,
   workerGraceMs: 30 * 60 * 1000,
   workerPollMs: 30 * 1000,
   killWaitMs: 10 * 1000,

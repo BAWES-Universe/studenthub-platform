@@ -405,10 +405,12 @@ request again; when it is at another head, the claim is removed
 and the new head is reviewed on its own claim. An unreadable pull request keeps
 the claim.
 
-**Ticks.** A review run ticks every `reviewTickIntervalMs` (60 s); a card run
-keeps `tickIntervalMs` (5 min). Each tick reads the Linear board, so several
-review slots ticking every minute can reach Linear's hourly limit; a limited
-tick is a `HOLD=LINEAR_RATE_LIMITED` the run waits out, as before.
+**Ticks.** A review run ticks every `reviewTickIntervalMs` (3 min); a card run
+keeps `tickIntervalMs` (5 min). Each tick reads the whole Linear board (about
+80,000 points), so one active review spends about 1,600,000 of the key's
+3,000,000 points an hour; every minute would spend 4,800,000. Before more than
+one review slot is turned on, the per-tick board read must be narrowed; until
+then a limited tick is a `HOLD=LINEAR_RATE_LIMITED` the run waits out.
 
 **Hand install, step 3 (owner-only, not done by this code).** This change does
 not touch `config.json`: Card B's `selfInstallGate` refuses changed keys other

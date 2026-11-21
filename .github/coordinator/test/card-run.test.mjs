@@ -4672,7 +4672,7 @@ test("M18 G2 S4: max_parallel absent is today's one slot: SHU-304, one review pe
   }
 });
 
-test("M18 G2 S5: a review run ticks every minute by default and a card run keeps its five minutes, both from the limits", async () => {
+test("M18 G2 S5: a review run ticks every three minutes by default and a card run keeps its five minutes, both from the limits", async () => {
   // The run's own three ticks (the revert's dispatch-off tick comes after).
   const gaps = (host) => host.tickTimes.slice(1, 3).map((at, i) => at - host.tickTimes[i]);
   const ticking = (id, done) => (h) => {
@@ -4684,8 +4684,10 @@ test("M18 G2 S5: a review run ticks every minute by default and a card run keeps
   for (const id of QUEUE) claimFor(reviewRun, REV, id, { outcome: "PASS", ok: true, land: "MERGED" });
   setPulls(reviewRun, [queuePull(240)]);
   assert.equal((await attempt(() => autoRun({ io: reviewRun.io, paths: PATHS }))).outcome, "REVIEW_PASS");
-  assert.deepEqual(gaps(reviewRun), [60 * 1000, 60 * 1000]);
-  assert.equal(CARD_RUN_LIMITS.reviewTickIntervalMs, 60 * 1000);
+  assert.deepEqual(gaps(reviewRun), [3 * 60 * 1000, 3 * 60 * 1000]);
+  assert.equal(CARD_RUN_LIMITS.reviewTickIntervalMs, 3 * 60 * 1000);
+  assert.ok(CARD_RUN_LIMITS.reviewTickIntervalMs < CARD_RUN_LIMITS.tickIntervalMs, "a review still ticks sooner than a card run");
+  assert.ok((3600000 / CARD_RUN_LIMITS.reviewTickIntervalMs) * 80000 <= 3000000 * 0.6, "one active review stays well inside Linear's hourly budget");
   const tuned = fakeHost({ id: "SHU-304", config: queueConfig(), onTick: ticking("SHU-304", reviewPass) });
   for (const id of QUEUE) claimFor(tuned, REV, id, { outcome: "PASS", ok: true, land: "MERGED" });
   setPulls(tuned, [queuePull(240)]);
