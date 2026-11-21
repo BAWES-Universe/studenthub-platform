@@ -5,6 +5,8 @@ import pg from 'pg';
 import { runMigrations } from '@studenthub/db';
 import { validatePayLine } from '../../payroll/src/pay-lines.js';
 import { PostgresPayLinesStore } from '../src/payroll/postgres-pay-lines-store.js';
+import { TransferLifecycleService } from '../../payroll/src/transfer-lifecycle.js';
+import { PostgresTransferLifecycleStore, UNAVAILABLE_PAY_LIFECYCLE_EFFECTS } from '../src/payroll/postgres-transfer-lifecycle-store.js';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL});
 let store: PostgresPayLinesStore, person: string, actor: string, company: string, storeId: string;
 before(async()=>{
@@ -36,7 +38,12 @@ test('F1_PG assignment, policy, draft state and stale version guards',async()=>{
  const id=await transfer(); await assert.rejects(store.appendLines(person,id,0,[line()]),/not_found/);
  const other='f1-other-'+randomUUID();await pool.query('INSERT INTO principals(id) VALUES($1)',[other]);await assert.rejects(store.appendLines(actor,id,0,[{...line(),personId:other}]),/person_not_assigned/);
  const l=line(); await store.appendLines(actor,id,0,[l]); await assert.rejects(store.editLine(actor,id,0,l),/version_conflict/);
- await pool.query("UPDATE pay_transfers SET status='locked' WHERE id=$1",[id]); await assert.rejects(store.editLine(actor,id,1,l),/transfer_not_draft/);
+ const lifecycle=new TransferLifecycleService(new PostgresTransferLifecycleStore(pool,{
+  authorize:async(_c,who,t)=>who.principalId===actor&&t.companyId===company,
+  unassignedPersonIds:async()=>[],
+ },{...UNAVAILABLE_PAY_LIFECYCLE_EFFECTS,ensureChildrenAndInvoices:async()=>{}}),()=>new Date('2026-11-19T00:00:00Z'));
+ assert.equal((await lifecycle.transition({principalId:actor,actingAs:false},id,'lock')).kind,'changed');
+ await assert.rejects(store.editLine(actor,id,2,l),/transfer_not_draft/);
  await assert.rejects(pool.query("UPDATE pay_transfer_lines SET candidate_total=99 WHERE id=$1",[l.id]),/not editable/);
 });
 test('F1_PG concurrent same-version edits permit one committed writer',async()=>{
@@ -83,6 +90,7 @@ test('F1_PG every retained payroll table has its enabled before-statement retent
   ['pay_transfers','pay_transfers_no_truncate','pay_transfer_rows_retained'],
   ['pay_transfer_lines','pay_transfer_lines_no_truncate','pay_transfer_rows_retained'],
   ['pay_line_audit','pay_line_audit_no_truncate','pay_line_audit_immutable'],
+  ['pay_transfer_lifecycle_history','pay_transfer_lifecycle_history_no_truncate','pay_transfer_lifecycle_history_immutable'],
  ] as const;
  for (const [table,trigger,handler] of guards) {
   const {rows}=await pool.query(`SELECT tgtype::int AS type,tgenabled AS enabled,p.proname AS handler

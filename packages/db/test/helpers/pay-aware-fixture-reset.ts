@@ -56,6 +56,8 @@ const guards = [
   ["work_appeals", "work_appeals_no_truncate"],
   ["work_appeal_updates", "work_appeal_updates_no_truncate"],
   ["work_staff_sessions", "work_staff_sessions_no_truncate"],
+  // The lifecycle audit has a statement-level retention guard as well.
+  ["pay_transfer_lifecycle_history", "pay_transfer_lifecycle_history_no_truncate"],
 ] as const;
 
 export async function resetPayAwareFixture(pool: pg.Pool, statement: string): Promise<void> {
