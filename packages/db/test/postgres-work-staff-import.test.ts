@@ -182,3 +182,27 @@ test("STAFF_IMPORT_PG a session the timer ended here is never reopened or moved 
   assert.deepEqual(await imports.importStaffSessions([{ ...open, endedAt: "2031-06-01T07:00:00.000Z" }]), { ...empty, unchanged: 1 });
   assert.equal((await pool.query("SELECT ended_at FROM work_staff_sessions WHERE id = $1", [id])).rows[0].ended_at.toISOString(), "2031-06-01T07:00:00.000Z");
 });
+
+test("STAFF_IMPORT_PG a NUL in a ref is refused by that row alone; earlier rows still commit and the tally matches the table", async () => {
+  const staff = await principal("n");
+  const tag = randomUUID().slice(0, 8);
+  const question = { legacyRef: `question_${tag}`, question: "Plan?", createdAt: "2031-07-01T05:00:00.000Z", updatedAt: "2031-07-01T05:00:00.000Z" };
+  try {
+    assert.equal((await imports.importStandupQuestions([question])).inserted, 1);
+    const answer = (n: string, over: Record<string, string> = {}) => ({ legacyRef: `answer_${tag}-${n}`, staffPrincipalId: staff, questionLegacyRef: question.legacyRef,
+      question: "Plan?", answer: "Visit", workDate: "2031-07-01", createdAt: "2031-07-01T05:30:00.000Z", ...over });
+    // The bad lookup is the last row: before per-row savepoints it left the transaction aborted and the commit rolled back.
+    const badQuestion = answer("2", { questionLegacyRef: "question_\u0000x" });
+    const badRef = answer("3\u0000");
+    const result = await imports.importStandupAnswers([answer("1"), badRef, badQuestion]);
+    assert.deepEqual(result, { ...empty, inserted: 1, refused: [{ legacyRef: badRef.legacyRef, code: "invalid" }, { legacyRef: badQuestion.legacyRef, code: "invalid" }] });
+    assert.equal((await pool.query("SELECT 1 FROM work_standup_answers WHERE legacy_ref = $1", [`answer_${tag}-1`])).rowCount, 1);
+    // The same for sessions: a good row, then one whose ref can't be stored.
+    const open = { legacyRef: `work_session_${tag}`, staffPrincipalId: staff, workDate: "2031-07-02", startedAt: "2031-07-02T05:00:00.000Z", endedAt: null };
+    const s = await imports.importStaffSessions([open, { ...open, legacyRef: `work_session_${tag}\u0000`, workDate: "2031-07-03" }]);
+    assert.deepEqual([s.inserted, s.refused.map((r) => r.code)], [1, ["invalid"]]);
+    assert.equal((await pool.query("SELECT 1 FROM work_staff_sessions WHERE legacy_ref = $1", [open.legacyRef])).rowCount, 1);
+  } finally {
+    await pool.query("UPDATE work_standup_questions SET retired_at = clock_timestamp() WHERE legacy_ref = $1 AND retired_at IS NULL", [question.legacyRef]);
+  }
+});

@@ -63,6 +63,7 @@ test("LEGACY_STANDUP answers keep the question as it read and the Kuwait day of 
   assert.deepEqual(code({ staff_id: "abc" }), ["no_staff:"]);
   assert.deepEqual(code({ question_uuid: null }), ["no_question:"]);
   assert.deepEqual(code({ question: "" }), ["bad_text:question"]);
+  assert.deepEqual(code({ question: " \n\t" }), ["bad_text:question"]);
   assert.deepEqual(code({ answer: " \n\t" }), ["bad_text:answer"]);
   assert.deepEqual(code({ answer: "a".repeat(4001) }), ["bad_text:answer"]);
   assert.deepEqual(code({ answer: "a".repeat(4000) }), []);
