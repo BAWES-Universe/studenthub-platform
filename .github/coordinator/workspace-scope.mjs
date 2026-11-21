@@ -152,7 +152,8 @@ export function resolveReviewOnlyLane(config = {}, issueId) {
 // change (any path outside .github) gets the same review-only verdict, so a
 // lane's pull request has an independent reviewer without a relay.
 export const QUEUE_CONFIG_REVIEW_KEYS = Object.freeze(["label", "lane", "max_heads_per_pr"]);
-export const QUEUE_CONFIG_REVIEW_OPTIONAL_KEYS = Object.freeze(["code_label", "product_label"]);
+// M18 G1: publish_status false keeps a review's verdict off GitHub; absent is on.
+export const QUEUE_CONFIG_REVIEW_OPTIONAL_KEYS = Object.freeze(["code_label", "product_label", "publish_status"]);
 export const MAX_QUEUE_CONFIG_REVIEW_HEADS = 10;
 const LABEL_RE = /^[a-z0-9][a-z0-9:._-]{0,49}$/;
 export function resolveQueueConfigReview(config = {}) {
@@ -175,6 +176,9 @@ export function resolveQueueConfigReview(config = {}) {
   if (Object.hasOwn(policy, "product_label") && (typeof policy.product_label !== "string" || !LABEL_RE.test(policy.product_label)
       || policy.product_label === policy.label || policy.product_label === policy.code_label)) {
     throw new Error("queue_config_review.product_label must be one plain GitHub label other than label and code_label");
+  }
+  if (Object.hasOwn(policy, "publish_status") && typeof policy.publish_status !== "boolean") {
+    throw new Error("queue_config_review.publish_status must be true or false");
   }
   if (!Number.isInteger(policy.max_heads_per_pr) || policy.max_heads_per_pr < 1 || policy.max_heads_per_pr > MAX_QUEUE_CONFIG_REVIEW_HEADS) {
     throw new Error(`queue_config_review.max_heads_per_pr must be 1 to ${MAX_QUEUE_CONFIG_REVIEW_HEADS}`);

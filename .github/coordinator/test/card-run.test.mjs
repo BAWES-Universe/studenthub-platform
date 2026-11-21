@@ -130,6 +130,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
     unlinkSync: (file) => { if (!files.delete(file)) throw Object.assign(new Error(`ENOENT ${file}`), { code: "ENOENT" }); },
     readdirSync: (dir) => children(dir),
     rmSync: (target) => { for (const file of [...files.keys()]) if (file === target || file.startsWith(`${target}/`)) files.delete(file); },
+    // M18 G5: the review metrics log is appended to.
+    appendFileSync: (file, text, options = {}) => put(file, `${files.get(file)?.text ?? ""}${text}`, { mode: files.get(file)?.mode ?? options.mode ?? 0o644 }),
   };
   const ok = (stdout = "") => ({ status: 0, stdout, stderr: "" });
   host.exec = (file, args) => {
@@ -4290,6 +4292,166 @@ test("SHU-321 R8: a GitHub read that fails is a skip that claims nothing", async
   noCredentials.files.delete(PATHS.coordinatorEnv);
   assert.equal((await attempt(() => autoRun({ io: noCredentials.io, paths: PATHS }))).skipped, "REVIEW_UNREADABLE");
   notReviewed(noCredentials, "no credentials");
+});
+
+// M18 G1 + G5: a review run puts its verdict on its pull request with the
+// landing token, at the exact head it armed, and writes one metrics line.
+const PUSHED_AT = "2026-10-09T15:20:07.000Z";
+const verdictTick = (reason) => (h) => {
+  // The review took about a minute.
+  h.clock = Math.max(h.clock, Date.parse("2026-10-09T15:31:30.000Z"));
+  if (h.files.has(PATHS.activation)) h.armedRecords = [...(h.armedRecords ?? []), JSON.parse(h.files.get(PATHS.activation).text)];
+  return tickText(spent("SHU-304", reason));
+};
+// The review card's terminal receipt for the run's own episode.
+const verdictReceipt = (episode, { stage = "COMPLETED", verdict = "PASS", sha = PR_HEAD } = {}) => ({
+  body: receiptCommentBody({ receipt_version: "1.1.0", attempt_id: "00000000-0000-4000-8000-0000000003a1", issue_id: "SHU-304", episode_id: episode,
+    stage, verdict_stage: verdict, target_sha: sha, role: "review",
+    timestamps: { reserved: "2026-10-09T15:30:20.000Z", launch: "2026-10-09T15:30:30.000Z", heartbeat: null, terminal: "2026-10-09T15:31:07.000Z" },
+    last_activity: "2026-10-09T15:31:07.000Z", evidence_links: ["https://linear.app/evidence/raw-envelope"],
+    notes: verdict === "PASS" ? ['reviewer summary: "The queue change is exact and every test pins it."'] : [],
+    ...(verdict === "BLOCKED" ? { review_findings: { verdict_stage: "BLOCKED", target_sha: sha, summary: "config.json drops a lane\nsee the diff", links: ["config.json@abc:3-9"] } } : {}) }),
+  createdAt: "2026-10-09T15:31:07.000Z", user: { id: ACTOR, displayName: "Coordinator" },
+});
+function verdictHost(reason, { receipt = {}, refuse = () => null } = {}) {
+  const host = fakeHost({ id: "SHU-304", config: queueConfig(), onTick: verdictTick(reason) });
+  for (const id of QUEUE) claimFor(host, REV, id, { outcome: "PASS", ok: true, land: "MERGED" });
+  setPulls(host, [queuePull(240)]);
+  host.files.set(LAND_PATHS.landEnv, { text: "SHU_LAND_GITHUB_TOKEN=land-secret-value\n", mode: 0o600, uid: 0, gid: 0 });
+  host.gh = { statuses: [], comments: [] };
+  const base = host.io.fetch;
+  const respond = (status, json) => ({ status, ok: status < 300, headers: { get: () => null }, json: async () => json });
+  const api = `https://api.github.com/repos/${COMMITTED.pilot_repo}`;
+  host.io = { ...host.io, fetch: async (url, options = {}) => {
+    if (url === "https://api.linear.app/graphql" && JSON.parse(options.body).query.includes("CoordinatorIssueComments")) {
+      host.api.push("linear receipts");
+      const episode = host.armedRecords?.at(-1)?.activation_id;
+      return respond(200, { data: { issue: { comments: { nodes: receipt === null ? [] : [verdictReceipt(episode, receipt)], pageInfo: { hasNextPage: false } } } } });
+    }
+    if (url === `${api}/commits/${PR_HEAD}`) {
+      assert.equal(options.headers.Authorization, "Bearer gh-secret-value", "the head's time is read with the read-only token");
+      return respond(200, { sha: PR_HEAD, commit: { committer: { date: PUSHED_AT } } });
+    }
+    if (options.headers?.Authorization !== "Bearer land-secret-value") return base(url, options);
+    const refused = refuse(url, options);
+    if (refused) return respond(refused, { message: "Resource not accessible by integration" });
+    const status = new RegExp(`^${api}/statuses/([0-9a-f]{40})$`).exec(url);
+    if (status && options.method === "POST") { host.gh.statuses.push({ sha: status[1], ...JSON.parse(options.body) }); return respond(201, {}); }
+    if (url.startsWith(`${api}/issues/240/comments?`)) return respond(200, structuredClone(host.gh.comments));
+    if (url === `${api}/issues/240/comments` && options.method === "POST") {
+      const comment = { body: JSON.parse(options.body).body, html_url: `https://github.com/pr/240#c${host.gh.comments.length + 1}` };
+      host.gh.comments.push(comment);
+      return respond(201, comment);
+    }
+    return respond(500, null);
+  } };
+  return host;
+}
+const PASS_LINE = `review-only verdict PASS at ${PR_HEAD} — the episode is complete`;
+const metricLines = (host) => (host.files.get(`${PATHS.stateDir}/review-metrics.jsonl`)?.text ?? "").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+
+test("M18 G1 R1: a box PASS sets pending then success on the exact reviewed head, posts one PASS comment, and writes one metrics line", async () => {
+  const host = verdictHost(PASS_LINE);
+  const run = await attempt(() => autoRun({ io: host.io, paths: LAND_PATHS }));
+  assert.equal(run.outcome, "REVIEW_PASS", JSON.stringify(run));
+  assert.deepEqual(host.gh.statuses.map((entry) => [entry.sha, entry.state, entry.context, entry.description]), [
+    [PR_HEAD, "pending", "orchestrator/review", "review running"],
+    [PR_HEAD, "success", "orchestrator/review", `PASS at ${PR_HEAD.slice(0, 7)}`],
+  ]);
+  assert.equal(host.gh.statuses[1].target_url, "https://github.com/pr/240#c1");
+  assert.equal(host.gh.comments.length, 1);
+  const body = host.gh.comments[0].body;
+  assert.equal(body.split("\n")[0], `PASS at ${PR_HEAD}`);
+  assert.match(body, /The queue change is exact and every test pins it\./);
+  assert.match(body, /^- https:\/\/linear\.app\/evidence\/raw-envelope$/m);
+  assert.match(body.split("\n").at(-1), /StudentHub orchestrator \(SHU-304, shu-304-run-/);
+  assert.deepEqual(metricLines(host), [{ pr: 240, head_sha: PR_HEAD, head_pushed_at: PUSHED_AT, review_started_at: "2026-10-09T15:30:30.000Z",
+    verdict_at: "2026-10-09T15:31:07.000Z", verdict: "PASS", slot: 1, dropped: false }]);
+  assert.equal(host.files.get(`${PATHS.stateDir}/review-metrics.jsonl`).mode, 0o600);
+  assert.equal(host.reports.length, 1);
+  assert.match(host.reports[0], /^Review on GitHub \(orchestrator\/review\): status success, comment posted\.$/m);
+  assert.match(host.reports[0], /^Reviews: 1 in the last 24 hours, 100% PASS; head to verdict median 11 min, p90 11 min \(1 timed\); 0 dropped with no verdict\.$/m);
+});
+
+test("M18 G1 R2: a box BLOCK sets failure with the findings' first line, and its comment is headed BLOCK at the full SHA", async () => {
+  const host = verdictHost(`review-only verdict BLOCKED at ${PR_HEAD} — the episode is complete`, { receipt: { stage: "HOLD", verdict: "BLOCKED" } });
+  const run = await attempt(() => autoRun({ io: host.io, paths: LAND_PATHS }));
+  assert.equal(run.outcome, "REVIEW_BLOCKED", JSON.stringify(run));
+  assert.deepEqual(host.gh.statuses.map((entry) => [entry.sha, entry.state, entry.description]), [
+    [PR_HEAD, "pending", "review running"],
+    [PR_HEAD, "failure", `BLOCK at ${PR_HEAD.slice(0, 7)}: config.json drops a lane`],
+  ]);
+  assert.equal(host.gh.comments.length, 1);
+  assert.equal(host.gh.comments[0].body.split("\n")[0], `BLOCK at ${PR_HEAD}`);
+  assert.match(host.gh.comments[0].body, /^- config\.json@abc:3-9$/m);
+  assert.equal(metricLines(host)[0].verdict, "BLOCKED");
+  assert.equal(host.gh.statuses.some((entry) => entry.state === "success"), false);
+});
+
+test("M18 G1 R3: a review that ends with no verdict posts no comment and never success, and is a dropped metrics line", async () => {
+  const host = verdictHost(`review-only run ended HOLD at ${PR_HEAD} without a review verdict`);
+  const run = await attempt(() => autoRun({ io: host.io, paths: LAND_PATHS }));
+  assert.equal(run.outcome, "STOPPED", JSON.stringify(run));
+  assert.deepEqual(host.gh.statuses.map((entry) => [entry.sha, entry.state, entry.description]), [
+    [PR_HEAD, "pending", "review running"], [PR_HEAD, "error", "no verdict, will retry"]]);
+  assert.deepEqual(host.gh.comments, []);
+  assert.equal(host.api.includes("linear receipts"), false, "a HOLD reads no verdict");
+  const [line] = metricLines(host);
+  assert.equal(line.verdict, "HOLD");
+  assert.equal(line.dropped, true);
+  assert.equal(line.review_started_at, run.timing.armed_at, "with no receipt read, the review started when the run armed");
+  assert.match(host.reports[0], /^Reviews: 1 in the last 24 hours, no verdicts; .*1 dropped with no verdict\.$/m);
+  // A tick naming any other SHA than the armed head is no verdict either.
+  const other = verdictHost(`review-only verdict PASS at ${"9".repeat(40)} — the episode is complete`);
+  await attempt(() => autoRun({ io: other.io, paths: LAND_PATHS }));
+  assert.equal(other.gh.statuses.some((entry) => entry.state === "success"), false);
+  assert.deepEqual(other.gh.comments, []);
+  // So is a receipt that disagrees with the tick on the verdict or the SHA,
+  // or no terminal receipt at all: only a confirming receipt publishes.
+  for (const receipt of [{ verdict: "BLOCKED", stage: "HOLD" }, { sha: "9".repeat(40) }]) {
+    const disagrees = verdictHost(PASS_LINE, { receipt });
+    const result = await attempt(() => autoRun({ io: disagrees.io, paths: LAND_PATHS }));
+    assert.equal(result.outcome, "REVIEW_PASS", "the run's own outcome is unchanged");
+    assert.deepEqual(disagrees.gh.statuses.map((entry) => entry.state), ["pending", "error"], JSON.stringify(receipt));
+    assert.deepEqual(disagrees.gh.comments, []);
+    assert.match(disagrees.reports[0], /^Review on GitHub \(orchestrator\/review\): status error; warning: the receipt on SHU-304 reads /m);
+  }
+  const missing = verdictHost(PASS_LINE, { receipt: null });
+  const unconfirmed = await attempt(() => autoRun({ io: missing.io, paths: LAND_PATHS }));
+  assert.equal(unconfirmed.outcome, "REVIEW_PASS", "the run's own outcome is unchanged");
+  assert.deepEqual(missing.gh.statuses.map((entry) => entry.state), ["pending", "error"], "no receipt, no success");
+  assert.deepEqual(missing.gh.comments, []);
+  assert.match(missing.reports[0], /^Review on GitHub \(orchestrator\/review\): status error; warning: no terminal receipt of /m);
+});
+
+test("M18 G1 R4: a publish GitHub refuses changes nothing about the run: the outcome, the claim and the report stand, with a warning", async () => {
+  const host = verdictHost(PASS_LINE, { refuse: (url, options) => (options.method === "POST" ? 403 : null) });
+  const run = await attempt(() => autoRun({ io: host.io, paths: LAND_PATHS }));
+  assert.equal(run.outcome, "REVIEW_PASS", JSON.stringify(run));
+  assert.equal(run.ok, true);
+  assert.equal(JSON.parse(host.files.get(reviewClaim(PATHS, 240, PR_HEAD)).text).outcome, "REVIEW_PASS");
+  reverted(host);
+  assert.deepEqual(host.gh.statuses, []);
+  assert.match(host.reports[0], /^Card run on SHU-304 \(review\): REVIEW_PASS/m);
+  assert.match(host.reports[0], /^Review on GitHub \(orchestrator\/review\): nothing set; warning: pending: the pending status was not set \(HTTP 403\); .*HTTP 403/m);
+  assert.equal(metricLines(host).length, 1, "the metrics line is still written");
+  // No landing token: the run is as before, and says the verdict was not published.
+  const tokenless = verdictHost(PASS_LINE);
+  tokenless.files.delete(LAND_PATHS.landEnv);
+  const plain = await attempt(() => autoRun({ io: tokenless.io, paths: LAND_PATHS }));
+  assert.equal(plain.outcome, "REVIEW_PASS");
+  assert.deepEqual(tokenless.gh.statuses, []);
+  assert.match(tokenless.reports[0], /no landing token, so the verdict was not published on GitHub/);
+  // Turned off in the committed config: nothing is published or warned.
+  const off = verdictHost(PASS_LINE);
+  const config = queueConfig();
+  config.queue_config_review = { ...config.queue_config_review, publish_status: false };
+  off.files.get(`${PATHS.checkout}/.github/coordinator/config.json`).text = JSON.stringify(config);
+  assert.equal((await attempt(() => autoRun({ io: off.io, paths: LAND_PATHS }))).outcome, "REVIEW_PASS");
+  assert.deepEqual(off.gh.statuses, []);
+  assert.deepEqual(off.gh.comments, []);
+  assert.doesNotMatch(off.reports[0], /^Review on GitHub/m);
+  assert.equal(metricLines(off).length, 1, "metrics are written either way");
 });
 
 // Self-watch 0d: the outside watch, on its own small fake host. It reads the
