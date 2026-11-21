@@ -29,6 +29,9 @@ const fromRow = (r: Row): WorkStaffSessionRecord => Object.freeze({
   id: r.id, staffId: r.staff_principal_id, workDate: r.work_date, startedAt: r.started_at.toISOString(), endedAt: r.ended_at?.toISOString() ?? null, minutes: r.minutes, source: r.source,
 });
 
+/** Legacy `staff.hours_per_day` default: a staff record nobody set reads as 8 hours. */
+const DEFAULT_STAFF_HOURS_PER_DAY = 8;
+
 /** The operator organizations whose staff and admins time their day (as in the work package). */
 const OPERATOR_ORG_IDS = ["root"];
 
@@ -71,6 +74,18 @@ export class PostgresWorkStaffTimeStore {
       [filter.range.from, filter.range.to, filter.staffId ?? null, filter.after?.workDate ?? null, filter.after?.staffId ?? null, filter.limit]);
     return Object.freeze(rows.map((r) => Object.freeze({ staffId: r.staff_principal_id, workDate: r.work_date, minutes: r.minutes, sessions: r.sessions, open: r.open,
       firstStart: r.first_start.toISOString(), lastEnd: r.last_end?.toISOString() ?? null })));
+  }
+
+  /**
+   * Each staff member's hours per day (work_staff_hours_per_day), for the staff
+   * hours export: legacy counted a day with no minutes as this many hours. A
+   * staff member with no row reads as legacy's default, 8.
+   */
+  async hoursPerDay(staffIds: readonly string[]): Promise<ReadonlyMap<string, number>> {
+    const { rows } = await this.#db.pool.query<{ staff_principal_id: string; hours: number }>(
+      "SELECT staff_principal_id, hours FROM work_staff_hours_per_day WHERE staff_principal_id = ANY($1::text[])", [[...staffIds]]);
+    const held = new Map(rows.map((r) => [r.staff_principal_id, r.hours]));
+    return new Map(staffIds.map((id) => [id, held.get(id) ?? DEFAULT_STAFF_HOURS_PER_DAY]));
   }
 
   async operatorStaff(): Promise<readonly string[]> {

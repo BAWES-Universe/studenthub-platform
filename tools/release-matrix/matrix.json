@@ -2791,7 +2791,8 @@
       "subject": "requirement r1",
       "gates": {
         "done": {
-          "state": "open"
+          "state": "done",
+          "evidence": "Export rule landed in #597; hours per day stored per principal (0509) and wired as staffHoursPerDay in PR #600 at 9333c3e, with STAFF_HOURS_PG and WORK_EXPORT staff hours tests."
         }
       }
     }

@@ -37,7 +37,7 @@ export interface WorkWiringPorts {
   readonly paused?: (personIds: readonly string[]) => Promise<ReadonlySet<string>>;
   /** Decision notices to the person; defaults to the comms lane's feed producers (`@studenthub/db/comms`). */
   readonly notices?: WorkDecisionHooks;
-  /** Staff hours per day for the staff hours export (legacy's fallback for a session with no end); none until the staff record exists. */
+  /** Staff hours per day for the staff hours export (legacy's fallback for a day with no minutes); defaults to the work lane's `work_staff_hours_per_day`. */
   readonly staffHoursPerDay?: (staffIds: readonly string[]) => Promise<ReadonlyMap<string, number>>;
 }
 
@@ -87,7 +87,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
     staffTime: new StaffTimeService({ store: staffTimeStore, grants, newId }),
     staffEmails: (ids) => staffTimeStore.emails(ids),
     standup: new StandupService({ store: new PostgresWorkStandupStore(pool), grants, newId }),
-    ...(ports.staffHoursPerDay ? { staffHoursPerDay: ports.staffHoursPerDay } : {}),
+    staffHoursPerDay: ports.staffHoursPerDay ?? ((ids) => staffTimeStore.hoursPerDay(ids)),
   };
   return {
     services: { work },

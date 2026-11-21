@@ -254,8 +254,9 @@ async function staffTotals(services: WorkHttpServices, actor: string, f: StaffHo
  * staff member over the range. An admin exports everyone or one staff member; a
  * staff member who isn't an admin, only themself (the service decides). Legacy
  * counted a day with no minutes (a session not ended, or ended inside the minute)
- * as the staff record's hours per day; that comes from `staffHoursPerDay`, and
- * while it is absent such a day adds nothing (wired before cutover).
+ * as the staff record's hours per day; that comes from `staffHoursPerDay`
+ * (wired to the work lane's staff hours, 8 unless set), and where no port is
+ * given at all such a day adds nothing.
  */
 export function staffHoursExport(services: WorkHttpServices): ExportKind<StaffHoursExportFilters> {
   return {
