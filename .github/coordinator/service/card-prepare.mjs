@@ -24,6 +24,7 @@ import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 import { watchLine } from "./card-watch.mjs";
 import { alertLine } from "./card-status.mjs";
 import { velocityLine, busyLine } from "./card-velocity.mjs";
+import { reviewMetricsLine, reviewPublishLine } from "./review-verdict.mjs";
 import { usageLine, hostLine } from "./card-usage.mjs";
 import { diskLine } from "./disk-prune.mjs";
 
@@ -635,6 +636,12 @@ export function renderRunReport(result) {
   if (result.velocity) lines.push(velocityLine(result.velocity));
   const busy = result.velocity ? busyLine(result.velocity) : null;
   if (busy) lines.push(busy);
+  // M18 G1 + G5: what a review put on its pull request, and the reviews of
+  // the last 24 hours, one line each.
+  const published = reviewPublishLine(result.review_publish);
+  if (published) lines.push(published);
+  const reviews = reviewMetricsLine(result.review_metrics);
+  if (reviews) lines.push(reviews);
   const usage = usageLine(result.usage);
   if (usage) lines.push(usage);
   const host = result.host ? hostLine(result.host) : null;

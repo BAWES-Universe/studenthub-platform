@@ -334,6 +334,35 @@ the pause file is read again just before arming; a GitHub read that fails is a
 `REVIEW_UNREADABLE` skip with no claim. A pull request that merged `main` in
 carries a merge commit without the trailer, so it is not a candidate.
 
+### Verdict on the pull request, and review metrics (M18 G1 + G5)
+
+A review run puts its verdict on the pull request itself
+(`service/review-verdict.mjs`, CONTINUOUS-GATE.md G1). As it arms it sets the
+commit status `orchestrator/review` to `pending` ("review running") on the exact
+head. When the tick ends the episode with `review-only verdict PASS|BLOCKED at
+<sha>` and that SHA is the armed head, and the terminal receipt on the review
+card agrees, it sets `success` ("PASS at <short sha>") or `failure` ("BLOCK at
+<short sha>: <first line of the findings>", at most 140 characters) and posts
+one comment whose first line is `PASS at <sha>` or `BLOCK at <sha>`, followed by
+the reviewer's summary and evidence. A comment already carrying that line and the
+orchestrator marker is never posted again. A run that ends with no verdict posts
+no comment and turns its own `pending` into `error` ("no verdict, will retry");
+nothing but a matching verdict ever sets `success`.
+
+The writes use the landing token (`/srv/shu/card-land.env`), the only token the
+box holds that may write to GitHub; it needs `statuses: write` and issue comment
+write on the repository. Publishing runs after the run's lock is released, is
+bounded, and is best effort: no token, a refused write or an unreadable read is a
+`Review on GitHub` warning line in the run report and never changes the outcome,
+the claim or the receipts. `queue_config_review.publish_status: false` turns it
+off; absent means on.
+
+Every review that armed appends one line to `/srv/shu/state/review-metrics.jsonl`
+(`pr`, `head_sha`, `head_pushed_at` from the head commit's committer date,
+`review_started_at`, `verdict_at`, `verdict` PASS|BLOCKED|HOLD, `slot`, `dropped`),
+and every run report carries one `Reviews:` line for the last 24 hours: count,
+PASS share, median and p90 head-to-verdict minutes, and dropped reviews.
+
 ## Card-run timer: queue self-install (SHU-322)
 
 Before that review, a `QUEUE_DONE` start whose installed revision R the
