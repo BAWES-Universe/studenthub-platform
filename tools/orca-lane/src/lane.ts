@@ -41,6 +41,8 @@ export interface WorkDecision {
   /** Header the start receipt must carry; on "resume" with startReceiptPosted false, post it before any work. */
   readonly startReceiptHeader: string;
   readonly startReceiptPosted: boolean;
+  /** Set when a parked ticket was sent back: address this changes comment on the same branch and PR, then post a new ready receipt. */
+  readonly changesRequested: { readonly head: string; readonly comment: number } | null;
 }
 
 export interface ObserveDecision {
@@ -126,6 +128,33 @@ export const observeReceiptHeader = (bot: string, issue: number, gen: number): s
 export const startReceiptHeader = (bot: string, issue: number, gen: number): string =>
   `**Orca ${bot} → Claude** · start · #${issue} gen ${gen}`;
 
+export const readyReceiptHeader = (bot: string, issue: number, gen: number, sha: string): string =>
+  `**Orca ${bot} → Claude** · ready · #${issue} gen ${gen} at ${sha}`;
+
+export const changesHeader = (bot: string, issue: number, gen: number, sha: string): string =>
+  `**Claude → Orca ${bot}** · changes · #${issue} gen ${gen} at ${sha}`;
+
+const SHA = "[0-9a-f]{40}";
+const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Review wait. Once the bot posts a ready receipt naming its PR's exact head, the
+ * ticket is parked: not eligible for work, but its claim, dispatch, lease and PR
+ * stay. Only a later changes comment from Claude's app naming that same head
+ * resumes it. A ready receipt is the bot's own (never Claude's app); the latest
+ * one wins. Returns null when the ticket is not parked.
+ */
+export function reviewWait(comments: readonly IssueComment[], bot: string, issue: number, gen: number): { readonly head: string; readonly changes: number | null } | null {
+  const first = (c: IssueComment): string => c.body.split("\n")[0]!.trim();
+  const ready = new RegExp(`^${escape(readyReceiptHeader(bot, issue, gen, ""))}(${SHA})$`);
+  const sorted = [...comments].sort((a, b) => a.id - b.id);
+  const lastReady = sorted.filter((c) => c.author === DISPATCH_AUTHOR && c.appId !== CLAUDE_APP_ID && ready.test(first(c))).at(-1);
+  if (!lastReady) return null;
+  const head = ready.exec(first(lastReady))![1]!;
+  const changes = sorted.find((c) => c.id > lastReady.id && c.author === DISPATCH_AUTHOR && c.appId === CLAUDE_APP_ID && first(c) === changesHeader(bot, issue, gen, head));
+  return { head, changes: changes?.id ?? null };
+}
+
 const posted = (comments: readonly IssueComment[], header: string): boolean =>
   comments.some((c) => c.author === DISPATCH_AUTHOR && c.body.split("\n")[0]!.trim() === header);
 
@@ -174,10 +203,14 @@ export function decide(input: {
     const held = input.claims.get(key);
     if (held !== undefined && held.dispatch !== comment.id) { skip(`claim is bound to dispatch ${held.dispatch}, not ${comment.id}`); continue; }
     if (held !== undefined && held.lease !== row.lease) { skip("lease changed since the claim was taken"); continue; }
+    const wait = reviewWait(issueComments, input.bot, row.issue, row.gen);
+    if (wait && wait.changes === null) { skip(`waiting for review at ${wait.head}`); continue; }
+    if (wait && held === undefined) { skip("ready receipt posted but no claim held here: never start twice"); continue; }
     const header = startReceiptHeader(input.bot, row.issue, row.gen);
     decisions.push({
       issue: row.issue, gen: row.gen, action: held === undefined ? "start" : "resume", dispatch: comment.id, slug: row.slug, claimKey: key, lease: row.lease,
       startReceiptHeader: header, startReceiptPosted: posted(issueComments, header),
+      changesRequested: wait ? { head: wait.head, comment: wait.changes! } : null,
     });
   }
   return decisions;
