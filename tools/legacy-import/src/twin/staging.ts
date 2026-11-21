@@ -73,9 +73,56 @@ export interface BrowserLike {
   newContext(options: { serviceWorkers: "block"; viewport: { width: number; height: number }; locale: string }): Promise<{
     addCookies(cookies: { name: string; value: string; domain: string; path: string; secure: boolean; httpOnly: boolean; sameSite: "Lax" }[]): Promise<void>;
     newPage(): Promise<{ goto(url: string, o: { waitUntil: "load"; timeout: number }): Promise<{ status(): number } | null>; content(): Promise<string>; url(): string }>;
-    route(url: string, handler: (route: { request(): { url(): string }; abort(): Promise<void>; continue(): Promise<void> }) => Promise<void>): Promise<void>;
+    route(url: string, handler: (route: RouteLike) => Promise<void>): Promise<void>;
     close(): Promise<void>;
   }>;
+}
+
+/** The part of a Playwright `Route` the staging guard uses. */
+export interface RouteLike {
+  request(): { url(): string };
+  abort(): Promise<void>;
+  fetch(options: { url: string; maxRedirects: 0 }): Promise<FetchedLike>;
+  fulfill(options: { response: FetchedLike }): Promise<void>;
+}
+export interface FetchedLike {
+  status(): number;
+  headers(): Record<string, string>;
+}
+
+export const MAX_REDIRECT_HOPS = 5;
+
+/**
+ * Keeps every request on `origin`, hop by hop. Playwright calls a route handler once per
+ * request, not once per redirect hop, and a fulfilled redirect is followed by the browser
+ * without routing the next hop again. So the guard follows redirects itself: each hop is
+ * fetched with redirects off, any hop to another origin (another host, or the same host on
+ * another port) aborts the request before it is sent, and only the final response is handed
+ * to the browser. `landed` records where each request really ended, for the caller to check.
+ */
+export function stagingOnly(origin: string, landed: Map<string, string>, blocked: Set<string>): (route: RouteLike) => Promise<void> {
+  return async (route) => {
+    const requested = route.request().url();
+    let at: URL;
+    try { at = new URL(requested); } catch { blocked.add(requested); return route.abort(); }
+    if (at.origin !== origin) { blocked.add(requested); return route.abort(); }
+    try {
+      for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+        const response = await route.fetch({ url: at.href, maxRedirects: 0 });
+        const status = response.status();
+        const location = response.headers()["location"];
+        if (status < 300 || status >= 400 || !location) {
+          landed.set(requested, at.href);
+          return route.fulfill({ response });
+        }
+        const next = new URL(location, at);
+        if (next.origin !== origin) break;
+        at = next;
+      }
+    } catch { /* an unreadable hop is refused like an off-origin one */ }
+    blocked.add(requested);
+    return route.abort();
+  };
 }
 
 export interface SessionPort {
@@ -104,24 +151,23 @@ export function stagingApp(browser: BrowserLike, sessions: SessionPort, people: 
       let context: Awaited<ReturnType<BrowserLike["newContext"]>> | undefined;
       try {
         try { context = await browser.newContext({ serviceWorkers: "block", viewport: { width: 1280, height: 900 }, locale: "en-GB" }); } catch { throw new WalkFailure("page_failed"); }
-        // Nothing leaves staging: any request to another origin (a redirect, an asset, a beacon) is aborted.
-        await context.route("**/*", async (route) => {
-          let allowed = false;
-          try { allowed = new URL(route.request().url()).origin === origin; } catch { allowed = false; }
-          await (allowed ? route.continue() : route.abort());
-        });
+        // Nothing leaves staging: a request or any redirect hop to another origin is aborted unsent.
+        const landed = new Map<string, string>(), blocked = new Set<string>();
+        await context.route("**/*", stagingOnly(origin, landed, blocked));
         await context.addCookies([{ name: SESSION_COOKIE, value: token, domain: host, path: "/", secure: true, httpOnly: true, sameSite: "Lax" }]);
         const page = await context.newPage();
         const html: string[] = [];
         for (const path of paths) {
           if (!path.startsWith("/") || path.startsWith("//")) throw new WalkFailure("page_failed");
+          const requested: string = new URL(`${origin}${path}`).href;
           let response;
-          try { response = await page.goto(`${origin}${path}`, { waitUntil: "load", timeout: 30_000 }); } catch { throw new WalkFailure("timeout"); }
+          try { response = await page.goto(requested, { waitUntil: "load", timeout: 30_000 }); } catch { throw new WalkFailure(blocked.has(requested) ? "page_failed" : "timeout"); }
           // The work routes answer a request without a valid session with 401, not a redirect.
           if (response?.status() === 401) throw new WalkFailure("sign_in_failed");
           if (!response || response.status() !== 200) throw new WalkFailure("page_failed");
-          const final = new URL(page.url());
-          // Redirects are followed: a final page outside staging is never read.
+          // The guard followed any redirects; where it landed is the page that was served.
+          const final: URL = new URL(landed.get(requested) ?? page.url());
+          // A second guard: a final page outside staging is never read.
           if (final.origin !== origin) throw new WalkFailure("page_failed");
           // A redirect to sign-in means the session was not accepted.
           if (final.pathname.startsWith("/login")) throw new WalkFailure("sign_in_failed");

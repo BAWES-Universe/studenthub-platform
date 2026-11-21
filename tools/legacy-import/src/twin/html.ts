@@ -177,7 +177,7 @@ function parseSelector(selector: string): Step[] {
     if (!m) throw new Error(`unsupported selector: ${selector}`);
     const rest = m[2] ?? "";
     // Classes and ids are read outside attribute expressions, so `[href="/a.html"]` is not a class.
-    const outside = rest.replace(/\[[^\]]*\]/g, "");
+    const outside = rest.replace(/\[[\w-]+(?:\^?=(?:"[^"]*"|[^\]]*))?\]/g, "");
     const id = /#([\w-]+)/.exec(outside)?.[1] ?? null;
     const classes = [...outside.matchAll(/\.([\w-]+)/g)].map((c) => c[1]!);
     const attrs = [...rest.matchAll(/\[([\w-]+)(?:(\^?=)(?:"([^"]*)"|([^\]]*)))?\]/g)].map((a) => ({

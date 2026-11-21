@@ -8,7 +8,7 @@
 
 import { compareSheets, type Explanation } from "./compare.js";
 import type { Journey, JourneyContext, LegacyReader } from "./journey.js";
-import { assertPrivate, outcomeOf, type JourneyResult, type PersonOutcome, type TwinReport, type WalkCode } from "./report.js";
+import { assertPrivate, outcomeOf, type JourneyResult, type PersonOutcome, type RefreshIdentity, type TwinReport, type WalkCode } from "./report.js";
 
 /** The new app, as one person sees it. */
 export interface NewApp {
@@ -24,6 +24,7 @@ export class WalkFailure extends Error {
 
 export interface WalkOptions {
   readonly revision: string;
+  readonly refresh: RefreshIdentity;
   readonly limit: number;
   readonly minimumPeople: number;
   readonly explanations: readonly Explanation[];
@@ -45,7 +46,7 @@ export async function walk(journeys: readonly Journey[], legacy: LegacyReader, a
     for (const legacyId of ids) people.push(await walkOne(journey, legacyId, legacy, app, ctx, options.explanations));
     results.push({ journey: journey.id, screens: journey.screens, people });
   }
-  const report: TwinReport = { schemaVersion: 1, revision: options.revision, startedAt, finishedAt: options.now().toISOString(), minimumPeople: options.minimumPeople, journeys: results };
+  const report: TwinReport = { schemaVersion: 2, revision: options.revision, month: ctx.month, refresh: options.refresh, startedAt, finishedAt: options.now().toISOString(), minimumPeople: options.minimumPeople, journeys: results };
   assertPrivate(report);
   return report;
 }
