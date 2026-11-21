@@ -57,6 +57,26 @@ export function pickNext(
   return { ...fresh, runToken };
 }
 
+/**
+ * The check before a write. `mine` is this run's resume decision (decided with
+ * this run's declaration), `holds` whether its token holds the run lock.
+ * purpose "write" passes for an ordinary resume; once a declared revision is on
+ * the PR it fails. purpose "ready" passes only in that completion-only state,
+ * and then returns the exact ready receipt header to post.
+ */
+export function checkRun(mine: WorkDecision | undefined, holds: boolean, purpose: "write" | "ready"): { ok: boolean; reason: string | null; readyReceiptHeader?: string } {
+  if (!mine) return { ok: false, reason: "ticket generation no longer eligible" };
+  if (!holds) return { ok: false, reason: "run lock not held by this token" };
+  if (purpose === "ready") {
+    return mine.completeOnly
+      ? { ok: true, reason: null, readyReceiptHeader: mine.completeOnly.readyReceiptHeader }
+      : { ok: false, reason: "no declared revision is on the PR: nothing to complete" };
+  }
+  return mine.completeOnly
+    ? { ok: false, reason: "revision is on the PR: the only write left is the ready receipt (--purpose ready)" }
+    : { ok: true, reason: null };
+}
+
 type Mode = "observe" | "work" | "check" | "expect" | "release" | "recover";
 
 function args(argv: readonly string[]): { bot: string; mode: Mode; claims: string; key?: string; token?: string; sha?: string; pull?: number; changes?: number; purpose: "write" | "ready" } {
@@ -148,13 +168,9 @@ function main(): void {
     // Only the lock holder may see its own revision's head move after a hand-back, and only to the head it declared.
     const holds = holdsRun(claims, bot, key!, token!);
     const mineNow = decisionsFor(holds ? { key: key!, expected: readExpected(claims, bot, key!, token!) } : undefined).find((d): d is WorkDecision => d.action === "resume" && d.claimKey === key);
-    const reason = !mineNow ? "ticket generation no longer eligible"
-      : !holds ? "run lock not held by this token"
-      : mineNow.completeOnly && purpose !== "ready" ? "revision is on the PR: the only write left is the ready receipt (--purpose ready)"
-      : null;
-    const readyReceiptHeader = reason === null && mineNow?.completeOnly ? mineNow.completeOnly.readyReceiptHeader : undefined;
-    process.stdout.write(`${JSON.stringify({ mode, bot, at, key, purpose, ok: reason === null, reason, ...(readyReceiptHeader ? { readyReceiptHeader } : {}) })}\n`);
-    if (reason !== null) process.exitCode = 3;
+    const { ok, reason, readyReceiptHeader } = checkRun(mineNow, holds, purpose);
+    process.stdout.write(`${JSON.stringify({ mode, bot, at, key, purpose, ok, reason, ...(readyReceiptHeader ? { readyReceiptHeader } : {}) })}\n`);
+    if (!ok) process.exitCode = 3;
     return;
   }
 
