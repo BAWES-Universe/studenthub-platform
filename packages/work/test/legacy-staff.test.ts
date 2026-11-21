@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mapLegacyStaffSession, mapLegacyStandupAnswer, mapLegacyStandupQuestion, type LegacyStaffSessionRow, type LegacyStandupAnswerRow } from "../src/index.js";
+import { mapLegacyStaffHours, mapLegacyStaffSession, mapLegacyStandupAnswer, mapLegacyStandupQuestion, type LegacyStaffSessionRow, type LegacyStandupAnswerRow } from "../src/index.js";
 
 const session = (over: Partial<LegacyStaffSessionRow> = {}): LegacyStaffSessionRow => ({
   work_session_uuid: "work_session_1", staff_id: 12, total_minutes: 150, created_at: "2026-11-18 09:00:10", updated_at: "2026-11-18 11:30:40", ...over,
@@ -82,4 +82,20 @@ test("LEGACY_STANDUP a Kuwait 00:01 stamp stays on its Kuwait day, though its UT
   // Two legacy answers to one question on one day stay two rows (each keeps its own ref).
   const twice = [answer({ answer_uuid: "answer_a" }), answer({ answer_uuid: "answer_b" })].map((r) => mapLegacyStandupAnswer(r).answer!);
   assert.deepEqual(twice.map((x) => [x.legacyRef, x.workDate]), [["answer_a", "2026-11-19"], ["answer_b", "2026-11-19"]]);
+});
+
+test("LEGACY_STAFF_HOURS a staff record's hours per day keeps its number under staff:<id>; a missing or bad one is reported, not defaulted", () => {
+  assert.deepEqual(mapLegacyStaffHours({ staff_id: 12, hours_per_day: 8 }), { hours: { legacyRef: "staff:12", legacyStaffId: "12", hours: 8 }, issues: [] });
+  assert.deepEqual(mapLegacyStaffHours({ staff_id: " 7 ", hours_per_day: "0" }).hours, { legacyRef: "staff:7", legacyStaffId: "7", hours: 0 });
+  assert.equal(mapLegacyStaffHours({ staff_id: 7, hours_per_day: 24 }).hours?.hours, 24);
+  const bad = (hours_per_day: number | string | null) => mapLegacyStaffHours({ staff_id: 7, hours_per_day });
+  assert.deepEqual(bad(null), { issues: [{ table: "staff", legacyId: "7", code: "bad_hours" }] });
+  assert.deepEqual(bad(""), { issues: [{ table: "staff", legacyId: "7", code: "bad_hours" }] });
+  assert.deepEqual(bad(25), { issues: [{ table: "staff", legacyId: "7", code: "bad_hours", detail: "25" }] });
+  assert.deepEqual(bad(-1).issues.map((i) => i.code), ["bad_hours"]);
+  assert.deepEqual(bad(7.5).issues.map((i) => [i.code, i.detail]), [["bad_hours", "7.5"]]);
+  // Row text never reaches the report.
+  assert.deepEqual(bad("eight"), { issues: [{ table: "staff", legacyId: "7", code: "bad_hours" }] });
+  assert.deepEqual(mapLegacyStaffHours({ staff_id: null, hours_per_day: 8 }).issues.map((i) => i.code), ["no_staff"]);
+  assert.deepEqual(mapLegacyStaffHours({ staff_id: "0", hours_per_day: 8 }).issues.map((i) => i.code), ["no_staff"]);
 });

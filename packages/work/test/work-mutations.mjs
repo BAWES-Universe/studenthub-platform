@@ -133,6 +133,12 @@ const mutations = [
   ["stand-up answers holding NUL are reported, not imported", " || hasNul(answer))", ")", "LEGACY_STANDUP", legacyStaff, legacyStaffSuite],
   ["non-numeric minutes stay out of the issue", "Number.isFinite(minutes) ? String(minutes) : undefined", "String(row.total_minutes)", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
   ["blank stand-up answers are not imported", "!/[^\\s]/u.test(answer) || ", "", "LEGACY_STANDUP", legacyStaff, legacyStaffSuite],
+  ["a missing hours per day is reported, not read as a number", "? Number.NaN : Number(raw)", "? 0 : Number(raw)", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
+  ["fractional hours per day are reported", "!Number.isInteger(hours) || hours < 0", "hours < 0", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
+  ["hours per day over 24 are reported", " || hours > 24)", ")", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
+  ["negative hours per day are reported", " || hours < 0 ||", " ||", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
+  ["hours per day keep the staff: ref", "`staff:${staff}`", "`${staff}`", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
+  ["non-numeric hours stay out of the issue", "Number.isFinite(hours) ? String(hours) : undefined", "String(raw)", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
 ];
 
 const root = new URL("../../../", import.meta.url);

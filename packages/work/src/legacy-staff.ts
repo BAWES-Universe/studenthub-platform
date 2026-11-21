@@ -17,7 +17,9 @@
 // - `daily_standup_question`: deleted outright in legacy, so an answer can
 //   name a question the mirror no longer holds;
 // - `daily_standup_answer`: keeps a copy of the question text; repeats on a
-//   day were allowed.
+//   day were allowed;
+// - `staff.hours_per_day`: tinyint, default 8; legacy's export counted a day
+//   with no minutes as this many hours.
 
 import type { IsoDate } from "./common.js";
 import { legacyInstant } from "./legacy.js";
@@ -44,9 +46,14 @@ export interface LegacyStandupAnswerRow {
   readonly created_at: string | null;
 }
 
-export type StaffImportIssueCode = "bad_time" | "bad_minutes" | "minutes_mismatch" | "no_staff" | "no_question" | "bad_text";
+export interface LegacyStaffHoursRow {
+  readonly staff_id: number | string | null;
+  readonly hours_per_day: number | string | null;
+}
+
+export type StaffImportIssueCode = "bad_time" | "bad_minutes" | "minutes_mismatch" | "no_staff" | "no_question" | "bad_text" | "bad_hours";
 export interface StaffImportIssue {
-  readonly table: "staff_work_session" | "daily_standup_question" | "daily_standup_answer";
+  readonly table: "staff_work_session" | "daily_standup_question" | "daily_standup_answer" | "staff";
   readonly legacyId: string;
   readonly code: StaffImportIssueCode;
   readonly detail?: string;
@@ -79,6 +86,14 @@ export interface ImportedStandupAnswer {
   readonly answer: string;
   readonly workDate: IsoDate;
   readonly createdAt: Date;
+}
+
+export interface ImportedStaffHours {
+  /** `staff:<staff_id>`: one row per legacy staff record. */
+  readonly legacyRef: string;
+  readonly legacyStaffId: string;
+  /** Whole hours, 0 to 24. */
+  readonly hours: number;
 }
 
 const kuwaitDay = (d: Date): IsoDate => new Date(d.getTime() + 3 * 3600_000).toISOString().slice(0, 10);
@@ -156,4 +171,22 @@ export function mapLegacyStandupAnswer(row: LegacyStandupAnswerRow): { readonly 
     answer: Object.freeze({ legacyRef: id, legacyStaffId: staff, questionLegacyRef: questionRef, question, answer, workDate: kuwaitDay(createdAt), createdAt }),
     issues: [],
   };
+}
+
+/**
+ * One legacy staff record's `hours_per_day`. A missing value is reported as
+ * `bad_hours`, not read as the default: the column is NOT NULL with a default
+ * in legacy, so a missing one means the mirror lost it. A value that isn't a
+ * whole number of hours from 0 to 24 is reported too (only the number goes in
+ * the detail).
+ */
+export function mapLegacyStaffHours(row: LegacyStaffHoursRow): { readonly hours?: ImportedStaffHours; readonly issues: readonly StaffImportIssue[] } {
+  const staff = staffId(row.staff_id);
+  const legacyId = staff ?? String(row.staff_id);
+  const issue = (code: StaffImportIssueCode, detail?: string): StaffImportIssue => ({ table: "staff", legacyId, code, ...(detail ? { detail } : {}) });
+  if (!staff) return { issues: [issue("no_staff")] };
+  const raw = row.hours_per_day;
+  const hours = raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "") ? Number.NaN : Number(raw);
+  if (!Number.isInteger(hours) || hours < 0 || hours > 24) return { issues: [issue("bad_hours", Number.isFinite(hours) ? String(hours) : undefined)] };
+  return { hours: Object.freeze({ legacyRef: `staff:${staff}`, legacyStaffId: staff, hours }), issues: [] };
 }
