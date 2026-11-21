@@ -123,6 +123,7 @@ const mutations = [
   ["private note hidden", "note: d.notePublic ? d.note : null", "note: d.note", "W5_PRIVATE", views, decisionSuite],
   ["stable paging cursor", "next: sessions.length > filter.limit && last ? { workDate: last.workDate, id: last.id } : null", "next: null", "W5_PAGING", views, decisionSuite],
   ["a staff session ends at updated_at only when it matches the stored minutes", "/ 60_000) === minutes)", "/ 60_000) >= 0)", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
+  ["a staff day of zero minutes counts the staff record's hours per day, as legacy did", "if (d.open || d.minutes === 0)", "if (d.open)", "WORK_EXPORT staff hours", exportsFile, exportsSuite],
   ["an answer whose copied prompt has no visible text is reported", "if (!/[^\\s]/u.test(question) || chars(question) < 1", "if (chars(question) < 1", "LEGACY_STANDUP answers", legacyStaff, legacyStaffSuite],
   ["a staff session whose end disagrees with its minutes is reported", 'issues: [issue("minutes_mismatch", String(minutes))]', "issues: []", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
   ["a staff session with no minutes is imported open", "return { session: Object.freeze({ ...base, endedAt: null }), issues: [] };", "return { issues: [] };", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
