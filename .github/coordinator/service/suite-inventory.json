@@ -2252,6 +2252,10 @@
     "SHU-321 R6: under a queue the scope narrows to the committed review lane only, and planning admits only that review",
     "SHU-321 R7: the claim records the pull request, its head and base, the run and every file's blob, and never reads as a landing",
     "SHU-321 R8: a GitHub read that fails is a skip that claims nothing",
+    "M18 G1 R1: a box PASS sets pending then success on the exact reviewed head, posts one PASS comment, and writes one metrics line",
+    "M18 G1 R2: a box BLOCK sets failure with the findings' first line, and its comment is headed BLOCK at the full SHA",
+    "M18 G1 R3: a review that ends with no verdict posts no comment and never success, and is a dropped metrics line",
+    "M18 G1 R4: a publish GitHub refuses changes nothing about the run: the outcome, the claim and the report stand, with a warning",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -2748,6 +2752,12 @@
     "SHU-303 V2: both reviewer prompts carry the review-only brief, and no PR text or declared scope",
     "SHU-303 H1: the host gate launches only the approved review: that head, that base, a reviewer",
     "SHU-303 H2: review_base_sha belongs only on a review receipt, is a real base, and never changes",
+    "M18 G1: a PASS sets success on the exact reviewed head only, and posts one comment headed PASS at the full SHA",
+    "M18 G1: a BLOCK sets failure with the findings' first line trimmed to 140 characters, and its comment carries the findings and evidence",
+    "M18 G1: a HOLD posts no comment and never success; it sets error only over the run's own pending status",
+    "M18 G1: a refused or failed publish never throws and never changes the verdict; with no token it only warns",
+    "M18 G1: a verdict already on the pull request is never posted again, and an unreadable comment list posts nothing",
+    "M18 G5: every review writes one metrics line, and the report line gives the last day's count, PASS share, median, p90 and drops",
     "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
     "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
     "SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick",
@@ -2764,6 +2774,15 @@
     "SHU-303 mutation M31 fold a finished review while its pull request cannot be read",
     "SHU-303 mutation M32 never fold a finished review whose pull request moved",
     "SHU-303 mutation M33 resume a recovered review without reading the pull request right before it starts",
+    "SHU-303 mutation M34 publish a verdict at whatever SHA the tick names",
+    "SHU-303 mutation M35 let a BLOCK status description run past 140 characters",
+    "SHU-303 mutation M36 set success over a HOLD's own pending status",
+    "SHU-303 mutation M37 set a HOLD status with no pending of the run's own",
+    "SHU-303 mutation M38 post the same verdict comment again",
+    "SHU-303 mutation M39 post a verdict comment when the comments cannot be read",
+    "SHU-303 mutation M40 count a HOLD as a review with a verdict",
+    "SHU-303 mutation M41 publish a verdict the review card's receipt does not confirm",
+    "SHU-303 mutation M42 let a refused status escape the publish",
     "SHU-303 P6: a review the supervisor finished after its pull request moved or its activation ended is held, by status only, with no verdict",
     "SHU-303 P7: any other supervisor answer, or a pull request that cannot be read, keeps the slot and writes nothing",
     "SHU-303 P8: a review whose pull request moved is not paused by an activation contract it would never use",
@@ -19271,6 +19290,22 @@
       "capabilities": []
     },
     {
+      "name": "M18 G1 R1: a box PASS sets pending then success on the exact reviewed head, posts one PASS comment, and writes one metrics line",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1 R2: a box BLOCK sets failure with the findings' first line, and its comment is headed BLOCK at the full SHA",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1 R3: a review that ends with no verdict posts no comment and never success, and is a dropped metrics line",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1 R4: a publish GitHub refuses changes nothing about the run: the outcome, the claim and the report stand, with a warning",
+      "capabilities": []
+    },
+    {
       "name": "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
       "capabilities": []
     },
@@ -22233,6 +22268,30 @@
       "capabilities": []
     },
     {
+      "name": "M18 G1: a PASS sets success on the exact reviewed head only, and posts one comment headed PASS at the full SHA",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1: a BLOCK sets failure with the findings' first line trimmed to 140 characters, and its comment carries the findings and evidence",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1: a HOLD posts no comment and never success; it sets error only over the run's own pending status",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1: a refused or failed publish never throws and never changes the verdict; with no token it only warns",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1: a verdict already on the pull request is never posted again, and an unreadable comment list posts nothing",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G5: every review writes one metrics line, and the report line gives the last day's count, PASS share, median, p90 and drops",
+      "capabilities": []
+    },
+    {
       "name": "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
       "capabilities": []
     },
@@ -22294,6 +22353,42 @@
     },
     {
       "name": "SHU-303 mutation M33 resume a recovered review without reading the pull request right before it starts",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M34 publish a verdict at whatever SHA the tick names",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M35 let a BLOCK status description run past 140 characters",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M36 set success over a HOLD's own pending status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M37 set a HOLD status with no pending of the run's own",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M38 post the same verdict comment again",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M39 post a verdict comment when the comments cannot be read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M40 count a HOLD as a review with a verdict",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M41 publish a verdict the review card's receipt does not confirm",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M42 let a refused status escape the publish",
       "capabilities": []
     },
     {
