@@ -89,6 +89,8 @@ export function workImportDigest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 }
 
+/** The legacy_ref rule every work table checks. */
+const LEGACY_REF = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/;
 const isOverlap = (e: unknown) => (e as { code?: string }).code === "23P01";
 const isUnique = (e: unknown) => (e as { code?: string }).code === "23505";
 // 22021: text Postgres can't store (a NUL); the row is refused, the batch goes on.
@@ -322,6 +324,10 @@ export class PostgresWorkImportStore {
 
   async #batch<R extends { readonly legacyRef: string }>(table: string, rows: readonly R[], each: (client: PoolClient, row: R, tally: Tally) => Promise<void>,
     after?: (client: PoolClient) => Promise<void>, extraLocks: readonly string[] = []): Promise<WorkImportResult> {
+    // A ref the tables could never hold (the legacy_ref rule; a NUL can't even be sent) is refused
+    // before any query touches it.
+    const refused = rows.filter((r) => !LEGACY_REF.test(r.legacyRef));
+    rows = rows.filter((r) => LEGACY_REF.test(r.legacyRef));
     return this.#db.transaction(async (client) => {
       // Two batches naming the same legacy_ref would both miss it on lookup and one insert would fail,
       // rolling back its whole batch. Lock every ref of the batch first, in one global order (so two
@@ -330,10 +336,18 @@ export class PostgresWorkImportStore {
         // Extra keys contain a space, which no legacy_ref may, so they never share a lock with a ref.
         [table, [...rows.map((r) => r.legacyRef), ...extraLocks]]);
       const tally = new Tally();
+      for (const row of refused) tally.refused.push({ legacyRef: row.legacyRef, code: "invalid" });
       for (const row of rows) {
+        // Each row runs under its own savepoint: a refused row (even one whose lookup failed outside
+        // `guarded`) is rolled back alone, so the transaction is never left aborted for later rows or
+        // the commit, and the tally only counts what is written.
+        await client.query("SAVEPOINT work_import_row");
         try {
           await each(client, row, tally);
+          await client.query("RELEASE SAVEPOINT work_import_row");
         } catch (error) {
+          await client.query("ROLLBACK TO SAVEPOINT work_import_row");
+          await client.query("RELEASE SAVEPOINT work_import_row");
           if (isOverlap(error)) tally.refused.push({ legacyRef: row.legacyRef, code: "overlap" });
           else if (isRuleRefusal(error)) tally.refused.push({ legacyRef: row.legacyRef, code: "invalid" });
           else throw error;
