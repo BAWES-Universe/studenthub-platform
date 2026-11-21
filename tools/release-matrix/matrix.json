@@ -2588,7 +2588,7 @@
     "M-5": {
       "title": "Work, recruit and finance history, each reconciled to legacy totals",
       "lane": "cutover",
-      "subject": "requirement r2",
+      "subject": "requirement r3",
       "gates": {
         "built": {
           "state": "open"
