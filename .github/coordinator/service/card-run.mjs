@@ -1281,7 +1281,8 @@ function reviewCustody(io, paths, config) {
 
 // M18 G1 + G5: the verdict on the pull request, then one metrics line. The
 // SHA is the armed head, and only when the tick's terminal line named that
-// same head (reviewVerdictOf); a receipt that disagrees publishes no verdict.
+// same head (reviewVerdictOf), and only when the review card's terminal
+// receipt confirms it; a missing or disagreeing receipt publishes no verdict.
 // Never throws: every failure is a warning on the summary.
 async function finishReview({ io, paths, limits, summary, credentials, plan, config, armedAt, finishedAt, custody, pending }) {
   const warnings = [];
@@ -1299,7 +1300,9 @@ async function finishReview({ io, paths, limits, summary, credentials, plan, con
       const read = await readReviewTerminal({ fetchImpl: boundedFetch(io, timeoutMs), linearToken: credentials?.LINEAR_API_TOKEN,
         actorIds: config.linear_receipt_actor_ids, card: plan.id, activationId: plan.record.activation_id, verdict, sha: decided.sha });
       if (read.warning) warnings.push(read.warning);
-      if (read.disagrees) verdict = "HOLD";
+      // Only a terminal receipt that agrees confirms the verdict: a missing,
+      // unreadable or contradicting receipt publishes no verdict.
+      if (!read.terminal) verdict = "HOLD";
       terminal = read.terminal;
     }
     decided = { ...decided, verdict };

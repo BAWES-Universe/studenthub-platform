@@ -296,9 +296,9 @@ const CASES = [
     pattern: "M18 G5:",
   },
   {
-    name: "M41 publish a verdict the review card's receipt contradicts",
+    name: "M41 publish a verdict the review card's receipt does not confirm",
     file: "service/card-run.mjs",
-    from: "      if (read.disagrees) verdict = \"HOLD\";",
+    from: "      if (!read.terminal) verdict = \"HOLD\";",
     to: "      // M18-M41",
     pattern: "M18 G1 R3:",
     test: "card-run.test.mjs",

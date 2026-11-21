@@ -17,8 +17,9 @@
 // The SHA is the one the coordinator's tick named in its terminal line
 // ("review-only verdict PASS at <sha>", decided from the validated callback's
 // target_sha), and it must equal the head the run armed; anything else
-// publishes no verdict. When the terminal receipt is read from the card, it
-// must agree on the verdict and the SHA as well.
+// publishes no verdict. The review card's terminal receipt for the episode
+// must also be read and agree on the verdict and the SHA; a receipt that is
+// missing, unreadable or disagrees publishes no verdict.
 //
 // The writes go out with the landing token, the one credential the box already
 // holds that may write to GitHub (card-land.mjs). Its statuses scope cannot be

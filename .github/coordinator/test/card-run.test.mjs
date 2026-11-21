@@ -4406,7 +4406,8 @@ test("M18 G1 R3: a review that ends with no verdict posts no comment and never s
   await attempt(() => autoRun({ io: other.io, paths: LAND_PATHS }));
   assert.equal(other.gh.statuses.some((entry) => entry.state === "success"), false);
   assert.deepEqual(other.gh.comments, []);
-  // So is a receipt that disagrees with the tick on the verdict or the SHA.
+  // So is a receipt that disagrees with the tick on the verdict or the SHA,
+  // or no terminal receipt at all: only a confirming receipt publishes.
   for (const receipt of [{ verdict: "BLOCKED", stage: "HOLD" }, { sha: "9".repeat(40) }]) {
     const disagrees = verdictHost(PASS_LINE, { receipt });
     const result = await attempt(() => autoRun({ io: disagrees.io, paths: LAND_PATHS }));
@@ -4415,6 +4416,12 @@ test("M18 G1 R3: a review that ends with no verdict posts no comment and never s
     assert.deepEqual(disagrees.gh.comments, []);
     assert.match(disagrees.reports[0], /^Review on GitHub \(orchestrator\/review\): status error; warning: the receipt on SHU-304 reads /m);
   }
+  const missing = verdictHost(PASS_LINE, { receipt: null });
+  const unconfirmed = await attempt(() => autoRun({ io: missing.io, paths: LAND_PATHS }));
+  assert.equal(unconfirmed.outcome, "REVIEW_PASS", "the run's own outcome is unchanged");
+  assert.deepEqual(missing.gh.statuses.map((entry) => entry.state), ["pending", "error"], "no receipt, no success");
+  assert.deepEqual(missing.gh.comments, []);
+  assert.match(missing.reports[0], /^Review on GitHub \(orchestrator\/review\): status error; warning: no terminal receipt of /m);
 });
 
 test("M18 G1 R4: a publish GitHub refuses changes nothing about the run: the outcome, the claim and the report stand, with a warning", async () => {
