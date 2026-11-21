@@ -146,7 +146,8 @@ export function mapLegacyStandupAnswer(row: LegacyStandupAnswerRow): { readonly 
   const questionRef = typeof row.question_uuid === "string" ? row.question_uuid.trim() : "";
   if (questionRef === "") return { issues: [issue("no_question")] };
   const question = typeof row.question === "string" ? row.question : "";
-  if (chars(question) < 1 || chars(question) > 255 || hasNul(question)) return { issues: [issue("bad_text", "question")] };
+  // A prompt with no visible text is no prompt (the answer's rule): reported, not imported.
+  if (!/[^\s]/u.test(question) || chars(question) < 1 || chars(question) > 255 || hasNul(question)) return { issues: [issue("bad_text", "question")] };
   const answer = typeof row.answer === "string" ? row.answer : "";
   if (!/[^\s]/u.test(answer) || chars(answer) > MAX_ANSWER || hasNul(answer)) return { issues: [issue("bad_text", "answer")] };
   const createdAt = legacyInstant(row.created_at);
