@@ -100,8 +100,9 @@ export function stagingApp(browser: BrowserLike, sessions: SessionPort, people: 
     async open(personId, paths) {
       const token = randomBytes(32).toString("base64url");
       await sessions.put({ id: token, personId });
-      const context = await browser.newContext({ serviceWorkers: "block", viewport: { width: 1280, height: 900 }, locale: "en-GB" });
+      let context: Awaited<ReturnType<BrowserLike["newContext"]>> | undefined;
       try {
+        try { context = await browser.newContext({ serviceWorkers: "block", viewport: { width: 1280, height: 900 }, locale: "en-GB" }); } catch { throw new WalkFailure("page_failed"); }
         await context.addCookies([{ name: SESSION_COOKIE, value: token, domain: host, path: "/", secure: true, httpOnly: true, sameSite: "Lax" }]);
         const page = await context.newPage();
         const html: string[] = [];
@@ -110,13 +111,16 @@ export function stagingApp(browser: BrowserLike, sessions: SessionPort, people: 
           let response;
           try { response = await page.goto(`${origin}${path}`, { waitUntil: "load", timeout: 30_000 }); } catch { throw new WalkFailure("timeout"); }
           if (!response || response.status() !== 200) throw new WalkFailure("page_failed");
+          const final = new URL(page.url());
+          // Redirects are followed: a final page outside staging is never read.
+          if (final.origin !== origin) throw new WalkFailure("page_failed");
           // A redirect to sign-in means the session was not accepted.
-          if (new URL(page.url()).pathname.startsWith("/login")) throw new WalkFailure("sign_in_failed");
+          if (final.pathname.startsWith("/login")) throw new WalkFailure("sign_in_failed");
           html.push(await page.content());
         }
         return html;
       } finally {
-        await context.close().catch(() => undefined);
+        await context?.close().catch(() => undefined);
         await sessions.delete(token);
       }
     },

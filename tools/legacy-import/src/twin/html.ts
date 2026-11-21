@@ -176,8 +176,10 @@ function parseSelector(selector: string): Step[] {
     const m = /^([a-z][\w-]*)?((?:#[\w-]+|\.[\w-]+|\[[\w-]+(?:\^?=(?:"[^"]*"|[^\]]*))?\])*)$/i.exec(token);
     if (!m) throw new Error(`unsupported selector: ${selector}`);
     const rest = m[2] ?? "";
-    const id = /#([\w-]+)/.exec(rest)?.[1] ?? null;
-    const classes = [...rest.matchAll(/\.([\w-]+)/g)].map((c) => c[1]!);
+    // Classes and ids are read outside attribute expressions, so `[href="/a.html"]` is not a class.
+    const outside = rest.replace(/\[[^\]]*\]/g, "");
+    const id = /#([\w-]+)/.exec(outside)?.[1] ?? null;
+    const classes = [...outside.matchAll(/\.([\w-]+)/g)].map((c) => c[1]!);
     const attrs = [...rest.matchAll(/\[([\w-]+)(?:(\^?=)(?:"([^"]*)"|([^\]]*)))?\]/g)].map((a) => ({
       name: a[1]!.toLowerCase(), op: (a[2] ?? "has") as "has" | "=" | "^=", value: a[3] ?? a[4] ?? "",
     }));

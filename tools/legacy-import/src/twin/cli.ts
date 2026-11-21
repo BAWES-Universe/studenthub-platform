@@ -108,7 +108,7 @@ const entry = process.argv[1];
 if (entry && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(path.resolve(entry))) {
   process.exitCode = 1;
   const [command, ...rest] = process.argv.slice(2);
-  const run = command === "walk" ? runWalk(process.env) : command === "close" ? Promise.resolve(runClose(rest[0], rest[1])) : Promise.resolve(2);
+  const run = command === "walk" ? runWalk(process.env) : command === "close" ? Promise.resolve().then(() => runClose(rest[0], rest[1])) : Promise.resolve(2);
   run.then((code) => (process.exitCode = code), (e: unknown) => {
     // Only a fixed code is printed: an error message could carry a value.
     const code = e instanceof Error && /^twin\.[\w.]+/.test(e.message) ? /^twin\.[\w.]+/.exec(e.message)![0] : "failed.unexpected";

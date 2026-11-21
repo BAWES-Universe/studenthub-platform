@@ -33,6 +33,9 @@ test("the page reader finds elements by simple selectors and reads text as a per
   assert.equal(query(doc, "a[href^=\"/work/history/\"]")?.attrs.get("href"), "/work/history/2026-10-02");
   assert.equal(textOf(query(doc, "section.p-card.x > p")!), "a AB b".replace(/\s+/g, " "));
   assert.throws(() => queryAll(doc, "li:first-child"), /unsupported selector/);
+  const links = parseHtml('<p><a class="x" href="/help.html#top">Help</a></p>');
+  assert.equal(query(links, 'a[href="/help.html#top"]')?.attrs.get("class"), "x", "a dot or hash inside an attribute value is not a class or id");
+  assert.equal(query(links, 'a.x[href^="/help.html"]') !== undefined, true);
 });
 
 // ---- facts -------------------------------------------------------------------------------
@@ -268,7 +271,7 @@ function fakeBrowser(responses: Record<string, { status: number; finalPath?: str
       newPage: async () => {
         let at = "";
         return {
-          goto: async (url: string) => { at = url; const r = responses[new URL(url).pathname]; log.push(`goto ${new URL(url).pathname}`); if (!r) throw new Error("net"); at = `${STAGING_ORIGIN}${r.finalPath ?? new URL(url).pathname}`; return { status: () => r.status }; },
+          goto: async (url: string) => { at = url; const r = responses[new URL(url).pathname]; log.push(`goto ${new URL(url).pathname}`); if (!r) throw new Error("net"); at = r.finalPath?.startsWith("https://") ? r.finalPath : `${STAGING_ORIGIN}${r.finalPath ?? new URL(url).pathname}`; return { status: () => r.status }; },
           content: async () => responses[new URL(at).pathname]?.html ?? "<html></html>",
           url: () => at,
         };
@@ -282,12 +285,16 @@ test("the staging app signs one person in for their pages only, and always remov
   const log: string[] = [];
   const sessions = { put: async (r: { id: string; personId: string }) => { log.push(`put ${r.personId}`); }, delete: async () => { log.push("delete"); } };
   assert.throws(() => stagingApp(fakeBrowser({}, log), sessions, async () => "p", "https://studenthub.co"), /twin.app.notStaging/);
-  const staging = stagingApp(fakeBrowser({ "/work/history": { status: 200, html: "<html>ok</html>" }, "/expired": { status: 200, finalPath: "/login/universe" }, "/missing": { status: 404 } }, log), sessions, async () => "p");
+  const staging = stagingApp(fakeBrowser({ "/work/history": { status: 200, html: "<html>ok</html>" }, "/expired": { status: 200, finalPath: "/login/universe" }, "/missing": { status: 404 }, "/away": { status: 200, finalPath: "https://elsewhere.example/page" } }, log), sessions, async () => "p");
   assert.deepEqual(await staging.open("p-1", ["/work/history"]), ["<html>ok</html>"]);
   assert.deepEqual(log, ["put p-1", "cookie __Host-studenthub_session staging.studenthub.co secure=true", "goto /work/history", "close", "delete"]);
-  for (const [path, code] of [["/expired", "sign_in_failed"], ["/missing", "page_failed"], ["/timeout", "timeout"], ["//evil.example", "page_failed"]] as const) {
+  for (const [path, code] of [["/expired", "sign_in_failed"], ["/missing", "page_failed"], ["/timeout", "timeout"], ["//evil.example", "page_failed"], ["/away", "page_failed"]] as const) {
     log.length = 0;
     await assert.rejects(staging.open("p-1", [path]), (e: unknown) => e instanceof WalkFailure && e.code === code, path);
     assert.deepEqual(log.slice(-2), ["close", "delete"], `${path}: session removed`);
   }
+  log.length = 0;
+  const broken: BrowserLike = { newContext: async () => { throw new Error("browser gone"); } };
+  await assert.rejects(stagingApp(broken, sessions, async () => "p").open("p-1", ["/work/history"]), (e: unknown) => e instanceof WalkFailure && e.code === "page_failed");
+  assert.deepEqual(log, ["put p-1", "delete"], "a session is removed even when no browser context could be made");
 });
