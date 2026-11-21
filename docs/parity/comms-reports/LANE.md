@@ -20,6 +20,7 @@ Slices, in order (one PR each):
 7. **Remaining exports onto P-1**: each lane's export button uses the service; this lane checks all seven legacy exports are covered. The check is `apps/gateway/test/legacy-exports-coverage.test.ts`: each of the 17 legacy downloads is mapped to a kind the gateway offers, owed by a named lane, or dropped with evidence, and every offered kind must name the download it replaces.
 8. **Webhooks** only if rows exist.
 9. **Recruit events reach people** (2026-11-20, from the parity sweep below): the recruit lane's outbox becomes feed items and the job invitation email.
+10. **Person reminder emails** (2026-11-21, the largest non-pay gap the sweep left): birthday, civil ID expired today, civil ID expiring within 25 days.
 
 Dependencies: slices 1 and 2 need nothing from other lanes. Slice 3 needs the access lane's reset flow. Slices 4 to 7 consume recruit, work and pay data.
 
@@ -221,6 +222,33 @@ request application change, in the same transaction, and leaves delivery to this
   would mislead). The daily staff emails wait for a worker that can deliver instead (#576),
   because their day would otherwise be spent.
 
+## Slice 10: person reminder emails (2026-11-21)
+
+Legacy's `cron/daily` (13:30 Kuwait) sent `Candidate::birthdayAlert` and `Candidate::civilIdExpire`,
+and the mid-month and end-of-month jobs (the 15th and 28th) sent `Candidate::notifyCivilIDExpiring`.
+Migration 0356 adds three optional email classes and `person_reminder_runs`.
+
+| Class | Who, on Kuwait day D | Email |
+| --- | --- | --- |
+| `person.birthday` | everyone whose profile birth date is D's month and day (29 February on the 28th in other years) | "Happy Birthday from StudentHub", greeting by first name |
+| `person.civil_id_expired` | placed people whose civil ID (not released) expires on D | "Please update your civil ID" |
+| `person.civil_id_expiring` | on the 15th and 28th: placed people whose civil ID expires before D + 25, already expired included, as legacy | "Civil ID is expiring", with the date, "expires on" or "expired on" |
+
+- "Placed" is legacy's `store_id > 0`: a work assignment that has not ended by D, the morning
+  summary's rule. Legacy's "verified email" is an address on the account; a paused account gets
+  nothing.
+- The email delivery job queues each kind once a Kuwait day from 13:30
+  (`packages/comms/src/person-reminders.ts`, `PostgresPersonRemindersStore.sendDay`): a per-kind,
+  per-day lock and run row, one email per person (`<class>:<day>:<principal>`), all in one
+  transaction. Like the daily staff emails, only a worker that can deliver queues them, since the
+  run row spends the day. A failed kind is retried by the next run and never holds back the other
+  kinds or delivery.
+- Every delivery attempt rechecks the person for the key's day, like the morning summary: a
+  renewed or released civil ID, an ended placement, a pause or a corrected birth date after
+  queueing suppresses the email, and each class can be switched off.
+- Legacy's emails linked to the candidate app; these point to the profile in words, as the other
+  emails do, and carry no tracking.
+
 ## Legacy parity sweep (legacy @ 55119d3, 2026-11-20)
 
 Every action of legacy's comms, notification, email, report and statistics controllers and
@@ -256,9 +284,9 @@ cron jobs, and where it lives here. Controller paths are relative to each app's
 | `cron/summary` (daily 05:00 UTC = 08:00 Kuwait) | Morning report email to staff | Morning summary (slice 4), from the email delivery job at 08:00 Kuwait |
 | `cron/daily` (13:30 UTC): `FiringHitmap::updateHitMap`, `firingSpike` | Stored the hit map and emailed the operations mailbox | Counted live (slice 3); spike email to subscribed staff (slice 4) |
 | `cron/gen-hit-map` (28th) | Rebuilt the stored hit map | Not needed: counted live |
-| `cron/daily`: `Candidate::birthdayAlert` | "Happy Birthday from StudentHub" email to every verified candidate on their birthday | Open: not built. Profiles keep the birth date (migration 0212) |
-| `cron/daily`: `Candidate::civilIdExpire` | "Please update your civil id" email to assigned candidates on the expiry day | Open: not built. The civil ID expiry is on main (Q14-3) |
-| `cron/mid-month`, `cron/end-of-month`: `Candidate::notifyCivilIDExpiring` | "Civil ID is expiring" email to assigned candidates whose ID expires within 25 days, on the 15th and 28th | Open: not built (same source) |
+| `cron/daily`: `Candidate::birthdayAlert` | "Happy Birthday from StudentHub" email to every verified candidate on their birthday | Slice 10: `person.birthday` |
+| `cron/daily`: `Candidate::civilIdExpire` | "Please update your civil id" email to assigned candidates on the expiry day | Slice 10: `person.civil_id_expired` |
+| `cron/mid-month`, `cron/end-of-month`: `Candidate::notifyCivilIDExpiring` | "Civil ID is expiring" email to assigned candidates whose ID expires within 25 days, on the 15th and 28th | Slice 10: `person.civil_id_expiring` |
 | `cron/mid-month`, `cron/end-of-month`: `Candidate::notifyMissingBankInfo` | "Bank information is missing" email to assigned candidates | Waits on the pay lane (bank details) |
 | `cron/end-of-month`: `Company::requestForAttendance` | Asks each company for its working hours sheet | Work lane |
 | `cron/daily`: `DailyStandupQuestion::standupReport` | Stand-up report email | Staff HR stays on legacy until replaced (D-WK4) |
@@ -292,5 +320,4 @@ invoices; company create and update report to staff: organizations; warning and 
 emails: people, Q16-2 and Q16-3) send through this lane's outbox when those lanes register
 their class.
 
-Largest open gap that is not pay, after slice 9: the person reminder emails (birthday, civil ID
-expired today, civil ID expiring within 25 days), all from data already on main.
+The person reminder emails, the largest open non-pay gap after slice 9, are slice 10.
