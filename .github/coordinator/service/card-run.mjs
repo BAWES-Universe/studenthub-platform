@@ -56,6 +56,14 @@
 // never reviews (a stopped one did not either, until M16 below), and a GitHub
 // read that fails claims nothing.
 //
+// M18 G2: queue_config_review.max_parallel opens up to eight review slots,
+// each its own standing review card (slot_lanes, SHU-304 first). A card
+// worker's review start takes a free slot and the head that has waited
+// longest, under the selection lock; a pull request has one review in flight
+// at most; only reviews that may have reached a verdict count toward
+// max_heads_per_pr, and a review that ended with none because its pull
+// request moved gives its claim back. Review runs tick every minute.
+//
 // SHU-322: before that review, a QUEUE_DONE start installs the next card
 // queue itself when main commits one inside the autopilot boundary
 // (service/card-install.mjs): reviewed queue data only, never coordinator
@@ -209,6 +217,9 @@ export const CARD_RUN_LIMITS = Object.freeze({
   // workers near 2,000,000 an hour; a stage takes tens of minutes, so a tick
   // that lands up to five minutes later costs little.
   tickIntervalMs: 5 * 60 * 1000,
+  // M18 G2: a review run ticks every minute, so its verdict is read within a
+  // minute of the reviewer's end. Card (builder) runs keep tickIntervalMs.
+  reviewTickIntervalMs: 60 * 1000,
   workerGraceMs: 30 * 60 * 1000,
   workerPollMs: 30 * 1000,
   killWaitMs: 10 * 1000,
@@ -303,7 +314,8 @@ export function planRun({ config, revision, now, review = null, limits = CARD_RU
     if (!queue.ok) refuse("CARD_RUN_SCOPE", queue.reason);
     // SHU-321: the one review a queue admits is the committed
     // queue_config_review lane, which the timer arms once the queue is done.
-    if (review && (cardId === null || cardId !== queueConfigReview(config)?.lane)) {
+    // M18 G2: or any of its review slots' lanes.
+    if (review && (cardId === null || !(queueConfigReview(config)?.slotLanes ?? []).includes(cardId))) {
       refuse("CARD_RUN_REVIEW_INPUT", "a review run under a card queue is only the committed queue_config_review lane");
     }
     if (!review && !queue.ids.includes(cardId)) refuse("CARD_RUN_SCOPE", "a card queue runs only a named queued card");
@@ -1141,6 +1153,8 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         }
       }
       const deadline = Date.parse(plan.record.expires_at);
+      // M18 G2: a review run ticks on its own, shorter interval.
+      const tickEvery = plan.kind === "review" ? (limits.reviewTickIntervalMs ?? CARD_RUN_LIMITS.reviewTickIntervalMs) : limits.tickIntervalMs;
       for (;;) {
         // Never start a tick once the window has closed, including the first:
         // arming itself can outlast it.
@@ -1174,7 +1188,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         // (no Linear read) happens until the hold is over. Awaited like the
         // ordinary wait, so other workers' runs go on meanwhile.
         if (outcome.hold) {
-          const wait = Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000);
+          const wait = Math.max(tickEvery, outcome.hold.retry_after_s * 1000);
           const until = Math.min(deadline, io.now().getTime() + wait);
           for (let now = io.now().getTime(); now < until; now = io.now().getTime()) {
             await io.sleep(Math.min(until - now, TICK_HOLD_MAX_SLEEP_MS));
@@ -1193,7 +1207,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         }
         // Awaited, so a host io whose wait is asynchronous lets other work go
         // on meanwhile; the host's own wait blocks as before.
-        await io.sleep(limits.tickIntervalMs);
+        await io.sleep(tickEvery);
       }
       result = { ...result, ...armed };
     } catch (error) {
@@ -1318,7 +1332,7 @@ async function finishReview({ io, paths, limits, summary, credentials, plan, con
     appendReviewMetric(io, paths.stateDir, { pr: summary.review.pr, head_sha: decided.sha, head_pushed_at: headPushedAt,
       review_started_at: terminal?.timestamps?.launch ?? terminal?.timestamps?.reserved ?? armedAt,
       verdict_at: (verdict === "HOLD" ? null : terminal?.timestamps?.terminal) ?? finishedAt ?? io.now().toISOString(),
-      verdict, slot: workerOf(paths) });
+      verdict, slot: reviewSlotOf(config, plan.id) ?? workerOf(paths) });
   } catch (error) {
     summary.review_publish = { status: summary.review_publish?.status ?? null, comment: summary.review_publish?.comment ?? null,
       warnings: [...(summary.review_publish?.warnings ?? warnings), String(error?.message ?? error).slice(0, 200)] };
@@ -1872,21 +1886,85 @@ export function assertQueueConfigReviewer(plan) {
 export const reviewClaim = (paths, pr, head) => path.join(paths.stateDir, `card-review-auto-pr${pr}-${head}.json`);
 const REVIEW_CLAIM_RE = /^card-review-auto-pr([1-9]\d*)-([0-9a-f]{40})\.json$/;
 
-// The heads of this pull request already claimed, and how many claims count
-// against this revision's cap. A claim that does not clearly name another
-// revision counts: it may be this one's.
-function reviewClaims(io, paths, pr, revision) {
-  const heads = new Set();
-  let atRevision = 0;
+// M18 G2: what a review claim records about its verdict once its run ends.
+// PASS or BLOCKED; NONE only when the run plainly reached no verdict (it never
+// armed, or its episode ended saying it had none); UNKNOWN for anything else
+// (an expiry, a refusal, an error), since a verdict may still have been
+// reached there. Only NONE leaves the cap: a claim with no verdict field (a
+// run still going, or one that died before its end was written) and an
+// unreadable claim both count, so a crash never lets the cap be exceeded.
+export const REVIEW_NO_VERDICT = "NONE";
+const NO_VERDICT_REASON_RE = /^review-only run ended .+ without a review verdict$/;
+export function claimVerdict(result) {
+  if (result?.outcome === "REVIEW_PASS") return "PASS";
+  if (result?.outcome === "REVIEW_BLOCKED") return "BLOCKED";
+  if (result?.outcome === "NOT_STARTED") return REVIEW_NO_VERDICT;
+  if (result?.outcome === "STOPPED" && NO_VERDICT_REASON_RE.test(String(result.reason ?? ""))) return REVIEW_NO_VERDICT;
+  return "UNKNOWN";
+}
+const claimCounts = (claim) => claim?.verdict !== REVIEW_NO_VERDICT;
+
+// M18 G2: a review still running: its claim has no outcome yet and the worker
+// that wrote it still holds its run lock, or its process is alive
+// (claimLive). A claim with no worker (one written before G2) is never live.
+function reviewInFlight(io, paths, claim) {
+  return Boolean(claim) && typeof claim === "object" && claim.outcome === undefined && claimLive(io, paths, claim);
+}
+
+// Every review claim in the state directory, parsed (null when unreadable).
+function readReviewClaims(io, paths) {
+  const claims = [];
   for (const file of io.fs.readdirSync(paths.stateDir)) {
     const match = REVIEW_CLAIM_RE.exec(file);
-    if (!match || Number(match[1]) !== pr) continue;
-    heads.add(match[2]);
+    if (!match) continue;
     let claim = null;
-    try { claim = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, file), "utf8")); } catch { /* counted below */ }
+    try { claim = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, file), "utf8")); } catch { /* unreadable: counted */ }
+    claims.push({ pr: Number(match[1]), head: match[2], claim });
+  }
+  return claims;
+}
+
+// The heads of this pull request already claimed, how many claims count
+// against this revision's cap, and whether one of its reviews is still in
+// flight. A claim that does not clearly name another revision counts: it may
+// be this one's. M18 G2: a claim whose run reached plainly no verdict does not.
+function reviewClaims(io, paths, pr, revision, all = readReviewClaims(io, paths)) {
+  const heads = new Set();
+  let atRevision = 0;
+  let inFlight = null;
+  for (const { pr: number, head, claim } of all) {
+    if (number !== pr) continue;
+    heads.add(head);
+    if (reviewInFlight(io, paths, claim)) inFlight = head;
+    if (!claimCounts(claim)) continue;
     if (!(SHA_RE.test(claim?.revision ?? "") && claim.revision !== revision)) atRevision += 1;
   }
-  return { heads, atRevision };
+  return { heads, atRevision, inFlight };
+}
+
+// M18 G2: the review slots, and the first that is free. A slot is busy while
+// a review claim naming its lane is in flight, or while another card
+// worker's armed activation targets its lane. A claim from before G2 names no
+// lane and is the policy's first lane's.
+export function reviewSlots(io, paths, policy, all = readReviewClaims(io, paths)) {
+  const busy = new Set();
+  for (const { claim } of all) {
+    if (reviewInFlight(io, paths, claim)) busy.add(typeof claim.lane === "string" ? claim.lane : policy.lane);
+  }
+  for (let worker = 1; worker <= MAX_CARD_WORKERS; worker += 1) {
+    if (worker === workerOf(paths)) continue;
+    let record = null;
+    try { record = JSON.parse(io.fs.readFileSync(cardRunPaths(worker).activation, "utf8")); } catch { continue; }
+    if (typeof record?.target_issue_id === "string") busy.add(record.target_issue_id);
+  }
+  const slots = policy.slotLanes.map((lane, i) => ({ slot: i + 1, lane, busy: busy.has(lane) }));
+  return { slots, free: slots.find((entry) => !entry.busy) ?? null };
+}
+export function reviewSlotOf(config, lane) {
+  let policy = null;
+  try { policy = resolveQueueConfigReview(config); } catch { return null; }
+  const index = policy?.slotLanes.indexOf(lane) ?? -1;
+  return index < 0 ? null : index + 1;
 }
 
 // GitHub as the coordinator's read-only token sees it, each read bounded. Any
@@ -1903,10 +1981,22 @@ function githubReader(io, credentials, timeoutMs) {
   };
 }
 
-// The lowest-numbered candidate whose head is not claimed yet, or none. The
-// list is read whole first, so a later pull request is never reviewed while
-// an earlier one could not be read.
-async function findQueueConfigPull({ io, credentials, repo, policy, paths, revision, timeoutMs }) {
+// M18 G2: when a head started waiting: its commit's committer date, from the
+// pull request's own commit list (the field readHeadPushedAt reads), read
+// with the read-only token. A head with no readable date waits behind every
+// dated one.
+export function headWaitingSince(commits, head) {
+  const last = Array.isArray(commits) ? commits.at(-1) : null;
+  const at = last?.sha === head ? Date.parse(last?.commit?.committer?.date ?? "") : NaN;
+  return Number.isFinite(at) ? at : Infinity;
+}
+
+// The candidate whose head has waited longest (M18 G2; ties by the lower
+// number) and is not claimed yet, or none. A pull request with a review in
+// flight is passed over, so it never has two. Every read is whole before the
+// pick, so a pull request is never passed over because another could not be
+// read.
+export async function findQueueConfigPull({ io, credentials, repo, policy, paths, revision, timeoutMs }) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "")) refuse("CARD_RUN_CONFIG", "pilot_repo must name one GitHub repository");
   const get = githubReader(io, credentials, timeoutMs);
   const api = `https://api.github.com/repos/${repo}`;
@@ -1914,25 +2004,32 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   if (!Array.isArray(open) || open.length >= GITHUB_PAGE) refuse("CARD_RUN_REVIEW_UNREADABLE", "the open pull requests are not one readable page");
   const capped = [];
   const labels = [policy.label, ...(policy.codeLabel ? [policy.codeLabel] : []), ...(policy.productLabel ? [policy.productLabel] : [])];
-  // Velocity A: the pull request reviewed least at this revision goes first,
-  // then the oldest. By number alone, every new head on an older pull request
-  // (each merge of main gives one) went ahead of a newer one for ever.
-  const listed = open.filter((pull) => listedCandidate(pull, repo, labels))
-    .map((pull) => ({ pull, claims: reviewClaims(io, paths, pull.number, revision) }))
-    .sort((a, b) => a.claims.atRevision - b.claims.atRevision || a.pull.number - b.pull.number);
-  for (const { pull, claims } of listed) {
+  // M18 G2: first come, first served, by how long each head has waited, so
+  // no pull request starves (Velocity A ordered by fewest reviews, then number).
+  const all = readReviewClaims(io, paths);
+  const waiting = [];
+  for (const pull of open.filter((entry) => listedCandidate(entry, repo, labels)).sort((a, b) => a.number - b.number)) {
     const pr = pull.number;
     const head = pull.head.sha;
     // A product pull request carries the product label alone, so no other
     // label can admit coordinator code, workflows or queue config beside it.
     if (hasLabel(pull, policy.productLabel) && (hasLabel(pull, policy.label) || hasLabel(pull, policy.codeLabel))) continue;
+    const claims = reviewClaims(io, paths, pr, revision, all);
     if (claims.heads.has(head)) continue;
+    // M18 G2: one review in flight per pull request.
+    if (claims.inFlight) continue;
     if (claims.atRevision >= policy.maxHeadsPerPr) {
       capped.push(pr);
       continue;
     }
-    const files = await get(`${api}/pulls/${pr}/files?per_page=${GITHUB_PAGE}`);
     const commits = await get(`${api}/pulls/${pr}/commits?per_page=${GITHUB_PAGE}`);
+    waiting.push({ pull, commits, since: headWaitingSince(commits, head) });
+  }
+  waiting.sort((a, b) => (a.since === b.since ? 0 : a.since < b.since ? -1 : 1) || a.pull.number - b.pull.number);
+  for (const { pull, commits } of waiting) {
+    const pr = pull.number;
+    const head = pull.head.sha;
+    const files = await get(`${api}/pulls/${pr}/files?per_page=${GITHUB_PAGE}`);
     let change = hasLabel(pull, policy.label) ? queueConfigChange(files, head, commits) : { ok: false };
     if (!change.ok && hasLabel(pull, policy.codeLabel)) change = queueConfigChange(files, head, commits, coordinatorCodePath);
     if (!change.ok && hasLabel(pull, policy.productLabel)) change = queueConfigChange(files, head, commits, productPath);
@@ -2014,44 +2111,39 @@ async function autoReview({ io, paths, limits, config, revision, done, skip }) {
   let policy;
   try { policy = resolveQueueConfigReview(config); } catch (error) { return skip("NOT_READY", `CARD_RUN_CONFIG: ${error.message}`); }
   if (!policy) return skip(done.skipped, done.reason);
-  let found;
-  try {
-    const credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
-    found = await findQueueConfigPull({ io, credentials, repo: config.pilot_repo, policy, paths, revision,
-      timeoutMs: limits.reviewRequestTimeoutMs ?? CARD_RUN_LIMITS.reviewRequestTimeoutMs });
-  } catch (error) {
+  const timeoutMs = limits.reviewRequestTimeoutMs ?? CARD_RUN_LIMITS.reviewRequestTimeoutMs;
+  let credentials;
+  try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch (error) { return unreadable(error.message); }
+  function unreadable(reason) {
     // Nothing was claimed, so the next timer start reads again. M16: a
     // stopped queue stays the QUEUE_STOPPED skip, its reason first, and says
     // why nothing was reviewed.
-    if (done.skipped === "QUEUE_STOPPED") return { ...skip(done.skipped, done.reason), review: { skipped: "REVIEW_UNREADABLE", reason: error.message } };
-    return skip("REVIEW_UNREADABLE", error.message);
+    if (done.skipped === "QUEUE_STOPPED") return { ...skip(done.skipped, done.reason), review: { skipped: "REVIEW_UNREADABLE", reason } };
+    return skip("REVIEW_UNREADABLE", reason);
   }
-  if (!found.pull) {
-    if (found.capped.length) return skip("REVIEW_CAP", `${done.reason}; pull request(s) #${found.capped.join(", #")} reached ${policy.maxHeadsPerPr} reviewed heads at ${revision}`);
+  // M18 G2: with more than one card worker, choosing a slot and a head and
+  // claiming them is one step under the selection lock, so two slots never
+  // take the same slot, the same head or two heads of one pull request.
+  const release = cardWorkers(config) > 1 ? await takeSelectLock(io, paths, limits) : () => {};
+  if (!release) return skip("QUEUE_BUSY", `another worker has held ${selectLock(paths)} for longer than this start waits`);
+  let taken;
+  try {
+    taken = await claimReview({ io, paths, limits, config, policy, revision, credentials });
+  } finally {
+    release();
+  }
+  if (taken.unreadable) return unreadable(taken.unreadable);
+  if (taken.busy) return skip(done.skipped, `${done.reason}; every review slot is busy (${taken.busy})`);
+  if (taken.skipped) return skip(taken.skipped, taken.reason);
+  if (!taken.pull) {
+    if (taken.capped.length) return skip("REVIEW_CAP", `${done.reason}; pull request(s) #${taken.capped.join(", #")} reached ${policy.maxHeadsPerPr} reviewed heads at ${revision}`);
     return skip(done.skipped, done.reason);
   }
-  const { pr, head, base, files } = found.pull;
-  const review = { pr, head, base, authorFamily: QUEUE_CONFIG_AUTHOR_FAMILY };
-  let plan;
-  try {
-    plan = assertQueueConfigReviewer(planRun({ config, revision, now: io.now(), limits, review, cardId: policy.lane }));
-  } catch (error) {
-    return skip("NOT_READY", error.message);
-  }
-  // The owner may have paused while GitHub was read; the pause wins.
-  const pausedNow = io.fs.existsSync(paths.pause);
-  if (pausedNow) return skip("PAUSED", `${paths.pause} exists`);
-  const claim = reviewClaim(paths, pr, head);
-  const claimText = (fields) => `${JSON.stringify({ pr, head, base, revision, ...fields, files })}\n`;
-  try {
-    io.fs.writeFileSync(claim, claimText({ claimed_at: io.now().toISOString() }), { mode: 0o600, flag: "wx" });
-  } catch (error) {
-    if (error.code === "EEXIST") return skip("ALREADY_REVIEWED", `pull request #${pr} at ${head} was already claimed: ${claim}`);
-    throw error;
-  }
+  const { plan, claim, claimText, review } = taken;
+  const { pr, head, base } = review;
   let result;
   try {
-    result = await runCard({ io, paths, limits, review, trigger: "timer", cardId: policy.lane, expectRevision: revision });
+    result = await runCard({ io, paths, limits, review, trigger: "timer", cardId: plan.id, expectRevision: revision });
   } catch (error) {
     if (NOT_NOW.has(error.code)) {
       // Not now, so the head is given back for a later start.
@@ -2062,14 +2154,78 @@ async function autoReview({ io, paths, limits, config, revision, done, skip }) {
     result = await notStarted({ io, paths, limits, error, config,
       result: { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, review: { pr, head, base }, revision } });
   }
+  const verdict = claimVerdict(result);
+  // M18 G2: a review that reached no verdict because its pull request moved
+  // gives its claim back: the dropped review spends no round of the cap, and
+  // the new head is reviewed on its own claim. Only a pull request read just
+  // now at another head counts as moved; an unreadable one keeps the claim.
+  if (verdict === REVIEW_NO_VERDICT) {
+    const movedTo = await movedHead({ io, credentials, repo: config.pilot_repo, pr, head, timeoutMs });
+    if (movedTo) {
+      try {
+        io.fs.unlinkSync(claim);
+        return { ...result, claim: null, claim_given_back: `pull request #${pr} moved from ${head} to ${movedTo}` };
+      } catch { /* the claim is finished below, and counts nothing */ }
+    }
+  }
   let claimError = null;
   try {
-    io.fs.writeFileSync(claim, claimText({ activation_id: result.activation_id, outcome: result.outcome }), { mode: 0o600 });
+    io.fs.writeFileSync(claim, claimText({ activation_id: result.activation_id, outcome: result.outcome, verdict }), { mode: 0o600 });
   } catch (error) {
     // The claim written before the run already stops a second review of this head.
     claimError = error.code ?? "CLAIM_WRITE_FAILED";
   }
   return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };
+}
+
+// M18 G2: the head a pull request has moved to, read with the read-only
+// token, or null when it has not moved or cannot be read.
+async function movedHead({ io, credentials, repo, pr, head, timeoutMs }) {
+  try {
+    const pull = await githubReader(io, credentials, timeoutMs)(`https://api.github.com/repos/${repo}/pulls/${pr}`);
+    const now = pull?.head?.sha;
+    return SHA_RE.test(now ?? "") && now !== head ? now : null;
+  } catch {
+    return null;
+  }
+}
+
+// M18 G2: the part of a review start that must not race another worker's: a
+// free slot, the head that has waited longest, its plan on the slot's own
+// card, and the claim, written exclusively. The caller holds the selection
+// lock when there is more than one card worker. The claim names the slot, its
+// lane and the worker and process that run it, so another worker sees the slot
+// and the pull request busy while it runs. Nothing is claimed unless every
+// read succeeded and the plan holds.
+export async function claimReview({ io, paths, limits = CARD_RUN_LIMITS, config, policy, revision, credentials,
+  planFor = (lane, review) => assertQueueConfigReviewer(planRun({ config, revision, now: io.now(), limits, review, cardId: lane })) }) {
+  const { slots, free } = reviewSlots(io, paths, policy);
+  if (!free) return { busy: slots.map((entry) => `slot ${entry.slot} ${entry.lane}`).join(", ") };
+  let found;
+  try {
+    found = await findQueueConfigPull({ io, credentials, repo: config.pilot_repo, policy, paths, revision,
+      timeoutMs: limits.reviewRequestTimeoutMs ?? CARD_RUN_LIMITS.reviewRequestTimeoutMs });
+  } catch (error) {
+    return { unreadable: error.message };
+  }
+  if (!found.pull) return { pull: null, capped: found.capped };
+  const { pr, head, base, files } = found.pull;
+  const review = { pr, head, base, authorFamily: QUEUE_CONFIG_AUTHOR_FAMILY };
+  let plan;
+  try { plan = planFor(free.lane, review); } catch (error) { return { skipped: "NOT_READY", reason: error.message }; }
+  // The owner may have paused while GitHub was read; the pause wins.
+  const pausedNow = io.fs.existsSync(paths.pause);
+  if (pausedNow) return { skipped: "PAUSED", reason: `${paths.pause} exists` };
+  const claim = reviewClaim(paths, pr, head);
+  const owner = { slot: free.slot, lane: free.lane, ...claimant(io, paths) };
+  const claimText = (fields) => `${JSON.stringify({ pr, head, base, revision, ...owner, ...fields, files })}\n`;
+  try {
+    io.fs.writeFileSync(claim, claimText({ claimed_at: io.now().toISOString() }), { mode: 0o600, flag: "wx" });
+  } catch (error) {
+    if (error.code === "EEXIST") return { skipped: "ALREADY_REVIEWED", reason: `pull request #${pr} at ${head} was already claimed: ${claim}` };
+    throw error;
+  }
+  return { pull: found.pull, review, plan, claim, claimText, slot: free.slot, lane: free.lane };
 }
 
 // A run refused before arming: the claim stands and the owner hears it once.

@@ -13,7 +13,7 @@ import {
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, recoverMarker, selectLock, repairIntent, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
   autoServiceName, autoTimerName,
-  reviewClaim, queueConfigPath, coordinatorCodePath, productPath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
+  cardRunPaths, reviewClaim, claimReview, claimVerdict, headWaitingSince, reviewSlots, queueConfigPath, coordinatorCodePath, productPath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
 } from "../service/card-run.mjs";
 import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS,
   readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
@@ -39,6 +39,7 @@ import { repairEvidenceDigest, validateActivationRecord } from "../single-run-ac
 import { judgeChecks, clearStaleLock, takeoverMarker, updatedHeadHolds } from "../service/card-land.mjs";
 import { judgingLane, threadReviewer, REVIEW_LIMITS } from "../service/card-threads.mjs";
 import { readVelocity, velocityLine } from "../service/card-velocity.mjs";
+import { resolveQueueConfigReview } from "../workspace-scope.mjs";
 import { ADDED_WEAKENING_LINES } from "./fixture/test-weakening-lines.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -3723,9 +3724,10 @@ const queueFiles = () => [
   { filename: ".github/coordinator/test/card-lanes.test.mjs", status: "modified", sha: "4".repeat(40), additions: 5, deletions: 1 },
 ];
 function queuePull(number, { head = PR_HEAD, base = PR_BASE, draft = false, fork = false, baseRef = "main", labels = [LABEL], files = queueFiles(),
-  messages = [`feat: commit the next card queue\n\n${SESSION}`, `test: pin the queue\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n${SESSION}`] } = {}) {
+  messages = [`feat: commit the next card queue\n\n${SESSION}`, `test: pin the queue\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n${SESSION}`], pushedAt = null } = {}) {
   const repo = COMMITTED.pilot_repo;
-  const commits = messages.map((message, i) => ({ sha: i === messages.length - 1 ? head : `${i + 5}`.repeat(40), commit: { message } }));
+  const commits = messages.map((message, i) => ({ sha: i === messages.length - 1 ? head : `${i + 5}`.repeat(40),
+    commit: { message, ...(pushedAt && i === messages.length - 1 ? { committer: { date: pushedAt } } : {}) } }));
   return {
     pull: { number, state: "open", draft, labels: labels.map((name) => ({ name })),
       base: { ref: baseRef, repo: { full_name: repo } }, head: { sha: head, ref: `chore/queue-${number}`, repo: { full_name: fork ? "someone/studenthub-platform" : repo } } },
@@ -3778,7 +3780,9 @@ test("SHU-321 R1: only a labelled, allowlisted, Claude-trailered queue config pu
   assert.equal(host.reports.length, 1);
   assert.match(host.reports[0], /^Card run on SHU-304 \(review\): REVIEW_PASS/m);
   assert.match(host.reports[0], new RegExp(`^Reviewed pull request #241 at ${PR_HEAD}, from base ${PR_BASE}\\.$`, "m"));
-  assert.equal(host.api.some((call) => call.startsWith("git push") || call.startsWith("github pulls/245")), false, "one review per start, nothing pushed");
+  // M18 G2: every candidate's commits are read to order the heads by age;
+  // only the one reviewed has its files and merge base read.
+  assert.equal(host.api.some((call) => call.startsWith("git push") || call.startsWith("github pulls/245/files") || call.startsWith(`github compare/main...${"9".repeat(40)}`)), false, "one review per start, nothing pushed");
   // The next start takes the next pull request.
   const next = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
   assert.deepEqual(next.review, { pr: 245, head: "9".repeat(40), base: PR_BASE }, JSON.stringify(next));
@@ -3796,16 +3800,27 @@ test("SHU-321 R1: only a labelled, allowlisted, Claude-trailered queue config pu
   }
 });
 
-test("Velocity A: the pull request reviewed least at this revision is reviewed first, so a new head on an older one never starves a newer one", async () => {
+test("M18 G2: the head that has waited longest is reviewed first, ties by the lower number, whatever a pull request's earlier reviews", async () => {
   const NEW_HEAD = "9".repeat(40);
-  const host = reviewHost([queuePull(241, { head: NEW_HEAD }), queuePull(245)]);
-  // #241 had a head reviewed at this revision already; #245 had none.
+  // #241's new head was pushed first, #245's later, #243's has no readable date.
+  const host = reviewHost([queuePull(245, { pushedAt: "2026-10-09T15:10:00Z" }), queuePull(241, { head: NEW_HEAD, pushedAt: "2026-10-09T15:00:00Z" }),
+    queuePull(243, { head: "6".repeat(40) })]);
+  // #241 had a head reviewed at this revision already; #245 had none. Under
+  // Velocity A that put #245 first; first come, first served does not.
   host.files.set(reviewClaim(PATHS, 241, "7".repeat(40)), { text: "{}", mode: 0o600, uid: 0, gid: 0 });
   const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
-  assert.deepEqual(run.review, { pr: 245, head: PR_HEAD, base: PR_BASE }, JSON.stringify(run));
-  // Then #241's new head, as both have one review now: the lower number goes first.
+  assert.deepEqual(run.review, { pr: 241, head: NEW_HEAD, base: PR_BASE }, JSON.stringify(run));
   const next = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
-  assert.deepEqual(next.review, { pr: 241, head: NEW_HEAD, base: PR_BASE }, JSON.stringify(next));
+  assert.deepEqual(next.review, { pr: 245, head: PR_HEAD, base: PR_BASE }, JSON.stringify(next));
+  // An undated head waits behind every dated one.
+  const last = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(last.review?.pr, 243, JSON.stringify(last));
+  // The same age: the lower number first.
+  const tie = reviewHost([queuePull(245, { pushedAt: "2026-10-09T15:00:00Z" }), queuePull(241, { head: NEW_HEAD, pushedAt: "2026-10-09T15:00:00Z" })]);
+  assert.equal((await attempt(() => autoRun({ io: tie.io, paths: PATHS }))).review?.pr, 241);
+  assert.equal(headWaitingSince([{ sha: NEW_HEAD, commit: { committer: { date: "2026-10-09T15:00:00Z" } } }], NEW_HEAD), Date.parse("2026-10-09T15:00:00Z"));
+  assert.equal(headWaitingSince([{ sha: PR_HEAD, commit: { committer: { date: "2026-10-09T15:00:00Z" } } }], NEW_HEAD), Infinity, "only the head's own date");
+  assert.equal(headWaitingSince(null, NEW_HEAD), Infinity);
 });
 
 test("SHU-321 R2: a fork, a draft, a non-main base, a contracts file not edited in place or an extra path is never reviewed", async () => {
@@ -4179,7 +4194,9 @@ test("SHU-321 R6: under a queue the scope narrows to the committed review lane o
   const { narrowQueueScope } = await import("../single-run-activation.mjs");
   const { resolveDispatchScope } = await import("../reconcile.mjs");
   const { resolveQueueConfigReview } = await import("../workspace-scope.mjs");
-  assert.deepEqual({ ...resolveQueueConfigReview(COMMITTED) }, { lane: "SHU-304", label: "coordinator:queue-config", codeLabel: "coordinator:code", productLabel: "box:product-review", maxHeadsPerPr: 3 });
+  // M18 G2: with max_parallel absent, one slot: the policy's lane alone.
+  assert.deepEqual({ ...resolveQueueConfigReview(COMMITTED), slotLanes: [...resolveQueueConfigReview(COMMITTED).slotLanes] },
+    { lane: "SHU-304", label: "coordinator:queue-config", codeLabel: "coordinator:code", productLabel: "box:product-review", maxHeadsPerPr: 3, maxParallel: 1, slotLanes: ["SHU-304"] });
   const review = { pr: 240, head: PR_HEAD, base: PR_BASE, authorFamily: "claude" };
   const record = planRun({ config: queueConfig(), revision: REV, now: START, review, cardId: "SHU-304" }).record;
   const file = (text) => ({ lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }), readFile: () => text });
@@ -4265,8 +4282,12 @@ test("SHU-321 R7: the claim records the pull request, its head and base, the run
   const host = reviewHost();
   const run = await autoRun({ io: host.io, paths: PATHS });
   const claim = JSON.parse(host.files.get(reviewClaim(PATHS, 240, PR_HEAD)).text);
+  // M18 G2: it also names its review slot and lane, the worker and process
+  // that ran it, and its verdict.
   assert.deepEqual(claim, {
-    pr: 240, head: PR_HEAD, base: PR_BASE, revision: REV, activation_id: run.activation_id, outcome: "REVIEW_PASS",
+    pr: 240, head: PR_HEAD, base: PR_BASE, revision: REV, slot: 1, lane: "SHU-304", worker: 1, pid: process.pid,
+    ...(claim.pid_start === undefined ? {} : { pid_start: claim.pid_start }),
+    activation_id: run.activation_id, outcome: "REVIEW_PASS", verdict: "PASS",
     files: Object.fromEntries(queueFiles().map((file) => [file.filename, { sha: file.sha, additions: file.additions, deletions: file.deletions }])),
   });
   assert.equal(host.files.get(reviewClaim(PATHS, 240, PR_HEAD)).mode, 0o600);
@@ -4452,6 +4473,228 @@ test("M18 G1 R4: a publish GitHub refuses changes nothing about the run: the out
   assert.deepEqual(off.gh.comments, []);
   assert.doesNotMatch(off.reports[0], /^Review on GitHub/m);
   assert.equal(metricLines(off).length, 1, "metrics are written either way");
+});
+
+// M18 G2: review slots. Each slot is its own standing review card; a card
+// worker takes a free one, under the selection lock, with the head that has
+// waited longest. Slot 2's lane needs a reviewed review-only card contract
+// before the config may name it, so slot tests drive claimReview with a policy
+// of two lanes and a plan that stands in for the slot card's own.
+const SLOT2 = "SHU-998";
+const twoSlotPolicy = () => ({ ...resolveQueueConfigReview(queueConfig()), maxParallel: 2, slotLanes: ["SHU-304", SLOT2] });
+const slotPlan = (lane, review) => ({ id: lane, kind: "review", record: { activation_id: `${lane.toLowerCase()}-run`, initial_target_sha: review.head } });
+const readClaim = (host, pr, head) => {
+  assert.equal(host.files.has(reviewClaim(PATHS, pr, head)), true, `the claim of #${pr} at ${head} stands`);
+  return JSON.parse(host.files.get(reviewClaim(PATHS, pr, head)).text);
+};
+// This process stands for every worker's live run process.
+const liveProcess = (host) => host.files.set(`/proc/${process.pid}`, { text: "", mode: 0o555, uid: 0, gid: 0 });
+
+test("M18 G2 S1: two slots never claim the same head, a pull request has one review in flight, and a busy slot is never taken", async () => {
+  const policy = twoSlotPolicy();
+  const w = (n) => cardRunPaths(n, PATHS);
+  const take = (host, paths) => claimReview({ io: host.io, paths, config: queueConfig(), policy, revision: REV, credentials: { GITHUB_TOKEN: "gh-secret-value" }, planFor: slotPlan });
+  // Two workers reading at once, with no lock between them: the exclusive
+  // claim lets one have the head; the other claims nothing.
+  const raced = reviewHost([queuePull(240)]);
+  liveProcess(raced);
+  const both = await Promise.all([take(raced, w(1)), take(raced, w(2))]);
+  assert.equal(both.filter((entry) => entry.claim).length, 1, JSON.stringify(both));
+  assert.deepEqual(both.filter((entry) => !entry.claim).map((entry) => entry.skipped), ["ALREADY_REVIEWED"]);
+  assert.deepEqual(reviewClaims(raced), [reviewClaim(PATHS, 240, PR_HEAD)]);
+  // One after the other (as under the lock): worker 1 takes slot 1, worker 2
+  // passes over the pull request in flight and the busy slot.
+  const host = reviewHost([queuePull(240), queuePull(241, { head: "6".repeat(40) })]);
+  liveProcess(host);
+  const first = await take(host, w(1));
+  assert.deepEqual([first.slot, first.lane, first.pull.pr], [1, "SHU-304", 240]);
+  assert.deepEqual((({ slot, lane, worker, pid }) => ({ slot, lane, worker, pid }))(readClaim(host, 240, PR_HEAD)), { slot: 1, lane: "SHU-304", worker: 1, pid: process.pid });
+  const second = await take(host, w(2));
+  assert.deepEqual([second.slot, second.lane, second.pull.pr], [2, SLOT2, 241], JSON.stringify(second));
+  // #240 moves while its review runs: its new head waits, and with both slots
+  // busy a third worker reads no pull request at all.
+  setPulls(host, [queuePull(240, { head: "8".repeat(40) }), queuePull(241, { head: "6".repeat(40) })]);
+  const reads = host.api.length;
+  const third = await take(host, w(3));
+  assert.match(third.busy ?? "", /slot 1 SHU-304, slot 2 SHU-998/, JSON.stringify(third));
+  assert.equal(host.api.length, reads, "a start with no free slot reads nothing");
+  // Slot 1's run ends; its slot is free, but #240 is still the in-flight
+  // review's until its claim has an outcome.
+  const ended = readClaim(host, 241, "6".repeat(40));
+  host.files.set(reviewClaim(PATHS, 241, "6".repeat(40)), { text: JSON.stringify({ ...ended, outcome: "REVIEW_PASS", verdict: "PASS" }), mode: 0o600, uid: 0, gid: 0 });
+  const fourth = await take(host, w(3));
+  assert.equal(fourth.pull, null, JSON.stringify(fourth));
+  // A slot whose card another worker has armed is busy even with no claim.
+  const armedElsewhere = reviewHost([queuePull(240)]);
+  armedElsewhere.files.set(w(2).activation, { text: JSON.stringify({ target_issue_id: "SHU-304" }), mode: 0o640, uid: 0, gid: 0 });
+  const { slots, free } = reviewSlots(armedElsewhere.io, w(1), policy);
+  assert.deepEqual(slots.map((entry) => entry.busy), [true, false]);
+  assert.equal(free.lane, SLOT2);
+  // Under more than one card worker the claim is written under the selection lock.
+  const two = reviewHost([queuePull(240)], { config: { ...queueConfig(), workers: { max: 2 } } });
+  const write = two.fs.writeFileSync;
+  let lockedAtClaim = null;
+  two.io = { ...two.io, fs: { ...two.fs, writeFileSync: (file, text, options = {}) => {
+    if (file === reviewClaim(PATHS, 240, PR_HEAD) && lockedAtClaim === null) lockedAtClaim = two.files.has(selectLock(PATHS));
+    return write(file, text, options);
+  } } };
+  const run = await attempt(() => autoRun({ io: two.io, paths: PATHS }));
+  assert.equal(run.outcome, "REVIEW_PASS", JSON.stringify(run));
+  assert.equal(lockedAtClaim, true, "the review claim is published under the selection lock");
+  assert.equal(two.files.has(selectLock(PATHS)), false, "and the lock is released");
+});
+
+test("M18 G2 S2: the cap counts only reviews with a verdict, a crashed or unknown one counts, and it holds under a race", async () => {
+  assert.equal(claimVerdict({ outcome: "REVIEW_PASS" }), "PASS");
+  assert.equal(claimVerdict({ outcome: "REVIEW_BLOCKED" }), "BLOCKED");
+  assert.equal(claimVerdict({ outcome: "NOT_STARTED" }), "NONE");
+  assert.equal(claimVerdict({ outcome: "STOPPED", reason: `review-only run ended HOLD at ${PR_HEAD} without a review verdict` }), "NONE");
+  for (const result of [{ outcome: "STOPPED", reason: "stop: two failed attempts" }, { outcome: "EXPIRED" }, { outcome: "ERROR" }, { outcome: "REFUSED" }, {}, null]) {
+    assert.equal(claimVerdict(result), "UNKNOWN", JSON.stringify(result));
+  }
+  const claimed = (host, head, fields) => host.files.set(reviewClaim(PATHS, 240, head), { text: JSON.stringify({ pr: 240, head, revision: REV, ...fields }), mode: 0o600, uid: 0, gid: 0 });
+  // Three heads that reached no verdict leave the cap untouched.
+  const dropped = reviewHost([queuePull(240, { head: "9".repeat(40) })]);
+  for (const head of [PR_HEAD, "7".repeat(40), "8".repeat(40)]) claimed(dropped, head, { outcome: "STOPPED", verdict: "NONE" });
+  assert.equal((await attempt(() => autoRun({ io: dropped.io, paths: PATHS }))).outcome, "REVIEW_PASS");
+  // Verdicts, an unknown ending, a claim with no ending and an unreadable one all count.
+  for (const [label, third] of [["a verdict", { outcome: "REVIEW_BLOCKED", verdict: "BLOCKED" }], ["an unknown ending", { outcome: "EXPIRED", verdict: "UNKNOWN" }],
+    ["a claim from before G2", { outcome: "STOPPED" }], ["a run that died", { worker: 2, pid: 999999, claimed_at: "x" }], ["unreadable", null]]) {
+    const host = reviewHost([queuePull(240, { head: "9".repeat(40) })]);
+    claimed(host, PR_HEAD, { outcome: "REVIEW_PASS", verdict: "PASS" });
+    claimed(host, "7".repeat(40), { outcome: "REVIEW_BLOCKED", verdict: "BLOCKED" });
+    if (third === null) host.files.set(reviewClaim(PATHS, 240, "8".repeat(40)), { text: "{\"pr", mode: 0o600, uid: 0, gid: 0 });
+    else claimed(host, "8".repeat(40), third);
+    const capped = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+    assert.equal(capped.skipped, "REVIEW_CAP", `${label}: ${JSON.stringify(capped)}`);
+    assert.equal(host.files.has(reviewClaim(PATHS, 240, "9".repeat(40))), false, `${label}: the capped head claims nothing`);
+    assert.equal(host.ticks, 0, label);
+    noArming(host);
+  }
+  // The race: two heads with verdicts and a third under review; #240 moves.
+  // Another worker passes #240 over while the review is in flight, and when
+  // that run dies before its end is written the cap still holds.
+  const race = reviewHost([queuePull(240, { head: "9".repeat(40) })]);
+  liveProcess(race);
+  claimed(race, PR_HEAD, { outcome: "REVIEW_PASS", verdict: "PASS" });
+  claimed(race, "7".repeat(40), { outcome: "REVIEW_BLOCKED", verdict: "BLOCKED" });
+  claimed(race, "8".repeat(40), { slot: 1, lane: "SHU-304", worker: 2, pid: process.pid, claimed_at: "x" });
+  const policy = twoSlotPolicy();
+  const take = () => claimReview({ io: race.io, paths: PATHS, config: queueConfig(), policy, revision: REV, credentials: { GITHUB_TOKEN: "gh-secret-value" }, planFor: slotPlan });
+  const inFlight = await take();
+  assert.equal(inFlight.pull, null, JSON.stringify(inFlight));
+  assert.deepEqual(inFlight.capped, [], "passed over for its review in flight");
+  race.files.delete(`/proc/${process.pid}`);
+  const died = await take();
+  assert.deepEqual([died.pull, died.capped], [null, [240]], JSON.stringify(died));
+  assert.equal(reviewClaims(race).length, 3, "never a fourth claim");
+});
+
+// A review that ends with no verdict, on a pull request GitHub says is now at `now`.
+function movedHost(reason, now) {
+  const host = verdictHost(reason);
+  const base = host.io.fetch;
+  const api = `https://api.github.com/repos/${COMMITTED.pilot_repo}`;
+  const respond = (status, json) => ({ status, ok: status < 300, headers: { get: () => null }, json: async () => json });
+  host.io = { ...host.io, fetch: async (url, options = {}) => {
+    if (url === `${api}/pulls/240`) {
+      assert.equal(options.headers.Authorization, "Bearer gh-secret-value", "the pull request is read with the read-only token");
+      host.api.push("github pulls/240");
+      return now === null ? respond(502, { message: "Bad Gateway" }) : respond(200, { number: 240, state: "open", head: { sha: now } });
+    }
+    return base(url, options);
+  } };
+  return host;
+}
+
+test("M18 G2 S3: a review whose pull request moved gives its claim back, so the dropped review spends no cap round and the new head is reviewed next", async () => {
+  const NEW_HEAD = "9".repeat(40);
+  const HOLD_LINE = `review-only run ended HOLD at ${PR_HEAD} without a review verdict`;
+  const host = movedHost(HOLD_LINE, NEW_HEAD);
+  const run = await attempt(() => autoRun({ io: host.io, paths: LAND_PATHS }));
+  assert.equal(run.outcome, "STOPPED", JSON.stringify(run));
+  assert.equal(run.claim, null);
+  assert.equal(run.claim_given_back, `pull request #240 moved from ${PR_HEAD} to ${NEW_HEAD}`);
+  assert.equal(host.files.has(reviewClaim(PATHS, 240, PR_HEAD)), false, "the claim is given back");
+  assert.equal(metricLines(host)[0].dropped, true, "the dropped review is still measured");
+  // The new head is reviewed on its own claim.
+  setPulls(host, [queuePull(240, { head: NEW_HEAD })]);
+  const next = await attempt(() => autoRun({ io: host.io, paths: LAND_PATHS }));
+  assert.equal(next.review?.head, NEW_HEAD, JSON.stringify(next));
+  // Not moved: the claim stays, records no verdict, and counts nothing.
+  const still = movedHost(HOLD_LINE, PR_HEAD);
+  await attempt(() => autoRun({ io: still.io, paths: LAND_PATHS }));
+  assert.deepEqual((({ outcome, verdict }) => ({ outcome, verdict }))(readClaim(still, 240, PR_HEAD)), { outcome: "STOPPED", verdict: "NONE" });
+  // Unreadable: the claim stays.
+  const unread = movedHost(HOLD_LINE, null);
+  await attempt(() => autoRun({ io: unread.io, paths: LAND_PATHS }));
+  assert.equal(readClaim(unread, 240, PR_HEAD).verdict, "NONE");
+  // A verdict, or an ending that may hide one, keeps its claim whatever the pull request did since.
+  for (const [reason, verdict] of [[PASS_LINE, "PASS"], ["stop: the run expired", "UNKNOWN"]]) {
+    const kept = movedHost(reason, NEW_HEAD);
+    await attempt(() => autoRun({ io: kept.io, paths: LAND_PATHS }));
+    assert.equal(readClaim(kept, 240, PR_HEAD).verdict, verdict, reason);
+    assert.equal(kept.api.includes("github pulls/240"), false, `${reason}: no read`);
+  }
+});
+
+test("M18 G2 S4: max_parallel absent is today's one slot: SHU-304, one review per start, and a start that finds it busy or nothing to review writes nothing", async () => {
+  const policy = resolveQueueConfigReview(queueConfig());
+  assert.equal(policy.maxParallel, 1);
+  assert.deepEqual([...policy.slotLanes], ["SHU-304"]);
+  const host = reviewHost([queuePull(240), queuePull(241, { head: "6".repeat(40) })]);
+  const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(run.card, "SHU-304");
+  assert.equal(run.review.pr, 240);
+  assert.equal(reviewClaims(host).length, 1, "one review per start");
+  // Nothing eligible: the plain skip, no claim, no Linear call, nothing armed.
+  const idle = reviewHost([]);
+  const quiet = await attempt(() => autoRun({ io: idle.io, paths: PATHS }));
+  assert.equal(quiet.skipped, "QUEUE_DONE", JSON.stringify(quiet));
+  notReviewed(idle, "nothing to review");
+  // Slot 1 busy on another worker (its claim with no outcome under a held run
+  // lock, or its armed activation): this start reads no pull request.
+  for (const [label, busy] of [
+    ["a review in flight", (h) => {
+      h.files.set(reviewClaim(PATHS, 239, "7".repeat(40)), { text: JSON.stringify({ pr: 239, head: "7".repeat(40), revision: REV, slot: 1, lane: "SHU-304", worker: 2, pid: 999999 }), mode: 0o600, uid: 0, gid: 0 });
+      h.files.set(cardRunPaths(2, PATHS).lock, { text: "999999", mode: 0o600, uid: 0, gid: 0 });
+    }],
+    ["an armed activation", (h) => h.files.set(cardRunPaths(2, PATHS).activation, { text: JSON.stringify({ target_issue_id: "SHU-304" }), mode: 0o640, uid: 0, gid: 0 })],
+  ]) {
+    const held = reviewHost([queuePull(240)]);
+    busy(held);
+    const skipped = await attempt(() => autoRun({ io: held.io, paths: PATHS }));
+    assert.equal(skipped.skipped, "QUEUE_DONE", `${label}: ${JSON.stringify(skipped)}`);
+    assert.match(skipped.reason, /every review slot is busy \(slot 1 SHU-304\)/, label);
+    assert.equal(held.api.some((call) => call.startsWith("github pulls")), false, `${label}: no pull request read`);
+    assert.equal(held.files.has(reviewClaim(PATHS, 240, PR_HEAD)), false, label);
+    assert.equal(held.api.some((call) => call.startsWith("linear")), false, `${label}: Linear is not called`);
+  }
+});
+
+test("M18 G2 S5: a review run ticks every minute by default and a card run keeps its five minutes, both from the limits", async () => {
+  // The run's own three ticks (the revert's dispatch-off tick comes after).
+  const gaps = (host) => host.tickTimes.slice(1, 3).map((at, i) => at - host.tickTimes[i]);
+  const ticking = (id, done) => (h) => {
+    h.tickTimes = [...(h.tickTimes ?? []), h.clock];
+    if (h.files.has(PATHS.activation) && id === "SHU-304") h.armedRecords = [...(h.armedRecords ?? []), JSON.parse(h.files.get(PATHS.activation).text)];
+    return h.ticks >= 3 ? done(h) : tickText(armed(JSON.parse(h.files.get(PATHS.activation).text).activation_id, id));
+  };
+  const reviewRun = fakeHost({ id: "SHU-304", config: queueConfig(), onTick: ticking("SHU-304", reviewPass) });
+  for (const id of QUEUE) claimFor(reviewRun, REV, id, { outcome: "PASS", ok: true, land: "MERGED" });
+  setPulls(reviewRun, [queuePull(240)]);
+  assert.equal((await attempt(() => autoRun({ io: reviewRun.io, paths: PATHS }))).outcome, "REVIEW_PASS");
+  assert.deepEqual(gaps(reviewRun), [60 * 1000, 60 * 1000]);
+  assert.equal(CARD_RUN_LIMITS.reviewTickIntervalMs, 60 * 1000);
+  const tuned = fakeHost({ id: "SHU-304", config: queueConfig(), onTick: ticking("SHU-304", reviewPass) });
+  for (const id of QUEUE) claimFor(tuned, REV, id, { outcome: "PASS", ok: true, land: "MERGED" });
+  setPulls(tuned, [queuePull(240)]);
+  await attempt(() => autoRun({ io: tuned.io, paths: PATHS, limits: { ...CARD_RUN_LIMITS, reviewTickIntervalMs: 30 * 1000 } }));
+  assert.deepEqual(gaps(tuned), [30 * 1000, 30 * 1000]);
+  const card = fakeHost({ onTick: ticking("SHU-301", passFor("SHU-301")) });
+  assert.equal((await attempt(() => runCard({ io: card.io, paths: PATHS }))).outcome, "PASS");
+  assert.deepEqual(gaps(card), [CARD_RUN_LIMITS.tickIntervalMs, CARD_RUN_LIMITS.tickIntervalMs]);
+  assert.equal(CARD_RUN_LIMITS.tickIntervalMs, 5 * 60 * 1000);
 });
 
 // Self-watch 0d: the outside watch, on its own small fake host. It reads the
