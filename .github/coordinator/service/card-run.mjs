@@ -95,6 +95,8 @@ import { WORKSPACE_STATE_DIR, workerWorkspaceStateDir, SUPERVISOR_STORE_DIRNAME,
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention, statusPath } from "./card-status.mjs";
 import { readVelocity } from "./card-velocity.mjs";
+import { publishStatusOn, publishPending, publishVerdict, readReviewTerminal, receiptFindings, reviewVerdictOf, readHeadPushedAt,
+  appendReviewMetric, readReviewMetrics } from "./review-verdict.mjs";
 import { readRunUsage, hostSnapshot } from "./card-usage.mjs";
 import { diskUpkeep } from "./disk-prune.mjs";
 import { landingRepairOn, repairCandidate, repairRecordPath, repairAlertPath, repairActivationId, readRound, claimRound, advanceRound,
@@ -1076,6 +1078,9 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   catch { refuse("CARD_RUN_LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
   let summary;
   let credentials;
+  // M18 G1 + G5: what a review run needs, once its lock is released, to put
+  // its verdict on the pull request and write its metrics line.
+  let reviewEnd = null;
   try {
     // M15 W5: looked for only once this run's own lock is held; see INSTALL_LOCK.
     const busy = [...installing(io, paths), ...busyReasons(io, paths)];
@@ -1126,6 +1131,15 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       // records progress and never changes how the run ends.
       if (config.watch?.observe === true) watch = createWatch({ armedAt: Date.parse(armedAt), limits: config.watch });
       status.write({ step: "armed", ...progress() });
+      // M18 G1: a review shows as running on its exact head. Best effort and
+      // bounded: a refused write is a warning, never a change to the run.
+      if (plan.kind === "review") {
+        reviewEnd = { plan, config, armedAt, finishedAt: null, custody: reviewCustody(io, paths, config), pending: null };
+        if (reviewEnd.custody.token) {
+          reviewEnd.pending = await publishPending({ io, token: reviewEnd.custody.token, repo: config.pilot_repo, sha: review.head,
+            timeoutMs: limits.reviewRequestTimeoutMs ?? CARD_RUN_LIMITS.reviewRequestTimeoutMs });
+        }
+      }
       const deadline = Date.parse(plan.record.expires_at);
       for (;;) {
         // Never start a tick once the window has closed, including the first:
@@ -1187,6 +1201,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     }
     // The run itself ends here; revert and landing are timed by their own steps.
     const finishedAt = armedAt === null ? null : io.now().toISOString();
+    if (reviewEnd) reviewEnd.finishedAt = finishedAt;
     status.write({ step: "reverting", ...progress(), outcome: result.outcome });
     let reverted;
     try { reverted = revert(io, paths, limits); }
@@ -1237,10 +1252,74 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
   }
+  // M18 G1 + G5: once the lock is released, like the report, a review's
+  // verdict goes on its pull request and its metrics line is written. Neither
+  // ever changes the result.
+  if (reviewEnd) await finishReview({ io, paths, limits, summary, credentials, ...reviewEnd });
+  try {
+    const reviews = readReviewMetrics(io, paths.stateDir);
+    if (reviews) summary.review_metrics = reviews;
+  } catch { /* the report goes out without it */ }
   // Reported last, once the host is as the revert left it and the lock is
   // released, so a slow Linear never holds the host. The report is bounded
   // and best effort: it never changes the result.
   return { ...summary, report: await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs }) };
+}
+
+// M18 G1: whether a review publishes its verdict, and with which token. The
+// landing token is the one the box already holds that may write to GitHub;
+// the coordinator's own token is read-only.
+function reviewCustody(io, paths, config) {
+  if (!publishStatusOn(config)) return { on: false, token: null };
+  try {
+    const custody = readLandToken(io, paths.landEnv);
+    return { on: true, token: custody.token ?? null, reason: custody.refused ?? custody.reason ?? null };
+  } catch {
+    return { on: true, token: null, reason: "the landing token file cannot be read" };
+  }
+}
+
+// M18 G1 + G5: the verdict on the pull request, then one metrics line. The
+// SHA is the armed head, and only when the tick's terminal line named that
+// same head (reviewVerdictOf); a receipt that disagrees publishes no verdict.
+// Never throws: every failure is a warning on the summary.
+async function finishReview({ io, paths, limits, summary, credentials, plan, config, armedAt, finishedAt, custody, pending }) {
+  const warnings = [];
+  let decided = null;
+  try {
+    decided = reviewVerdictOf(summary);
+    if (!decided) return;
+    const timeoutMs = limits.reviewRequestTimeoutMs ?? CARD_RUN_LIMITS.reviewRequestTimeoutMs;
+    const repo = config.pilot_repo;
+    let verdict = decided.verdict;
+    if (decided.mismatch) warnings.push(`the tick named ${decided.mismatch}, not the armed head ${decided.sha}; no verdict was published`);
+    if (pending?.warning) warnings.push(`pending: ${pending.warning}`);
+    let terminal = null;
+    if (verdict !== "HOLD" && custody.on && custody.token) {
+      const read = await readReviewTerminal({ fetchImpl: boundedFetch(io, timeoutMs), linearToken: credentials?.LINEAR_API_TOKEN,
+        actorIds: config.linear_receipt_actor_ids, card: plan.id, activationId: plan.record.activation_id, verdict, sha: decided.sha });
+      if (read.warning) warnings.push(read.warning);
+      if (read.disagrees) verdict = "HOLD";
+      terminal = read.terminal;
+    }
+    decided = { ...decided, verdict };
+    if (custody.on) {
+      const { summary: findings, links } = receiptFindings(terminal);
+      const published = await publishVerdict({ io, token: custody.token, repo, pr: summary.review.pr, verdict, sha: decided.sha,
+        summary: findings, links, card: plan.id, activationId: plan.record.activation_id, pendingSet: pending?.set === true, timeoutMs });
+      summary.review_publish = { ...published, warnings: [...warnings, ...published.warnings] };
+    } else if (warnings.length) {
+      summary.review_publish = { status: null, comment: null, warnings };
+    }
+    const headPushedAt = await readHeadPushedAt({ io, token: credentials?.GITHUB_TOKEN, repo, sha: decided.sha, timeoutMs });
+    appendReviewMetric(io, paths.stateDir, { pr: summary.review.pr, head_sha: decided.sha, head_pushed_at: headPushedAt,
+      review_started_at: terminal?.timestamps?.launch ?? terminal?.timestamps?.reserved ?? armedAt,
+      verdict_at: (verdict === "HOLD" ? null : terminal?.timestamps?.terminal) ?? finishedAt ?? io.now().toISOString(),
+      verdict, slot: workerOf(paths) });
+  } catch (error) {
+    summary.review_publish = { status: summary.review_publish?.status ?? null, comment: summary.review_publish?.comment ?? null,
+      warnings: [...(summary.review_publish?.warnings ?? warnings), String(error?.message ?? error).slice(0, 200)] };
+  }
 }
 
 // The landing token is read here, by root, from its own file; a run without

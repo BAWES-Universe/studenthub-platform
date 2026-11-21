@@ -245,6 +245,72 @@ const CASES = [
     to: "          if (false) { // SHU303-M33\n            if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — final review-only check",
     pattern: "SHU-303 P9:",
   },
+  // M18 G1 + G5: the verdict on the pull request and the metrics line.
+  {
+    name: "M34 publish a verdict at whatever SHA the tick names",
+    file: "service/review-verdict.mjs",
+    from: "  if (match && result.outcome === outcome && match[2] === head) return { verdict: match[1], sha: head };",
+    to: "  if (match) return { verdict: match[1], sha: match[2] }; // M18-M34",
+    pattern: "M18 G1: a PASS sets success",
+  },
+  {
+    name: "M35 let a BLOCK status description run past 140 characters",
+    file: "service/review-verdict.mjs",
+    from: "description: line ? fit(`${head}: ${line}`, REVIEW_STATUS_DESCRIPTION_MAX) : head,",
+    to: "description: line ? `${head}: ${line}` /* M18-M35 */ : head,",
+    pattern: "M18 G1: a BLOCK sets failure",
+  },
+  {
+    name: "M36 set success over a HOLD's own pending status",
+    file: "service/review-verdict.mjs",
+    from: "    try { await setStatus(gh, repo, sha, reviewStatus({ verdict, sha })); done.status = \"error\"; }",
+    to: "    try { await setStatus(gh, repo, sha, reviewStatus({ verdict: \"PASS\", sha })); done.status = \"error\"; } // M18-M36",
+    pattern: "M18 G1: a HOLD posts no comment",
+  },
+  {
+    name: "M37 set a HOLD status with no pending of the run's own",
+    file: "service/review-verdict.mjs",
+    from: "    if (!pendingSet) return done;",
+    to: "    // M18-M37",
+    pattern: "M18 G1: a HOLD posts no comment",
+  },
+  {
+    name: "M38 post the same verdict comment again",
+    file: "service/review-verdict.mjs",
+    from: "    if (existing) {",
+    to: "    if (false) { // M18-M38",
+    pattern: "M18 G1: a verdict already on the pull request",
+  },
+  {
+    name: "M39 post a verdict comment when the comments cannot be read",
+    file: "service/review-verdict.mjs",
+    from: "    if (response.status !== 200 || !Array.isArray(list)) throw new Error(`the comments of #${pr} cannot be read (HTTP ${response.status})`);",
+    to: "    if (!Array.isArray(list)) return null; // M18-M39",
+    pattern: "M18 G1: a verdict already on the pull request",
+  },
+  {
+    name: "M40 count a HOLD as a review with a verdict",
+    file: "service/review-verdict.mjs",
+    from: "verdict: entry.verdict, slot: entry.slot ?? null, dropped: entry.verdict === \"HOLD\",",
+    to: "verdict: entry.verdict, slot: entry.slot ?? null, dropped: false, // M18-M40",
+    pattern: "M18 G5:",
+  },
+  {
+    name: "M41 publish a verdict the review card's receipt contradicts",
+    file: "service/card-run.mjs",
+    from: "      if (read.disagrees) verdict = \"HOLD\";",
+    to: "      // M18-M41",
+    pattern: "M18 G1 R3:",
+    test: "card-run.test.mjs",
+  },
+  {
+    name: "M42 let a refused status escape the publish",
+    file: "service/review-verdict.mjs",
+    from: "    done.status = status.state;\n  } catch (error) {\n",
+    to: "    done.status = status.state;\n  } catch (error) {\n    throw error; // M18-M42\n",
+    pattern: "M18 G1 R4:",
+    test: "card-run.test.mjs",
+  },
 ];
 
 for (const mutation of CASES) {
@@ -261,7 +327,7 @@ for (const mutation of CASES) {
       const run = spawnSync(process.execPath, [
         "--test",
         `--test-name-pattern=${mutation.pattern}`,
-        path.join(root, "test", "review-only.test.mjs"),
+        path.join(root, "test", mutation.test ?? "review-only.test.mjs"),
       ], { cwd: root, env: childEnv, encoding: "utf8", timeout: 60_000 });
       const output = run.stdout + run.stderr;
       assert.equal(run.signal, null, `${mutation.name}: a timeout or crash is not a mutation kill`);

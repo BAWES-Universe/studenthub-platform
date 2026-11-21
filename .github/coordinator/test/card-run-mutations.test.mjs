@@ -283,8 +283,8 @@ const CASES = [
   },
   {
     name: "M43 post the report while the run still holds the lock",
-    from: "    try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }\n  }\n  // Reported last",
-    to: "  }\n  // SHU86-M43\n  // Reported last",
+    from: "    try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }\n  }\n  // M18 G1 + G5: once the lock",
+    to: "  }\n  // SHU86-M43\n  // M18 G1 + G5: once the lock",
     pattern: "SHU-86 C30:",
   },
   {
