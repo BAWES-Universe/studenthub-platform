@@ -2253,6 +2253,7 @@
     "SHU-321 R7: the claim records the pull request, its head and base, the run and every file's blob, and never reads as a landing",
     "SHU-321 R8: a GitHub read that fails is a skip that claims nothing",
     "M18 G1 R1: a box PASS sets pending then success on the exact reviewed head, posts one PASS comment, and writes one metrics line",
+    "M18 G1 R1b: a PASS ending on the coordinator's generic line is published only when the receipt confirms PASS at the armed head",
     "M18 G1 R2: a box BLOCK sets failure with the findings' first line, and its comment is headed BLOCK at the full SHA",
     "M18 G1 R3: a review that ends with no verdict posts no comment and never success, and is a dropped metrics line",
     "M18 G1 R4: a publish GitHub refuses changes nothing about the run: the outcome, the claim and the report stand, with a warning",
@@ -19314,6 +19315,10 @@
     },
     {
       "name": "M18 G1 R1: a box PASS sets pending then success on the exact reviewed head, posts one PASS comment, and writes one metrics line",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1 R1b: a PASS ending on the coordinator's generic line is published only when the receipt confirms PASS at the armed head",
       "capabilities": []
     },
     {
