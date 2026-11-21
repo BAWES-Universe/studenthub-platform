@@ -1,0 +1,72 @@
+name: Changed-test preflight pilot
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-preflight-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changed-test-preflight:
+    name: Changed-test preflight (advisory)
+    # This pilot is not a branch-protection requirement or an independent verdict.
+    # Its helper and evidence come from the PR head and are not tamper-proof.
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    continue-on-error: true
+    env:
+      PREFLIGHT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      PREFLIGHT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify immutable comparison commits
+        id: revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PREFLIGHT_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PREFLIGHT_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$PREFLIGHT_HEAD_SHA"
+          git cat-file -e "${PREFLIGHT_BASE_SHA}^{commit}"
+          git cat-file -e "${PREFLIGHT_HEAD_SHA}^{commit}"
+      - uses: actions/setup-node@v4
+        id: node
+        with:
+          node-version: 24
+      - name: Prepare the existing application test prerequisites
+        id: prepare
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm run build
+      - name: Check the pilot fixtures
+        if: ${{ steps.prepare.outcome == 'success' }}
+        run: node --test tools/test-preflight/*.unit.mjs
+      - name: Collect structured changed-test evidence
+        id: preflight
+        if: ${{ always() && !cancelled() && steps.revision.outcome == 'success' && steps.node.outcome == 'success' }}
+        env:
+          # A failed install/build must be reported as unavailable, not as passing tests.
+          PREFLIGHT_REPORT_PATH: ${{ runner.temp }}/test-preflight/report.json
+          PREFLIGHT_SETUP_STATUS: ${{ steps.prepare.outcome }}
+        run: |
+          mkdir -p -- "$(dirname -- "$PREFLIGHT_REPORT_PATH")"
+          node tools/test-preflight/run.mjs
+      - name: Upload advisory evidence
+        if: ${{ always() && !cancelled() && steps.preflight.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-preflight-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/test-preflight/report.json
+          if-no-files-found: warn
+          retention-days: 14
