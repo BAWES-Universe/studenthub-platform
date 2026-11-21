@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderHistory } from "../../../apps/gateway/src/work/pages.js";
+import { renderDay, renderHistory } from "../../../apps/gateway/src/work/pages.js";
 import { WORK_COPY } from "../../../apps/gateway/src/work/copy.js";
 import type { WorkHttpServices } from "../../../apps/gateway/src/work/http.js";
 import { compareSheets, validateExplanations, type Explanation } from "../src/twin/compare.js";
 import { parseDuration, SheetBuilder, type FactSheet } from "../src/twin/facts.js";
 import { parseHtml, query, queryAll, textOf } from "../src/twin/html.js";
-import type { LegacyParam, LegacyReader } from "../src/twin/journey.js";
+import type { LegacyParam, LegacyReader, OpenedPage } from "../src/twin/journey.js";
 import { workHistory } from "../src/twin/journeys/work-history.js";
 import { assertPrivate, closeVerified, MINIMUM_PEOPLE_FLOOR, verdictOf, type TwinReport } from "../src/twin/report.js";
 import { walkedRevisionMatchesTree } from "../src/twin/cli.js";
@@ -96,96 +96,164 @@ test("an explanation must cite a decision record or a desk comment, as a whole c
 
 // ---- work history journey ----------------------------------------------------------------
 
-/** Legacy rows for one candidate: two days, every status, an open session, a null total. */
+/**
+ * Legacy rows for one candidate: two days, every status, an open session, a null total, a
+ * manual log. Times are Kuwait wall time, as legacy wrote them.
+ */
 const LEGACY_ROWS = [
-  { date: "2026-10-02", status: 1, open: 0, seconds: 9000 },
-  { date: "2026-10-02", status: 0, open: 0, seconds: 1830 },
-  { date: "2026-10-02", status: 2, open: 0, seconds: 600 },
-  { date: "2026-10-15", status: 1, open: 0, seconds: 3600 },
-  { date: "2026-10-15", status: 0, open: 1, seconds: null },
+  { date: "2026-10-02", status: 1, open: 0, seconds: 9000, start: "2026-10-02 08:00:00", end: "2026-10-02 10:30:00", late: 0 },
+  { date: "2026-10-02", status: 0, open: 0, seconds: 1830, start: "2026-10-02 11:00:00", end: "2026-10-02 11:30:30", late: 1 },
+  { date: "2026-10-02", status: 2, open: 0, seconds: 600, start: "2026-10-02 13:00:00", end: "2026-10-02 13:10:00", late: 0 },
+  { date: "2026-10-15", status: 1, open: 0, seconds: 3600, start: "2026-10-15 09:00:00", end: "2026-10-15 10:00:00", late: 0 },
+  { date: "2026-10-15", status: 0, open: 1, seconds: null, start: "2026-10-15 14:00:00", end: null, late: 0 },
 ];
 
 function reader(rows: readonly Record<string, unknown>[], calls: { sql: string; params: readonly LegacyParam[] }[] = []): LegacyReader {
   return { rows: async (sql, params) => { calls.push({ sql, params }); bind(sql, params); return rows; } };
 }
 
-/** The same hours as the new app holds them after the M-5 import. */
+/** The same hours as the new app holds them after the M-5 import, stored in another order. */
 function newSessions(over: Partial<Record<number, Record<string, unknown>>> = {}) {
   const base = [
-    { workDate: "2026-10-02", status: "approved", durationSeconds: 9000, endedAt: "x" },
-    { workDate: "2026-10-02", status: "pending", durationSeconds: 1830, endedAt: "x" },
-    { workDate: "2026-10-02", status: "rejected", durationSeconds: 600, endedAt: "x" },
-    { workDate: "2026-10-15", status: "approved", durationSeconds: 3600, endedAt: "x" },
-    { workDate: "2026-10-15", status: "pending", durationSeconds: null, endedAt: null },
+    { workDate: "2026-10-15", status: "pending", durationSeconds: null, startedAt: "2026-10-15T11:00:00.000Z", endedAt: null, source: "timer" },
+    { workDate: "2026-10-02", status: "rejected", durationSeconds: 600, startedAt: "2026-10-02T10:00:00.000Z", endedAt: "2026-10-02T10:10:00.000Z", source: "timer" },
+    { workDate: "2026-10-02", status: "approved", durationSeconds: 9000, startedAt: "2026-10-02T05:00:00.000Z", endedAt: "2026-10-02T07:30:00.000Z", source: "timer" },
+    { workDate: "2026-10-02", status: "pending", durationSeconds: 1830, startedAt: "2026-10-02T08:00:00.000Z", endedAt: "2026-10-02T08:30:30.000Z", source: "manual" },
+    { workDate: "2026-10-15", status: "approved", durationSeconds: 3600, startedAt: "2026-10-15T06:00:00.000Z", endedAt: "2026-10-15T07:00:00.000Z", source: "timer" },
   ];
-  return base.map((s, i) => ({ ...s, ...(over[i] ?? {}) }));
+  return base.map((s, i) => ({ id: `aaaaaaaa-0000-4000-8000-00000000000${i}`, storeId: "store-1", flags: [] as string[], note: null, ...s, ...(over[i] ?? {}) }));
+}
+type NewSession = ReturnType<typeof newSessions>[number];
+
+function views(sessions: readonly NewSession[]): WorkHttpServices {
+  const mine = async (_person: string, range: { from: string; to: string }) => {
+    const inRange = sessions.filter((s) => s.workDate >= range.from && s.workDate <= range.to);
+    const totals = { approvedSeconds: 0, pendingSeconds: 0, rejectedSeconds: 0, open: 0 };
+    for (const s of inRange) {
+      if (s.endedAt === null) totals.open++;
+      else totals[`${s.status as "approved" | "pending" | "rejected"}Seconds`] += s.durationSeconds ?? 0;
+    }
+    return { rows: inRange.map((session) => ({ session, decision: null })), totals, next: null };
+  };
+  return { views: { mine } } as unknown as WorkHttpServices;
 }
 
-async function historyPage(sessions: ReturnType<typeof newSessions>, language: "en" | "ar" = "en"): Promise<string> {
-  const totals = { approvedSeconds: 0, pendingSeconds: 0, rejectedSeconds: 0, open: 0 };
-  for (const s of sessions) {
-    if (s.endedAt === null) totals.open++;
-    else totals[`${s.status as "approved" | "pending" | "rejected"}Seconds`] += s.durationSeconds ?? 0;
+async function historyPage(sessions: readonly NewSession[], language: "en" | "ar" = "en"): Promise<string> {
+  return renderHistory(views(sessions), "person", MONTH, "2026-11", WORK_COPY[language]);
+}
+
+/** What the walk opens for one person: the month page and each legacy day's page. */
+async function walkedPages(legacy: FactSheet, sessions: readonly NewSession[], language: "en" | "ar" = "en"): Promise<OpenedPage[]> {
+  const out: OpenedPage[] = [];
+  for (const path of workHistory.pages({ month: MONTH }, legacy)) {
+    const day = /^\/work\/history\/(\d{4}-\d{2}-\d{2})$/.exec(path)?.[1];
+    out.push({ path, html: day ? await renderDay(views(sessions), undefined, "person", day, null, WORK_COPY[language]) : await historyPage(sessions, language) });
   }
-  const services = { views: { mine: async () => ({ rows: sessions.map((session) => ({ session })), totals, next: null }) } } as unknown as WorkHttpServices;
-  return renderHistory(services, "person", MONTH, "2026-11", WORK_COPY[language]);
+  return out;
 }
 
-test("work history: the legacy month and the new page read to the same sheet, in English and Arabic", async () => {
+test("work history: the legacy month and days and the new pages read to the same sheet, in English and Arabic", async () => {
   const calls: { sql: string; params: readonly LegacyParam[] }[] = [];
   const legacy = await workHistory.legacySheet(reader(LEGACY_ROWS, calls), "42", { month: MONTH });
   assert.deepEqual(calls[0]!.params, [42, { date: "2026-10-01" }, { date: "2026-10-31" }]);
-  assert.deepEqual(Object.fromEntries(legacy), {
+  assert.deepEqual(workHistory.pages({ month: MONTH }, legacy), ["/work/history?month=2026-10", "/work/history/2026-10-02", "/work/history/2026-10-15"]);
+  const facts = Object.fromEntries(legacy);
+  assert.deepEqual(Object.fromEntries(Object.entries(facts).filter(([k]) => !k.startsWith("dayDetail"))), {
     "day[2026-10-02].approvedMinutes": 150, "day[2026-10-02].open": false, "day[2026-10-02].rejectedMinutes": 10,
     "day[2026-10-02].sessions": 3, "day[2026-10-02].waitingMinutes": 30,
     "day[2026-10-15].approvedMinutes": 60, "day[2026-10-15].open": true, "day[2026-10-15].sessions": 2,
     "month.approvedMinutes": 210, "month.rejectedMinutes": 10, "month.truncated": false, "month.waitingMinutes": 30,
   });
+  assert.deepEqual(Object.fromEntries(Object.entries(facts).filter(([k]) => k.startsWith("dayDetail[2026-10-15]"))), {
+    "dayDetail[2026-10-15].approvedMinutes": 60, "dayDetail[2026-10-15].rejectedMinutes": 0, "dayDetail[2026-10-15].sessions": 2,
+    "dayDetail[2026-10-15].truncated": false, "dayDetail[2026-10-15].waitingMinutes": 0,
+    "dayDetail[2026-10-15].session[1].end": "10:00", "dayDetail[2026-10-15].session[1].late": false, "dayDetail[2026-10-15].session[1].minutes": 60,
+    "dayDetail[2026-10-15].session[1].start": "09:00", "dayDetail[2026-10-15].session[1].status": "approved",
+    "dayDetail[2026-10-15].session[2].end": null, "dayDetail[2026-10-15].session[2].late": false, "dayDetail[2026-10-15].session[2].minutes": null,
+    "dayDetail[2026-10-15].session[2].start": "14:00", "dayDetail[2026-10-15].session[2].status": "open",
+  });
+  assert.equal(facts["dayDetail[2026-10-02].session[2].late"], true);
   for (const language of ["en", "ar"] as const) {
-    const next = workHistory.newSheet([await historyPage(newSessions(), language)], { month: MONTH });
+    const next = workHistory.newSheet(await walkedPages(legacy, newSessions(), language), { month: MONTH });
     assert.deepEqual(compareSheets("work-history", legacy, next, []), { matched: legacy.size, explained: [], regressions: [] }, language);
   }
 });
 
 test("work history: a session whose status changed in the import is a regression at that day's paths", async () => {
   const legacy = await workHistory.legacySheet(reader(LEGACY_ROWS), "42", { month: MONTH });
-  const next = workHistory.newSheet([await historyPage(newSessions({ 2: { status: "approved" } }))], { month: MONTH });
+  const next = workHistory.newSheet(await walkedPages(legacy, newSessions({ 1: { status: "approved" } })), { month: MONTH });
   assert.deepEqual(compareSheets("work-history", legacy, next, []).regressions, [
+    { path: "dayDetail[2026-10-02].approvedMinutes", kind: "differs" },
+    { path: "dayDetail[2026-10-02].rejectedMinutes", kind: "differs" },
+    { path: "dayDetail[2026-10-02].session[3].status", kind: "differs" },
     { path: "day[2026-10-02].approvedMinutes", kind: "differs" },
     { path: "day[2026-10-02].rejectedMinutes", kind: "missing" },
     { path: "month.approvedMinutes", kind: "differs" },
     { path: "month.rejectedMinutes", kind: "differs" },
   ]);
-  const dropped = workHistory.newSheet([await historyPage(newSessions().slice(0, 3))], { month: MONTH });
-  assert.ok(compareSheets("work-history", legacy, dropped, []).regressions.some((r) => r.path === "day[2026-10-15].sessions" && r.kind === "missing"));
+  const dropped = workHistory.newSheet(await walkedPages(legacy, newSessions().slice(1)), { month: MONTH });
+  const lost = compareSheets("work-history", legacy, dropped, []).regressions;
+  assert.ok(lost.some((r) => r.path === "dayDetail[2026-10-15].session[2].start" && r.kind === "missing"), "the open session is missing on the day page");
+  assert.ok(lost.some((r) => r.path === "dayDetail[2026-10-15].sessions" && r.kind === "differs"));
+});
+
+test("work history: the day page shows each session's own time, end, duration and manual mark", async () => {
+  const legacy = await workHistory.legacySheet(reader(LEGACY_ROWS), "42", { month: MONTH });
+  for (const [over, path] of [
+    [{ 2: { startedAt: "2026-10-02T05:01:00.000Z" } }, "dayDetail[2026-10-02].session[1].start"],
+    [{ 2: { endedAt: "2026-10-02T07:31:00.000Z" } }, "dayDetail[2026-10-02].session[1].end"],
+    [{ 3: { source: "timer" } }, "dayDetail[2026-10-02].session[2].late"],
+    [{ 1: { source: "manual" } }, "dayDetail[2026-10-02].session[3].late"],
+  ] as const) {
+    for (const language of ["en", "ar"] as const) {
+      const next = workHistory.newSheet(await walkedPages(legacy, newSessions(over), language), { month: MONTH });
+      assert.deepEqual(compareSheets("work-history", legacy, next, []).regressions, [{ path, kind: "differs" }], `${path} ${language}`);
+    }
+  }
+  // A day cut short by paging reads as truncated, never as a full day.
+  const cut = (await walkedPages(legacy, newSessions())).map((p) => p.path.endsWith("2026-10-02")
+    ? { ...p, html: p.html.replace("</section>", '<p><a href="/work/history/2026-10-02?after=x">Later sessions on this day</a></p></section>') } : p);
+  assert.deepEqual(compareSheets("work-history", legacy, workHistory.newSheet(cut, { month: MONTH }), []).regressions,
+    [{ path: "dayDetail[2026-10-02].truncated", kind: "differs" }]);
 });
 
 test("work history: an empty month reads as zero totals on both sides; a page it cannot read fails", async () => {
   const legacy = await workHistory.legacySheet(reader([]), "42", { month: MONTH });
-  const next = workHistory.newSheet([await historyPage([])], { month: MONTH });
+  assert.deepEqual(workHistory.pages({ month: MONTH }, legacy), ["/work/history?month=2026-10"]);
+  const next = workHistory.newSheet(await walkedPages(legacy, []), { month: MONTH });
   assert.deepEqual(compareSheets("work-history", legacy, next, []).regressions, []);
-  assert.throws(() => workHistory.newSheet(["<html><main>Sign in</main></html>"], { month: MONTH }), /twin.page.noSummary/);
-  await assert.rejects(workHistory.legacySheet(reader([{ date: "2026-10-02", status: 7, open: 0, seconds: 1 }]), "42", { month: MONTH }), /twin.legacy.badStatus/);
+  const month = { path: "/work/history?month=2026-10", html: await historyPage([]) };
+  assert.throws(() => workHistory.newSheet([{ ...month, html: "<html><main>Sign in</main></html>" }], { month: MONTH }), /twin.page.noSummary/);
+  assert.throws(() => workHistory.newSheet([{ ...month, path: "/work/history?month=2026-09" }], { month: MONTH }), /twin.page.notMonth/);
+  assert.throws(() => workHistory.newSheet([month, { path: "/work/history/2026-09-30", html: "" }], { month: MONTH }), /twin.page.notDay/);
+  assert.throws(() => workHistory.newSheet([month, { path: "/work/history/2026-10-02", html: "<html><main>Sign in</main></html>" }], { month: MONTH }), /twin.page.noDayTotals/);
+  await assert.rejects(workHistory.legacySheet(reader([{ ...LEGACY_ROWS[0], status: 7 }]), "42", { month: MONTH }), /twin.legacy.badStatus/);
 });
 
 // ---- walk, report and gates --------------------------------------------------------------
 
-function app(pages: (personId: string) => Promise<readonly string[]>, linked = (id: string) => (id === "404" ? undefined : `p-${id}`)): NewApp {
-  return { personFor: async (id) => linked(id), open: async (personId) => pages(personId) };
+function app(pages: (personId: string, paths: readonly string[]) => Promise<readonly string[]>, linked = (id: string) => (id === "404" ? undefined : `p-${id}`)): NewApp {
+  return { personFor: async (id) => linked(id), open: async (personId, paths) => pages(personId, paths) };
 }
 
 test("a walk records each person's outcome, and failures as fixed codes that never carry a value", async () => {
   const people = ["1", "2", "3", "404", "5"];
   const legacy: LegacyReader = { rows: async (sql) => (sql.includes("GROUP BY candidate_id") ? people.map((id) => ({ id })) : LEGACY_ROWS) };
-  const page = await historyPage(newSessions());
-  const changed = await historyPage(newSessions({ 0: { durationSeconds: 9060 } }));
-  const report = await walk([workHistory], legacy, app(async (p) => {
+  const people6 = [...people, "6"];
+  const legacy6: LegacyReader = { rows: async (sql, params) => (sql.includes("GROUP BY candidate_id") ? people6.map((id) => ({ id })) : legacy.rows(sql, params)) };
+  const legacySheet = await workHistory.legacySheet(reader(LEGACY_ROWS), "1", { month: MONTH });
+  const same = await walkedPages(legacySheet, newSessions());
+  const changed = await walkedPages(legacySheet, newSessions({ 2: { durationSeconds: 9060 } }));
+  const report = await walk([workHistory], legacy6, app(async (p, paths) => {
     if (p === "p-3") throw new Error("Fatima Al-Sabah's page timed out");
     if (p === "p-5") throw new WalkFailure("sign_in_failed");
-    return [p === "p-2" ? changed : page];
+    assert.deepEqual(paths, same.map((x) => x.path));
+    if (p === "p-6") return [same[0]!.html];
+    return (p === "p-2" ? changed : same).map((x) => x.html);
   }), { month: MONTH }, { revision: REVISION, limit: 10, minimumPeople: 1, explanations: [], now: () => new Date("2026-11-20T00:00:00Z") });
   const outcomes = report.journeys[0]!.people.map((p) => [p.legacyId, p.outcome, "code" in p ? p.code : p.regressions.length]);
-  assert.deepEqual(outcomes, [["1", "match", 0], ["2", "regression", 2], ["3", "error", "page_failed"], ["404", "error", "persona_unlinked"], ["5", "error", "sign_in_failed"]]);
+  assert.deepEqual(outcomes, [["1", "match", 0], ["2", "regression", 4], ["3", "error", "page_failed"], ["404", "error", "persona_unlinked"], ["5", "error", "sign_in_failed"],
+    ["6", "error", "page_failed"]]);
   assert.ok(!JSON.stringify(report).includes("Fatima"), "no error text reaches the report");
   assert.deepEqual(verdictOf(report.journeys[0]!, 1), { verdict: "open", reason: "regression", walked: 2 });
 });

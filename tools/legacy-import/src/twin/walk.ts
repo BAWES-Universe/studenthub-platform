@@ -57,10 +57,13 @@ async function walkOne(journey: Journey, legacyId: string, legacy: LegacyReader,
   let personId: string | undefined;
   try { personId = await app.personFor(legacyId, journey.persona); } catch { return error("persona_unlinked"); }
   if (!personId) return error("persona_unlinked");
+  let paths: readonly string[];
+  try { paths = journey.pages(ctx, legacySheet); } catch { return error("legacy_read_failed"); }
   let html: readonly string[];
-  try { html = await app.open(personId, journey.pages(ctx)); } catch (e) { return error(e instanceof WalkFailure ? e.code : "page_failed"); }
+  try { html = await app.open(personId, paths); } catch (e) { return error(e instanceof WalkFailure ? e.code : "page_failed"); }
+  if (html.length !== paths.length) return error("page_failed");
   let nextSheet;
-  try { nextSheet = journey.newSheet(html, ctx); } catch { return error("extract_failed"); }
+  try { nextSheet = journey.newSheet(paths.map((path, i) => ({ path, html: html[i]! })), ctx); } catch { return error("extract_failed"); }
   const comparison = compareSheets(journey.id, legacySheet, nextSheet, explanations);
   return { legacyId, outcome: outcomeOf(comparison), ...comparison };
 }

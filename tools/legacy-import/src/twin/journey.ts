@@ -26,10 +26,18 @@ export interface Journey {
   /** Up to `limit` legacy ids with something to compare, in a stable order. */
   people(legacy: LegacyReader, ctx: JourneyContext, limit: number): Promise<readonly string[]>;
   legacySheet(legacy: LegacyReader, legacyId: string, ctx: JourneyContext): Promise<FactSheet>;
-  /** Paths on the new app to open, in order, for this person. */
-  pages(ctx: JourneyContext): readonly string[];
-  /** Reads the sheet from the HTML of the pages above, in the same order. */
-  newSheet(html: readonly string[], ctx: JourneyContext): FactSheet;
+  /**
+   * Paths on the new app to open, in order, for this person. The legacy sheet is given so a
+   * journey can open a detail page for each thing legacy showed (each day, each item).
+   */
+  pages(ctx: JourneyContext, legacy: FactSheet): readonly string[];
+  /** Reads the sheet from the pages above: each path with its final HTML, in the same order. */
+  newSheet(pages: readonly OpenedPage[], ctx: JourneyContext): FactSheet;
+}
+
+export interface OpenedPage {
+  readonly path: string;
+  readonly html: string;
 }
 
 /** `YYYY-MM` -> first and last ISO day. */
