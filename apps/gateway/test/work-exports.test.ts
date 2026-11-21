@@ -176,9 +176,11 @@ test("WORK_EXPORT the export route's work kinds parse their query strictly; bad 
   assert.equal(kind("work-assigned-history").filters(q("from=2026-11-18")), null);
 });
 
-test("WORK_EXPORT staff hours: minutes per staff member over every page; a day not ended adds the staff record's hours per day, or nothing while that port is absent", async () => {
+test("WORK_EXPORT staff hours: minutes per staff member over every page; a day not ended or with zero minutes adds the staff record's hours per day, or nothing while that port is absent", async () => {
   const day = (staffId: string, workDate: string, minutes: number, open = false) => ({ staffId, workDate, minutes, sessions: 1, open, firstStart: `${workDate}T05:00:00.000Z`, lastEnd: open ? null : `${workDate}T09:00:00.000Z` });
-  const pages = [[day("s-2", "2026-11-18", 90), day("s-1", "2026-11-18", 30, true)], [day("s-1", "2026-11-17", 480)]];
+  // s-1: a day with closed minutes and one still open (adds the hours), a full day, and a day whose
+  // sessions all closed inside the minute (adds the hours too, as legacy's zero-minute row did).
+  const pages = [[day("s-2", "2026-11-18", 90), day("s-1", "2026-11-18", 30, true)], [day("s-1", "2026-11-17", 480), day("s-1", "2026-11-16", 0)]];
   const calls: unknown[][] = [];
   const staffTime = { days: async (actor: string, from: string, to: string, options: { staffId?: string; after?: unknown }) => {
     calls.push([actor, from, to, options]);
@@ -198,7 +200,7 @@ test("WORK_EXPORT staff hours: minutes per staff member over every page; a day n
   const withPort = new ExportService(new Memory(), [staffHoursExport({ ...base, staffHoursPerDay: async () => new Map([["s-1", 8]]) } as never) as never]);
   const again = await withPort.request("admin", "work-staff-sessions", { from: "2026-11-01", to: "2026-11-18", staffId: "s-1" });
   assert.ok(again.ok);
-  assert.deepEqual(csv((await withPort.file("admin", again.id))!.bytes)[2], "s-1,Huda,huda@example.invalid,990,16.50,2026-11-01,2026-11-18");
+  assert.deepEqual(csv((await withPort.file("admin", again.id))!.bytes)[2], "s-1,Huda,huda@example.invalid,1470,24.50,2026-11-01,2026-11-18");
   assert.ok(calls.some((c) => JSON.stringify(c) === JSON.stringify(["admin", "2026-11-01", "2026-11-18", { staffId: "s-1", after: { workDate: "2026-11-18", staffId: "s-1" } }])), "the second page is read for that staff member");
   // Refused by the service, and bad filters never reach it.
   assert.deepEqual(await without.request("staff", "work-staff-sessions", { from: "2026-11-01", to: "2026-11-18" }), { ok: false, reason: "not_found" });

@@ -4394,6 +4394,34 @@ test("M18 G1 R1: a box PASS sets pending then success on the exact reviewed head
   assert.match(host.reports[0], /^Reviews: 1 in the last 24 hours, 100% PASS; head to verdict median 11 min, p90 11 min \(1 timed\); 0 dropped with no verdict\.$/m);
 });
 
+test("M18 G1 R1b: a PASS ending on the coordinator's generic line is published only when the receipt confirms PASS at the armed head", async () => {
+  // 2026-11-21, #595 at 136579c: the lane's PASS ended on "review PASS — the
+  // episode is complete", which names no SHA, and published nothing.
+  const GENERIC = "review PASS — the episode is complete";
+  const host = verdictHost(GENERIC);
+  const run = await attempt(() => autoRun({ io: host.io, paths: LAND_PATHS }));
+  assert.equal(run.outcome, "PASS", JSON.stringify(run));
+  assert.deepEqual(host.gh.statuses.map((entry) => [entry.sha, entry.state, entry.description]), [
+    [PR_HEAD, "pending", "review running"], [PR_HEAD, "success", `PASS at ${PR_HEAD.slice(0, 7)}`]]);
+  assert.equal(host.gh.comments.length, 1);
+  assert.equal(host.gh.comments[0].body.split("\n")[0], `PASS at ${PR_HEAD}`);
+  assert.equal(metricLines(host)[0].verdict, "PASS");
+  assert.match(host.reports[0], /^Review on GitHub \(orchestrator\/review\): status success, comment posted\.$/m);
+  // The line names no SHA, so the receipt alone binds it: one at another
+  // head, one that BLOCKED, or none at all publishes no success.
+  for (const receipt of [{ sha: "9".repeat(40) }, { verdict: "BLOCKED", stage: "HOLD" }, null]) {
+    const other = verdictHost(GENERIC, { receipt });
+    await attempt(() => autoRun({ io: other.io, paths: LAND_PATHS }));
+    assert.deepEqual(other.gh.statuses.map((entry) => entry.state), ["pending", "error"], JSON.stringify(receipt));
+    assert.deepEqual(other.gh.comments, []);
+    assert.equal(metricLines(other)[0].verdict, "HOLD");
+  }
+  // Any other generic line is no verdict.
+  const stopped = verdictHost("review PASS — the episode is complete, almost");
+  await attempt(() => autoRun({ io: stopped.io, paths: LAND_PATHS }));
+  assert.equal(stopped.gh.statuses.some((entry) => entry.state === "success"), false);
+});
+
 test("M18 G1 R2: a box BLOCK sets failure with the findings' first line, and its comment is headed BLOCK at the full SHA", async () => {
   const host = verdictHost(`review-only verdict BLOCKED at ${PR_HEAD} — the episode is complete`, { receipt: { stage: "HOLD", verdict: "BLOCKED" } });
   const run = await attempt(() => autoRun({ io: host.io, paths: LAND_PATHS }));
