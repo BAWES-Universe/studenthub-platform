@@ -54,6 +54,7 @@ const REVIEW_SUMMARY_MAX = 6000;
 const REVIEW_LINKS_MAX = 32;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const VERDICT_RE = /^review-only verdict (PASS|BLOCKED) at ([0-9a-f]{40}) /;
+const REVIEW_PASS_RE = /^review PASS — the episode is complete$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REVIEW_ISSUE_QUERY = `
   query ReviewVerdictIssue($id: String!) {
@@ -68,9 +69,19 @@ export function publishStatusOn(config) {
 // What a finished review run decided, from its own summary: PASS or BLOCKED
 // at the exact head it armed, or HOLD. A verdict whose SHA is not the armed
 // head is no verdict.
+//
+// A PASS from a lane whose requested worker matches its verdict ends the
+// episode on the coordinator's generic line, "review PASS — the episode is
+// complete" (single-run-activation.mjs), which names no SHA; the card run
+// reports it as outcome PASS. That line is a PASS at the armed head only once
+// the review card's terminal receipt agrees on PASS at that head, which
+// finishReview requires before anything is published (2026-11-21: the first
+// review on the installed G1, #595 at 136579c, passed this way and published
+// nothing).
 export function reviewVerdictOf(result) {
   const head = result?.review?.head;
   if (result?.kind !== "review" || !SHA_RE.test(head ?? "")) return null;
+  if (result.outcome === "PASS" && REVIEW_PASS_RE.test(String(result.reason ?? ""))) return { verdict: "PASS", sha: head };
   const match = VERDICT_RE.exec(String(result.reason ?? ""));
   const outcome = match ? `REVIEW_${match[1]}` : null;
   if (match && result.outcome === outcome && match[2] === head) return { verdict: match[1], sha: head };
