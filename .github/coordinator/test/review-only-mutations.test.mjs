@@ -311,6 +311,35 @@ const CASES = [
     pattern: "M18 G1 R4:",
     test: "card-run.test.mjs",
   },
+  // M18 G2: the review slots' config.
+  {
+    name: "M43 let max_parallel run past eight slots",
+    file: "workspace-scope.mjs",
+    from: "maxParallel < 1 || maxParallel > MAX_REVIEW_SLOTS) {",
+    to: "maxParallel < 1) { // M18-M43",
+    pattern: "M18 G2: max_parallel",
+  },
+  {
+    name: "M44 let a slot lane be any card",
+    file: "workspace-scope.mjs",
+    from: '      || slotLanes.some((lane) => typeof lane !== "string" || !resolveReviewOnlyLane(config, lane))) {',
+    to: "      ) { // M18-M44",
+    pattern: "M18 G2: max_parallel",
+  },
+  {
+    name: "M45 let one card stand in two slots",
+    file: "workspace-scope.mjs",
+    from: "      || new Set(slotLanes).size !== slotLanes.length\n",
+    to: "      // M18-M45\n",
+    pattern: "M18 G2: max_parallel",
+  },
+  {
+    name: "M46 open more than one slot without naming its cards",
+    file: "workspace-scope.mjs",
+    from: '  if (maxParallel > 1 && !Object.hasOwn(policy, "slot_lanes")) {',
+    to: "  if (false) { // M18-M46",
+    pattern: "M18 G2: max_parallel",
+  },
 ];
 
 for (const mutation of CASES) {

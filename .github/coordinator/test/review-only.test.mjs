@@ -880,3 +880,37 @@ test("M18 G5: every review writes one metrics line, and the report line gives th
   assert.equal(reviewMetricsLine(summariseReviewMetrics("", Date.now())), "Reviews: 0 in the last 24 hours, no verdicts; head to verdict median n/a, p90 n/a (0 timed); 0 dropped with no verdict.");
   assert.equal(reviewMetricsLine(null), null);
 });
+
+// M18 G2: review slots. max_parallel absent is one slot, the policy's lane;
+// more slots name one standing review card each, the policy's lane first, and
+// every one must be a committed, reviewed review-only lane.
+test("M18 G2: max_parallel is 1 to 8 and absent is one slot, and slot_lanes names that many committed review-only lanes, the policy's lane first", () => {
+  const policy = CONFIG.queue_config_review;
+  const resolve = (edit) => resolveQueueConfigReview({ ...CONFIG, queue_config_review: { ...policy, ...edit } });
+  const shape = (resolved) => [resolved.maxParallel, [...resolved.slotLanes]];
+  assert.deepEqual(shape(resolveQueueConfigReview(CONFIG)), [1, [policy.lane]]);
+  assert.deepEqual(shape(resolve({ max_parallel: 1 })), [1, [policy.lane]]);
+  assert.deepEqual(shape(resolve({ max_parallel: 1, slot_lanes: [policy.lane] })), [1, [policy.lane]]);
+  assert.equal(Object.isFrozen(resolveQueueConfigReview(CONFIG).slotLanes), true);
+  for (const [label, edit] of [
+    ["zero slots", { max_parallel: 0 }],
+    ["nine slots", { max_parallel: 9, slot_lanes: Array.from({ length: 9 }, () => policy.lane) }],
+    ["a string", { max_parallel: "2" }],
+    ["a fraction", { max_parallel: 1.5 }],
+    ["slot lanes without max_parallel", { slot_lanes: [policy.lane] }],
+    ["two slots without slot lanes", { max_parallel: 2 }],
+    ["fewer lanes than slots", { max_parallel: 2, slot_lanes: [policy.lane] }],
+    ["more lanes than slots", { max_parallel: 1, slot_lanes: [policy.lane, "SHU-998"] }],
+    ["another lane first", { max_parallel: 1, slot_lanes: ["SHU-998"] }],
+    ["one card in two slots", { max_parallel: 2, slot_lanes: [policy.lane, policy.lane] }],
+    ["a lane that is no review card", { max_parallel: 2, slot_lanes: [policy.lane, "SHU-998"] }],
+    ["a build card as a slot", { max_parallel: 2, slot_lanes: [policy.lane, CONFIG.card_lanes?.[0]?.id ?? "SHU-301"] }],
+    ["not a list", { max_parallel: 1, slot_lanes: policy.lane }],
+  ]) {
+    assert.throws(() => resolve(edit), /queue_config_review\.(max_parallel|slot_lanes)/, label);
+  }
+  // Each refusal names its own rule.
+  assert.throws(() => resolve({ max_parallel: 9, slot_lanes: Array.from({ length: 9 }, () => policy.lane) }), /max_parallel must be 1 to 8/);
+  assert.throws(() => resolve({ max_parallel: 2 }), /max_parallel above 1 needs slot_lanes/);
+  assert.throws(() => resolve({ slot_lanes: [policy.lane] }), /slot_lanes needs max_parallel/);
+});
