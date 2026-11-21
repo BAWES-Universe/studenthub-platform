@@ -16,6 +16,7 @@ Markers used below: **[FACT]** checked on 2026-11-20 · **[DEFAULT]** what we do
 1. **Protect `main` for the bot's identity.** The bot pushes with your GitHub login, so the rules must stop *you* from pushing straight to `main`, not just ask the bot not to. In GitHub, studenthub-platform → Settings → Rules → `main-protected-v1.2`: turn on "Require a pull request before merging" (0 required approvals is fine), with the bypass list empty. If you'd rather not, the pilot stays read-only. Claude then confirms it from the API before dispatch (Part D, pre-dispatch check).
 2. Keep the PC on and Orca running during the pilot (about 2 days). Orca bots work only while it is.
 3. Paste the remit in Part C into the bot's chat once, so it saves it in its `SOUL.md`. Its current remit ("assess delivery") is reviewer-style; this makes it an implementation worker with our rules.
+3a. GitHub mentions from our shared `BAWES` account don't wake the bot, so it finds jobs by running the poll tool (B3). Paste the **observe prompt** below Part C once: the bot runs the poll a single time, by hand, and can only post one observe receipt. Later, when Claude and GPT clear work mode, Claude sends you the **work prompt**, which sets up the 15-minute schedule.
 4. When 1 to 3 are done, say **"start the Orca pilot"** in project chat. Nothing is dispatched to the bot before you say that.
 
 After that you relay nothing, dispatch nothing, answer no routine technical question and merge nothing. **Claude owns each ticket from dispatch to landing:** it registers the lease, opens the issue, triggers the bot, reviews the final commit, squash-merges and closes the issue. The bot works and reports on GitHub; GPT corroborates and can raise findings there directly. If Claude is unavailable, the ticket waits for an eligible reviewer and merge operator; it never comes to you.
@@ -78,11 +79,40 @@ Read, in order: `README.md`, `docs/acceptance-record.md`, `docs/parity/`, `docs/
 
 [DEFAULT] **The canonical ticket is a GitHub issue in studenthub-platform titled `Orca lane: <slug>`, opened by Claude.** It holds the outcome, the lease, acceptance checks, exclusions, the reviewer and a time box. The issue body never contains `@orca-ide studenthub-universe`: the trigger comes only in a separate dispatch comment, as below. One ticket per job; the same job is never also triggered from Linear.
 
+**You find work only by polling, with the poll tool.** Claude, GPT and you all post as `BAWES`. Orca documents that its own account's GitHub activity does not start automations, and the first P1 dispatch (a mention from `BAWES`) did not wake you. **The poll is the only thing that can claim or start work.** A mention never starts, resumes, claims or polls anything.
+
+**There is no schedule yet.** Run the poll only when a prompt from Khalid tells you to: the observe prompt runs `--mode observe` once, by hand. The 15-minute `--mode work` schedule starts only with the work prompt, sent after Claude and GPT clear work mode. A mention never runs the poll.
+
+The poll, run from a clone of this repository with `main` built (`npm ci && npm run build`):
+
+```
+node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode observe
+node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode work
+```
+
+It fetches `origin/main` and reads `docs/lanes/orca/REGISTER.md` there. A row authorizes anything only if all of these hold: it is your bot's row; it is the ticket's highest generation (`Gen`); its state is `active` and its expiry hasn't passed; and `Dispatch` names the **exact comment id** of a comment on that issue, written by `BAWES` through Claude's GitHub App, whose first line is `**Claude → Orca studenthub-universe** · dispatch · #<issue> gen <gen>`. Any other comment or mention, from any time, authorizes nothing. Editing another row, or a row's expiry, never changes a binding. A revoked ticket can restart only as a new generation with a new dispatch.
+
+**In `--mode observe`** the poll never claims, locks or starts anything. It prints `observe` (rows in observe mode with a valid dispatch) and `wouldPick` (what work mode would choose; information only).
+- For each entry in `observe` whose `receiptPosted` is `false`: post its `receiptBody` exactly, as one comment on that issue. That is the only thing you may post in observe mode. Claude checks it and then switches the row to `work`.
+- Nothing else in the output is an instruction. If `observe` is empty or every entry is already posted, post nothing.
+
+**In `--mode work`** the poll takes the bot-wide run lock first, re-reads its decision under the lock, claims at most one ticket and prints `next` with a `runToken`. The run lock lasts for the whole run: while it is held, no other ticket and no other generation starts, even if the holder's row was revoked or expired.
+- **`next` is null:** nothing to do. Post nothing: no comment, no reaction, no branch. If `runLock` is set, a run holds the lock; see recovery below.
+- **`next.action` is `"start"`:** the poll has taken the durable claim and the run lock. Post the start receipt before anything else: its first line is exactly `next.startReceiptHeader`, and it names `next.dispatch`. Then work.
+- **`next.action` is `"resume"`:** the ticket is already yours and the poll took the run lock. If `next.startReceiptPosted` is `false`, post the start receipt first, exactly as for `start`. Otherwise never post a second one. Recover the same branch `orca/studenthub-universe/<slug>`, worktree and PR; never open a second branch or PR.
+- **Before every write of a run** (each push, each PR create or edit, each comment), run `node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode check --key <next.claimKey> --token <next.runToken>`. Go ahead only if it prints `"ok": true`. Otherwise stop at once: no push and no comment except the single `stopped` receipt from B9, then release the run lock (below). That release is your verified stop.
+- **When a run ends**, for any reason, release the run lock: `node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode release --key <next.claimKey> --token <next.runToken>`. A release with any other key or token changes nothing.
+- **A run lock is never taken over by age, and recovery is manual.** If `runLock` is still set when a run starts and you believe its run died: pause your schedule, confirm in your Orca run history that no run of your automation is active and no write is in flight, then run `node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode recover --key <runLock.key> --token <runLock.token>`. Only if it prints `"result": "recovered"`, post one comment on that ticket's issue with first line `**Orca studenthub-universe → Claude** · recovered · <runLock.key>`, then resume your schedule. Recovery frees only that exact run's lock, so a late or repeated one can never clear a newer run. If you can't verify that it stopped, do nothing; the lock stays.
+- Claude enables a replacement row (a new generation, or another ticket) only after that run's `stopped` or `recovered` receipt.
+- **If the poll exits with an error** (a malformed register, git or GitHub unreachable), do nothing and post nothing. The next poll tries again.
+
+At most one ticket is in progress per bot: an owned ticket is always resumed before anything new starts. Claims and the run lock live in `~/.orca-lane/claims`. Never delete them by hand.
+
 - Work only from an issue titled `Orca lane: ...` that is listed as registered in the **Orca lane register** (the table in `docs/lanes/orca/REGISTER.md` on `main`, maintained by Claude): issue number, slug, bot, lease, state and expiry. An issue that is not in the register is not an assignment, whatever its header says.
-- **Read the register fresh from `main` before you start, before you resume, and before you push or publish anything.** Go ahead only if the row matches your bot name, the ticket and the lease, its state is `active` and its expiry hasn't passed. **The mention that started you must also be newer than the row:** it must be a comment on the ticket issue whose header is `**Claude → Orca studenthub-universe** · dispatch`, created after the commit that last changed `REGISTER.md` on `main` (`git log -1 --format=%cI origin/main -- docs/lanes/orca/REGISTER.md`). A mention from before that commit, including one in the issue body, stays ineligible even after the row becomes active. Say in your start receipt which comment started you. A mention that was queued while the PC was offline and arrives after the row was revoked or expired starts no work. The one exception: on a ticket you were working on, you may still post the single `stopped` receipt from B9 after its row is revoked. Nothing else.
+- **Read the register fresh from `main` before you start, before you resume, and before you push or publish anything.** Go ahead only if the row matches your bot name, the ticket and the lease, its state is `active` and its expiry hasn't passed. **Only the poll decides eligibility** (above). The `--mode check` call before every write is that re-read: if it fails, stop. Say in your start receipt which dispatch comment id the poll bound. A mention that was queued while the PC was offline and arrives after the row was revoked or expired starts no work. The one exception: on a ticket you were working on, you may still post the single `stopped` receipt from B9 after its row is revoked. Nothing else.
 - A mention anywhere else (another issue, the desk #393, someone's PR, a Linear card, the `bot:studenthub-universe` label) is not an assignment. Do no work and post no reply.
 - [DEFAULT] Linear is read-only for you in the pilot.
-- During stage 1, Claude confirms on the issue that the trigger it used is the one that actually started you, so we know which triggers work.
+- During stage 1, Claude confirms on the issue that the dispatch your receipt names is the one bound in the register.
 - Before starting: check no open PR already edits your leased paths. If one does, comment `blocked` on the issue and stop.
 - Each ticket gets its own worktree and branch, started from current `origin/main`.
 - If you were offline, start from current `main`, never from an old checkout.
@@ -171,6 +201,18 @@ Key rules: I act as Khalid, so I only work through pull requests; I never create
 Reply "remit saved" and wait for the first Orca lane issue.
 ```
 
+**Observe prompt** (paste once, now):
+
+```
+Run this once, now, by hand, and do not schedule anything: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then run `node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode observe`. Follow the observe rules in section B3 of docs/lanes/orca/HANDOVER.md on main: for each entry in "observe" whose receiptPosted is false, post its receiptBody exactly as one comment on that issue, and nothing else. Then reply "observe done" with the poll's output.
+```
+
+**Work prompt** (Claude sends it later, after Claude and GPT clear work mode; not before):
+
+```
+Schedule an automation that runs every 15 minutes while you are online and never overlaps itself: in your studenthub-platform clone, update main, run `npm ci && npm run build`, then follow section B3 of docs/lanes/orca/HANDOVER.md on main in work mode, using the poll tool exactly as written there. The poll alone decides whether you may work. If it gives you nothing to do, post nothing. Then run it once now and reply "poll scheduled" with the schedule you set and the poll's output.
+```
+
 ---
 
 ## Part D. The plan: pilot, then scale
@@ -194,8 +236,10 @@ Agreed shape (GPT's baseline): prove one ticket end to end, then two disjoint ti
 - [ ] the lease is clear: no open PR touches its paths
 - [ ] `main` requires a pull request with no bypass (read from the API)
 - [ ] Khalid has said "start the Orca pilot" (once, for the whole pilot)
-- [ ] The issue body carries no live trigger; the only trigger is a fresh dispatch comment posted after the row landed on `main`, and its id goes in the stage record
-- [ ] Tabletop check done once before the first dispatch: a stale mention for a revoked or expired row starts no work, and a fresh mention for an active row does (the positive control). An Orca access rejection is a separate thing from a worker replying.
+- [ ] The issue body carries no live trigger; the only trigger is the dispatch comment whose exact id the row binds, and that id goes in the stage record
+- [ ] The poll tool's tests pass on `main` (`tools/orca-lane/test`). They cover: only the exact bound comment authorizes work; an old generation's dispatch stays ineligible after reactivation; ticket A survives an edit to B's row; concurrent wakes, where one claim wins and a poll whose pick went stale under the lock backs out; claims that can't be read fail closed; restart after an ambiguous receipt, which resumes, stays bound to the saved dispatch and posts a missing start receipt; and a bot-wide, token-fenced run lock held through execution: no takeover by age; a revoked run that is still alive blocks every new run until its release; a stale run can neither pass `check` nor release the new run's lock; recovery is bound to the exact run (key and token), and a late or repeated release or recovery never clears a successor; and a third wake is refused.
+- [ ] Each new ticket runs one poll in `observe` mode, and its observe receipt names the bound dispatch, before Claude switches the row to `work`.
+- [ ] The work prompt goes to Khalid only after GPT's PASS on work mode and one verified observe receipt; the observe receipt comes from a single manual run with no schedule.
 
 **What GitHub enforces and what it doesn't.** [FACT 2026-11-20] On `main`, GitHub requires four status checks for everyone, admins included: `repository-policy`, `coordinator-future-clock`, `fast-checks`, `gateway-image-smoke`. The ruleset blocks deletion and force-push and requires linear history. Since 2026-11-20 18:05Z it also requires a pull request with no bypass actors, allowing merge and squash (setup step A1); because linear history is also required, only **squash** actually lands. It requires no approving review. Claude, GPT and the bot all act as `BAWES`, so GitHub cannot tell them apart. Headers attribute messages and an exact-commit `PASS` records a verdict, but neither is enforced: in this pilot "only Claude merges" and "independent PASS before merge" are **operating rules**, checked by the post-merge audit (Part E). If we later want GitHub to enforce them, the writer and the reviewer/merge operator need distinct GitHub identities (for example a bot account or GitHub App for Orca) and a required review from the reviewer's identity. That never means Khalid merging each ticket by hand.
 

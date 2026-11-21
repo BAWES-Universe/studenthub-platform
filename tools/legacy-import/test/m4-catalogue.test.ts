@@ -156,6 +156,12 @@ test("areas import as catalogue items; their details are reported as skipped (le
   assert.deepEqual(issues, [{ rule: "catalogue.areaDetailsSkipped", legacyTable: "area", legacyId: "a-1" }]);
 });
 
+test("a repeated catalogue id is a duplicate even when its first row was refused", () => {
+  const { items, issues } = mapLegacyCatalogue("tag", [{ tag_id: 1, tag: "" }, { tag_id: 1, tag: "Valid" }]);
+  assert.deepEqual(items, []);
+  assert.deepEqual(issues.map((i) => [i.rule, i.legacyId]), [["catalogue.invalidName", "1"], ["catalogue.duplicateId", "1"]]);
+});
+
 test("the digest is stable across runs and changes when the legacy row changes", () => {
   const row = { country_id: 1, country_name_en: "Kuwait" };
   const a = mapLegacyCatalogue("country", [row]).items[0]!.digest;
