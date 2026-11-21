@@ -30,6 +30,15 @@ function renderedBytes(summary, links) {
   return Buffer.byteLength(JSON.stringify(encodeFindings(summary, links)));
 }
 
+// Keep the marker inside both existing budgets. Cut at UTF-16 code-point
+// boundaries so a supplementary character cannot turn into a lone surrogate.
+const SUMMARY_TRUNCATED = "\n[review summary truncated]";
+function markedSummary(text, limit) {
+  let end = Math.max(0, limit - SUMMARY_TRUNCATED.length);
+  if (end > 0 && /[\uD800-\uDBFF]/.test(text[end - 1]) && /[\uDC00-\uDFFF]/.test(text[end] ?? "")) end--;
+  return text.slice(0, end) + SUMMARY_TRUNCATED;
+}
+
 // Receipts are public Linear comments. Text that looks like a credential is
 // dropped rather than trimmed, so a partial secret can never be published.
 export function reviewFindingsFromCallback(callback) {
@@ -38,10 +47,14 @@ export function reviewFindingsFromCallback(callback) {
     ? callback.links.filter((link) => typeof link === "string" && link.length > 0 && link.length <= REVIEW_FINDINGS_LINK_LENGTH_MAX && !secretShaped(link)).slice(0, REVIEW_FINDINGS_LINKS_MAX)
     : [];
   const text = typeof callback.summary === "string" ? callback.summary.trim() : "";
-  let summary = text && !secretShaped(text) ? text.slice(0, REVIEW_FINDINGS_SUMMARY_MAX) : null;
+  const safeText = text && !secretShaped(text) ? text : null;
+  let summary = safeText && safeText.length > REVIEW_FINDINGS_SUMMARY_MAX
+    ? markedSummary(safeText, REVIEW_FINDINGS_SUMMARY_MAX) : safeText;
   // Over budget, trailing citations go first, then the summary is shortened.
   while (links.length && renderedBytes(summary, links) > REVIEW_FINDINGS_CONTEXT_BYTES_MAX) links.pop();
-  while (summary && renderedBytes(summary, links) > REVIEW_FINDINGS_CONTEXT_BYTES_MAX) summary = summary.slice(0, Math.floor(summary.length * 0.9)) || null;
+  while (summary && renderedBytes(summary, links) > REVIEW_FINDINGS_CONTEXT_BYTES_MAX) {
+    summary = markedSummary(safeText, Math.floor(summary.length * 0.9));
+  }
   if (!summary && !links.length) return null;
   return { verdict_stage: "BLOCKED", target_sha: callback.target_sha, summary, links };
 }
