@@ -8,3 +8,6 @@ export * from "./id-card-verify.js";
 export * from "./public-photo.js";
 export * from "./certificates.js";
 export * from "./certificate-pdf.js";
+export * from "./statistics.js";
+export * from "./firing-hit-map.js";
+export * from "./firing-spike.js";

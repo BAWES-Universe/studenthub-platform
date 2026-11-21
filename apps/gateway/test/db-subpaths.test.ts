@@ -22,7 +22,7 @@ async function moduleFor(specifier: string): Promise<Record<string, unknown>> {
 
 test("PREP_EXPORTS explicit database area exports resolve with their assigned values", async () => {
   const manifest = JSON.parse(await readFile(resolve("packages/db/package.json"), "utf8")) as { exports: Record<string, Record<string, string>> };
-  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions", "./billing", "./comms", "./reports", "./universe", "./work"].sort());
+  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions", "./billing", "./comms", "./import", "./reports", "./universe", "./work"].sort());
   assert.equal(JSON.stringify(manifest.exports).includes("*"), false);
   for (const area of areas) {
     assert.deepEqual(manifest.exports[`./${area}`], { types: `./dist/${area}/index.d.ts`, import: `./dist/${area}/index.js` });
@@ -45,12 +45,12 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
     types: "./dist/comms/index.d.ts", import: "./dist/comms/index.js",
   });
   const comms = await moduleFor("@studenthub/db/comms");
-  assert.deepEqual(Object.keys(comms).sort(), ["PostgresStaffMessagesStore", "recordWorkSessionDecision", "retractWorkSessionDecision"]);
+  assert.deepEqual(Object.keys(comms).sort(), ["CIVIL_ID_EXPIRING_DAYS", "PERSON_REMINDER_KINDS", "PostgresPersonRemindersStore", "PostgresRecruitDispatchStore", "PostgresStaffMessagesStore", "recordWorkSessionDecision", "retractWorkSessionDecision"]);
   assert.equal(typeof comms.PostgresStaffMessagesStore, "function");
   // Reports is subpath-only too (reports lane, migrations 0600 to 0649).
   assert.deepEqual(manifest.exports["./reports"], { types: "./dist/reports/index.d.ts", import: "./dist/reports/index.js" });
   const reports = await moduleFor("@studenthub/db/reports");
-  assert.deepEqual(Object.keys(reports).sort(), ["PostgresCatalogueListStore", "PostgresIdCardsStore", "PostgresMorningSummaryStore", "idCardAssigned", "idCardExpiredCount", "idCardNeedsCount"]);
+  assert.deepEqual(Object.keys(reports).sort(), ["PostgresCatalogueListStore", "PostgresFiringSpikeStore", "PostgresIdCardsStore", "PostgresMorningSummaryStore", "PostgresStatisticsStore", "idCardAssigned", "idCardExpiredCount", "idCardNeedsCount"]);
   // Universe embed is subpath-only too (E2): the root golden stays unchanged.
   assert.deepEqual(manifest.exports["./universe"], {
     types: "./dist/universe/index.d.ts", import: "./dist/universe/index.js",

@@ -2588,7 +2588,7 @@
     "M-5": {
       "title": "Work, recruit and finance history, each reconciled to legacy totals",
       "lane": "cutover",
-      "subject": "requirement r1",
+      "subject": "requirement r3",
       "gates": {
         "built": {
           "state": "open"
@@ -2770,8 +2770,8 @@
       "subject": "requirement r1",
       "gates": {
         "done": {
-          "state": "open",
-          "note": "Installed and first manual run ok 2026-11-17 (PR #504 comment 6954521676). Closes with the first timer-triggered run's time and counts."
+          "state": "done",
+          "evidence": "First timer-triggered run 2026-11-20 00:30Z on b8cd999 (PR #550): ok, 123 tables, 865,915 rows, 7 bearer-token tables excluded, nonTransactional empty, no refusal record; posted as PR #393 comment 7032910903."
         }
       }
     },
@@ -2791,7 +2791,8 @@
       "subject": "requirement r1",
       "gates": {
         "done": {
-          "state": "open"
+          "state": "done",
+          "evidence": "Export rule landed in #597; hours per day stored per principal (0509) and wired as staffHoursPerDay in PR #600 at 9333c3e, with STAFF_HOURS_PG and WORK_EXPORT staff hours tests."
         }
       }
     }

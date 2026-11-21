@@ -323,8 +323,9 @@ renamed file counts under both names):
 `code_label` and `product_label` are optional; without one, no pull request is
 reviewed under it. A pull request with `product_label` must carry no other
 policy label; one that does is never a candidate, so coordinator code never
-reaches review beside a product label. The least-reviewed candidate at this revision, then the
-lowest-numbered, is reviewed at its exact head by `codex-verifier`, one per start, once
+reaches review beside a product label. The candidate whose head has waited
+longest (M18 G2, below), then the lowest-numbered, is reviewed at its exact head
+by `codex-verifier`, one per start, once
 per head (`/srv/shu/state/card-review-auto-pr<N>-<head>.json`, written before
 the run with each file's blob), and at most `max_heads_per_pr` heads per pull
 request per installed revision (`REVIEW_CAP`). The run arms, ticks, reverts and
@@ -333,6 +334,107 @@ installs or writes a branch. A stopped, invalid or paused queue never reviews;
 the pause file is read again just before arming; a GitHub read that fails is a
 `REVIEW_UNREADABLE` skip with no claim. A pull request that merged `main` in
 carries a merge commit without the trailer, so it is not a candidate.
+
+### Verdict on the pull request, and review metrics (M18 G1 + G5)
+
+A review run puts its verdict on the pull request itself
+(`service/review-verdict.mjs`, CONTINUOUS-GATE.md G1). As it arms it sets the
+commit status `orchestrator/review` to `pending` ("review running") on the exact
+head. When the tick ends the episode with `review-only verdict PASS|BLOCKED at
+<sha>` and that SHA is the armed head, and the terminal receipt on the review
+card agrees, it sets `success` ("PASS at <short sha>") or `failure` ("BLOCK at
+<short sha>: <first line of the findings>", at most 140 characters) and posts
+one comment whose first line is `PASS at <sha>` or `BLOCK at <sha>`, followed by
+the reviewer's summary and evidence. A comment already carrying that line and the
+orchestrator marker is never posted again. A run that ends with no verdict posts
+no comment and turns its own `pending` into `error` ("no verdict, will retry");
+nothing but a matching verdict ever sets `success`.
+
+The writes use the landing token (`/srv/shu/card-land.env`), the only token the
+box holds that may write to GitHub; it needs `statuses: write` and issue comment
+write on the repository. Publishing runs after the run's lock is released, is
+bounded, and is best effort: no token, a refused write or an unreadable read is a
+`Review on GitHub` warning line in the run report and never changes the outcome,
+the claim or the receipts. `queue_config_review.publish_status: false` turns it
+off; absent means on.
+
+Every review that armed appends one line to `/srv/shu/state/review-metrics.jsonl`
+(`pr`, `head_sha`, `head_pushed_at` from the head commit's committer date,
+`review_started_at`, `verdict_at`, `verdict` PASS|BLOCKED|HOLD, `slot`, `dropped`),
+and every run report carries one `Reviews:` line for the last 24 hours: count,
+PASS share, median and p90 head-to-verdict minutes, and dropped reviews.
+
+### Review slots, oldest head first, and the minute start (M18 G2)
+
+`queue_config_review` may name two more keys (CONTINUOUS-GATE.md G2):
+
+- `max_parallel`: how many reviews may run at once, 1 to 8. Absent is 1, which
+  is the behaviour above: one slot, on SHU-304.
+- `slot_lanes`: one standing review card per slot, exactly `max_parallel` of
+  them, `lane` first, each a distinct committed `review_lanes` entry with a
+  reviewed review-only contract in `card-contracts.mjs`. It may be left out only
+  with one slot.
+
+For example `"max_parallel": 3, "slot_lanes": ["SHU-304", "SHU-A", "SHU-B"]`.
+Each slot keeps its own card, so every card still has one receipt writer and
+`slots=1`/`max_dispatch=1`. A card worker's review start takes the first free
+slot: one with no review claim in flight on its lane (no outcome yet, and its
+worker's run lock held or its process alive) and no other worker's activation
+armed on its lane. With every slot busy the start reads nothing and is the
+plain `QUEUE_DONE`/`QUEUE_STOPPED` skip, saying so. With more than one card
+worker, the slot, the head and the claim are chosen and written under the
+selection lock (`/srv/shu/state/card-run-select.lock`); the claim file is still
+written exclusively, and now also names its `slot`, `lane`, `worker` and `pid`.
+
+**Order.** Among eligible heads, the one that has waited longest goes first: the
+head commit's committer date, from the pull request's own commit list, read
+with the read-only token. Ties, and heads with no readable date (they go last),
+go by the lower number. A pull request with a review in flight is passed over,
+so it never has two.
+
+**Cap.** Only reviews that may have reached a verdict count toward
+`max_heads_per_pr`. When the run ends its claim records `verdict`: `PASS`,
+`BLOCKED`, `NONE` (it never armed, or its episode ended "without a review
+verdict"), or `UNKNOWN` (an expiry, refusal or error). Only `NONE` leaves the
+cap; a claim with no `verdict` (a run still going, one that died, or one from
+before G2) and an unreadable claim count.
+
+**A moved head gives the claim back.** A run that ends `NONE` reads its pull
+request again; when it is at another head, the claim is removed
+(`claim_given_back` in the result), so the dropped review spends no cap round
+and the new head is reviewed on its own claim. An unreadable pull request keeps
+the claim.
+
+**Ticks.** A review run ticks every `reviewTickIntervalMs` (3 min); a card run
+keeps `tickIntervalMs` (5 min). Each tick reads the whole Linear board (about
+80,000 points), so one active review spends about 1,600,000 of the key's
+3,000,000 points an hour; every minute would spend 4,800,000. Before more than
+one review slot is turned on, the per-tick board read must be narrowed; until
+then a limited tick is a `HOLD=LINEAR_RATE_LIMITED` the run waits out.
+
+**Hand install, step 3 (owner-only, not done by this code).** This change does
+not touch `config.json`: Card B's `selfInstallGate` refuses changed keys other
+than the queue's, so `max_parallel` and `slot_lanes` go in by hand, with the
+new slot cards created in Linear, added as review-only contracts in
+`card-contracts.mjs` and as `review_lanes` entries. Then each review slot needs a
+card worker (`workers.max` at least `max_parallel`, `timer-install --workers N`)
+and a unit that starts it every minute after its last start ends, for example a
+drop-in timer for worker N:
+
+```ini
+# /etc/systemd/system/shu-card-run-wN.timer (worker 1: shu-card-run.timer)
+[Timer]
+OnUnitInactiveSec=60s
+OnActiveSec=60s
+Unit=shu-card-run-wN.service
+```
+
+A start is safe every minute: a paused host, a held lock, a busy host, every
+slot busy or no eligible head is a skip that arms nothing, claims nothing and
+writes nothing to Linear; GitHub is read only when a slot is free. The reviewer
+sandbox lock per slot (`shu-reviewer-sandbox-<slot>.lock`, a uid per slot) is
+part of the same hand install (G2 host); until then the host-wide sandbox lock
+lets one reviewer run at a time, and a busy sandbox relaunches the same review.
 
 ## Card-run timer: queue self-install (SHU-322)
 

@@ -20,7 +20,7 @@ function appeal(over: Record<string, unknown> = {}) {
   return { id: APPEAL_ID, sessionId: session().id, personId: "person", orgId: "co", storeId: STORE, reason: "I stayed until 9 <pm>", status: "in_progress",
     createdAt: "2026-11-18T19:00:00.000Z", updatedAt: "x", ...over };
 }
-interface World { failRead?: boolean; placements?: unknown[]; open?: unknown; assignment?: unknown; rows?: unknown[]; outcome?: unknown; appeals?: unknown[]; detail?: unknown; raised?: unknown; pages?: unknown[][] }
+interface World { language?: "en" | "ar"; failRead?: boolean; placements?: unknown[]; open?: unknown; assignment?: unknown; rows?: unknown[]; outcome?: unknown; appeals?: unknown[]; detail?: unknown; raised?: unknown; pages?: unknown[][] }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const rows = world.rows ?? [];
   const totals = { approvedSeconds: 3600, pendingSeconds: 9000, rejectedSeconds: 0, open: 0 };
@@ -47,10 +47,11 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
       raise: async (...args: unknown[]) => { calls.push(["raise", ...args]); return world.raised ?? { kind: "raised", appeal: appeal() }; },
     },
     storeNames: async (ids: readonly string[]) => new Map(ids.map((id) => [id, "Avenues <Mall>"])),
+    language: async (personId: string) => personId === "person" ? world.language : undefined,
   } as unknown as WorkHttpServices;
 }
 
-type Opt = { method?: string; body?: string; origin?: string; cookie?: string | null; contentType?: string; service?: WorkHttpServices | undefined; world?: World };
+type Opt = { acceptLanguage?: string; method?: string; body?: string; origin?: string; cookie?: string | null; contentType?: string; service?: WorkHttpServices | undefined; world?: World };
 async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
   const req = Readable.from(o.body !== undefined ? [o.body] : []) as Readable & { method?: string; url?: string; headers: Record<string, string> };
   req.method = o.method ?? "GET";
@@ -59,6 +60,7 @@ async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
     ...(o.cookie === null ? {} : { cookie: `__Host-studenthub_session=${o.cookie ?? SESSION}` }),
     ...(o.body !== undefined ? { "content-type": o.contentType ?? "application/x-www-form-urlencoded", "content-length": String(Buffer.byteLength(o.body)) } : {}),
     ...(o.origin ? { origin: o.origin } : {}),
+    ...(o.acceptLanguage ? { "accept-language": o.acceptLanguage } : {}),
   };
   const res = new EventEmitter() as EventEmitter & { statusCode: number; headersSent: boolean; headers: Record<string, string>; chunks: string[]; writeHead(s: number, h: Record<string, string>): void; end(v?: unknown): void; destroy(): void };
   res.statusCode = 0; res.headers = {}; res.chunks = []; res.headersSent = false;
@@ -85,7 +87,7 @@ test("WORK_PAGES only the person's work paths; signed-out and switched-off answe
 test("WORK_PAGES Track shows the right state, and the only script runs under the page's nonce", async () => {
   const open = await request("/work/track", { world: { open: session({ endedAt: null, durationSeconds: null }) } });
   assert.equal(open.status, 200);
-  assert.match(open.html, /You're clocked in/);
+  assert.match(open.html, /You&#39;re clocked in/);
   assert.match(open.html, /Since 09:00 at Avenues &lt;Mall&gt; \(3h 30m so far\)/);
   assert.match(open.html, /action="\/work\/track\/stop" data-location><input type="hidden" name="sessionId" value="bbbbbbbb-/);
   assert.match(open.html, /action="\/work\/track\/discard"><input type="hidden" name="sessionId" value="bbbbbbbb-/);
@@ -97,7 +99,7 @@ test("WORK_PAGES Track shows the right state, and the only script runs under the
   const placed = await request("/work/track", { world: { assignment: { storeId: STORE } } });
   assert.match(placed.html, /action="\/work\/track\/start" data-location/);
   const none = await request("/work/track");
-  assert.match(none.html, /aren't placed at a store today/);
+  assert.match(none.html, /aren&#39;t placed at a store today/);
   assert.doesNotMatch(none.html, /\/work\/track\/start/);
   assert.match(none.html, /action="\/work\/track\/manual"/);
   assert.match((await request("/work/track?done=stopped")).html, /You&#39;re clocked out/);
@@ -223,7 +225,7 @@ test("WORK_PAGES appeals: raised from a day's closed session, listed, and opened
 
   const list = await request("/work/appeals", { world: { appeals: [appeal()] } });
   assert.match(list.html, new RegExp(`href="/work/appeals/${APPEAL_ID}">Raised Wednesday, 18 November 2026</a>: <strong>Being looked at</strong>. I stayed until 9 &lt;pm&gt;`));
-  assert.match((await request("/work/appeals")).html, /haven't appealed any hours/);
+  assert.match((await request("/work/appeals")).html, /haven&#39;t appealed any hours/);
   assert.equal((await request("/work/appeals?after=nope")).status, 400);
 
   const unread = { id: "dddddddd-0000-4000-8000-000000000001", appealId: APPEAL_ID, title: "Checking", detail: "Looking at the store log", authorId: "staff", createdAt: "2026-11-19T06:00:00.000Z", readAt: null };
@@ -261,8 +263,36 @@ test("WORK_PAGES Placement shows where the person works now, next and before, an
   assert.match(page.html, /Coming up[\s\S]*Friday, 1 January 2027 to Sunday, 31 January 2027/);
   assert.match(page.html, /Before[\s\S]*Thursday, 1 January 2026 to Tuesday, 31 March 2026/);
   assert.match(page.html, /aria-current="page">Placement/);
-  assert.match((await request("/work/assignment")).html, /aren't placed at a store right now/);
+  assert.match((await request("/work/assignment")).html, /aren&#39;t placed at a store right now/);
   const one = await request(`/work/assignment/${placements[2]!.id}`, { world: { placements } });
   assert.match(one.html, /Placed at the company&#39;s request/);
   assert.equal((await request("/work/assignment/eeeeeeee-0000-4000-8000-000000000009", { world: { placements } })).status, 404);
+});
+
+test("WORK_PAGES in Arabic: the person's saved language, else their browser's; the document is marked right to left", async () => {
+  const calls: unknown[][] = [];
+  const open = await request("/work/track", { world: { language: "ar", open: session({ endedAt: null, durationSeconds: null }) } }, calls);
+  assert.match(open.html, /<html lang="ar" dir="rtl">/);
+  assert.match(open.html, /<a href="\/work\/assignment">مكان العمل<\/a> · <a href="\/work\/track" aria-current="page">تسجيل الدوام<\/a>/);
+  assert.match(open.html, /<h2 id="now-heading">أنت مسجّل الدخول<\/h2><p>منذ 09:00 في Avenues &lt;Mall&gt; \(3 س 30 د حتى الآن\)\.<\/p>/);
+  // The location messages are in the script as JSON strings.
+  assert.ok(open.html.includes('s.textContent="جارٍ تحديد موقعك..."'));
+  assert.match(open.html, /نسيت تسجيل الدخول؟/);
+  // A saved English preference wins over an Arabic browser; no preference follows the browser.
+  assert.match((await request("/work/track", { world: { language: "en" }, acceptLanguage: "ar-KW,ar;q=0.9" })).html, /<title>Track/);
+  const browser = await request("/work/history?month=2026-11", { acceptLanguage: "ar-KW,ar;q=0.9,en;q=0.8", world: { rows: [{ session: session(), decision: null }] } });
+  assert.match(browser.html, /<h2 id="month-heading">نوفمبر 2026<\/h2>/);
+  assert.match(browser.html, /<dt>بانتظار الموافقة<\/dt><dd>2 س 30 د<\/dd>/);
+  assert.match(browser.html, /الأربعاء، 18 نوفمبر 2026<\/a>: جلسة واحدة، 2 س 30 د بالانتظار/);
+  assert.match((await request("/work/history?month=2026-11", { acceptLanguage: "en;q=0.9,ar;q=0.8" })).html, /November 2026/);
+  // Errors before and after sign-in are in the browser's or the person's language.
+  const signedOut = await request("/work/track", { cookie: null, acceptLanguage: "ar" });
+  assert.deepEqual([signedOut.status, /<h1>تسجيل الدخول<\/h1><p>سجّل الدخول لرؤية ساعاتك\.<\/p>/.test(signedOut.html), /lang="ar" dir="rtl"/.test(signedOut.html)], [401, true, true]);
+  assert.match((await request("/work/history?month=2027-01", { world: { language: "ar" } })).html, /اختر شهرًا حتى الشهر الحالي\./);
+  const refused = await post("/work/track/start", "latitude=&longitude=", { world: { language: "ar", outcome: { kind: "refused", code: "location_required" } } });
+  assert.match(refused.html, /نحتاج موقعك لتسجيل الدخول أو الخروج/);
+  // A lookup that fails falls back to the browser's language.
+  const failing = services([], {});
+  const broken = await request("/work/assignment", { acceptLanguage: "ar", service: { ...failing, language: async () => { throw new Error("down"); } } as never });
+  assert.match(broken.html, /ليس لديك مكان عمل في متجر الآن\./);
 });

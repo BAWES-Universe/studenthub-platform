@@ -280,6 +280,15 @@ test("W5_VIEWS each viewer sees only their scope; totals split by status across 
   for (const [actor, date, id] of [["owner", other.workDate, other.id], ["staff", "2026-11-01", other.id], ["staff", "nope", other.id], ["staff", other.workDate, "x"]] as const) {
     assert.equal(await views.staffSession(actor, date, id), undefined, `${actor} ${date} ${id}`);
   }
+  // The M-03 entry page looks one session up at one store, for whoever covers that store in that company.
+  for (const actor of ["manager", "owner", "staff"]) assert.equal((await views.storeSession(actor, "company", STORE_A, mine.workDate, mine.id.toUpperCase()))?.decision?.rating, 3, actor);
+  assert.equal((await views.storeSession("owner", "company", STORE_B, storeB.workDate, storeB.id))?.session.id, storeB.id);
+  for (const [actor, org, store, date, id] of [
+    ["manager", "company", STORE_B, storeB.workDate, storeB.id], ["manager", "company", STORE_B, mine.workDate, mine.id], ["owner", "company", STORE_B, mine.workDate, mine.id],
+    ["rivalOwner", "company", STORE_A, mine.workDate, mine.id], ["person", "company", STORE_A, mine.workDate, mine.id], ["owner", "company", STORE_A, "2026-11-01", mine.id],
+    ["owner", "nowhere", STORE_A, mine.workDate, mine.id], ["owner", "company", "x", mine.workDate, mine.id], ["owner", "company", STORE_A, "nope", mine.id], ["owner", "company", STORE_A, mine.workDate, "x"],
+    ["owner", "company", RIVAL_STORE, rival.workDate, rival.id],
+  ] as const) assert.equal(await views.storeSession(actor, org, store, date, id), undefined, `${actor} ${org} ${store} ${date} ${id}`);
   const all = await views.all("staff", range);
   assert.equal("rows" in all && all.rows.length, 5);
   // A group owner's sub-companies are in reach only through a subtree grant; a self-scoped one sees the group alone.

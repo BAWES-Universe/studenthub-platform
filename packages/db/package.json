@@ -58,6 +58,10 @@
       "types": "./dist/reports/index.d.ts",
       "import": "./dist/reports/index.js"
     },
+    "./import": {
+      "types": "./dist/import/index.d.ts",
+      "import": "./dist/import/index.js"
+    },
     "./recruit": {
       "types": "./dist/recruit/index.d.ts",
       "import": "./dist/recruit/index.js"

@@ -58,6 +58,13 @@ class Memory implements AppealStore {
       },
       insertDecision: async (d) => { this.decisions.push(d); },
       setStatus: async (ids, status, decisionId) => { this.sessions = this.sessions.map((s) => ids.includes(s.id) ? { ...s, status, decisionId } : s); },
+      softDeleteSession: async (id, actorId, reason) => { this.sessions = this.sessions.map((s) => s.id === id && s.deletedAt === null ? { ...s, deletedAt: "now", deletedBy: actorId, deleteReason: reason } as WorkSession : s); },
+      restoreSession: async (id) => {
+        const s = this.sessions.find((x) => x.id === id)!;
+        if (this.sessions.some((o) => o.personId === s.personId && o.id !== s.id && o.id !== s.correctsSessionId && this.inForce(o)
+          && Date.parse(o.startedAt) < Date.parse(s.endedAt!) && Date.parse(o.endedAt ?? "9999-01-01") > Date.parse(s.startedAt))) throw new SessionConflict("overlap");
+        this.sessions = this.sessions.map((x) => x.id === id ? { ...x, deletedAt: null } : x);
+      },
       insertAppeal: async (a) => { const row = { ...a, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; this.appeals.push(row); return row; },
       lockAppeal: async (id) => this.appeals.find((a) => a.id === id),
       setAppealStatus: async (id, status) => { this.appeals = this.appeals.map((a) => a.id === id ? { ...a, status } : a); return this.appeals.find((a) => a.id === id)!; },
@@ -224,6 +231,50 @@ test("W6_ADD staff add missing time for an appeal; it is approved and linked, no
   const other = session({ personId: "other", startedAt: "2026-11-16T06:00:00.000Z", endedAt: "2026-11-16T07:00:00.000Z", workDate: "2026-11-16" });
   store.sessions.push(other);
   assert.deepEqual(await svc.correct("staff", other.id, { ...input, appealId }), { kind: "refused", code: "appeal_not_found" });
+});
+
+test("W6_REMOVE staff remove a closed session with a reason (legacy delete-session hard-deleted it), and restore it", async () => {
+  const { store, svc } = setup();
+  const s = session(), open = session({ endedAt: null, durationSeconds: null, status: "pending", startedAt: "2026-11-19T05:00:00.000Z", workDate: "2026-11-19" });
+  store.sessions.push(s, open);
+  assert.deepEqual(await svc.remove("staff", s.id, ""), { kind: "refused", code: "invalid_input" });
+  assert.deepEqual(await svc.remove("staff", "x", "dup"), { kind: "refused", code: "invalid_input" });
+  for (const actor of ["owner", "rivalStaff", "person"]) assert.deepEqual(await svc.remove(actor, s.id, "dup"), { kind: "refused", code: "session_not_found" }, actor);
+  assert.deepEqual(await svc.remove("staff", open.id, "dup"), { kind: "refused", code: "session_open" });
+  assert.deepEqual(await svc.remove("staff", s.id.toUpperCase(), " logged twice "), { kind: "removed", sessionId: s.id });
+  const removed = store.sessions.find((x) => x.id === s.id) as WorkSession & { deletedBy?: string; deleteReason?: string };
+  assert.deepEqual([removed.deletedAt !== null, removed.deletedBy, removed.deleteReason], [true, "staff", "logged twice"]);
+  assert.deepEqual(store.events.at(-1), { kind: "session.deleted", orgId: "company", personId: "person", subjectId: s.id, actorId: "staff", detail: { assignmentId: "assignment", workDate: "2026-11-18", reason: "logged twice" } });
+  assert.deepEqual(await svc.remove("staff", s.id, "again"), { kind: "refused", code: "already_deleted" });
+
+  // Restore: staff only, a removed closed session, not one that would overlap hours now in force.
+  assert.deepEqual(await svc.restore("owner", s.id), { kind: "refused", code: "session_not_found" });
+  assert.deepEqual(await svc.restore("staff", open.id), { kind: "refused", code: "not_deleted" });
+  const overlap = session({ startedAt: "2026-11-18T07:00:00.000Z", endedAt: "2026-11-18T09:00:00.000Z" });
+  store.sessions.push(overlap);
+  assert.deepEqual(await svc.restore("staff", s.id), { kind: "refused", code: "overlaps_session" });
+  store.sessions = store.sessions.filter((x) => x.id !== overlap.id);
+  assert.deepEqual(await svc.restore("staff", s.id), { kind: "restored", sessionId: s.id });
+  assert.equal(store.sessions.find((x) => x.id === s.id)?.deletedAt, null);
+  assert.equal(store.events.at(-1)?.kind, "session.restored");
+  // A discarded session never ended, so it can't come back.
+  const discarded = session({ endedAt: null, durationSeconds: null, deletedAt: "then", startedAt: "2026-11-17T05:00:00.000Z", workDate: "2026-11-17" });
+  store.sessions.push(discarded);
+  assert.deepEqual(await svc.restore("staff", discarded.id), { kind: "refused", code: "session_open" });
+});
+
+test("W6_REMOVE a corrected session is refused; removing the correction brings the original back; a stale correction stays out", async () => {
+  const { store, svc } = setup();
+  const s = session();
+  store.sessions.push(s);
+  const first = await svc.correct("staff", s.id, { startedAt: "2026-11-18T06:00:00Z", endedAt: "2026-11-18T09:00:00Z", reason: "fix" });
+  const correction = first.kind === "entered" ? first.session.id : "";
+  assert.deepEqual(await svc.remove("staff", s.id, "dup"), { kind: "refused", code: "session_replaced" });
+  assert.deepEqual(await svc.remove("staff", correction, "wrong fix"), { kind: "removed", sessionId: correction });
+  assert.equal(store.inForce(store.sessions.find((x) => x.id === s.id)!), true, "the original counts again");
+  // The original is corrected again; the removed first correction can't come back beside the new one.
+  assert.equal((await svc.correct("staff", s.id, { startedAt: "2026-11-18T06:00:00Z", endedAt: "2026-11-18T08:30:00Z", reason: "fix again" })).kind, "entered");
+  assert.deepEqual(await svc.restore("staff", correction), { kind: "refused", code: "session_replaced" });
 });
 
 test("W6_CURSOR appeal cursors are strict", () => {

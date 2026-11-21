@@ -141,7 +141,14 @@ export const RELEASE_STEPS: Readonly<Record<string, string>> = {
  * changes, so `seed` reopens its gates and `check` refuses evidence recorded for the old
  * requirement. Rewording a title without changing what it asks for keeps the revision.
  */
-export const REQUIREMENT_REVISION: Readonly<Record<string, number>> = {};
+export const REQUIREMENT_REVISION: Readonly<Record<string, number>> = {
+  // r2: the M-5 table map (docs/lanes/cutover/PLAN.md) adds per-table import rules and a
+  // reconciliation count per table for staff sessions and stand-up questions and answers.
+  // r3: the M-5 rules on record (docs/parity/work/README.md, #584): a table reconciles only
+  // when `clean` (no ref held for an unknown digest or a conflict), and runs stay dry runs
+  // until the legacy writer's time_zone is read from the mirror and recorded.
+  "import M-5": 3,
+};
 
 export const requirementSubject = (section: "import" | "release", id: string): string =>
   `requirement r${REQUIREMENT_REVISION[`${section} ${id}`] ?? 1}`;

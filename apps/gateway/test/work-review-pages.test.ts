@@ -21,13 +21,20 @@ const ROWS = [
   { session: session({ id: S2, status: "rejected", source: "manual" }), decision: { outcome: "rejected", reason: "late <again>", note: "private word", notePublic: false, rating: 2, decidedBy: "manager", decidedAt: "2026-11-18T10:00:00.000Z" } },
   { session: session({ id: S3, endedAt: null, durationSeconds: null }), decision: null },
 ];
-interface World { rows?: unknown[]; viewRefused?: boolean; decided?: unknown; requests?: unknown[] | null; requestOutcome?: unknown }
+interface World { language?: "en" | "ar"; rows?: unknown[]; entry?: unknown | null; staffEntry?: unknown | null; removal?: unknown; restored?: unknown; viewRefused?: boolean; decided?: unknown; requests?: unknown[] | null; requestOutcome?: unknown }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const decided = world.decided ?? { kind: "decided", decisions: [], changed: 1 };
   return {
     personFor: async (id: string) => id === SESSION ? "actor" : undefined,
+    language: async (personId: string) => personId === "actor" ? world.language : undefined,
     views: { all: async (...args: unknown[]) => { calls.push(["all", ...args]); return world.viewRefused ? { kind: "refused", code: "forbidden" } : { rows: world.rows ?? ROWS, totals: { approvedSeconds: 0, pendingSeconds: 0, rejectedSeconds: 0, open: 0 }, next: null }; },
+      staffSession: async (...args: unknown[]) => { calls.push(["staffSession", ...args]); return world.staffEntry === null ? undefined : world.staffEntry ?? ROWS[1]; },
+      storeSession: async (...args: unknown[]) => { calls.push(["storeSession", ...args]); return world.entry === null ? undefined : world.entry ?? ROWS[1]; },
       company: async (...args: unknown[]) => { calls.push(["company", ...args]); return world.viewRefused ? { kind: "refused", code: "forbidden" } : { rows: world.rows ?? ROWS, totals: { approvedSeconds: 0, pendingSeconds: 9000, rejectedSeconds: 9000, open: 1 }, next: null }; } },
+    appeals: {
+      remove: async (...args: unknown[]) => { calls.push(["remove", ...args]); return world.removal ?? { kind: "removed", sessionId: S2 }; },
+      restore: async (...args: unknown[]) => { calls.push(["restore", ...args]); return world.restored ?? { kind: "restored", sessionId: S2 }; },
+    },
     decisions: {
       decideSessions: async (...args: unknown[]) => { calls.push(["decideSessions", ...args]); return decided; },
       undo: async (...args: unknown[]) => { calls.push(["undo", ...args]); return decided; },
@@ -43,7 +50,7 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   } as unknown as WorkHttpServices;
 }
 
-type Opt = { method?: string; body?: string; origin?: string; cookie?: string | null; contentType?: string; service?: WorkHttpServices | undefined; world?: World };
+type Opt = { acceptLanguage?: string; method?: string; body?: string; origin?: string; cookie?: string | null; contentType?: string; service?: WorkHttpServices | undefined; world?: World };
 async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
   const req = Readable.from(o.body !== undefined ? [o.body] : []) as Readable & { method?: string; url?: string; headers: Record<string, string> };
   req.method = o.method ?? "GET";
@@ -52,6 +59,7 @@ async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
     ...(o.cookie === null ? {} : { cookie: `__Host-studenthub_session=${o.cookie ?? SESSION}` }),
     ...(o.body !== undefined ? { "content-type": o.contentType ?? "application/x-www-form-urlencoded", "content-length": String(Buffer.byteLength(o.body)) } : {}),
     ...(o.origin ? { origin: o.origin } : {}),
+    ...(o.acceptLanguage ? { "accept-language": o.acceptLanguage } : {}),
   };
   const res = new EventEmitter() as EventEmitter & { statusCode: number; headersSent: boolean; headers: Record<string, string>; chunks: string[]; writeHead(s: number, h: Record<string, string>): void; end(v?: unknown): void; destroy(): void };
   res.statusCode = 0; res.headers = {}; res.chunks = []; res.headersSent = false;
@@ -201,4 +209,154 @@ test("WORK_EXPORT the company screen exports these hours in detail or per person
   assert.ok((await request("/work/logs?from=2026-01-01&to=2026-11-18")).html.includes('<form method="post" action="/exports/work-assigned-history?from=2026-01-01&amp;to=2026-11-18"><button type="submit">Export who worked where (CSV)</button></form>'));
   // The old screen-local export path is gone.
   assert.equal((await post("/organization/co/work/export", "kind=summary")).handled, false);
+});
+
+test("WORK_REVIEW in Arabic: the actor's saved language, else the browser's; right to left, Kuwait dates, the same forms", async () => {
+  const page = await request("/organization/co/work", { world: { language: "ar" } });
+  assert.match(page.html, /<html lang="ar" dir="rtl">/);
+  assert.match(page.html, /<h1>مراجعة العمل<\/h1>/);
+  assert.match(page.html, /<option value="pending">بانتظار الموافقة<\/option>/);
+  assert.match(page.html, /<p>تمت الموافقة 0 د · بالانتظار 2 س 30 د · مرفوضة 2 س 30 د · 1 جارية<\/p>/);
+  assert.match(page.html, /<p>الأربعاء، 18 نوفمبر 2026، 09:00 إلى 11:30 \(2 س 30 د\) · Avenues &lt;Mall&gt;<\/p><p><strong>مرفوضة<\/strong> · أُدخلت متأخرة<\/p>/);
+  assert.match(page.html, /<p>ملاحظة \(تراها شركتك فقط\): private word<\/p><p>التقييم: 2 من 5<\/p><p>صدر القرار في الأربعاء، 18 نوفمبر 2026 من Mona<\/p>/);
+  assert.match(page.html, /<button type="submit" name="action" value="approve">الموافقة على المحدد<\/button>/);
+  // A refused decision explains itself in the actor's language.
+  const refused = await post("/organization/co/work/decide", `sessionId=${S1}&action=approve`, { world: { language: "ar", decided: { kind: "refused", code: "session_open" } } });
+  assert.match(refused.html, /لا يمكن اتخاذ قرار بشأن ساعات ما زالت جارية\./);
+  // The store screens and their tabs.
+  const changes = await request(`/store/${STORE}/assignment-changes`, { world: { language: "ar", requests: [{ id: REQ, personId: "person-1", storeId: STORE, orgId: "co", status: "pending", note: null, requestedAt: "2026-11-17T10:00:00.000Z", decisionReason: null }] } });
+  assert.match(changes.html, /<h1>طلبات التعيين: Avenues &lt;Mall&gt;<\/h1><\/header><nav class="p-card" aria-label="المتجر"><a href="\/store\/[^"]+\/time-approvals">اعتماد الساعات<\/a>/);
+  assert.match(changes.html, /<strong>بانتظار StudentHub<\/strong> · طُلب في الثلاثاء، 17 نوفمبر 2026/);
+  // A saved English preference wins over an Arabic browser; no preference follows the browser, before and after sign-in.
+  assert.match((await request("/organization/co/work", { world: { language: "en" }, acceptLanguage: "ar" })).html, /<h1>Work review<\/h1>/);
+  assert.match((await request("/organization/co/work", { acceptLanguage: "ar-KW,ar;q=0.9" })).html, /<h1>مراجعة العمل<\/h1>/);
+  const signedOut = await request("/organization/co/work", { cookie: null, acceptLanguage: "ar" });
+  assert.deepEqual([signedOut.status, /<h1>تسجيل الدخول<\/h1><p>سجّل الدخول لمراجعة الساعات\.<\/p>/.test(signedOut.html)], [401, true]);
+  assert.match((await request("/work/logs", { world: { language: "ar" } })).html, /<h1>سجلات العمل<\/h1>[\s\S]*تصحيح هذه الساعات/);
+});
+
+test("WORK_REVIEW M-03 entry page: one entry from the store's queue, decided or undone in place", async () => {
+  // The store's queue links each entry; the company screen doesn't.
+  const queue = await request(`/store/${STORE}/time-approvals`);
+  assert.match(queue.html, new RegExp(`<a href="/store/${STORE}/time-approvals/${S1}\\?date=2026-11-18">Details</a>`));
+  assert.doesNotMatch((await request("/organization/co/work")).html, />Details</);
+
+  const calls: unknown[][] = [];
+  const page = await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, {}, calls);
+  assert.equal(page.status, 200);
+  assert.deepEqual(calls[0], ["storeSession", "actor", "co", STORE, "2026-11-18", S2]);
+  assert.match(page.html, /<title>Hours: Sara &lt;S&gt;/);
+  assert.match(page.html, /Reason: late &lt;again&gt;/);
+  assert.match(page.html, /Note \(only your company can see it\): private word/);
+  assert.match(page.html, /by Mona/);
+  const form = page.html.slice(page.html.indexOf(`action="/store/${STORE}/time-approvals/decide"`));
+  assert.match(form, /^[^>]*><button type="submit" disabled hidden aria-hidden="true" tabindex="-1"><\/button>/);
+  assert.match(form, new RegExp(`name="back" value="/store/${STORE}/time-approvals/${S2}\\?date=2026-11-18"><input type="hidden" name="sessionId" value="${S2}">`));
+  assert.match(form, new RegExp(`<button type="submit" name="undo" value="${S2}">Undo this decision</button>`));
+  assert.match(page.html, new RegExp(`<a href="/store/${STORE}/time-approvals">Back to time approvals</a>`));
+  assert.equal(page.html.includes("<script"), false);
+
+  // Waiting hours have no undo; hours in progress can't be decided yet.
+  assert.doesNotMatch((await request(`/store/${STORE}/time-approvals/${S1}?date=2026-11-18`, { world: { entry: ROWS[0] } })).html, /name="undo"/);
+  const open = await request(`/store/${STORE}/time-approvals/${S3}?date=2026-11-18`, { world: { entry: ROWS[2] } });
+  assert.match(open.html, /still in progress/);
+  assert.doesNotMatch(open.html, /\/decide"/);
+
+  // Not this store's, not that day, or not the actor's: one answer. Unknown store, a post, signed out.
+  assert.equal((await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, { world: { entry: null } })).status, 404);
+  assert.equal((await request(`/store/${OTHER_STORE}/time-approvals/${S2}?date=2026-11-18`)).status, 404);
+  assert.equal((await post(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, `sessionId=${S2}&action=approve`)).status, 405);
+  assert.equal((await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, { cookie: null })).status, 401);
+  for (const p of [`/store/${STORE}/time-approvals/nope`, `/store/${STORE}/assignment-changes/${S2}`, `/store/${STORE}/time-approvals/${S2}/x`]) assert.equal((await request(p)).handled, false, p);
+});
+
+test("WORK_REVIEW M-03 entry page: a decision goes back to the entry; a refusal shows it again; the way back stays on it", async () => {
+  const entry = `/store/${STORE}/time-approvals/${S2}?date=2026-11-18`;
+  const calls: unknown[][] = [];
+  const done = await post(`/store/${STORE}/time-approvals/decide`, `back=${encodeURIComponent(entry)}&sessionId=${S2}&action=approve&rating=4`, {}, calls);
+  assert.deepEqual([done.status, done.headers.location], [303, `${entry}&done=decided`]);
+  assert.deepEqual(calls.find((c) => c[0] === "decideSessions"), ["decideSessions", "actor", [S2], { decision: "approve", reason: undefined, note: undefined, rating: "4", notePublic: "" }]);
+  const undone = await post(`/store/${STORE}/time-approvals/decide`, `back=${encodeURIComponent(entry)}&undo=${S2}`);
+  assert.equal(undone.headers.location, `${entry}&done=undone`);
+  assert.match((await request(`${entry}&done=decided`)).html, /Your decision was saved\./);
+
+  const refused = await post(`/store/${STORE}/time-approvals/decide`, `back=${encodeURIComponent(entry)}&sessionId=${S2}&action=approve`, { world: { decided: { kind: "refused", code: "session_replaced" } } });
+  assert.equal(refused.status, 409);
+  assert.match(refused.html, /<title>Hours: Sara/);
+  assert.match(refused.html, /Those hours were corrected by StudentHub/);
+  // The entry is gone by the time of the refusal: the store's queue, with the same message.
+  const gone = await post(`/store/${STORE}/time-approvals/decide`, `back=${encodeURIComponent(entry)}&sessionId=${S2}&action=approve`, { world: { decided: { kind: "refused", code: "session_replaced" }, entry: null } });
+  assert.deepEqual([gone.status, /Time approvals: Avenues/.test(gone.html)], [409, true]);
+
+  for (const bad of [`https://evil.invalid/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, `//evil.invalid/store/${STORE}/time-approvals/${S2}?date=2026-11-18`,
+    `/store/${STORE}/time-approvals/${S2}/../../../../x?date=2026-11-18`, `/store/${OTHER_STORE}/time-approvals/${S2}?date=2026-11-18`, `/store/${STORE}/time-approvals/${S2}?date=soon`,
+    `/store/${STORE}/time-approvals/${S2}`]) {
+    const moved = await post(`/store/${STORE}/time-approvals/decide`, `back=${encodeURIComponent(bad)}&sessionId=${S2}&action=approve`);
+    assert.equal(moved.headers.location, `/store/${STORE}/time-approvals?done=decided`, bad);
+  }
+  // The company screen has no entry pages to go back to.
+  const company = await post("/organization/co/work/decide", `back=${encodeURIComponent(`/organization/co/work/${S2}?date=2026-11-18`)}&sessionId=${S2}&action=approve`);
+  assert.equal(company.headers.location, "/organization/co/work?done=decided");
+});
+
+test("WORK_REVIEW M-03 entry page in Arabic", async () => {
+  const page = await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, { world: { language: "ar" } });
+  assert.match(page.html, /<html lang="ar" dir="rtl">/);
+  assert.match(page.html, /<title>ساعات: Sara &lt;S&gt;/);
+  assert.match(page.html, />موافقة<\/button> <button type="submit" name="action" value="reject">رفض<\/button>/);
+  assert.match(page.html, />العودة إلى اعتماد الساعات</);
+  assert.match((await request(`/store/${STORE}/time-approvals/${S2}?date=2026-11-18`, { world: { entry: null }, acceptLanguage: "ar" })).html, /الساعات غير موجودة/);
+});
+
+test("WORK_REVIEW staff remove closed hours from the work logs with a reason, and can put them back", async () => {
+  // Each closed entry on the staff logs links to its removal page; a company's screen and open hours don't.
+  const logs = await request("/work/logs");
+  assert.match(logs.html, new RegExp(`<a href="/work/logs/remove\\?session=${S1}&amp;date=2026-11-18">Remove these hours</a>`));
+  assert.doesNotMatch(logs.html, new RegExp(`remove\\?session=${S3}`));
+  assert.doesNotMatch((await request("/organization/co/work")).html, /Remove these hours/);
+
+  const calls: unknown[][] = [];
+  const page = await request(`/work/logs/remove?session=${S2}&date=2026-11-18`, {}, calls);
+  assert.equal(page.status, 200);
+  assert.deepEqual(calls[0], ["staffSession", "actor", "2026-11-18", S2]);
+  assert.match(page.html, /<title>Remove hours/);
+  assert.match(page.html, new RegExp(`<form method="post" action="/work/logs/remove" class="p-card">[\\s\\S]*name="sessionId" value="${S2}"><input type="hidden" name="date" value="2026-11-18">[\\s\\S]*<input name="reason" required maxlength="255">`));
+  assert.equal((await request(`/work/logs/remove?session=${S2}&date=2026-11-18`, { world: { staffEntry: null } })).status, 404);
+  assert.equal((await request(`/work/logs/remove?session=${S3}&date=2026-11-18`, { world: { staffEntry: ROWS[2] } })).status, 404, "open hours have no removal page");
+
+  const removed: unknown[][] = [];
+  assert.equal((await post("/work/logs/remove", `sessionId=${S2}&date=2026-11-18&reason=x`, { origin: "https://evil.invalid" }, removed)).status, 403);
+  assert.equal((await post("/work/logs/remove", `sessionId=${S2}&date=2026-11-18&reason=x&back=/x`, {}, removed)).status, 400);
+  const done = await post("/work/logs/remove", `sessionId=${S2}&date=2026-11-18&reason=logged+twice`, {}, removed);
+  assert.deepEqual([done.status, done.headers.location], [303, `/work/logs?done=removed&restore=${S2}`]);
+  assert.deepEqual(removed.filter((c) => c[0] === "remove"), [["remove", "actor", S2, "logged twice"]]);
+  const refused = await post("/work/logs/remove", `sessionId=${S2}&date=2026-11-18&reason=`, { world: { removal: { kind: "refused", code: "invalid_input" } } });
+  assert.equal(refused.status, 400);
+  assert.match(refused.html, /Give a reason of up to 255 characters\./);
+  assert.match(refused.html, /action="\/work\/logs\/remove"/, "the form again");
+  const gone = await post("/work/logs/remove", `sessionId=${S2}&date=2026-11-18&reason=x`, { world: { removal: { kind: "refused", code: "already_deleted" }, staffEntry: null } });
+  assert.deepEqual([gone.status, /already removed/.test(gone.html)], [409, true]);
+
+  // The notice puts them back with one press; a broken id shows no button.
+  const after = await request(`/work/logs?done=removed&restore=${S2}`);
+  assert.match(after.html, /The hours were removed\./);
+  assert.match(after.html, new RegExp(`<form method="post" action="/work/logs/restore" class="p-card"><input type="hidden" name="sessionId" value="${S2}"><button type="submit">Put them back</button></form>`));
+  assert.doesNotMatch((await request("/work/logs?done=removed&restore=nope")).html, /\/work\/logs\/restore/);
+  assert.doesNotMatch((await request(`/organization/co/work?done=removed&restore=${S2}`)).html, /\/work\/logs\/restore/);
+  const restoring: unknown[][] = [];
+  const back = await post("/work/logs/restore", `sessionId=${S2}`, {}, restoring);
+  assert.deepEqual([back.headers.location, restoring], ["/work/logs?done=restored", [["restore", "actor", S2]]]);
+  const overlap = await post("/work/logs/restore", `sessionId=${S2}`, { world: { restored: { kind: "refused", code: "overlaps_session" } } });
+  assert.deepEqual([overlap.status, /overlap hours now in force/.test(overlap.html)], [409, true]);
+  assert.equal((await request("/work/logs/restore")).status, 405);
+  // A store or company path has no removal.
+  assert.equal((await request(`/store/${STORE}/time-approvals/remove`)).handled, false);
+});
+
+test("WORK_REVIEW staff removal in Arabic", async () => {
+  const page = await request(`/work/logs/remove?session=${S2}&date=2026-11-18`, { world: { language: "ar" } });
+  assert.match(page.html, /<html lang="ar" dir="rtl">/);
+  assert.match(page.html, /<title>حذف ساعات/);
+  assert.match(page.html, />حذف<\/button>/);
+  assert.match((await request(`/work/logs?done=removed&restore=${S2}`, { world: { language: "ar" } })).html, /تم حذف الساعات\.[\s\S]*>إعادتها<\/button>/);
 });

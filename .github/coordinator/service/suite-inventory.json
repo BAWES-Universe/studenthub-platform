@@ -2252,6 +2252,17 @@
     "SHU-321 R6: under a queue the scope narrows to the committed review lane only, and planning admits only that review",
     "SHU-321 R7: the claim records the pull request, its head and base, the run and every file's blob, and never reads as a landing",
     "SHU-321 R8: a GitHub read that fails is a skip that claims nothing",
+    "M18 G1 R1: a box PASS sets pending then success on the exact reviewed head, posts one PASS comment, and writes one metrics line",
+    "M18 G1 R1b: a PASS ending on the coordinator's generic line is published only when the receipt confirms PASS at the armed head",
+    "M18 G1 R2: a box BLOCK sets failure with the findings' first line, and its comment is headed BLOCK at the full SHA",
+    "M18 G1 R3: a review that ends with no verdict posts no comment and never success, and is a dropped metrics line",
+    "M18 G1 R4: a publish GitHub refuses changes nothing about the run: the outcome, the claim and the report stand, with a warning",
+    "M18 G2: the head that has waited longest is reviewed first, ties by the lower number, whatever a pull request's earlier reviews",
+    "M18 G2 S1: two slots never claim the same head, a pull request has one review in flight, and a busy slot is never taken",
+    "M18 G2 S2: the cap counts only reviews with a verdict, a crashed or unknown one counts, and it holds under a race",
+    "M18 G2 S3: a review whose pull request moved gives its claim back, so the dropped review spends no cap round and the new head is reviewed next",
+    "M18 G2 S4: max_parallel absent is today's one slot: SHU-304, one review per start, and a start that finds it busy or nothing to review writes nothing",
+    "M18 G2 S5: a review run ticks every three minutes by default and a card run keeps its five minutes, both from the limits",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -2748,6 +2759,13 @@
     "SHU-303 V2: both reviewer prompts carry the review-only brief, and no PR text or declared scope",
     "SHU-303 H1: the host gate launches only the approved review: that head, that base, a reviewer",
     "SHU-303 H2: review_base_sha belongs only on a review receipt, is a real base, and never changes",
+    "M18 G1: a PASS sets success on the exact reviewed head only, and posts one comment headed PASS at the full SHA",
+    "M18 G1: a BLOCK sets failure with the findings' first line trimmed to 140 characters, and its comment carries the findings and evidence",
+    "M18 G1: a HOLD posts no comment and never success; it sets error only over the run's own pending status",
+    "M18 G1: a refused or failed publish never throws and never changes the verdict; with no token it only warns",
+    "M18 G1: a verdict already on the pull request is never posted again, and an unreadable comment list posts nothing",
+    "M18 G5: every review writes one metrics line, and the report line gives the last day's count, PASS share, median, p90 and drops",
+    "M18 G2: max_parallel is 1 to 8 and absent is one slot, and slot_lanes names that many committed review-only lanes, the policy's lane first",
     "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
     "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
     "SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick",
@@ -2764,6 +2782,19 @@
     "SHU-303 mutation M31 fold a finished review while its pull request cannot be read",
     "SHU-303 mutation M32 never fold a finished review whose pull request moved",
     "SHU-303 mutation M33 resume a recovered review without reading the pull request right before it starts",
+    "SHU-303 mutation M34 publish a verdict at whatever SHA the tick names",
+    "SHU-303 mutation M35 let a BLOCK status description run past 140 characters",
+    "SHU-303 mutation M36 set success over a HOLD's own pending status",
+    "SHU-303 mutation M37 set a HOLD status with no pending of the run's own",
+    "SHU-303 mutation M38 post the same verdict comment again",
+    "SHU-303 mutation M39 post a verdict comment when the comments cannot be read",
+    "SHU-303 mutation M40 count a HOLD as a review with a verdict",
+    "SHU-303 mutation M41 publish a verdict the review card's receipt does not confirm",
+    "SHU-303 mutation M42 let a refused status escape the publish",
+    "SHU-303 mutation M43 let max_parallel run past eight slots",
+    "SHU-303 mutation M44 let a slot lane be any card",
+    "SHU-303 mutation M45 let one card stand in two slots",
+    "SHU-303 mutation M46 open more than one slot without naming its cards",
     "SHU-303 P6: a review the supervisor finished after its pull request moved or its activation ended is held, by status only, with no verdict",
     "SHU-303 P7: any other supervisor answer, or a pull request that cannot be read, keeps the slot and writes nothing",
     "SHU-303 P8: a review whose pull request moved is not paused by an activation contract it would never use",
@@ -3232,6 +3263,19 @@
     "SHU-321 mutation M14 let a product path reach .github",
     "SHU-321 mutation M15 review coordinator code under the product label",
     "SHU-321 mutation M16 let another label stand beside the product label",
+    "SHU-321 mutation M17 review a pull request whose review is still in flight",
+    "SHU-321 mutation M18 take a slot whose review is still running",
+    "SHU-321 mutation M19 claim a review outside the selection lock",
+    "SHU-321 mutation M20 take a slot another worker has armed",
+    "SHU-321 mutation M21 count a review that reached no verdict",
+    "SHU-321 mutation M22 count only claims that recorded a verdict",
+    "SHU-321 mutation M23 read an unknown ending as no verdict",
+    "SHU-321 mutation M24 keep the claim of a review whose pull request moved",
+    "SHU-321 mutation M25 give back a claim whose pull request did not move",
+    "SHU-321 mutation M26 give back the claim of a review with a verdict",
+    "SHU-321 mutation M27 review the lowest number first, whatever a head's age",
+    "SHU-321 mutation M28 tick a review on the card interval",
+    "SHU-321 mutation M29 read Linear or GitHub pull requests while every slot is busy",
     "SHU-321 mutation the unmutated suite passes",
     "SHU-322 B1: a reviewed card queue on main installs in order, reports once and exits for the next start",
     "SHU-322 B2: a coordinator change outside the queue config paths, or a deletion, is a refusal for the owner",
@@ -4492,7 +4536,6 @@
     "Velocity A2: with code self-install on, a reviewed config may raise workers.max, as a plain { max: N } up to the ceiling, and nothing else",
     "Velocity A2: timer-install --workers N puts N workers on the host while workers.max is lower; the extra workers skip until it is raised",
     "Velocity: a board read answered with a 5xx is asked again twice at most, and a write never",
-    "Velocity A: the pull request reviewed least at this revision is reviewed first, so a new head on an older one never starves a newer one",
     "Velocity A3: a queue that keeps the installed dispatch_scope and appends cards installs even when installed cards landed",
     "Velocity A3: an install main has ready holds new card starts until the host is idle, then installs and carries the installed claims over",
     "SHU71_SNAPSHOT_GIT_CAUSE: a failed snapshot step is held by its code with git's own last line",
@@ -19271,6 +19314,50 @@
       "capabilities": []
     },
     {
+      "name": "M18 G1 R1: a box PASS sets pending then success on the exact reviewed head, posts one PASS comment, and writes one metrics line",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1 R1b: a PASS ending on the coordinator's generic line is published only when the receipt confirms PASS at the armed head",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1 R2: a box BLOCK sets failure with the findings' first line, and its comment is headed BLOCK at the full SHA",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1 R3: a review that ends with no verdict posts no comment and never success, and is a dropped metrics line",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1 R4: a publish GitHub refuses changes nothing about the run: the outcome, the claim and the report stand, with a warning",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G2: the head that has waited longest is reviewed first, ties by the lower number, whatever a pull request's earlier reviews",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G2 S1: two slots never claim the same head, a pull request has one review in flight, and a busy slot is never taken",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G2 S2: the cap counts only reviews with a verdict, a crashed or unknown one counts, and it holds under a race",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G2 S3: a review whose pull request moved gives its claim back, so the dropped review spends no cap round and the new head is reviewed next",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G2 S4: max_parallel absent is today's one slot: SHU-304, one review per start, and a start that finds it busy or nothing to review writes nothing",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G2 S5: a review run ticks every three minutes by default and a card run keeps its five minutes, both from the limits",
+      "capabilities": []
+    },
+    {
       "name": "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
       "capabilities": []
     },
@@ -22233,6 +22320,34 @@
       "capabilities": []
     },
     {
+      "name": "M18 G1: a PASS sets success on the exact reviewed head only, and posts one comment headed PASS at the full SHA",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1: a BLOCK sets failure with the findings' first line trimmed to 140 characters, and its comment carries the findings and evidence",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1: a HOLD posts no comment and never success; it sets error only over the run's own pending status",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1: a refused or failed publish never throws and never changes the verdict; with no token it only warns",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G1: a verdict already on the pull request is never posted again, and an unreadable comment list posts nothing",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G5: every review writes one metrics line, and the report line gives the last day's count, PASS share, median, p90 and drops",
+      "capabilities": []
+    },
+    {
+      "name": "M18 G2: max_parallel is 1 to 8 and absent is one slot, and slot_lanes names that many committed review-only lanes, the policy's lane first",
+      "capabilities": []
+    },
+    {
       "name": "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
       "capabilities": []
     },
@@ -22294,6 +22409,58 @@
     },
     {
       "name": "SHU-303 mutation M33 resume a recovered review without reading the pull request right before it starts",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M34 publish a verdict at whatever SHA the tick names",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M35 let a BLOCK status description run past 140 characters",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M36 set success over a HOLD's own pending status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M37 set a HOLD status with no pending of the run's own",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M38 post the same verdict comment again",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M39 post a verdict comment when the comments cannot be read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M40 count a HOLD as a review with a verdict",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M41 publish a verdict the review card's receipt does not confirm",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M42 let a refused status escape the publish",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M43 let max_parallel run past eight slots",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M44 let a slot lane be any card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M45 let one card stand in two slots",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M46 open more than one slot without naming its cards",
       "capabilities": []
     },
     {
@@ -25861,6 +26028,58 @@
     },
     {
       "name": "SHU-321 mutation M16 let another label stand beside the product label",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M17 review a pull request whose review is still in flight",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M18 take a slot whose review is still running",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M19 claim a review outside the selection lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M20 take a slot another worker has armed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M21 count a review that reached no verdict",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M22 count only claims that recorded a verdict",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M23 read an unknown ending as no verdict",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M24 keep the claim of a review whose pull request moved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M25 give back a claim whose pull request did not move",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M26 give back the claim of a review with a verdict",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M27 review the lowest number first, whatever a head's age",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M28 tick a review on the card interval",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M29 read Linear or GitHub pull requests while every slot is busy",
       "capabilities": []
     },
     {
@@ -33043,10 +33262,6 @@
     },
     {
       "name": "Velocity: a board read answered with a 5xx is asked again twice at most, and a write never",
-      "capabilities": []
-    },
-    {
-      "name": "Velocity A: the pull request reviewed least at this revision is reviewed first, so a new head on an older one never starves a newer one",
       "capabilities": []
     },
     {

@@ -111,7 +111,7 @@ their employer and to pay.
 |---|---|
 | Person | `GET /api/work/today`, `POST /api/work/sessions/{start,stop,discard,manual}`, `GET /api/work/hours/mine`, `GET /api/work/placements/mine`, `POST /api/work/appeals`, `GET /api/work/appeals/mine`, `GET /api/work/appeals/:id`, `POST /api/work/appeal-updates/:id/read` |
 | Company, store manager | `GET /api/work/hours/company/:orgId`, `GET /api/work/placements/company/:orgId`, `GET /api/work/placement-requests/company/:orgId`, `POST /api/work/placement-requests`, `POST /api/work/decisions/{sessions,days}`, `POST /api/work/sessions/:id/undo` |
-| Staff | `POST /api/work/placements`, `POST /api/work/placements/:id/end-date`, `POST /api/work/placement-requests/:id/{accept,reject,cancel}`, `GET /api/work/hours/all`, `GET /api/work/appeals`, `POST /api/work/appeals/:id/{updates,status,missing-time}`, `POST /api/work/sessions/:id/correct` |
+| Staff | `POST /api/work/placements`, `POST /api/work/placements/:id/end-date`, `POST /api/work/placement-requests/:id/{accept,reject,cancel}`, `GET /api/work/hours/all`, `GET /api/work/appeals`, `POST /api/work/appeals/:id/{updates,status,missing-time}`, `POST /api/work/sessions/:id/{correct,remove,restore}` |
 
 Stop and discard name the open session they act on (`sessionId`, the id `today` returned). If another tab or device has
 since stopped it and started a new one, they answer 409 `session_changed` and change nothing. A placement's end date
@@ -138,6 +138,74 @@ reported and the batch goes on. Imported decisions then link each decided sessio
 the latest legacy decision with its status. Legacy ids keep their underscores
 (`can_wrk_hr_<uuid>`), which migration 0504 allows.
 
+### Staff time and the stand-up (M-5)
+
+`packages/work/src/legacy-staff.ts` maps the internal staff rows the same way, with the
+legacy id as `legacy_ref` (`work_session_<uuid>`, `question_<uuid>`, `answer_<uuid>`). The
+importer resolves the legacy `staff_id` to a principal; a staff id with no principal is
+reported by the importer, not passed on.
+
+| Legacy | Here | Rules |
+|---|---|---|
+| `staff_work_session` | `work_staff_sessions`, `source = 'import'` | The start is `created_at`; the day is its Kuwait date. Ending a session saved `total_minutes` and `updated_at` together, so `updated_at` is the end when its whole minutes match `total_minutes`; otherwise the end is the start plus `total_minutes` (what legacy showed and exported) and the row is reported as `minutes_mismatch`. No minutes: imported open, as legacy showed it. Negative or fractional minutes are reported, not imported. A second open session on one day is refused (`open_twice`). |
+| `daily_standup_question` | `work_standup_questions` | Trimmed text, 1 to 255 characters, asked (not retired), no author. |
+| `daily_standup_answer` | `work_standup_answers`, `source = 'import'` | The question text as it read, the day as the Kuwait date of `created_at`; repeats on a day are kept. An answer whose question legacy deleted is refused (`no_question`); a blank answer, one over 4,000 characters, or text holding a NUL character (which Postgres can't store) is reported, not cut. |
+| `staff.hours_per_day` | `work_staff_hours_per_day` (0509), `legacy_ref` `staff:<staff_id>` | A whole number of hours, 0 to 24 (legacy: tinyint, default 8). A missing or other value is reported as `bad_hours`, not read as the default. One row per principal: a second legacy staff record resolved to the same person is refused (`invalid`). |
+
+`PostgresWorkImportStore.importStaffSessions`, `importStandupQuestions` (run before the
+answers), `importStandupAnswers` and `importStaffHours` follow the contract above, with the digest stored in
+`legacy_digest` (migration 0508). A session imported open that legacy has since ended gets
+its end once (counted as updated); any other change is a conflict. The import key of a
+staff session or question can't be changed afterwards. Imported questions stay editable and retirable here, so a replay compares the stored question
+too: one edited or retired since import is a conflict, never unchanged. A session the timer
+ended here is never reopened or moved by a later legacy replay (a conflict); legacy agreeing
+with that end is unchanged. The hours per day can be changed here too, so their replay compares the
+stored hours: a number changed since import is a conflict, never overwritten. Rows that already had a
+`legacy_ref` before 0508 keep a NULL digest (unknown: nothing is made up for them); they
+keep working, a timer can still end an open one, and a re-run refuses each of them as
+`unknown_digest` without comparing or overwriting it. Rows imported from 0508 on must carry
+their digest. Within a batch, ends are applied
+before new open sessions, and each staff member's day is locked with the refs, so two
+batches can't deadlock. `reconcileStaffImport(table, legacyRefs, reportedRefs, heldRefs)` gives each table's reconciliation by legacy reference only: the legacy and
+imported counts, the legacy refs with no imported row (split into `skipped`, the refs the
+run passes in `reportedRefs` because it reported or refused them, and `missing`, the
+unexplained ones; without `reportedRefs` every absent ref is `missing`), and imported refs legacy no
+longer holds. ID coverage and content are kept apart: `covered` counts the legacy refs that have a row,
+`held` lists the covered refs whose content is not accepted (the run's conflicts and
+`unknown_digest` refusals passed as `heldRefs`, plus any row whose digest is unknown here),
+`verified` is the rest, and `clean` is true only when nothing is held, skipped, missing or
+extra. Issues and results carry legacy ids, rule codes and numbers only, never row
+text, and importing sends nothing (no notices, outbox rows or emails).
+
+#### M-5 rules on record
+
+1. **Writer clock.** Legacy wrote these stamps with MySQL `NOW()` in the connection's session
+   zone (stand-up answers) or `created_at`/`updated_at` behaviours, for all rows since
+   `m221215_072607_attendance` (15 Dec 2022). The app sets Asia/Kuwait, but that does not prove
+   the session zone of the writer. The mapper reads every stamp as Asia/Kuwait wall time
+   (UTC+3, no DST). That is an assumption until the legacy connection's `time_zone` is read
+   from the mirror (read-only) and recorded with the interval it covers.
+2. **Day.** `work_date` is the Asia/Kuwait calendar day of the instant, never the UTC date (a
+   Kuwait `2026-11-20 00:01:00` stays on 20 Nov and is stored as `2026-11-19T21:01:00Z`). Under a
+   Kuwait writer clock this equals the legacy stored day. The literal legacy value is not kept
+   apart from the instant; if the clock proves to be another zone, the mapper converts from
+   that zone and the stored-day grouping is re-checked before any write.
+3. **Unknown history holds.** Until rule 1 is proven, the M-5 import gate stays open: runs are
+   dry runs, nothing is written. Rows whose content can't be accepted are held by ref
+   (`unknown_digest`, conflicts) and the table is never `clean` while any is held.
+4. **Answer shapes.** The prompt comes from `daily_standup_answer.question`, the copy legacy
+   kept, never the current question row. A null, blank, NUL-holding or over-255 prompt is
+   `bad_text:question`; a null, blank (spaces, tabs, newlines only), NUL-holding or
+   over-4,000-character answer is `bad_text:answer`; an answer whose question was not imported
+   is `no_question`. Each is reported by legacy id, not imported, and counted as `skipped`
+   (explained), never cut, filled in or dropped silently. Repeats on a day are separate rows.
+5. **Two open sessions for one person and day.** Within a snapshot ends are applied first, so
+   a session legacy closed and a new one it opened both load. Two still open is a real
+   exception: the second is refused as `open_twice` by its own ref, counted as `skipped`, and the
+   first keeps its ref; neither is ended or merged. Minutes: when `updated_at` disagrees with
+   the stored `total_minutes`, the stored minutes win (what legacy showed and exported) and
+   the row is reported as `minutes_mismatch`; no end is invented for an open session.
+
 ## Screens: Track, History and Appeals (C-11 to C-13)
 
 `apps/gateway/src/work/pages.ts` serves `/work/track`, `/work/history[/:date]` and `/work/appeals[/:id]`. The pages are rendered on the server with the shared page shell and profile card styles, and they call the same services as the JSON API.
@@ -152,6 +220,21 @@ the latest legacy decision with its status. Legacy ids keep their underscores
 
 The person comes from the session cookie, and posts need the same origin and a form body. A refusal shows the Track page again with a plain message (400 or 409).
 
+### Arabic
+
+The person's screens (Placement, Track, History, a day, Appeals) are in Arabic or English
+(`apps/gateway/src/work/copy.ts`). The language is the one the person saved on their profile
+(`person_preferences`, read through the `language` port), else the browser's Accept-Language,
+else English; error pages before sign-in follow the browser. An Arabic page is marked
+`lang="ar" dir="rtl"`. Dates and times are Kuwait's, with Latin digits as the legacy apps showed
+them, and durations read "2 س 30 د". Store names, notes and replies are shown as written.
+
+The screens of the people who look after the work are in Arabic or English the same way, by the
+viewer's own saved language: the company's Work review (O-11), a store's Time approvals and
+Assignment changes (M-03, M-04), and StudentHub staff's Placements, Work logs, Appeals and
+corrections (A-12, A-13), `/me/work` with its stand-up card, Staff time and the stand-up admin page
+(`apps/gateway/src/work/team-copy.ts`). Stand-up questions and answers are shown as written.
+
 ## Screens: employer and staff (C-10, O-11, M-03, M-04, A-12, A-13)
 
 `apps/gateway/src/work/review-pages.ts` and `staff-pages.ts`, same pattern as the person's screens (no script on these pages). Every read and write goes through the work services, which check the actor's grants on each request.
@@ -160,9 +243,9 @@ The person comes from the session cookie, and posts need the same origin and a f
 |---|---|---|
 | C-10 Placement | `/work/assignment[/:id]` | Where the person works now, what is coming up and where they worked before |
 | O-11 Work review | `/organization/:orgId/work` | The company's hours by date range, status and store, with names; approve or reject the selected sessions with a reason, note (private unless shared) and rating; undo a decision. Filters survive the post |
-| M-03 Time approvals | `/store/:storeId/time-approvals` | The same queue for one store, waiting hours by default; only that store's manager (or the company, or staff) |
+| M-03 Time approvals | `/store/:storeId/time-approvals`, `/:sessionId?date=` | The same queue for one store, waiting hours by default; only that store's manager (or the company, or staff). Each entry opens on its own page (where it started and stopped, its note, the decision and who made it), and is approved, rejected or undone there. An entry at another store, on another day, or out of the viewer's scope is one "not found" answer |
 | M-04 Assignment changes | `/store/:storeId/assignment-changes` | Ask StudentHub for a person at the store, follow the answer, cancel a waiting request |
-| A-12 Work | `/work/assignments?org=`, `/work/logs` | Staff: a company's placements and waiting requests; place, end or extend, accept or decline. Work logs across companies with a person filter, the same decisions, and "Correct these hours" |
+| A-12 Work | `/work/assignments?org=`, `/work/logs`, `/work/logs/remove` | Staff: a company's placements and waiting requests; place, end or extend, accept or decline. Work logs across companies with a person filter, the same decisions, "Correct these hours" and "Remove these hours" (a reason is required; the notice after a removal puts the hours back) |
 | A-13 Appeals and corrections | `/work/appeals?as=staff`, `/work/appeals/:id`, `/work/corrections` | Staff list appeals by status; on an appeal, reply, set the status, correct the appealed hours or add missing time (Kuwait time, reason required); correct any closed session from the logs |
 
 | Legacy | Here | Why |
@@ -190,8 +273,8 @@ StudentHub's own staff time their day here (hours are hours). `StaffTimeService`
 - The table refuses edits to a closed session, a second open session for the same day, an end
   before the start, and deletes.
 
-The staff hours export is under Exports below. The legacy rows are imported with the cutover
-lane's importer (M-5).
+The staff hours export is under Exports below. The legacy rows are mapped for the cutover
+lane's importer (M-5) as described under "Staff time and the stand-up".
 
 ## Daily stand-up (legacy daily_standup_question / daily_standup_answer)
 
@@ -219,9 +302,8 @@ The stand-up part of A-14. `StandupService` (`packages/work/src/standup.ts`) ove
   allowed; answers given here may not.
 
 Legacy's emailed stand-up report (`standupReport`) was switched off in its cron and is not ported.
-The legacy rows (`daily_standup_question` → `work_standup_questions.legacy_ref`,
-`daily_standup_answer` → `work_standup_answers` with `source = 'import'`) are for the cutover
-lane's importer.
+The legacy rows are mapped for the cutover lane's importer as described under "Staff time and
+the stand-up".
 
 ## Exports (P-1)
 
@@ -256,15 +338,53 @@ from `/exports/<id>` under the kind's name. Files are CSV; legacy wrote Excel.
   page by page and stops one row past the cap: the detailed and who-worked-where files never
   hold more than that, and the summary and staff hours files keep only per-person totals
   (staff hours stops once there are more than 10,000 staff members; a range is at most 366 days).
-- Staff hours: legacy counted a session with no end as the staff record's hours per day. That
-  comes from the `staffHoursPerDay` port (`wireWork` option), absent until the staff record
-  exists; while it is absent a day not ended adds nothing. The release matrix gates cutover on
-  wiring it (the cutover lane's STAFF-HOURS-FALLBACK step). The button is on `/work/staff-time`.
+- Staff hours: legacy used the staff record's hours per day for a staff/day row whose minutes
+  were empty or zero (its query grouped by staff and day without summing, so a day with several
+  sessions showed one arbitrary row). Here a day counts the hours once when a session is still
+  open or its sessions add up to zero minutes (all closed inside the minute); duplicate open
+  sessions on a day count once, and a day with closed minutes and one still open keeps its
+  minutes and adds the hours. The hours come from `work_staff_hours_per_day` (0509, one row
+  per principal, 0 to 24); a staff member with no row reads as legacy's default, 8. `wireWork`
+  wires it unless a `staffHoursPerDay` port is given. The rows come from legacy
+  `staff.hours_per_day` (see "Staff time and the stand-up (M-5)" above). The button is on `/work/staff-time`.
+
+## Legacy parity sweep (legacy @ 55119d3, 2026-11-20)
+
+Every action of legacy's work and attendance controllers, and where it lives here. Legacy paths
+are relative to each app's `modules/v1/controllers`.
+
+| App | Legacy action | Here |
+|---|---|---|
+| candidate | `AccountController` start-working-time, stop-working-time, discard | Track (`/work/track`), `POST /api/work/sessions/{start,stop,discard}` |
+| candidate | `CandidateWorkingHour` add-hour (manual log) | "Forgot to clock in?" on Track, `POST /api/work/sessions/manual` |
+| candidate | `CandidateWorkingHour` list-date, working-dates, date-detail, hours-detail, list-hour, stats | History (`/work/history[/:date]`), `GET /api/work/hours/mine` (one month by day, totals by status) |
+| candidate | `CandidateWorkingHour` appeal, appeal-detail, mark-read-appeal-update | Appeals (`/work/appeals[/:id]`), `POST /api/work/appeals`, `POST /api/work/appeal-updates/:id/read` |
+| candidate | `Candidate` work-history, work-history-detail | Placement (`/work/assignment[/:id]`), `GET /api/work/placements/mine` |
+| candidate | `Candidate` appreciation-certificate | Reports lane certificates (`apps/gateway/src/reports/certificates-http.ts`) |
+| company | `CandidateWorkingHour` list-date, date-detail, list-hour, stats | Work review (O-11), `GET /api/work/hours/company/:orgId` |
+| company | `CandidateWorkLogFeedback` save, bulk-save, undo | O-11 and M-03 decisions, `POST /api/work/decisions/{sessions,days}`, `POST /api/work/sessions/:id/undo` |
+| manager | `CandidateWorkingHour` list-date, list-hour | Time approvals (M-03, and each entry's page) |
+| staff | `CandidateWorkingHour` list-date, list-hour, hours-detail | Work logs (A-12), `GET /api/work/hours/all` |
+| staff | `CandidateWorkingHour` add-hour | "Correct these hours" and "Add missing time" (A-13), `POST /api/work/sessions/:id/correct`, `POST /api/work/appeals/:id/missing-time` |
+| staff | `CandidateWorkingHour` delete-session | "Remove these hours" on the work logs, `POST /api/work/sessions/:id/remove` (added in this sweep; legacy hard-deleted, here a soft delete with who and why, and `restore` puts it back) |
+| staff | `CandidateWorkingHour` delete-day | Remove each of the day's entries. Legacy deleted the `candidate_working_date` row only, leaving its hours; day totals here are a view over the sessions, so there is no day row to remove |
+| staff | `CandidateWorkingHour` appeal-list, appeal-detail, appeal-update, appeal-update-status | A-13 (`/work/appeals?as=staff`, `/work/appeals/:id`), `GET /api/work/appeals`, `POST /api/work/appeals/:id/{updates,status}` |
+| admin | `CandidateWorkingHour` list-date, list-hour | Work logs (A-12) |
+| admin | `CandidateWorkHistory` list | A-12 placements, `PlacementService.history` |
+| admin | `StaffWorkSession` list, list-inactive, view, download-list-excel | Staff time (`/work/staff-time`) and the staff hours export (P-1) |
+| status | `CandidateWorkHistory` list | Not ported: it listed every placement with no sign-in. Placements are shown only to the person, their company and staff |
+
+Legacy had no reply from the person on an appeal: the candidate app could raise an appeal, read it
+and mark staff replies read, and only staff posted updates (`appeal-update`). The contract's
+`appeals.self.comment` is therefore not added; the person replies by raising a new appeal once the
+open one is resolved, as in legacy.
+
+A removed session leaves every total and pay (`lineage` reads its chain as discarded). The
+person's feed keeps the decision notice it had; removal itself sends nothing, like a correction
+(D-WK3).
 
 ## Not yet here
 
 - The rest of A-14 (staff leave and expenses); it depends on the pay lane's settlement (P1, F4).
-- A session detail page for M-03 (`/store/:storeId/time-approvals/:sessionId`); each session is decided in the queue for now.
-- Arabic copy for the work screens.
-- A reply box for the person on an appeal: the contract lists `appeals.self.comment`, but W-6 lets only staff post updates, as legacy did. This is to be confirmed with the legacy rules before it is added.
-- The importer run itself (cutover lane, M-5).
+- The importer run itself (cutover lane, M-5): reading the mirror, resolving staff ids and
+  writing the run's report.
