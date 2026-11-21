@@ -43,6 +43,8 @@ export interface WorkDecision {
   readonly startReceiptPosted: boolean;
   /** Set when a parked ticket was sent back: address this changes comment on the same branch and PR, then post a new ready receipt. */
   readonly changesRequested: { readonly head: string; readonly pull: number; readonly comment: number } | null;
+  /** Set only inside a handed-back run whose declared revision is on the PR: the one write left is this ready receipt. */
+  readonly completeOnly: { readonly readyReceiptHeader: string } | null;
 }
 
 export interface ObserveDecision {
@@ -145,7 +147,10 @@ export const ticketBranch = (bot: string, slug: string): string => `orca/${bot}/
 export type ReviewWait =
   | { readonly state: "parked"; readonly head: string }
   | { readonly state: "held"; readonly reason: string }
-  | { readonly state: "sent-back"; readonly head: string; readonly pull: number; readonly changes: number };
+  | { readonly state: "sent-back"; readonly head: string; readonly pull: number; readonly changes: number; readonly completing: string | null };
+
+/** What a handed-back run declared before its one revision push: the head, on which PR, for which changes request. */
+export interface ExpectedHead { readonly sha: string; readonly pull: number; readonly changes: number }
 
 /**
  * Review wait. Once the bot posts a ready receipt naming its PR's exact head, the
@@ -168,7 +173,7 @@ export function reviewWait(input: {
    * Set only inside the run that holds the bot's run lock for this ticket (check mode, verified by token):
    * the successor head that run declared before pushing (expectHead), or null if it declared none.
    */
-  readonly running?: { readonly expected: string | null };
+  readonly running?: { readonly expected: ExpectedHead | null };
 }): ReviewWait | null {
   const { bot, issue, gen } = input;
   const first = (c: IssueComment): string => c.body.split("\n")[0]!.trim();
@@ -182,11 +187,14 @@ export function reviewWait(input: {
   const pull = pulls[0]!;
   if (pull.base !== "main" || pull.draft) return { state: "held", reason: `ready at ${head} but PR #${pull.number} is ${pull.draft ? "a draft" : `into ${pull.base}`}: held for Claude's review` };
   const changes = sorted.find((c) => c.id > lastReady.id && c.author === DISPATCH_AUTHOR && c.appId === CLAUDE_APP_ID && first(c) === changesHeader(bot, issue, gen, head));
-  // The run that was handed back may move the head only to the successor it declared before pushing;
-  // any other movement (a branch sync, someone else's push), and any movement seen by anyone else, is drift.
-  const revising = changes !== undefined && input.running !== undefined && input.running.expected === pull.head;
-  if (pull.head !== head && !revising) return { state: "held", reason: `ready at ${head} but PR #${pull.number} head is ${pull.head}: held for Claude's review` };
-  return changes ? { state: "sent-back", head, pull: pull.number, changes: changes.id } : { state: "parked", head };
+  // The run that was handed back may move the head only to the successor it declared before pushing, on this
+  // PR and for this changes request. Once it has, the run may only complete: post the ready receipt at that head.
+  // Any other movement (a branch sync, someone else's push), and any movement seen by anyone else, is drift.
+  const expected = input.running?.expected;
+  const completing = changes !== undefined && expected != null && pull.head !== head &&
+    expected.sha === pull.head && expected.pull === pull.number && expected.changes === changes.id;
+  if (pull.head !== head && !completing) return { state: "held", reason: `ready at ${head} but PR #${pull.number} head is ${pull.head}: held for Claude's review` };
+  return changes ? { state: "sent-back", head, pull: pull.number, changes: changes.id, completing: completing ? pull.head : null } : { state: "parked", head };
 }
 
 const posted = (comments: readonly IssueComment[], header: string): boolean =>
@@ -211,7 +219,7 @@ export function decide(input: {
   /** Open PRs per ticket branch (ticketBranch). Only needed once a ticket has a ready receipt; missing means none. */
   readonly pulls?: ReadonlyMap<string, readonly BranchPull[]>;
   /** The run this process holds the run lock for (check mode only, verified by token), and its declared successor head. */
-  readonly running?: { readonly key: string; readonly expected: string | null };
+  readonly running?: { readonly key: string; readonly expected: ExpectedHead | null };
 }): Decision[] {
   const decisions: Decision[] = [];
   const latestGen = new Map<number, number>();
@@ -250,6 +258,7 @@ export function decide(input: {
       issue: row.issue, gen: row.gen, action: held === undefined ? "start" : "resume", dispatch: comment.id, slug: row.slug, claimKey: key, lease: row.lease,
       startReceiptHeader: header, startReceiptPosted: posted(issueComments, header),
       changesRequested: wait?.state === "sent-back" ? { head: wait.head, pull: wait.pull, comment: wait.changes } : null,
+      completeOnly: wait?.state === "sent-back" && wait.completing !== null ? { readyReceiptHeader: readyReceiptHeader(input.bot, row.issue, row.gen, wait.completing) } : null,
     });
   }
   return decisions;
@@ -367,26 +376,32 @@ export function releaseRun(dir: string, bot: string, key: string, token: string)
 }
 
 /**
- * Declares, before a push, the exact head the run is about to put on its PR. Only
+ * Declares, before its one revision push, the exact head a handed-back run is
+ * about to put on its PR, with that PR and the changes request it answers. Only
  * the holder of the run lock can declare it, it lives in that run's own slot, and
- * a later declaration replaces an earlier one. A handed-back run's check accepts
- * the PR head moving only to this head.
+ * it can be declared once per run. The run's check accepts the PR head moving
+ * only to this head, and after that only for posting the ready receipt.
  */
-export function expectHead(dir: string, bot: string, key: string, token: string, sha: string): "recorded" | "not-owner" | "bad-sha" {
-  if (!new RegExp(`^${SHA}$`).test(sha)) return "bad-sha";
+export function expectHead(dir: string, bot: string, key: string, token: string, expected: ExpectedHead): "recorded" | "not-owner" | "already-declared" | "bad-input" {
+  if (!new RegExp(`^${SHA}$`).test(expected.sha) || !Number.isSafeInteger(expected.pull) || expected.pull < 1 || !Number.isSafeInteger(expected.changes) || expected.changes < 1) return "bad-input";
   const latest = slots(dir, bot).at(-1);
   if (!latest || latest.released || latest.owner.key !== key || latest.owner.token !== token) return "not-owner";
-  writeFileSync(path.join(slotsDir(dir, bot), String(latest.n), "expected"), `${sha}\n`);
+  try {
+    writeFileSync(path.join(slotsDir(dir, bot), String(latest.n), "expected.json"), `${JSON.stringify(expected)}\n`, { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return "already-declared";
+    throw error;
+  }
   return "recorded";
 }
 
-/** The successor head the current run declared, only for the current holder; otherwise null. */
-export function readExpected(dir: string, bot: string, key: string, token: string): string | null {
+/** What the current run declared, only for the current holder; otherwise null. */
+export function readExpected(dir: string, bot: string, key: string, token: string): ExpectedHead | null {
   const latest = slots(dir, bot).at(-1);
   if (!latest || latest.released || latest.owner.key !== key || latest.owner.token !== token) return null;
   try {
-    const sha = readFileSync(path.join(slotsDir(dir, bot), String(latest.n), "expected"), "utf8").trim();
-    return new RegExp(`^${SHA}$`).test(sha) ? sha : null;
+    const parsed = JSON.parse(readFileSync(path.join(slotsDir(dir, bot), String(latest.n), "expected.json"), "utf8")) as ExpectedHead;
+    return new RegExp(`^${SHA}$`).test(parsed.sha) && Number.isSafeInteger(parsed.pull) && Number.isSafeInteger(parsed.changes) ? parsed : null;
   } catch {
     return null;
   }

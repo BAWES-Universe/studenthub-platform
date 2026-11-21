@@ -2,7 +2,8 @@
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode observe
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode work
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode check --key <claimKey> --token <runToken>
-//   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode expect --key <claimKey> --token <runToken> --sha <head about to be pushed>
+//   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode check --key <claimKey> --token <runToken> --purpose ready
+//   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode expect --key <claimKey> --token <runToken> --sha <head about to be pushed> --pull <n> --changes <comment id>
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode release --key <claimKey> --token <runToken>
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode recover --key <runLock.key> --token <runLock.token>
 // observe never claims or locks; it lists observe-mode rows and what work mode would pick.
@@ -17,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { acquireRun, type BranchPull, claim, type ClaimRecord, decide, expectHead, readExpected, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, ticketBranch, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
+import { acquireRun, type BranchPull, claim, type ClaimRecord, decide, expectHead, type ExpectedHead, readExpected, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, ticketBranch, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
 
 const REPO = "BAWES-Universe/studenthub-platform";
 const REGISTER = "docs/lanes/orca/REGISTER.md";
@@ -58,7 +59,7 @@ export function pickNext(
 
 type Mode = "observe" | "work" | "check" | "expect" | "release" | "recover";
 
-function args(argv: readonly string[]): { bot: string; mode: Mode; claims: string; key?: string; token?: string; sha?: string } {
+function args(argv: readonly string[]): { bot: string; mode: Mode; claims: string; key?: string; token?: string; sha?: string; pull?: number; changes?: number; purpose: "write" | "ready" } {
   const value = (flag: string): string | undefined => {
     const at = argv.indexOf(flag);
     return at >= 0 ? argv[at + 1] : undefined;
@@ -66,14 +67,19 @@ function args(argv: readonly string[]): { bot: string; mode: Mode; claims: strin
   const bot = value("--bot");
   const mode = value("--mode");
   if (!bot || (mode !== "observe" && mode !== "work" && mode !== "check" && mode !== "expect" && mode !== "release" && mode !== "recover")) {
-    throw new Error("usage: poll --bot <name> --mode observe|work|check|expect|release|recover [--key <claimKey>] [--token <runToken>] [--sha <sha>] [--claims <dir>]");
+    throw new Error("usage: poll --bot <name> --mode observe|work|check|expect|release|recover [--key <claimKey>] [--token <runToken>] [--sha <sha> --pull <n> --changes <id>] [--purpose write|ready] [--claims <dir>]");
   }
   const key = value("--key");
   const token = value("--token");
   if ((mode === "check" || mode === "expect" || mode === "release" || mode === "recover") && (!key || !token)) throw new Error(`${mode} needs --key and --token`);
   const sha = value("--sha");
-  if (mode === "expect" && !sha) throw new Error("expect needs --sha");
-  return { bot, mode, claims: value("--claims") ?? path.join(os.homedir(), ".orca-lane", "claims"), ...(key ? { key } : {}), ...(token ? { token } : {}), ...(sha ? { sha } : {}) };
+  const pull = value("--pull");
+  const changes = value("--changes");
+  if (mode === "expect" && (!sha || !pull || !changes)) throw new Error("expect needs --sha, --pull and --changes");
+  const purpose = value("--purpose") ?? "write";
+  if (purpose !== "write" && purpose !== "ready") throw new Error("--purpose is write or ready");
+  return { bot, mode, purpose, claims: value("--claims") ?? path.join(os.homedir(), ".orca-lane", "claims"), ...(key ? { key } : {}), ...(token ? { token } : {}),
+    ...(sha ? { sha } : {}), ...(pull ? { pull: Number(pull) } : {}), ...(changes ? { changes: Number(changes) } : {}) };
 }
 
 function comments(issue: number): IssueComment[] {
@@ -111,10 +117,10 @@ export function heldClaims(dir: string): Map<string, ClaimRecord> {
 }
 
 function main(): void {
-  const { bot, mode, claims, key, token, sha } = args(process.argv.slice(2));
+  const { bot, mode, claims, key, token, sha, pull, changes, purpose } = args(process.argv.slice(2));
   if (mode === "expect") {
-    const result = expectHead(claims, bot, key!, token!, sha!);
-    process.stdout.write(`${JSON.stringify({ mode, bot, key, sha, result })}\n`);
+    const result = expectHead(claims, bot, key!, token!, { sha: sha!, pull: pull!, changes: changes! });
+    process.stdout.write(`${JSON.stringify({ mode, bot, key, sha, pull, changes, result })}\n`);
     if (result !== "recorded") process.exitCode = 3;
     return;
   }
@@ -135,15 +141,19 @@ function main(): void {
   for (const branch of new Set(mine.map((row) => ticketBranch(bot, row.slug)))) pulls.set(branch, branchPulls(branch));
   const now = new Date();
   const at = now.toISOString();
-  const decisionsFor = (running?: { key: string; expected: string | null }): Decision[] => decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims), pulls, ...(running ? { running } : {}) });
+  const decisionsFor = (running?: { key: string; expected: ExpectedHead | null }): Decision[] => decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims), pulls, ...(running ? { running } : {}) });
 
   if (mode === "check") {
     // A running ticket always holds its claim, so only a matching resume (same dispatch, same lease) passes.
     // Only the lock holder may see its own revision's head move after a hand-back, and only to the head it declared.
     const holds = holdsRun(claims, bot, key!, token!);
     const mineNow = decisionsFor(holds ? { key: key!, expected: readExpected(claims, bot, key!, token!) } : undefined).find((d): d is WorkDecision => d.action === "resume" && d.claimKey === key);
-    const reason = !mineNow ? "ticket generation no longer eligible" : !holds ? "run lock not held by this token" : null;
-    process.stdout.write(`${JSON.stringify({ mode, bot, at, key, ok: reason === null, reason })}\n`);
+    const reason = !mineNow ? "ticket generation no longer eligible"
+      : !holds ? "run lock not held by this token"
+      : mineNow.completeOnly && purpose !== "ready" ? "revision is on the PR: the only write left is the ready receipt (--purpose ready)"
+      : null;
+    const readyReceiptHeader = reason === null && mineNow?.completeOnly ? mineNow.completeOnly.readyReceiptHeader : undefined;
+    process.stdout.write(`${JSON.stringify({ mode, bot, at, key, purpose, ok: reason === null, reason, ...(readyReceiptHeader ? { readyReceiptHeader } : {}) })}\n`);
     if (reason !== null) process.exitCode = 3;
     return;
   }
