@@ -27,10 +27,20 @@ export interface JourneyResult {
   readonly people: readonly PersonOutcome[];
 }
 
+/** Which legacy refresh was read: the run the walk held the shared lock over. */
+export interface RefreshIdentity {
+  readonly startedAt: string;
+  readonly finishedAt: string;
+  readonly totalRows: number;
+}
+
 export interface TwinReport {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   /** The platform revision walked (a 40-character commit). */
   readonly revision: string;
+  /** The Kuwait month walked, `YYYY-MM`. */
+  readonly month: string;
+  readonly refresh: RefreshIdentity;
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly minimumPeople: number;
@@ -72,9 +82,14 @@ const KINDS: readonly DiffKind[] = ["differs", "missing", "extra"];
 export function assertPrivate(report: TwinReport): void {
   const fail = (field: string): never => { throw new Error(`twin.report.notPrivate: ${field}`); };
   const keys = (o: object, allowed: readonly string[], field: string) => { for (const k of Object.keys(o)) if (!allowed.includes(k)) fail(`${field}.${k}`); };
-  keys(report, ["schemaVersion", "revision", "startedAt", "finishedAt", "minimumPeople", "journeys"], "report");
-  if (report.schemaVersion !== 1) fail("schemaVersion");
+  keys(report, ["schemaVersion", "revision", "month", "refresh", "startedAt", "finishedAt", "minimumPeople", "journeys"], "report");
+  if (report.schemaVersion !== 2) fail("schemaVersion");
   if (!/^[0-9a-f]{40}$/.test(report.revision)) fail("revision");
+  if (typeof report.month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(report.month)) fail("month");
+  if (!report.refresh || typeof report.refresh !== "object") fail("refresh");
+  keys(report.refresh, ["startedAt", "finishedAt", "totalRows"], "refresh");
+  if (!ISO.test(report.refresh.startedAt) || !ISO.test(report.refresh.finishedAt)) fail("refresh.time");
+  if (!Number.isSafeInteger(report.refresh.totalRows) || report.refresh.totalRows < 0) fail("refresh.totalRows");
   if (!ISO.test(report.startedAt)) fail("startedAt");
   if (!ISO.test(report.finishedAt)) fail("finishedAt");
   if (!Number.isInteger(report.minimumPeople) || report.minimumPeople < 1) fail("minimumPeople");
@@ -175,4 +190,31 @@ export function closeVerified<T extends ScreenRowLike>(screens: Readonly<Record<
     }
   }
   return { screens: out, changes };
+}
+
+/**
+ * What a walk prints and a pull request may quote: the walked revision, month and refresh,
+ * then each journey's verdict and counts. Built only from the report's checked fields, so it
+ * carries no person's id or value; the per-person report itself stays on the staging host.
+ */
+export function walkReceipt(report: TwinReport): string[] {
+  assertPrivate(report);
+  const lines = [`legacy-twin: receipt revision=${report.revision} month=${report.month} refresh=${report.refresh.finishedAt} refreshRows=${report.refresh.totalRows} minimum=${report.minimumPeople}`];
+  for (const j of report.journeys) {
+    const v = verdictOf(j, report.minimumPeople);
+    const counts = (["match", "explained", "regression", "error"] as const).map((o) => `${o}=${j.people.filter((p) => p.outcome === o).length}`).join(" ");
+    const distinct = new Set(j.people.map((p) => p.legacyId)).size;
+    lines.push(`legacy-twin: ${j.journey} [${j.screens.join(",")}] ${v.verdict}${v.verdict === "open" ? `.${v.reason}` : ""} walked=${v.walked} distinct=${distinct} ${counts}`);
+  }
+  return lines;
+}
+
+/** A walk succeeds only when every journey it walked is verified. */
+export function walkVerified(report: TwinReport): boolean {
+  return report.journeys.length > 0 && report.journeys.every((j) => verdictOf(j, report.minimumPeople).verdict === "verified");
+}
+
+/** A close succeeds only when every screen it touched ended verified. */
+export function closeSucceeded(changes: readonly GateChange[]): boolean {
+  return changes.length > 0 && changes.every((c) => c.change === "closed" || c.change === "already_closed");
 }

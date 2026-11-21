@@ -8,13 +8,14 @@ import { parseDuration, SheetBuilder, type FactSheet } from "../src/twin/facts.j
 import { parseHtml, query, queryAll, textOf } from "../src/twin/html.js";
 import type { LegacyParam, LegacyReader, OpenedPage } from "../src/twin/journey.js";
 import { workHistory } from "../src/twin/journeys/work-history.js";
-import { assertPrivate, closeVerified, MINIMUM_PEOPLE_FLOOR, verdictOf, type TwinReport } from "../src/twin/report.js";
-import { walkedRevisionMatchesTree } from "../src/twin/cli.js";
+import { assertPrivate, closeSucceeded, closeVerified, MINIMUM_PEOPLE_FLOOR, verdictOf, walkReceipt, walkVerified, type TwinReport } from "../src/twin/report.js";
+import { candidateMatchesWalk, isEvidenceOnly, refreshIdentity, type Git } from "../src/twin/cli.js";
 import { JOURNEYS } from "../src/twin/journeys/index.js";
-import { bind, parseRows, stagingApp, STAGING_ORIGIN, type BrowserLike } from "../src/twin/staging.js";
+import { bind, MAX_REDIRECT_HOPS, parseRows, stagingApp, stagingOnly, STAGING_ORIGIN, type BrowserLike, type RouteLike } from "../src/twin/staging.js";
 import { walk, WalkFailure, type NewApp } from "../src/twin/walk.js";
 
 const REVISION = "a".repeat(40);
+const REFRESH = { startedAt: "2026-11-20T00:30:00.000Z", finishedAt: "2026-11-20T00:41:00.000Z", totalRows: 865915 };
 const MONTH = "2026-10";
 const sheet = (entries: Record<string, string | number | boolean | null>): FactSheet => {
   const b = new SheetBuilder();
@@ -38,6 +39,7 @@ test("the page reader finds elements by simple selectors and reads text as a per
   const links = parseHtml('<p><a class="x" href="/help.html#top">Help</a></p>');
   assert.equal(query(links, 'a[href="/help.html#top"]')?.attrs.get("class"), "x", "a dot or hash inside an attribute value is not a class or id");
   assert.equal(query(links, 'a.x[href^="/help.html"]') !== undefined, true);
+  assert.equal(query(parseHtml('<a href="/a].html#top">x</a>'), 'a[href="/a].html#top"]')?.attrs.get("href"), "/a].html#top", "a quoted ] ends no attribute");
 });
 
 // ---- facts -------------------------------------------------------------------------------
@@ -250,7 +252,7 @@ test("a walk records each person's outcome, and failures as fixed codes that nev
     assert.deepEqual(paths, same.map((x) => x.path));
     if (p === "p-6") return [same[0]!.html];
     return (p === "p-2" ? changed : same).map((x) => x.html);
-  }), { month: MONTH }, { revision: REVISION, limit: 10, minimumPeople: 1, explanations: [], now: () => new Date("2026-11-20T00:00:00Z") });
+  }), { month: MONTH }, { revision: REVISION, refresh: REFRESH, limit: 10, minimumPeople: 1, explanations: [], now: () => new Date("2026-11-20T00:00:00Z") });
   const outcomes = report.journeys[0]!.people.map((p) => [p.legacyId, p.outcome, "code" in p ? p.code : p.regressions.length]);
   assert.deepEqual(outcomes, [["1", "match", 0], ["2", "regression", 4], ["3", "error", "page_failed"], ["404", "error", "persona_unlinked"], ["5", "error", "sign_in_failed"],
     ["6", "error", "page_failed"]]);
@@ -264,7 +266,7 @@ const person = (legacyId: string, outcome: "match" | "explained" | "regression" 
   regressions: outcome === "regression" ? [{ path: "a.y", kind: "missing" as const }] : [],
 });
 function report(journeys: TwinReport["journeys"], minimumPeople = 2): TwinReport {
-  return { schemaVersion: 1, revision: REVISION, startedAt: "2026-11-20T00:00:00.000Z", finishedAt: "2026-11-20T00:10:00.000Z", minimumPeople, journeys };
+  return { schemaVersion: 2, revision: REVISION, month: MONTH, refresh: REFRESH, startedAt: "2026-11-20T00:00:00.000Z", finishedAt: "2026-11-20T00:10:00.000Z", minimumPeople, journeys };
 }
 
 test("a journey is verified only with enough people walked, no regression and no failed walk", () => {
@@ -290,6 +292,10 @@ test("the privacy check refuses any report field that could carry a value", () =
     ["revision", (r) => { r.revision = "main"; }],
     ["screens", (r) => { r.journeys[0].screens = ["C-12 /work"]; }],
     ["legacyId", (r) => { r.journeys[0].people[1].legacyId = "01"; }],
+    ["schemaVersion", (r) => { r.schemaVersion = 1; }],
+    ["month", (r) => { r.month = "October"; }],
+    ["refresh.note", (r) => { r.refresh.note = "x"; }],
+    ["refresh.totalRows", (r) => { r.refresh.totalRows = "865915 rows"; }],
     ["people.duplicate", (r) => { r.journeys[0].people[1].legacyId = "1"; }],
   ];
   for (const [field, mutate] of breaks) {
@@ -356,11 +362,58 @@ test("the walker registry maps each journey to screens the release matrix knows"
   }
   assert.equal(new Set(JOURNEYS.map((j) => j.id)).size, JOURNEYS.length, "journey ids are unique");
   assert.ok(MINIMUM_PEOPLE_FLOOR >= 5);
-  assert.equal(walkedRevisionMatchesTree("main", () => 0), false, "a revision must be a full commit");
-  assert.equal(walkedRevisionMatchesTree(REVISION, (args) => (args[0] === "merge-base" ? 1 : 0)), false, "not in this tree");
-  assert.equal(walkedRevisionMatchesTree(REVISION, (args) => (args[0] === "diff" ? 1 : 0)), false, "walker changed since");
-  assert.equal(walkedRevisionMatchesTree(REVISION, (args) => (args[0] === "diff" && args[2] === "HEAD" ? 1 : 0)), false, "uncommitted walker edits");
-  assert.equal(walkedRevisionMatchesTree(REVISION, () => 0), true);
+});
+
+/** A git stand-in: `files` differ committed since the walk, `pending` are uncommitted. */
+function fakeGit(files: string[], pending: string[] = [], ancestor = true): Git {
+  return (args) => args[0] === "merge-base" ? { status: ancestor ? 0 : 1, stdout: "" }
+    : args[0] === "diff" ? { status: 0, stdout: files.map((f) => `${f}\n`).join("") }
+    : { status: 0, stdout: pending.map((f) => ` M ${f}\n`).join("") };
+}
+
+test("a close is bound to the walked candidate: evidence-only changes pass, app, config or walker changes refuse", () => {
+  assert.equal(candidateMatchesWalk("main", fakeGit([])), false, "a revision must be a full commit");
+  assert.equal(candidateMatchesWalk(REVISION, fakeGit([], [], false)), false, "not in this tree");
+  assert.equal(candidateMatchesWalk(REVISION, fakeGit([])), true, "the walked revision itself");
+  // Control 1: an evidence-only update is accepted.
+  assert.equal(candidateMatchesWalk(REVISION, fakeGit(["tools/release-matrix/matrix.json", "docs/lanes/cutover/PLAN.md", "README.md"])), true);
+  // Control 2: a new Work renderer or route config is refused, committed or not.
+  for (const changed of ["apps/gateway/src/work/pages.ts", "apps/gateway/src/work/copy.ts", "apps/gateway/src/routes.ts", "deploy/staging.env.example",
+    "tools/legacy-import/src/twin/journeys/work-history.ts", "tools/legacy-import/twin-explanations.json", "package-lock.json"]) {
+    assert.equal(candidateMatchesWalk(REVISION, fakeGit(["tools/release-matrix/matrix.json", changed])), false, changed);
+    assert.equal(candidateMatchesWalk(REVISION, fakeGit([], [changed])), false, `${changed} uncommitted`);
+  }
+  assert.equal(candidateMatchesWalk(REVISION, (args) => (args[0] === "status" ? { status: 128, stdout: "" } : fakeGit([])(args))), false, "git failing refuses");
+  for (const f of ["tools/release-matrix/matrix.json", "docs/x/y.md", "a/b/README.md"]) assert.equal(isEvidenceOnly(f), true, f);
+  for (const f of ["tools/release-matrix/src/matrix.ts", "docs", "apps/gateway/src/work/pages.ts", "x.mdx"]) assert.equal(isEvidenceOnly(f), false, f);
+});
+
+test("a walk names the refresh it read, and refuses one that is not ok or does not say which run it was", () => {
+  assert.deepEqual(refreshIdentity({ ok: true, code: "ok", ...REFRESH, durationMs: 1, tables: {} }), REFRESH);
+  for (const bad of [null, { ...REFRESH, ok: false }, { ok: true }, { ok: true, ...REFRESH, finishedAt: "yesterday" }, { ok: true, ...REFRESH, totalRows: -1 }]) {
+    assert.equal(refreshIdentity(bad), undefined, JSON.stringify(bad));
+  }
+});
+
+test("the receipt carries verdicts and counts only, and a run succeeds only when everything is verified", () => {
+  const people = [person("1"), person("2", "explained"), person("3")];
+  const ok = report([{ journey: "work-history", screens: ["C-12"], people }], 2);
+  assert.deepEqual(walkReceipt(ok), [
+    `legacy-twin: receipt revision=${REVISION} month=2026-10 refresh=2026-11-20T00:41:00.000Z refreshRows=865915 minimum=2`,
+    "legacy-twin: work-history [C-12] verified walked=3 distinct=3 match=2 explained=1 regression=0 error=0",
+  ]);
+  assert.equal(walkVerified(ok), true);
+  const open = report([{ journey: "work-history", screens: ["C-12"], people: [...people, { legacyId: "4", outcome: "error", code: "persona_unlinked" }] }], 2);
+  assert.match(walkReceipt(open)[1]!, / open\.error walked=3 distinct=4 .* error=1$/);
+  assert.equal(walkVerified(open), false);
+  assert.equal(walkVerified(report([], 2)), false, "walking nothing is not a success");
+  const named = report([{ journey: "work-history", screens: ["C-12"], people: [person("70001"), person("70002"), { legacyId: "70003", outcome: "error", code: "timeout" }] }], 2);
+  assert.ok(!walkReceipt(named).join("\n").includes("7000"), "no person id reaches the receipt");
+  assert.equal(closeSucceeded([{ screen: "C-12", journey: "work-history", change: "closed" }, { screen: "C-13", journey: "x", change: "already_closed" }]), true);
+  for (const change of ["not_verified", "built_open"] as const) {
+    assert.equal(closeSucceeded([{ screen: "C-12", journey: "work-history", change: "closed" }, { screen: "C-13", journey: "x", change }]), false, change);
+  }
+  assert.equal(closeSucceeded([]), false);
 });
 
 // ---- staging adapters --------------------------------------------------------------------
@@ -416,12 +469,104 @@ test("the staging app signs one person in for their pages only, and always remov
   const routes: RouteHandler[] = [];
   await stagingApp(fakeBrowser({ "/work/history": { status: 200 } }, [], routes), sessions, async () => "p").open("p-1", ["/work/history"]);
   assert.equal(routes.length, 1);
-  for (const [url, expected] of [[`${STAGING_ORIGIN}/assets/app.css`, "continue"], ["https://tracker.example/beacon", "abort"], ["https://staging.studenthub.co.evil.example/x", "abort"], ["not a url", "abort"]] as const) {
-    let did = "";
-    await routes[0]!({ request: () => ({ url: () => url }), abort: async () => { did = "abort"; }, continue: async () => { did = "continue"; } });
-    assert.equal(did, expected, url);
+  assert.equal(routes.length, 1, "the guard is installed on the context before any page opens");
+});
+
+/**
+ * A route as Playwright gives one: `fetch` with redirects off returns one hop, and
+ * `fetched` records every URL a hop was actually sent to.
+ */
+function fakeRoute(url: string, hops: Record<string, { status: number; location?: string }>, fetched: string[]) {
+  let did = "";
+  const route: RouteLike = {
+    request: () => ({ url: () => url }),
+    abort: async () => { did = "abort"; },
+    fetch: async ({ url: at }) => {
+      fetched.push(at);
+      const h = hops[at];
+      if (!h) throw new Error("connection refused");
+      return { status: () => h.status, headers: (): Record<string, string> => (h.location ? { location: h.location } : {}) };
+    },
+    fulfill: async () => { did = "fulfill"; },
+  };
+  return { route, did: () => did };
+}
+
+test("the staging guard follows every redirect hop itself and refuses one that leaves staging, before sending it", async () => {
+  const O = STAGING_ORIGIN;
+  const hops = {
+    [`${O}/work/history`]: { status: 200 },
+    [`${O}/same`]: { status: 302, location: "/work/history" },
+    [`${O}/off`]: { status: 302, location: "https://tracker.example/leak" },
+    [`${O}/port`]: { status: 307, location: "https://staging.studenthub.co:8443/x" },
+    [`${O}/chain`]: { status: 301, location: `${O}/off` },
+    [`${O}/loop`]: { status: 302, location: "/loop" },
+    [`${O}/bad`]: { status: 302, location: "http://[" },
+  };
+  for (const [path, outcome, lands] of [
+    ["/work/history", "fulfill", "/work/history"], ["/same", "fulfill", "/work/history"],
+    ["/off", "abort", null], ["/port", "abort", null], ["/chain", "abort", null], ["/loop", "abort", null], ["/bad", "abort", null], ["/gone", "abort", null],
+  ] as const) {
+    const landed = new Map<string, string>(), blocked = new Set<string>(), fetched: string[] = [];
+    const { route, did } = fakeRoute(`${O}${path}`, hops, fetched);
+    await stagingOnly(O, landed, blocked)(route);
+    assert.equal(did(), outcome, path);
+    assert.equal(landed.get(`${O}${path}`) ?? null, lands === null ? null : `${O}${lands}`, `${path} landed`);
+    assert.equal(blocked.has(`${O}${path}`), outcome === "abort", `${path} blocked`);
+    assert.ok(fetched.every((u) => new URL(u).origin === O), `${path}: no hop was sent off staging`);
+    assert.ok(fetched.length <= MAX_REDIRECT_HOPS + 1, `${path}: hops are bounded`);
   }
-  log.length = 0;
+  for (const url of ["https://tracker.example/beacon", "https://staging.studenthub.co.evil.example/x", "https://staging.studenthub.co:8443/x", "not a url"]) {
+    const fetched: string[] = [];
+    const { route, did } = fakeRoute(url, {}, fetched);
+    await stagingOnly(O, new Map(), new Set())(route);
+    assert.equal(did(), "abort", url);
+    assert.deepEqual(fetched, [], `${url}: never sent`);
+  }
+});
+
+test("the staging app reads where the guard landed, and a blocked hop is a page failure, not a timeout", async () => {
+  const O = STAGING_ORIGIN;
+  const hops: Record<string, { status: number; location?: string }> = {
+    [`${O}/work/history`]: { status: 200 }, [`${O}/expired`]: { status: 302, location: "/login" }, [`${O}/login`]: { status: 200 },
+    [`${O}/off`]: { status: 302, location: "https://tracker.example/leak" }, [`${O}/moved`]: { status: 302, location: "/work/history" },
+  };
+  // A browser that, like Playwright, sends each navigation through the context's route handler.
+  const browser: BrowserLike = {
+    newContext: async () => {
+      let handler: ((r: RouteLike) => Promise<void>) | undefined;
+      return {
+        route: async (_u, h) => { handler = h; },
+        addCookies: async () => undefined,
+        newPage: async () => {
+          let at = "";
+          return {
+            goto: async (url: string) => {
+              at = url;
+              const { route, did } = fakeRoute(url, hops, []);
+              await handler!(route);
+              if (did() === "abort") throw new Error("net::ERR_FAILED");
+              return { status: () => 200 };
+            },
+            content: async () => `<html>${new URL(at).pathname}</html>`,
+            url: () => at,
+          };
+        },
+        close: async () => undefined,
+      };
+    },
+  };
+  const sessions = { put: async () => undefined, delete: async () => undefined };
+  const app = stagingApp(browser, sessions, async () => "p");
+  assert.deepEqual(await app.open("p-1", ["/work/history"]), ["<html>/work/history</html>"]);
+  for (const [path, code] of [["/expired", "sign_in_failed"], ["/off", "page_failed"], ["/moved", "page_failed"]] as const) {
+    await assert.rejects(app.open("p-1", [path]), (e: unknown) => e instanceof WalkFailure && e.code === code, path);
+  }
+});
+
+test("a session is removed even when no browser context could be made", async () => {
+  const log: string[] = [];
+  const sessions = { put: async (r: { id: string; personId: string }) => { log.push(`put ${r.personId}`); }, delete: async () => { log.push("delete"); } };
   const broken: BrowserLike = { newContext: async () => { throw new Error("browser gone"); } };
   await assert.rejects(stagingApp(broken, sessions, async () => "p").open("p-1", ["/work/history"]), (e: unknown) => e instanceof WalkFailure && e.code === "page_failed");
   assert.deepEqual(log, ["put p-1", "delete"], "a session is removed even when no browser context could be made");
