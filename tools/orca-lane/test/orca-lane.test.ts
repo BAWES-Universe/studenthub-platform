@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acquireRun, CLAUDE_APP_ID, changesHeader, claim, claimKey, decide, dispatchHeader, holdsRun, parseRegister, readClaim, recoverRun, RegisterError, readyReceiptHeader, releaseRun, startReceiptHeader, type IssueComment } from "../src/lane.js";
+import { acquireRun, CLAUDE_APP_ID, changesHeader, claim, claimKey, decide, dispatchHeader, holdsRun, parseRegister, readClaim, recoverRun, RegisterError, readyReceiptHeader, releaseRun, startReceiptHeader, ticketBranch, type BranchPull, type IssueComment } from "../src/lane.js";
 import { heldClaims, pickNext } from "../src/poll.js";
 
 const BOT = "studenthub-universe";
@@ -17,9 +17,10 @@ const dispatch = (id: number, issue: number, gen: number, extra: Partial<IssueCo
   ({ id, body: `${dispatchHeader(BOT, issue, gen)}\n\n@orca-ide ${BOT}`, author: "BAWES", appId: CLAUDE_APP_ID, ...extra });
 // claims: [claimKey, saved dispatch, saved lease?] (lease defaults to the test row's lease for that issue)
 const leaseOf = (key: string): string => `\`docs/x-${key.split("--")[1]}.md\` only; no migrations`;
-const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: ([string, number] | [string, number, string])[] = []) =>
+const run = (markdown: string, comments: Record<number, IssueComment[]>, claims: ([string, number] | [string, number, string])[] = [], pulls: Record<string, BranchPull[]> = {}) =>
   decide({ rows: parseRegister(markdown), bot: BOT, now: NOW, comments: new Map(Object.entries(comments).map(([k, v]) => [Number(k), v])),
-    claims: new Map(claims.map(([key, dispatch, lease]) => [key, { dispatch, lease: lease ?? leaseOf(key), at: "t" }])) });
+    claims: new Map(claims.map(([key, dispatch, lease]) => [key, { dispatch, lease: lease ?? leaseOf(key), at: "t" }])),
+    pulls: new Map(Object.entries(pulls)) });
 const acquire = (dir: string) => (d: { claimKey: string }) => { const t = `t-${Math.random()}`; return acquireRun(dir, BOT, d.claimKey, NOW, t) === "acquired" ? t : null; };
 
 test("the live register on main parses", () => {
@@ -151,6 +152,8 @@ const ready = (id: number, issue: number, gen: number, sha: string, extra: Parti
   ({ id, body: `${readyReceiptHeader(BOT, issue, gen, sha)}\n\nPR #700 ready at ${sha}`, author: "BAWES", appId: null, ...extra });
 const changes = (id: number, issue: number, gen: number, sha: string, extra: Partial<IssueComment> = {}): IssueComment =>
   ({ id, body: `${changesHeader(BOT, issue, gen, sha)}\n\nBLOCK: fix the link`, author: "BAWES", appId: CLAUDE_APP_ID, ...extra });
+const prA = (head: string, extra: Partial<BranchPull> = {}): Record<string, BranchPull[]> =>
+  ({ [ticketBranch(BOT, "slug-581")]: [{ number: 700, head, base: "main", draft: false, ...extra }] });
 
 test("review wait: an interrupted active ticket still resumes first", () => {
   const md = register(row(581, 1, "`900`"), row(590, 1, "`950`"));
@@ -162,43 +165,64 @@ test("review wait: an interrupted active ticket still resumes first", () => {
   assert.equal(next?.changesRequested, null);
 });
 
-test("review wait: a ticket parked at its ready head lets the other ticket start", () => {
+test("review wait: a ticket parked at its PR's ready head lets the other ticket start, keeping its claim", () => {
   const md = register(row(581, 1, "`900`"), row(590, 1, "`950`"));
   const comments = { 581: [dispatch(900, 581, 1), ready(910, 581, 1, HEAD_1)], 590: [dispatch(950, 590, 1)] };
-  const decisions = run(md, comments, [[claimKey(BOT, 581, 1), 900]]);
+  const decisions = run(md, comments, [[claimKey(BOT, 581, 1), 900]], prA(HEAD_1));
   assert.match(JSON.stringify(decisions.find((d) => d.issue === 581)), new RegExp(`waiting for review at ${HEAD_1}`));
   assert.equal(pickNext(decisions, () => "claimed", () => "tok")?.issue, 590);
-  // The parked ticket's claim is kept, so it can never be started a second time.
-  assert.equal(readyIsKept(md, comments), true);
+  assert.ok(decisions.every((d) => !(d.issue === 581 && d.action === "start")));
 });
 
-const readyIsKept = (md: string, comments: Record<number, IssueComment[]>): boolean =>
-  run(md, comments, [[claimKey(BOT, 581, 1), 900]]).every((d) => !(d.issue === 581 && d.action === "start"));
-
-test("review wait: only Claude's exact-head changes request resumes the same PR, never a second start", () => {
+test("review wait: only Claude's changes request at the PR's current head resumes the same PR, never a second start", () => {
   const md = register(row(581, 1, "`900`"), row(590, 1, "`950`"));
   const base = [dispatch(900, 581, 1), { id: 905, body: `${startReceiptHeader(BOT, 581, 1)}\n\ndispatch 900`, author: "BAWES", appId: null }, ready(910, 581, 1, HEAD_1)];
-  const pick = (extra: IssueComment[]) => {
-    const decisions = run(md, { 581: [...base, ...extra], 590: [dispatch(950, 590, 1)] }, [[claimKey(BOT, 581, 1), 900]]);
+  const pick = (extra: IssueComment[], pulls = prA(HEAD_1)) => {
+    const decisions = run(md, { 581: [...base, ...extra], 590: [dispatch(950, 590, 1)] }, [[claimKey(BOT, 581, 1), 900]], pulls);
     return { decisions, next: pickNext(decisions, () => "claimed", () => "tok") };
   };
-  // Trusted, exact head, after the ready receipt: resume A on its claim, with the comment to address.
+  // Trusted, exact head, after the ready receipt, PR still at that head: resume A on its claim.
   const sent = pick([changes(920, 581, 1, HEAD_1)]);
   assert.equal(sent.next?.issue, 581);
   assert.equal(sent.next?.action, "resume");
   assert.equal(sent.next?.startReceiptPosted, true);
-  assert.deepEqual(sent.next?.changesRequested, { head: HEAD_1, comment: 920 });
-  // None of these resume A: a different head, not Claude's app, or written before the ready receipt.
+  assert.deepEqual(sent.next?.changesRequested, { head: HEAD_1, pull: 700, comment: 920 });
+  // None of these resume A: a different head, not Claude's app, or written before the ready receipt, or for another issue.
   for (const bad of [changes(920, 581, 1, HEAD_2), changes(920, 581, 1, HEAD_1, { appId: null }), changes(908, 581, 1, HEAD_1), changes(920, 590, 1, HEAD_1)]) {
     assert.equal(pick([bad]).next?.issue, 590);
   }
   // A new ready receipt at the fixed head parks A again; the old changes request no longer counts.
-  assert.equal(pick([changes(920, 581, 1, HEAD_1), ready(930, 581, 1, HEAD_2)]).next?.issue, 590);
+  assert.equal(pick([changes(920, 581, 1, HEAD_1), ready(930, 581, 1, HEAD_2)], prA(HEAD_2)).next?.issue, 590);
   // A ready receipt written through Claude's app can't park or unpark anything.
   assert.equal(pick([ready(915, 581, 1, HEAD_2, { appId: CLAUDE_APP_ID })]).next?.issue, 590);
   // With the claim lost, a parked ticket is skipped rather than started twice.
-  const lost = run(md, { 581: [...base, changes(920, 581, 1, HEAD_1)], 590: [dispatch(950, 590, 1)] });
+  const lost = run(md, { 581: [...base, changes(920, 581, 1, HEAD_1)], 590: [dispatch(950, 590, 1)] }, [], prA(HEAD_1));
   assert.match(JSON.stringify(lost.find((d) => d.issue === 581)), /never start twice/);
+});
+
+test("review wait: a stale head, a missing or extra PR, a draft or another base holds the ticket for explicit review", () => {
+  const md = register(row(581, 1, "`900`"), row(590, 1, "`950`"));
+  const comments = { 581: [dispatch(900, 581, 1), ready(910, 581, 1, HEAD_1), changes(920, 581, 1, HEAD_1)], 590: [dispatch(950, 590, 1)] };
+  const branch = ticketBranch(BOT, "slug-581");
+  const cases: [Record<string, BranchPull[]>, RegExp][] = [
+    [prA(HEAD_2), new RegExp(`PR #700 head is ${HEAD_2}`)],
+    [{}, /0 open PRs/],
+    [{ [branch]: [] }, /0 open PRs/],
+    [{ [branch]: [...prA(HEAD_1)[branch]!, { number: 701, head: HEAD_1, base: "main", draft: false }] }, /2 open PRs/],
+    [prA(HEAD_1, { draft: true }), /is a draft/],
+    [prA(HEAD_1, { base: "release" }), /into release/],
+  ];
+  for (const [pulls, reason] of cases) {
+    const decisions = run(md, comments, [[claimKey(BOT, 581, 1), 900]], pulls);
+    const a = decisions.find((d) => d.issue === 581)!;
+    assert.equal(a.action, "skip");
+    assert.match(JSON.stringify(a), reason);
+    assert.match(JSON.stringify(a), /held for Claude's review/);
+    assert.equal(pickNext(decisions, () => "claimed", () => "tok")?.issue, 590);
+  }
+  // A ready receipt from before the bound dispatch doesn't count at all: the ticket is not in review.
+  const early = run(md, { 581: [ready(890, 581, 1, HEAD_1), dispatch(900, 581, 1)], 590: [dispatch(950, 590, 1)] }, [[claimKey(BOT, 581, 1), 900]]);
+  assert.equal(early.find((d) => d.issue === 581)!.action, "resume");
 });
 
 test("a resume stays bound to the dispatch its claim saved", () => {

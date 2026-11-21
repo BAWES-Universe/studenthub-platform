@@ -42,7 +42,7 @@ export interface WorkDecision {
   readonly startReceiptHeader: string;
   readonly startReceiptPosted: boolean;
   /** Set when a parked ticket was sent back: address this changes comment on the same branch and PR, then post a new ready receipt. */
-  readonly changesRequested: { readonly head: string; readonly comment: number } | null;
+  readonly changesRequested: { readonly head: string; readonly pull: number; readonly comment: number } | null;
 }
 
 export interface ObserveDecision {
@@ -137,22 +137,48 @@ export const changesHeader = (bot: string, issue: number, gen: number, sha: stri
 const SHA = "[0-9a-f]{40}";
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** The open PRs on a ticket's branch, as GitHub reports them now. */
+export interface BranchPull { readonly number: number; readonly head: string; readonly base: string; readonly draft: boolean }
+
+export const ticketBranch = (bot: string, slug: string): string => `orca/${bot}/${slug}`;
+
+export type ReviewWait =
+  | { readonly state: "parked"; readonly head: string }
+  | { readonly state: "held"; readonly reason: string }
+  | { readonly state: "sent-back"; readonly head: string; readonly pull: number; readonly changes: number };
+
 /**
  * Review wait. Once the bot posts a ready receipt naming its PR's exact head, the
  * ticket is parked: not eligible for work, but its claim, dispatch, lease and PR
  * stay. Only a later changes comment from Claude's app naming that same head
- * resumes it. A ready receipt is the bot's own (never Claude's app); the latest
- * one wins. Returns null when the ticket is not parked.
+ * resumes it, and only while the one open, ready PR on the ticket's branch into
+ * main still has that head. A ready receipt counts only after the bound dispatch,
+ * is the bot's own (never Claude's app), and the latest one wins. A missing PR, a
+ * second PR, a draft, another base or a moved head holds the ticket until Claude
+ * reviews it explicitly. Returns null when the ticket is not in review.
  */
-export function reviewWait(comments: readonly IssueComment[], bot: string, issue: number, gen: number): { readonly head: string; readonly changes: number | null } | null {
+export function reviewWait(input: {
+  readonly comments: readonly IssueComment[];
+  readonly bot: string;
+  readonly issue: number;
+  readonly gen: number;
+  readonly dispatch: number;
+  readonly pulls: readonly BranchPull[] | undefined;
+}): ReviewWait | null {
+  const { bot, issue, gen } = input;
   const first = (c: IssueComment): string => c.body.split("\n")[0]!.trim();
   const ready = new RegExp(`^${escape(readyReceiptHeader(bot, issue, gen, ""))}(${SHA})$`);
-  const sorted = [...comments].sort((a, b) => a.id - b.id);
-  const lastReady = sorted.filter((c) => c.author === DISPATCH_AUTHOR && c.appId !== CLAUDE_APP_ID && ready.test(first(c))).at(-1);
+  const sorted = [...input.comments].sort((a, b) => a.id - b.id);
+  const lastReady = sorted.filter((c) => c.id > input.dispatch && c.author === DISPATCH_AUTHOR && c.appId !== CLAUDE_APP_ID && ready.test(first(c))).at(-1);
   if (!lastReady) return null;
   const head = ready.exec(first(lastReady))![1]!;
+  const pulls = input.pulls ?? [];
+  if (pulls.length !== 1) return { state: "held", reason: `ready at ${head} but ${pulls.length} open PRs on the branch: held for Claude's review` };
+  const pull = pulls[0]!;
+  if (pull.base !== "main" || pull.draft) return { state: "held", reason: `ready at ${head} but PR #${pull.number} is ${pull.draft ? "a draft" : `into ${pull.base}`}: held for Claude's review` };
+  if (pull.head !== head) return { state: "held", reason: `ready at ${head} but PR #${pull.number} head is ${pull.head}: held for Claude's review` };
   const changes = sorted.find((c) => c.id > lastReady.id && c.author === DISPATCH_AUTHOR && c.appId === CLAUDE_APP_ID && first(c) === changesHeader(bot, issue, gen, head));
-  return { head, changes: changes?.id ?? null };
+  return changes ? { state: "sent-back", head, pull: pull.number, changes: changes.id } : { state: "parked", head };
 }
 
 const posted = (comments: readonly IssueComment[], header: string): boolean =>
@@ -174,6 +200,8 @@ export function decide(input: {
   readonly now: Date;
   readonly comments: ReadonlyMap<number, readonly IssueComment[]>;
   readonly claims: ReadonlyMap<string, ClaimRecord>;
+  /** Open PRs per ticket branch (ticketBranch). Only needed once a ticket has a ready receipt; missing means none. */
+  readonly pulls?: ReadonlyMap<string, readonly BranchPull[]>;
 }): Decision[] {
   const decisions: Decision[] = [];
   const latestGen = new Map<number, number>();
@@ -203,14 +231,15 @@ export function decide(input: {
     const held = input.claims.get(key);
     if (held !== undefined && held.dispatch !== comment.id) { skip(`claim is bound to dispatch ${held.dispatch}, not ${comment.id}`); continue; }
     if (held !== undefined && held.lease !== row.lease) { skip("lease changed since the claim was taken"); continue; }
-    const wait = reviewWait(issueComments, input.bot, row.issue, row.gen);
-    if (wait && wait.changes === null) { skip(`waiting for review at ${wait.head}`); continue; }
+    const wait = reviewWait({ comments: issueComments, bot: input.bot, issue: row.issue, gen: row.gen, dispatch: comment.id, pulls: input.pulls?.get(ticketBranch(input.bot, row.slug)) });
+    if (wait?.state === "held") { skip(wait.reason); continue; }
+    if (wait?.state === "parked") { skip(`waiting for review at ${wait.head}`); continue; }
     if (wait && held === undefined) { skip("ready receipt posted but no claim held here: never start twice"); continue; }
     const header = startReceiptHeader(input.bot, row.issue, row.gen);
     decisions.push({
       issue: row.issue, gen: row.gen, action: held === undefined ? "start" : "resume", dispatch: comment.id, slug: row.slug, claimKey: key, lease: row.lease,
       startReceiptHeader: header, startReceiptPosted: posted(issueComments, header),
-      changesRequested: wait ? { head: wait.head, comment: wait.changes! } : null,
+      changesRequested: wait?.state === "sent-back" ? { head: wait.head, pull: wait.pull, comment: wait.changes } : null,
     });
   }
   return decisions;

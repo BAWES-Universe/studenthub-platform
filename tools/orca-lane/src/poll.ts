@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { acquireRun, claim, type ClaimRecord, decide, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
+import { acquireRun, type BranchPull, claim, type ClaimRecord, decide, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, ticketBranch, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
 
 const REPO = "BAWES-Universe/studenthub-platform";
 const REGISTER = "docs/lanes/orca/REGISTER.md";
@@ -82,6 +82,15 @@ function comments(issue: number): IssueComment[] {
   });
 }
 
+/** Open PRs whose head is the ticket branch in this repository. */
+function branchPulls(branch: string): BranchPull[] {
+  const owner = REPO.split("/")[0]!;
+  const raw = execFileSync("gh", ["api", "--paginate", `repos/${REPO}/pulls?state=open&per_page=100&head=${owner}:${branch}`,
+    "--jq", ".[] | {number, head: .head.sha, base: .base.ref, draft, headRepo: .head.repo.full_name}"], { encoding: "utf8" });
+  return raw.split("\n").filter(Boolean).map((line) => JSON.parse(line) as BranchPull & { headRepo: string })
+    .filter((pull) => pull.headRepo === REPO).map(({ number, head, base, draft }) => ({ number, head, base, draft }));
+}
+
 export function heldClaims(dir: string): Map<string, ClaimRecord> {
   const held = new Map<string, ClaimRecord>();
   let entries: string[] = [];
@@ -113,9 +122,11 @@ function main(): void {
   const mine = rows.filter((row) => row.bot === bot && row.state === "active");
   const byIssue = new Map<number, IssueComment[]>();
   for (const issue of new Set(mine.map((row) => row.issue))) byIssue.set(issue, comments(issue));
+  const pulls = new Map<string, BranchPull[]>();
+  for (const branch of new Set(mine.map((row) => ticketBranch(bot, row.slug)))) pulls.set(branch, branchPulls(branch));
   const now = new Date();
   const at = now.toISOString();
-  const decisionsFor = (): Decision[] => decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims) });
+  const decisionsFor = (): Decision[] => decide({ rows, bot, now, comments: byIssue, claims: heldClaims(claims), pulls });
 
   if (mode === "check") {
     // A running ticket always holds its claim, so only a matching resume (same dispatch, same lease) passes.
