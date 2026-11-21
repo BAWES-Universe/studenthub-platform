@@ -620,15 +620,16 @@ export function narrowQueueScope(config, filePath, io = {}) {
   // SHU-321: the committed queue_config_review lane is the one exception. Once
   // the queue is done the timer may arm it on a queue config pull request, so
   // a record targeting that lane, and no other review lane, narrows to it.
-  if (validateActivationRecord(record).ok && record.target_issue_id === queueConfigReviewLane(config)) {
+  // M18 G2: every review slot's lane is that lane's equal.
+  if (validateActivationRecord(record).ok && queueConfigReviewLanes(config).includes(record.target_issue_id)) {
     return { ...config, dispatch_scope: { issue_ids: [record.target_issue_id] } };
   }
   if (!validateActivationRecord(record).ok || !queue.ids.includes(record.target_issue_id)) return config;
   return { ...config, dispatch_scope: { issue_ids: [record.target_issue_id] } };
 }
 
-function queueConfigReviewLane(config) {
-  try { return resolveQueueConfigReview(config)?.lane ?? null; } catch { return null; }
+function queueConfigReviewLanes(config) {
+  try { return resolveQueueConfigReview(config)?.slotLanes ?? []; } catch { return []; }
 }
 
 // ---------------------------------------------------------------------------

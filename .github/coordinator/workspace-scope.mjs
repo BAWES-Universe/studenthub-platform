@@ -153,8 +153,14 @@ export function resolveReviewOnlyLane(config = {}, issueId) {
 // lane's pull request has an independent reviewer without a relay.
 export const QUEUE_CONFIG_REVIEW_KEYS = Object.freeze(["label", "lane", "max_heads_per_pr"]);
 // M18 G1: publish_status false keeps a review's verdict off GitHub; absent is on.
-export const QUEUE_CONFIG_REVIEW_OPTIONAL_KEYS = Object.freeze(["code_label", "product_label", "publish_status"]);
+// M18 G2: max_parallel (1 to MAX_REVIEW_SLOTS, absent is 1) is how many reviews
+// may run at once, and slot_lanes names one standing review card per slot,
+// the policy's lane first. Each slot keeps its own card, so every card still
+// has one writer of its receipts and one run at a time. slot_lanes may be left
+// out only with one slot, which is then the policy's lane alone.
+export const QUEUE_CONFIG_REVIEW_OPTIONAL_KEYS = Object.freeze(["code_label", "product_label", "publish_status", "max_parallel", "slot_lanes"]);
 export const MAX_QUEUE_CONFIG_REVIEW_HEADS = 10;
+export const MAX_REVIEW_SLOTS = 8;
 const LABEL_RE = /^[a-z0-9][a-z0-9:._-]{0,49}$/;
 export function resolveQueueConfigReview(config = {}) {
   const policy = config?.queue_config_review;
@@ -183,7 +189,24 @@ export function resolveQueueConfigReview(config = {}) {
   if (!Number.isInteger(policy.max_heads_per_pr) || policy.max_heads_per_pr < 1 || policy.max_heads_per_pr > MAX_QUEUE_CONFIG_REVIEW_HEADS) {
     throw new Error(`queue_config_review.max_heads_per_pr must be 1 to ${MAX_QUEUE_CONFIG_REVIEW_HEADS}`);
   }
-  return Object.freeze({ lane: policy.lane, label: policy.label, codeLabel: policy.code_label ?? null, productLabel: policy.product_label ?? null, maxHeadsPerPr: policy.max_heads_per_pr });
+  const maxParallel = Object.hasOwn(policy, "max_parallel") ? policy.max_parallel : 1;
+  if (!Number.isInteger(maxParallel) || maxParallel < 1 || maxParallel > MAX_REVIEW_SLOTS) {
+    throw new Error(`queue_config_review.max_parallel must be 1 to ${MAX_REVIEW_SLOTS}`);
+  }
+  if (Object.hasOwn(policy, "slot_lanes") && !Object.hasOwn(policy, "max_parallel")) {
+    throw new Error("queue_config_review.slot_lanes needs max_parallel beside it");
+  }
+  if (maxParallel > 1 && !Object.hasOwn(policy, "slot_lanes")) {
+    throw new Error("queue_config_review.max_parallel above 1 needs slot_lanes, one standing review card per slot");
+  }
+  const slotLanes = Object.hasOwn(policy, "slot_lanes") ? policy.slot_lanes : [policy.lane];
+  if (!Array.isArray(slotLanes) || slotLanes.length !== maxParallel || slotLanes[0] !== policy.lane
+      || new Set(slotLanes).size !== slotLanes.length
+      || slotLanes.some((lane) => typeof lane !== "string" || !resolveReviewOnlyLane(config, lane))) {
+    throw new Error("queue_config_review.slot_lanes must name max_parallel distinct committed review-only lanes, the policy's lane first");
+  }
+  return Object.freeze({ lane: policy.lane, label: policy.label, codeLabel: policy.code_label ?? null, productLabel: policy.product_label ?? null,
+    maxHeadsPerPr: policy.max_heads_per_pr, maxParallel, slotLanes: Object.freeze([...slotLanes]) });
 }
 
 // Repo-mode paths never reach what the host's dependency install owns.
