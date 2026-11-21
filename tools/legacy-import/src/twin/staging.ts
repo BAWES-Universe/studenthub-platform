@@ -110,6 +110,8 @@ export function stagingApp(browser: BrowserLike, sessions: SessionPort, people: 
           if (!path.startsWith("/") || path.startsWith("//")) throw new WalkFailure("page_failed");
           let response;
           try { response = await page.goto(`${origin}${path}`, { waitUntil: "load", timeout: 30_000 }); } catch { throw new WalkFailure("timeout"); }
+          // The work routes answer a request without a valid session with 401, not a redirect.
+          if (response?.status() === 401) throw new WalkFailure("sign_in_failed");
           if (!response || response.status() !== 200) throw new WalkFailure("page_failed");
           const final = new URL(page.url());
           // Redirects are followed: a final page outside staging is never read.
