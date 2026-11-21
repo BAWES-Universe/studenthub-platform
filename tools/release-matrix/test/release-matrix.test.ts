@@ -438,15 +438,15 @@ test("seed refuses invalid sources, so a mistyped id cannot drop a row and its e
   assert.deepEqual(ok.matrix!.screens["U-04"]!.gates.built, { state: "done", evidence: "PR #1 at 0123abcd" });
 });
 
-test("M-5 is at requirement r2 (the work table map), so evidence recorded for r1 is stale", () => {
+test("M-5 is at requirement r3 (the M-5 rules on record), so evidence recorded for r2 is stale", () => {
   const contract = loadContract(root);
   const inventory = loadInventory(root);
-  assert.equal(requirementSubject("import", "M-5"), "requirement r2");
+  assert.equal(requirementSubject("import", "M-5"), "requirement r3");
   assert.equal(requirementSubject("import", "M-4"), "requirement r1");
   const matrix = loadMatrix(root);
-  assert.equal(matrix.imports["M-5"]!.subject, "requirement r2");
+  assert.equal(matrix.imports["M-5"]!.subject, "requirement r3");
   const previous = clone(matrix);
-  (previous.imports["M-5"] as { subject: string }).subject = "requirement r1";
+  (previous.imports["M-5"] as { subject: string }).subject = "requirement r2";
   (previous.imports["M-5"]!.gates as Record<string, unknown>).built = { state: "done", evidence: "PR #9 at abcdef1" };
   assert.deepEqual(rules(checkMatrix(previous, contract, inventory)), ["matrix.row.stale"]);
   assert.deepEqual(seedMatrix(contract, inventory, previous).imports["M-5"]!.gates.built, { state: "open" });
