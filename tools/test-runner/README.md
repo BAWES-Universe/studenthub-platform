@@ -31,7 +31,7 @@ Patterns describe conventions, rather than shell commands to run:
 | `assertionTests` | TypeScript `.test.ts` files under `packages/actor-assertion/test` |
 | `exerciseTests` | `tools/observability/synthetic-exercise.mjs`, when present |
 | `nodeTests` | Compiled `.test.js` under `dist/{apps,packages,tools}/…/test/…`, plus source `.test.mjs` under apps/packages test directories; exceptions below |
-| `mutationTests` | Apps/packages test scripts whose basename contains `mutations` and ends in `.mjs`, excluding `.test.mjs` and the database package |
+| `mutationTests` | Apps/packages scripts directly inside a `test` directory whose basename contains `mutations` and ends in `.mjs`, excluding `.test.mjs` and the database package |
 | `documentTests` | Private-document source `.test.mjs` files, excluding `r2-postgres.test.mjs` |
 | `deploymentTests` | `.test.mjs` files below `deploy/coolify/test` |
 | `dbTests` | Compiled database tests whose path starts `dist/packages/db/test/postgres-` |
@@ -110,6 +110,7 @@ Checks performed on 2026-11-22 against the source at this PR's base:
 | `npm ci` | Passed in WSL with Node 22 |
 | `npm run typecheck` | Passed on Windows with Node 24 |
 | `npm test` on Windows | Build passed; runner tests failed on CRLF-sensitive CI workflow parsing and a denied symlink operation; the full plan did not finish |
+| `npm test` in WSL | Passed in full against the initial base; subsequent main integration and final-head CI are detailed in PR Evidence |
 | `node --test tools/test-runner/test/*.test.mjs` in WSL | Passed: 22 tests |
 | `node tools/test-runner/test/discover-mutations.mjs` in WSL | Passed |
 | Relative-link/base-path verification | Passed: 20 links, 10 distinct source files |
