@@ -798,7 +798,9 @@ test("SHU-322 B19: a refused install writes a finished status, so the watch neve
   assert.equal(status.run_id, out.activation_id);
   assert.equal(status.kind, "install");
   assert.equal(status.outcome, "NEEDS_OWNER");
-  assert.equal(status.queue.length > 0, true);
+  // The installed queue is shown, its landed cards as landed (M18).
+  assert.equal(status.queue.length + status.landed.length > 0, true);
+  assert.equal(status.queue.some((id) => status.landed.includes(id)), false);
   assert.equal(status.trigger, "timer");
   assert.equal(status.card, null);
   assert.equal(status.revision, R);
