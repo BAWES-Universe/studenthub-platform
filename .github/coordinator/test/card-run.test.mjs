@@ -5037,6 +5037,21 @@ test("M18 status: landed cards in the installed queue are shown as landed, not a
   assert.ok(before.includes("Queue: SHU-301, SHU-302.") && !before.some((line) => line.startsWith("Landed")), before.join("\n"));
 });
 
+test("M18 status: a refused run's status also lists landed cards as landed, not as queued", async () => {
+  // Every status writer splits the queue, so a later refusal does not show a
+  // landed card as queued again.
+  const host = fakeHost({ config: queueConfig(), card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: { id: "someone" }, delegate: null } });
+  host.files.set(handLandRecord(PATHS, "SHU-301"), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, pr: 77, reviewed_head: "2".repeat(40),
+    merge_commit: "3".repeat(40), recorded_at: "2026-10-09T15:00:00.000Z" })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  const { output } = await main(["auto"], host.io, PATHS);
+  assert.equal(output.outcome, "NOT_STARTED", JSON.stringify(output));
+  assert.equal(output.card, "SHU-305");
+  const status = readStatus(host.io, PATHS);
+  assert.equal(status.outcome, "NOT_STARTED");
+  assert.deepEqual(status.queue, ["SHU-305"]);
+  assert.deepEqual(status.landed, ["SHU-301"]);
+});
+
 test("SHU-86 0d: the status the watch shows is built from validated fields only", () => {
   const host = watchHost({ status: watchStatus({ card: "SHU-301 <script>", queue: ["SHU-1", "x\n-->", 7], step: "hacked", outcome: "lin-secret-value",
     land: "MERGED\nAlert", revision: "nope", ticks: -1, last_tick_at: "soon", reason: "token lin-secret-value", needs_owner: "yes" }) });

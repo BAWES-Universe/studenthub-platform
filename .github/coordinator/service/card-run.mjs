@@ -1129,19 +1129,9 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     // The invocation id ties the status to the unit start the outside watch
     // reads, so a run it alerted before this run wrote a status is matched.
     const invocation = typeof io.invocation === "function" ? io.invocation() : null;
-    // The watch shows the queue: cards with a landing already on record (a
-    // timer, repair or recorded hand landing; no GitHub read) are listed as
-    // landed, not as queued, since the selector passes over them.
-    const queued = [];
-    const landedQueue = [];
-    for (const id of (config.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string")) {
-      let landed = false;
-      try { landed = (await cardLanded(io, paths, id)).landed === true; } catch { /* shown as queued */ }
-      (landed ? landedQueue : queued).push(id);
-    }
     const status = createStatus({ io, paths, run: { run_id: plan.record.activation_id,
       invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: plan.id, kind: plan.kind, trigger, revision,
-      queue: queued, landed: landedQueue } });
+      ...(await statusQueue(io, paths, config)) } });
     const progress = () => {
       const seen = watch ? watch.summary(io.now().getTime()) : null;
       return { ticks: ticks.length, last_tick_at: ticks.at(-1)?.at ?? null, armed_at: armedAt, watching: watch !== null,
@@ -1784,7 +1774,7 @@ async function repairInterrupted({ io, paths, limits, config, revision, next, sk
   const invocation = typeof io.invocation === "function" ? io.invocation() : null;
   createStatus({ io, paths, run: { run_id: summary.activation_id,
     invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: next.card, kind: "card", trigger: "timer",
-    revision, queue: (config?.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string") } })
+    revision, ...(await statusQueue(io, paths, config)) } })
     .write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "REPAIR_INTERRUPTED", land: null,
       reverted: false, needs_owner: summary.needs_owner });
   let credentials = null;
@@ -2079,7 +2069,7 @@ async function afterQueueDone({ io, paths, limits, config, revision, done, skip 
   // The status says this start finished, as a refused run's does (C44).
   // M11: a code install that put the installed revision back ends the same
   // way: nothing new runs, and the owner was told once by its report.
-  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(install.result?.outcome)) installRefusedStatus({ io, paths, config, result: install.result });
+  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(install.result?.outcome)) await installRefusedStatus({ io, paths, config, result: install.result });
   if (install.result) return install.result;
   if (install.paused) return skip("PAUSED", install.reason);
   const review = await autoReview({ io, paths, limits, config, revision, done, skip });
@@ -2100,20 +2090,35 @@ async function drainForInstall({ io, paths, limits, config, revision, skip }) {
     return null;
   }
   const ended = install.result;
-  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(ended?.outcome)) installRefusedStatus({ io, paths, config, result: ended });
+  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(ended?.outcome)) await installRefusedStatus({ io, paths, config, result: ended });
   if (ended) return ended;
   if (install.paused) return skip("PAUSED", install.reason);
   if (install.skipped === "INSTALL_HOST_BUSY") return skip("INSTALL_PENDING", `main's install waits for the host to be idle: ${install.reason}`);
   return null;
 }
 
+// The queue every status shows: cards with a landing already on record (a
+// timer, repair or recorded hand landing; no GitHub read) are listed as
+// landed, not as queued, since the selector passes over them. Every status
+// writer uses this, so no later status shows a landed card as queued again.
+async function statusQueue(io, paths, config) {
+  const queue = [];
+  const landed = [];
+  for (const id of (config?.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string")) {
+    let done = false;
+    try { done = (await cardLanded(io, paths, id)).landed === true; } catch { /* shown as queued */ }
+    (done ? landed : queue).push(id);
+  }
+  return { queue, landed };
+}
+
 // A refused self-install's finished status: no card, nothing armed, and the
 // owner already told once by its report.
-function installRefusedStatus({ io, paths, config, result }) {
+async function installRefusedStatus({ io, paths, config, result }) {
   const invocation = typeof io.invocation === "function" ? io.invocation() : null;
   createStatus({ io, paths, run: { run_id: result.activation_id,
     invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: null, kind: "install", trigger: "timer",
-    revision: result.revision, queue: (config?.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string") } })
+    revision: result.revision, ...(await statusQueue(io, paths, config)) } })
     .write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: result.outcome, land: null,
       reverted: false, needs_owner: true });
 }
@@ -2253,7 +2258,7 @@ async function notStarted({ io, paths, limits, error, config, result }) {
   const invocation = typeof io.invocation === "function" ? io.invocation() : null;
   createStatus({ io, paths, run: { run_id: summary.activation_id,
     invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: summary.card, kind: summary.kind, trigger: "timer",
-    revision: summary.revision, queue: (config?.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string") } })
+    revision: summary.revision, ...(await statusQueue(io, paths, config)) } })
     .write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "NOT_STARTED", land: null,
       reverted: false, needs_owner: needsOwner(summary) });
   let credentials = null;
