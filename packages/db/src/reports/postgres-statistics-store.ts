@@ -33,6 +33,17 @@ const HIRING = `SELECT
   (SELECT count(*)::int FROM work_assignments WHERE LEAST(COALESCE(end_date, $1::date), $1::date) - start_date > 365) AS retained,
   (SELECT count(*)::int FROM recruit_invitations) AS invitations`;
 
+// $1 the months asked for (YYYY-MM), $2 the first day of the oldest, $3 the first day after the newest, all in Kuwait time.
+const INVITATIONS = `SELECT to_char(k.at, 'YYYY-MM') AS month,
+    count(*) FILTER (WHERE i.status IN ('sent','seen'))::int AS "noAnswer",
+    count(*) FILTER (WHERE i.status = 'accepted')::int AS accepted,
+    count(*) FILTER (WHERE i.status = 'declined')::int AS declined,
+    count(*) FILTER (WHERE i.status = 'withdrawn')::int AS withdrawn
+  FROM recruit_invitations i CROSS JOIN LATERAL (SELECT i.created_at AT TIME ZONE 'Asia/Kuwait' AS at) k
+  WHERE i.created_at >= ($2::date::timestamp AT TIME ZONE 'Asia/Kuwait') AND i.created_at < ($3::date::timestamp AT TIME ZONE 'Asia/Kuwait')
+    AND to_char(k.at, 'YYYY-MM') = ANY($1::text[])
+  GROUP BY 1 ORDER BY 1`;
+
 // $1 is the Asia/Kuwait day. Requests keep legacy's KWD filter (no currency on file means KWD).
 const KWD_REQUESTS = "recruit_requests r LEFT JOIN organization_commercial_terms t ON t.org_id = r.org_id AND t.field = 'currency_code'";
 const OVERVIEW = `SELECT
@@ -92,6 +103,14 @@ export class PostgresStatisticsStore {
   async hiring(day: string): Promise<StatisticsHiringCounts> {
     if (!DAY.test(day)) throw new RangeError("invalid day");
     return (await this.#pool.query<StatisticsHiringCounts>(HIRING, [day])).rows[0]!;
+  }
+
+  /** Invitations sent in each of `months` (`YYYY-MM`, Kuwait time), by how they stand now; months with none are left out. */
+  async invitationsByMonth(months: readonly string[]): Promise<{ month: string; noAnswer: number; accepted: number; declined: number; withdrawn: number }[]> {
+    if (months.length === 0 || !months.every(m => /^\d{4}-(0[1-9]|1[0-2])$/.test(m))) throw new RangeError("invalid months");
+    const sorted = [...months].sort(), last = sorted[sorted.length - 1]!.split("-").map(Number) as [number, number];
+    const after = last[1] === 12 ? `${last[0] + 1}-01-01` : `${last[0]}-${String(last[1] + 1).padStart(2, "0")}-01`;
+    return (await this.#pool.query(INVITATIONS, [months, `${sorted[0]}-01`, after])).rows;
   }
 
   /** Top-level companies, and placements ended in `months` (`YYYY-MM`) up to one Asia/Kuwait day, both from one snapshot. */
