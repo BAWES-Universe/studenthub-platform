@@ -321,6 +321,11 @@
           "route": "/recruit/jobs",
           "test": "apps/gateway/test/recruit-jobs-http.test.ts",
           "via": "handler"
+        },
+        {
+          "route": "/recruit/jobs/:jobId",
+          "test": "apps/gateway/test/recruit-jobs-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -349,17 +354,10 @@
     "C-08": {
       "lane": "recruit",
       "subject": "`/invitations`, `/invitations/:id`",
-      "served": [
-        {
-          "route": "/recruit/invitations",
-          "test": "apps/gateway/test/recruit-invitations-http.test.ts",
-          "via": "handler"
-        }
-      ],
       "gates": {
         "built": {
-          "state": "done",
-          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /recruit/invitations list with accept/decline; no invitation detail page"
         },
         "verified": {
           "state": "open"
@@ -369,17 +367,10 @@
     "C-09": {
       "lane": "recruit",
       "subject": "`/interviews`, `/interviews/:id`",
-      "served": [
-        {
-          "route": "/recruit/my-interviews",
-          "test": "apps/gateway/test/recruit-interviews-http.test.ts",
-          "via": "handler"
-        }
-      ],
       "gates": {
         "built": {
-          "state": "done",
-          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /recruit/my-interviews list; no interview detail page"
         },
         "verified": {
           "state": "open"
@@ -392,6 +383,11 @@
       "served": [
         {
           "route": "/work/assignment",
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/work/assignment/:assignmentId",
           "test": "apps/gateway/test/work-pages.test.ts",
           "via": "handler"
         }
@@ -434,6 +430,11 @@
           "route": "/work/history",
           "test": "apps/gateway/test/work-pages.test.ts",
           "via": "handler"
+        },
+        {
+          "route": "/work/history/:date",
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -452,6 +453,11 @@
       "served": [
         {
           "route": "/work/appeals",
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/work/appeals/:appealId",
           "test": "apps/gateway/test/work-pages.test.ts",
           "via": "handler"
         }
@@ -618,6 +624,11 @@
           "route": "/recruit/requests",
           "test": "apps/gateway/test/recruit-requests-http.test.ts",
           "via": "handler"
+        },
+        {
+          "route": "/recruit/requests/:requestId",
+          "test": "apps/gateway/test/recruit-requests-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -730,6 +741,11 @@
           "route": "/workspace/my-stores",
           "test": "apps/gateway/test/store-manager.test.ts",
           "via": "gateway"
+        },
+        {
+          "route": "/workspace/stores/:storeId",
+          "test": "apps/gateway/test/store-manager.test.ts",
+          "via": "gateway"
         }
       ],
       "gates": {
@@ -816,17 +832,10 @@
     "A-01": {
       "lane": "people",
       "subject": "`/people/candidates`, `/:id`",
-      "served": [
-        {
-          "route": "/workspace/people",
-          "test": "apps/gateway/test/people-directory.test.ts",
-          "via": "handler"
-        }
-      ],
       "gates": {
         "built": {
-          "state": "done",
-          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /workspace/people list only; no candidate detail or full-timer view"
         },
         "verified": {
           "state": "open"
@@ -849,17 +858,10 @@
     "A-03": {
       "lane": "people",
       "subject": "`/people/candidate-documents/:id`",
-      "served": [
-        {
-          "route": "/workspace/civil-ids",
-          "test": "apps/gateway/test/civil-id-review-http.test.ts",
-          "via": "handler"
-        }
-      ],
       "gates": {
         "built": {
-          "state": "done",
-          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /workspace/civil-ids review queue only; no per-candidate documents page"
         },
         "verified": {
           "state": "open"
@@ -935,17 +937,10 @@
     "A-08": {
       "lane": "recruit",
       "subject": "`/recruiting/requests`, `/recruiting/requests/:id`, `/stories/:id`",
-      "served": [
-        {
-          "route": "/recruit/staff/requests",
-          "test": "apps/gateway/test/recruit-pipeline-http.test.ts",
-          "via": "handler"
-        }
-      ],
       "gates": {
         "built": {
-          "state": "done",
-          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /recruit/staff/requests list and pipeline exist; no stories/:id page"
         },
         "verified": {
           "state": "open"
@@ -975,17 +970,10 @@
     "A-10": {
       "lane": "recruit",
       "subject": "`/recruiting/matches`, `/recruiting/jobs`",
-      "served": [
-        {
-          "route": "/recruit/staff/jobs",
-          "test": "apps/gateway/test/recruit-jobs-http.test.ts",
-          "via": "handler"
-        }
-      ],
       "gates": {
         "built": {
-          "state": "done",
-          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /recruit/staff/jobs exists; no matches page"
         },
         "verified": {
           "state": "open"
