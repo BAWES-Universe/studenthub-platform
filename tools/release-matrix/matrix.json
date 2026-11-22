@@ -159,11 +159,12 @@
       "subject": "`/messages`, `/messages/:id` \u2014 conversations",
       "gates": {
         "built": {
-          "state": "open",
-          "note": "dropped in legacy (audit 2026-11-20): chat is dead in legacy prod; dropped 10-04 (comms lane); needs an exclusion waiver"
+          "state": "waived",
+          "decision": "Chat was dropped by Khalid's 10-04 \"Drop all\" card (no chat messages in the 12 months before); see contracts/decisions-2026-10-04.md"
         },
         "verified": {
-          "state": "open"
+          "state": "waived",
+          "decision": "Chat was dropped by Khalid's 10-04 \"Drop all\" card (no chat messages in the 12 months before); see contracts/decisions-2026-10-04.md"
         }
       }
     },
@@ -172,11 +173,12 @@
       "subject": "`/support`, `/support/:id` \u2014 tickets",
       "gates": {
         "built": {
-          "state": "open",
-          "note": "dropped in legacy (audit 2026-11-20): tickets are dead in legacy prod; dropped 10-04 (comms lane); needs an exclusion waiver"
+          "state": "waived",
+          "decision": "Support tickets were dropped by Khalid's 10-04 \"Drop all\" card (no tickets in the 12 months before); see contracts/decisions-2026-10-04.md"
         },
         "verified": {
-          "state": "open"
+          "state": "waived",
+          "decision": "Support tickets were dropped by Khalid's 10-04 \"Drop all\" card (no tickets in the 12 months before); see contracts/decisions-2026-10-04.md"
         }
       }
     },
@@ -1151,11 +1153,12 @@
       "subject": "`/service` \u2014 conversations, tickets, voicemail records",
       "gates": {
         "built": {
-          "state": "open",
-          "note": "dropped in legacy (audit 2026-11-20): service inbox: chat and tickets dead in legacy; needs a waiver"
+          "state": "waived",
+          "decision": "The service inbox's chat and tickets were dropped by Khalid's 10-04 \"Drop all\" card, and voicemail by his 11-20 addendum (Yeastar no longer used); see contracts/decisions-2026-10-04.md"
         },
         "verified": {
-          "state": "open"
+          "state": "waived",
+          "decision": "The service inbox's chat and tickets were dropped by Khalid's 10-04 \"Drop all\" card, and voicemail by his 11-20 addendum (Yeastar no longer used); see contracts/decisions-2026-10-04.md"
         }
       }
     },
