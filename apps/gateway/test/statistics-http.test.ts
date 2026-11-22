@@ -8,7 +8,7 @@ import { handleIdCards, type IdCardsHttpService } from "../src/reports/id-cards-
 async function rig(t: TestContext) {
   const reads: string[] = [];
   const raw = Object.fromEntries(STAFF_STATISTICS_COUNTERS.filter(c => c.source.kind === "available").map(c => [c.key, 7]));
-  const store: StatisticsStore = { async invitationsByMonth() { return [{ month: "2026-10", noAnswer: 1, accepted: 3, declined: 0, withdrawn: 0 }]; }, async staffCounts(day) { reads.push(day); return raw; }, async hiring() { return { hired: 4, retained: 1, invitations: 0 }; }, async overviewCounts() { return { candidates: 50, assigned: 9, suggested: 30, requests: 12, requestsDelivered: 5 }; } };
+  const store: StatisticsStore = { async emailsByDay() { return [{ day: "2026-11-20", sent: 501, failed: 2 }, { day: "2026-11-19", sent: 40, failed: 0 }]; }, async invitationsByMonth() { return [{ month: "2026-10", noAnswer: 1, accepted: 3, declined: 0, withdrawn: 0 }]; }, async staffCounts(day) { reads.push(day); return raw; }, async hiring() { return { hired: 4, retained: 1, invitations: 0 }; }, async overviewCounts() { return { candidates: 50, assigned: 9, suggested: 30, requests: 12, requestsDelivered: 5 }; } };
   const isStaff = async (id: string) => id === "staff";
   const statistics = new StatisticsService(store, { isStaff }, () => new Date("2026-11-20T06:00:00Z"));
   const service = { isStaff, statistics: { page: (v: string) => statistics.page(v) } } as unknown as IdCardsHttpService;
@@ -44,6 +44,10 @@ test("REPORTS_STATISTICS_HTTP staff see every counter, with not available for a 
   assert.match(html, /<th scope="row">October 2026<\/th><td><meter min="0" max="4" value="4"><\/meter> 4<\/td><td>1<\/td><td>3<\/td><td>0<\/td><td>0<\/td><td>75%<\/td><td>0%<\/td>/);
   assert.match(html, /<th scope="row">November 2025<\/th><td><meter min="0" max="4" value="0"><\/meter> 0<\/td>(<td>0<\/td>){4}<td>–<\/td><td>–<\/td>/);
   assert.equal((body as unknown as { invitationsByMonth: unknown[] }).invitationsByMonth.length, 12);
+  assert.match(html, /<h2>Emails sent per day<\/h2><p>Emails sent in each of the last 14 days/);
+  assert.match(html, /<th scope="row">2026-11-20<\/th><td><meter min="0" max="501" high="500" value="501"><\/meter> 501 <strong>\(over 500\)<\/strong><\/td><td>2<\/td>/);
+  assert.match(html, /<th scope="row">2026-11-19<\/th><td><meter min="0" max="501" high="500" value="40"><\/meter> 40<\/td><td>0<\/td>/);
+  assert.match(html, /<th scope="row">2026-11-07<\/th>/, "oldest of the 14 days");
   assert.equal((await x.call("/workspace/statistics", "s-staff", "application/json", "POST")).status, 405);
 });
 

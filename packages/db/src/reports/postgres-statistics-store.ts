@@ -43,6 +43,14 @@ const INVITATIONS = `SELECT to_char(k.at, 'YYYY-MM') AS month,
   WHERE i.created_at >= ($2::date::timestamp AT TIME ZONE 'Asia/Kuwait') AND i.created_at < ($3::date::timestamp AT TIME ZONE 'Asia/Kuwait')
     AND to_char(k.at, 'YYYY-MM') = ANY($1::text[])
   GROUP BY 1 ORDER BY 1`;
+// $1 the Kuwait days asked for, $2 the first, $3 the last. Sent: the provider accepted it; failed: an attempt that failed.
+const EMAILS = `SELECT to_char(a.at AT TIME ZONE 'Asia/Kuwait', 'YYYY-MM-DD') AS day,
+    count(*) FILTER (WHERE a.outcome = 'sent')::int AS sent, count(*) FILTER (WHERE a.outcome = 'failed')::int AS failed
+  FROM email_attempts a
+  WHERE a.at >= ($2::date::timestamp AT TIME ZONE 'Asia/Kuwait') AND a.at < (($3::date + 1)::timestamp AT TIME ZONE 'Asia/Kuwait')
+    AND to_char(a.at AT TIME ZONE 'Asia/Kuwait', 'YYYY-MM-DD') = ANY($1::text[])
+  GROUP BY 1 ORDER BY 1`;
+
 // $1 staff principal ids, $2 the first Kuwait day, $3 the last (inclusive). Each count is by the staff member who did it, when it was recorded.
 const RECRUITER_ACTIVITY = `WITH r AS (SELECT ($2::date::timestamp AT TIME ZONE 'Asia/Kuwait') AS lo, (($3::date + 1)::timestamp AT TIME ZONE 'Asia/Kuwait') AS hi),
   s AS (SELECT unnest($1::text[]) AS id),
@@ -126,6 +134,13 @@ export class PostgresStatisticsStore {
     const sorted = [...months].sort(), last = sorted[sorted.length - 1]!.split("-").map(Number) as [number, number];
     const after = last[1] === 12 ? `${last[0] + 1}-01-01` : `${last[0]}-${String(last[1] + 1).padStart(2, "0")}-01`;
     return (await this.#pool.query(INVITATIONS, [months, `${sorted[0]}-01`, after])).rows;
+  }
+
+  /** Emails sent, and attempts that failed, on each of `days` (Kuwait dates); days with none are left out. */
+  async emailsByDay(days: readonly string[]): Promise<{ day: string; sent: number; failed: number }[]> {
+    if (days.length === 0 || !days.every(d => DAY.test(d))) throw new RangeError("invalid days");
+    const sorted = [...days].sort();
+    return (await this.#pool.query(EMAILS, [days, sorted[0], sorted[sorted.length - 1]])).rows;
   }
 
   /** What each of `staff` recorded over the Kuwait days `from` to `to` (inclusive), and their names. */
