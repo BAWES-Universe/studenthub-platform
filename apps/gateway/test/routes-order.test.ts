@@ -18,10 +18,10 @@ test("PREP_ORDER routes retain the exact gateway handler order", async () => {
     "organization-profile", "organization-status", "organization-commercial-terms",
     "organization-approved-to-hire", "organization-notes", "pay-contracts", "organization-brands",
     "organization-stores", "organization-deletion", "organization-creation",
-    "organization-account-manager-page", "organization-account-manager", "profile-records", "legacy-link", "civil-id", "civil-id-suggestion", "area", "people-directory", "civil-id-review", "access", "staff-view", "company-registration", "company-team", "company-contacts", "store-manager",
+    "organization-account-manager-page", "organization-account-manager", "organization-pages", "profile-records", "legacy-link", "civil-id", "civil-id-suggestion", "area", "people-directory", "civil-id-review", "access", "staff-view", "company-registration", "company-team", "company-contacts", "store-manager",
     "recruit-requests", "recruit-pipeline", "recruit-checklist", "recruit-people-search", "recruit-invitations", "recruit-employer-view", "recruit-interviews", "recruit-jobs", "recruit-fulltimers", "recruit-request-applications", "work", "staff-messages", "list-exports", "id-cards", "invoices",
   ]);
-  assert.equal(ROUTES.length, 53);
+  assert.equal(ROUTES.length, 54);
   for (const route of ROUTES) assert.equal(typeof route.handle, "function");
 });
 
