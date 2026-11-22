@@ -8,6 +8,7 @@ node dist/tools/release-matrix/src/cli.js check     # structure; also enforced b
 node dist/tools/release-matrix/src/cli.js report    # open gates by lane
 node dist/tools/release-matrix/src/cli.js release [candidate|cutover|retired]   # exits 1 while a gate due by then is open
 node dist/tools/release-matrix/src/cli.js seed      # re-derive rows after the contract or inventory changes (refuses invalid sources)
+node dist/tools/release-matrix/src/cli.js burndown [YYYY-MM-DD]   # closed gates by section and the daily rate needed to each date
 ```
 
 ## Closing a gate
@@ -21,6 +22,36 @@ Edit `matrix.json`. A gate is `{"state": "open"}`, `{"state": "done", "evidence"
 A waiver must cite `contracts/decisions-<date>.md` or the desk comment that agreed it (`PR #393 comment <id>`). A citation is a whole token: `PR #512 at 1a2b3c4-rc` or `contracts/decisions-2026-10-27.md.bak` cite nothing. Free text may surround the citation, and it may end a sentence. A lane closes its own gates in the PR that earns them; the reviewer checks the evidence with the code.
 
 Gates: screens `built` (on main with tests) and `verified` (journey walked on staging against the refreshed copy); exclusions `decision` (SHU-213); mobile `built` (compatibility route or retirement on main) and `verified` (contract test against captured store-build traffic); imports `built`, `dryRun`, `rehearsal`, `reconciled`; release steps `done`.
+
+## Built screens: cited evidence plus a reference lint
+
+A screen's `built` gate closes only with a `served` list: where the screen is served on main and the test that requests it.
+
+```json
+"C-11": {
+  "lane": "work",
+  "subject": "`/work/track` — clock/manual session",
+  "served": [{ "route": "/work/track", "test": "apps/gateway/test/work-pages.test.ts", "via": "handler" }],
+  "gates": { "built": { "state": "done", "evidence": "PR #600 at 1a2b3c4" }, "verified": { "state": "open" } }
+}
+```
+
+A route may name parameters (`/store/:storeId/time-approvals`). Every literal part of it must appear in `apps/gateway/src` (as a string or escaped in a regular expression) and in the cited test file, and the test file must exist under `apps`, `packages` or `tools`. The served route may differ from the contract's target route (staff pages live under `/workspace` and `/recruit/staff`); the row says where the screen really is instead of hiding the difference.
+
+`built` means a reviewed implementation with cited evidence (the PR at its head). The served list is a reference lint on top of that, not a proof: `check` (and the test suite) re-reads every entry on every PR, so a renamed route or a deleted or rewritten test fails it, but a route fragment can still match an unrelated string.
+
+`via` says how far the cited test reaches. `gateway` means the test requests the page through `createGatewayServer`, so the route is wired; the check refuses `gateway` when the test never starts it. `handler` means the test calls the page handler directly: implemented and tested, wiring not shown by that test (the work lane's pages are switched on at cutover by SWITCHES). Deployed staging behaviour is the `verified` gate, closed by the journey run, never by this lint. Seeding keeps `served` while the row's subject holds and drops it with the gates when the subject changes.
+
+An open gate may carry a `note` saying why it is open (`"backend only: ..."`, `"partly built: ..."`); notes are kept across seeds.
+
+## Marking gates as you merge
+
+Each lane closes its own gates in the PR that earns them, in the same diff as the code:
+
+1. A PR that ships a screen's page adds the row's `served` entry and sets `built` to done, citing the PR at its head (`PR #N at <sha>`). Push the matrix change last, once the head is final, or cite the head in a follow-up commit.
+2. A PR that ships part of a screen updates the open gate's `note` so the checklist says what is left.
+3. A journey walked on staging closes `verified` with the run (`run https://github.com/.../actions/runs/<id>`) or the run report comment.
+4. The reviewer checks the evidence with the code. `burndown` is the honest count; post it, do not restate it.
 
 ## Checkpoints
 
