@@ -122,7 +122,7 @@ The documentation verification results below were recorded on 2026-11-22:
 | --- | --- |
 | `npm ci` | Passed in the isolated documentation worktree. |
 | `npm run typecheck` | Passed in the isolated documentation worktree. |
-| `npm test` | Pending verification; builds the repository and runs the unit suites. |
+| `npm test` | Passed (exit 0); built the repository and completed the unit and mutation suites. |
 | `npm run test:db` | Not run locally: no disposable PostgreSQL 17 instance was provisioned for this documentation task. |
 
 The contracts suites cover health responses, role/grant validation, hierarchy,
