@@ -53,8 +53,11 @@ export interface IssuerKeyRegistry {
   /** Register a key as ACTIVE. Idempotent for an existing (issuer, keyId). */
   registerKey(registration: IssuerKeyRegistration): Promise<IssuerKeyDescriptor>;
   /**
-   * Rotate: retire every active key of `issuer` other than the one that stays,
-   * keeping rows for overlap verification/audit.
+   * Retire the named key of `issuer`, keeping its row for audit. The gateway
+   * resolver no longer returns this row, whether an assertion names its key ID
+   * or omits `kid`. Retirement is scoped to this key ID: the issuer's other keys
+   * are left as they are, including any that hold the same public key.
+   * Idempotent for an already retired key; throws RangeError for an unknown one.
    */
   retireIssuerKey(issuer: string, keyId: string): Promise<IssuerKeyDescriptor>;
 }
