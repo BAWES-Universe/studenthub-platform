@@ -454,7 +454,7 @@ export function checkServed(matrix: Matrix, read: (file: string) => string | und
       for (const part of parts) {
         if (!appearsIn(text, part)) issues.push({ rule: "matrix.served.testSilent", detail: `${where}: ${entry.test} never requests '${part}'` });
       }
-      if (entry.via === "gateway" && !text.includes("createGatewayServer")) {
+      if (entry.via === "gateway" && !/\bcreateGatewayServer\s*\(/.test(text)) {
         issues.push({ rule: "matrix.served.notThroughGateway", detail: `${where} claims gateway wiring but ${entry.test} never starts createGatewayServer` });
       }
     }

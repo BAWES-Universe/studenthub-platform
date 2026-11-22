@@ -86,7 +86,7 @@ function main(command: string | undefined, phaseArg?: string): number {
 
   if (command === "burndown") {
     const today = phaseArg ?? new Date().toISOString().slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(today) || Number.isNaN(Date.parse(`${today}T00:00:00Z`)) || new Date(`${today}T00:00:00Z`).toISOString().slice(0, 10) !== today) {
       console.error("usage: cli.js burndown [YYYY-MM-DD]");
       return 2;
     }
