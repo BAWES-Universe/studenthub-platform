@@ -37,8 +37,15 @@ const NAME = (alias: string, profile: string) => `COALESCE(NULLIF(btrim(${profil
 const ENTRY = `i.invoice_number AS "invoiceNumber", i.transfer_id AS "transferId", i.org_id AS "orgId", ${NAME("o", "p")} AS "companyName",
   i.currency_code AS "currencyCode", i.invoice_date::text AS "invoiceDate", i.total::text AS total, i.line_count AS "lineCount", i.status,
   (i.paid_at AT TIME ZONE 'Asia/Kuwait')::date::text AS "paidOn"`;
+/*
+ * Only locked and payment-sent transfers make an unpaid invoice due. After an admin unlock the transfer is a
+ * draft again and its amounts can change, and a cancelled transfer is never paid, so their
+ * unpaid invoices are neither listed nor served: they are not payable. A relock re-issues or
+ * keeps them (`PostgresTransferInvoiceEffects`), and a paid invoice is always shown as a receipt.
+ */
 const FROM = `FROM transfer_invoice i JOIN organizations o ON o.id = i.org_id LEFT JOIN organization_profiles p ON p.org_id = i.org_id
-  WHERE NOT i.deleted AND i.org_id = ANY($1::text[])`;
+  JOIN pay_transfers t ON t.id = i.transfer_id
+  WHERE NOT i.deleted AND i.org_id = ANY($1::text[]) AND (i.status = 'paid' OR t.status IN ('locked', 'payment_sent'))`;
 
 export class PostgresTransferInvoiceReads {
   readonly #pool: pg.Pool;
@@ -84,13 +91,13 @@ export class PostgresTransferInvoiceReads {
     return { orgId, name: organization.rows[0]?.name ?? orgId, invoices: invoices.rows };
   }
 
-  /** One live invoice billed inside the organization's tree, with its transfer's period; null otherwise. */
+  /** One live, paid or payable invoice billed inside what the reader may see, with its transfer's period; null otherwise. */
   async document(principalId: string, orgId: string, invoiceNumber: string): Promise<TransferInvoiceDocument | null> {
     const visible = await this.#visible(principalId, orgId);
     if (!visible) return null;
     return (await this.#pool.query<TransferInvoiceDocument>(
       `SELECT ${ENTRY}, t.period_start::text AS "periodStart", t.period_end::text AS "periodEnd"
-         ${FROM.replace("WHERE", "JOIN pay_transfers t ON t.id = i.transfer_id WHERE")} AND i.invoice_number = $2`,
+         ${FROM} AND i.invoice_number = $2`,
       [visible, invoiceNumber])).rows[0] ?? null;
   }
 }

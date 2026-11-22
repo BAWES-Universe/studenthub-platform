@@ -26,6 +26,10 @@ const mutations = [
     "WHERE NOT i.deleted AND i.org_id = ANY($1::text[])", "WHERE NOT i.deleted AND $1::text[] IS NOT NULL"],
   ["let the parent's answer cover its sub-companies", "TRANSFER_INVOICE_READS_SCOPE", reads,
     "node.id === orgId || this.#decision(", "true || this.#decision("],
+  ["show unpaid invoices of unlocked or cancelled transfers", "TRANSFER_INVOICE_READS_PAYABLE", reads,
+    "AND (i.status = 'paid' OR t.status IN ('locked', 'payment_sent'))", ""],
+  ["hide paid receipts of settled transfers", "TRANSFER_INVOICE_READS_PAYABLE", reads,
+    "(i.status = 'paid' OR t.status IN", "(t.status IN"],
   ["skip the read check on the asked organization", "TRANSFER_INVOICE_READS_REFUSED", reads,
     "if (!this.#decision(grants.rows, orgId, above))\n            return null;", ""],
 ];

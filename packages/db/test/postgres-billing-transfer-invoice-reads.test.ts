@@ -133,3 +133,45 @@ test("TRANSFER_INVOICE_READS_DOCUMENT one live invoice with its period; voided o
   const today = (await pool.query("SELECT (now() AT TIME ZONE 'Asia/Kuwait')::date::text AS d")).rows[0].d as string;
   assert.equal(paid?.status, "paid"); assert.equal(paid?.paidOn, today);
 });
+
+test("TRANSFER_INVOICE_READS_PAYABLE an unpaid invoice is listed and served only while its transfer is locked or payment sent; unlock and cancel hide it, relock re-issues or keeps it", async () => {
+  await grant("fin-p", "P", "finance", "subtree");
+  // An unrelated paid receipt, which every step below must keep.
+  const settled = await transfer([["C2", "1.000"]], "P");
+  await move(settled, "lock"); await move(settled, "payment_received");
+  const receipt = await numberOf(settled, "C2");
+  const group = await transfer([["P", "4.000"], ["C1", "2.500"]], "P");
+  await move(group, "lock");
+  const [c1, parent] = [await numberOf(group, "C1"), await numberOf(group, "P")];
+  const listed = async () => Object.fromEntries((await reads.listForOrganization("fin-p", "P"))!.invoices.map(i => [i.invoiceNumber, [i.total, i.status]]));
+  assert.deepEqual(await listed(), { [c1]: ["2.500", "unpaid"], [parent]: ["4.000", "unpaid"], [receipt]: ["1.000", "paid"] });
+  assert.equal((await reads.document("fin-p", "P", c1))?.total, "2.500", "the original PDF while locked");
+
+  // Admin unlock: the transfer is a draft again and C1 changes to 3.000. Before relock nothing of it is due.
+  await move(group, "admin_unlock");
+  await pool.query("UPDATE pay_transfer_lines SET company_total='3.000' WHERE transfer_id=$1 AND store_id=$2", [group, store.C1]);
+  assert.deepEqual(await listed(), { [receipt]: ["1.000", "paid"] }, "the unlocked transfer's invoices leave the list; the receipt stays");
+  assert.equal(await reads.document("fin-p", "P", c1), null, "the original direct PDF link is not found while unlocked");
+  assert.equal(await reads.document("fin-p", "P", parent), null);
+  assert.equal((await reads.document("fin-p", "P", receipt))?.status, "paid");
+
+  // Relock: C1 changed, so it gets a new number and amount; P is unchanged and keeps its number.
+  await move(group, "lock");
+  const reissued = await numberOf(group, "C1");
+  assert.notEqual(reissued, c1);
+  assert.equal(await numberOf(group, "P"), parent);
+  assert.deepEqual(await listed(), { [reissued]: ["3.000", "unpaid"], [parent]: ["4.000", "unpaid"], [receipt]: ["1.000", "paid"] });
+  assert.equal(await reads.document("fin-p", "P", c1), null, "the old number stays voided");
+  await move(group, "payment_sent");
+  assert.equal((await reads.document("fin-p", "P", reissued))?.status, "unpaid", "still due once payment is sent");
+
+  // Unlock then cancel: the cancelled transfer's invoice is never due again.
+  const cancelled = await transfer([["P", "7.000"]], "P");
+  await move(cancelled, "lock");
+  const dropped = await numberOf(cancelled, "P");
+  assert.ok((await listed())[dropped]);
+  await move(cancelled, "admin_unlock"); await move(cancelled, "cancel");
+  assert.equal((await listed())[dropped], undefined);
+  assert.equal(await reads.document("fin-p", "P", dropped), null);
+  assert.equal((await reads.document("fin-p", "P", receipt))?.status, "paid", "the unrelated receipt is preserved throughout");
+});
