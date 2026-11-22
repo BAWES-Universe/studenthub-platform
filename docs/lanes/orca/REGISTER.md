@@ -6,5 +6,5 @@ An Orca bot works only on a ticket listed here, read fresh from `main`, and only
 |---|---|---|---|---|---|---|---|---|---|
 | #581 | `running-tests-guide` | studenthub-universe | 1 | work | `7048993553` | `docs/runbooks/running-tests.md` only; no migrations | Claude | revoked | 2026-11-22 18:00 |
 | #581 | `running-tests-guide` | studenthub-universe | 2 | work | `7051422072` | `docs/runbooks/running-tests.md` only; no migrations | Claude | done | 2026-11-23 18:00 |
-| #603 | `fixtures-readme` | studenthub-universe | 1 | work | `7063400979` | `tools/fixtures/README.md` only; no migrations | Claude | active | 2026-11-24 18:00 |
-| #604 | `observability-exercise-readme` | studenthub-universe | 1 | work | `7063401402` | `tools/observability/README.md` only; no migrations | Claude | active | 2026-11-24 18:00 |
+| #603 | `fixtures-readme` | studenthub-universe | 1 | work | `7063400979` | `tools/fixtures/README.md` only; no migrations | Claude | done | 2026-11-24 18:00 |
+| #604 | `observability-exercise-readme` | studenthub-universe | 1 | work | `7063401402` | `tools/observability/README.md` only; no migrations | Claude | done | 2026-11-24 18:00 |
