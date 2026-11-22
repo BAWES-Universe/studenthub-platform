@@ -54,6 +54,16 @@ Two active rows of one kind whose names normalize the same become one item: the 
 - The snapshot holds the columns the organization projections read (`company_name`, common names, descriptions, website, email, `currency_code`, approved to hire, hourly rate, bonus commission, status override) and the three activity counters, each normalized to what the package parses: blank text is null, decimals lose padding zeros, the currency code is upper case, and the status override is 0, 9 or 10. An unusable value becomes null and is reported by column; the company still imports.
 - Stamped with the organizations package's parity revision, as `snapshotRow` requires.
 
+## M-4 stores and brand links map
+
+`tools/legacy-import/src/m4-stores.ts` maps legacy `brand` company links and `store` rows; `PostgresStoreImportStore` (`@studenthub/db/import`) writes `organization_brands` (migration 0200), `organization_stores` (migration 0202) and the id map (legacy tables `brand_company` and `store`). Companies, brands and malls import first; this step resolves them through the id map.
+
+- Each legacy brand belongs to one company (`brand.company_id`), and the platform links each brand item to one organization. Two same-name legacy brands share one catalogue item: the first company's link is kept, and the other is refused as `brand_taken`, never moved. A link that is already in place for the same organization is adopted.
+- A store keeps its legacy name and location trimmed. A blank name, or one longer than the platform's 120 characters, is reported as `store.badName` and left out, never cut to fit. A location longer than 500 characters is reported and imported as none.
+- A store's brand must be its own company's, as in legacy's store form and the platform's stores screen. Another company's brand, an unknown brand and an unusable reference are reported and dropped from the store. At write time a brand that is not linked to the store's organization is refused as `brand_not_linked`.
+- A store deleted in legacy (`deleted = 1`) imports as removed, with its last update time as the removal time, so later work and assignment history can still name it. `store_status` is not read: legacy sets it to 10 on every store and never reads it. The store manager comes with contacts.
+- Legacy times are Asia/Kuwait wall time. A row whose company, brand or mall has no id map row is refused by code (`no_organization`, `no_brand`, `no_mall`), and the batch goes on.
+
 ## M-5 table map (work)
 
 Legacy staff ids resolve to the platform principal the same way for every row below; a staff id with no principal is reported by legacy id, not imported. Each table gets its own reconciliation count: legacy rows against imported rows by `legacy_ref`, by legacy id only. Legacy times are Asia/Kuwait wall time: a `work_date` is the Kuwait date read straight from that wall time, with no UTC conversion, so an answer or session at 21:00 to 23:59 keeps its own day.
