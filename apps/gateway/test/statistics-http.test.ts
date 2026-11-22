@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test, { type TestContext } from "node:test";
-import { FiringHitMapService, STAFF_STATISTICS_COUNTERS, StatisticsService, type StatisticsStore } from "../../../packages/reports/src/index.js";
+import { FiringHitMapService, RecruiterActivityService, STAFF_STATISTICS_COUNTERS, StatisticsService, type StatisticsStore } from "../../../packages/reports/src/index.js";
 import { handleIdCards, type IdCardsHttpService } from "../src/reports/id-cards-http.js";
 
 async function rig(t: TestContext) {
@@ -112,4 +112,51 @@ test("REPORTS_STATISTICS_HTTP staff turn the spike email on and off from the hit
   assert.equal((await post("s-staff", "email=on&x=1")).status, 400);
   for (const session of [undefined, "s-alia"]) assert.equal((await post(session, "email=on")).status, 404);
   assert.deepEqual([...subs], [], "nothing changed by refused requests");
+});
+
+test("REPORTS_RECRUITERS_HTTP staff see what each staff member did, today by default or over a range; bad ranges are refused; everyone else gets not found", async (t) => {
+  const isStaff = async (id: string) => id === "staff";
+  const asked: string[] = [];
+  const recruiters = new RecruiterActivityService({ async recruiterActivity(_ids, from, to) {
+    asked.push(`${from}..${to}`);
+    return { names: new Map([["staff", "Sara <Ops>"]]), counts: new Map([["staff", { placements: 1, requests: 2, suggestions: 3, notes: 4, invitations: 5, invitationsAccepted: 1, invitationsDeclined: 2 }]]) };
+  } }, { isStaff }, { async operatorStaff() { return ["staff", "omar"]; } }, () => new Date("2026-11-20T06:00:00Z"));
+  const service = { isStaff, statistics: { page: async () => undefined, recruiters: (v: string, r: never) => recruiters.page(v, r) } } as unknown as IdCardsHttpService;
+  const server = createServer(async (req, res) => {
+    if (!await handleIdCards(req, res, service, "https://studenthub.example", async s => ({ "s-alia": "alia", "s-staff": "staff" } as Record<string, string>)[s])) { res.writeHead(418); res.end(); }
+  });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>(r => server.close(() => r())));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const call = (query = "", session = "s-staff", accept = "application/json", method = "GET") =>
+    fetch(`${base}/workspace/statistics/recruiters${query}`, { method, headers: { ...(session ? { cookie: `__Host-studenthub_session=${session}` } : {}), accept } });
+  const r = await call();
+  assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store");
+  const body = await r.json() as { from: string; to: string; staff: { name: string; notes: number }[]; totals: { invitations: number } };
+  assert.deepEqual([body.from, body.to], ["2026-11-20", "2026-11-20"]);
+  assert.deepEqual(body.staff.map(s => [s.name, s.notes]), [["Sara <Ops>", 4], ["omar", 0]]);
+  assert.equal(body.totals.invitations, 5);
+  const html = await (await call("?from=2026-11-01&to=2026-11-20", "s-staff", "text/html")).text();
+  assert.match(html, /<h1>What each staff member did<\/h1>/);
+  assert.match(html, /2026-11-01 to 2026-11-20/);
+  assert.match(html, /<th scope="row">Sara &lt;Ops&gt;<\/th><td>1<\/td><td>2<\/td><td>3<\/td><td>4<\/td><td>5<\/td><td>1<\/td><td>2<\/td>/);
+  assert.match(html, /<tfoot><tr><th scope="row">All staff<\/th><td>1<\/td>/);
+  assert.match(html, /<input type="date" name="from" value="2026-11-01" max="2026-11-20" required>/);
+  assert.deepEqual(asked, ["2026-11-20..2026-11-20", "2026-11-01..2026-11-20"]);
+  for (const [q, field] of [["?to=2026-11-21", "to"], ["?from=2025-11-19&to=2026-11-20", "too_long"], ["?from=x", "from"], ["?from=2026-11-20&to=2026-11-19", "order"], ["?day=2026-11-20", "query"], ["?from=2026-11-01&from=2026-11-02", "query"]] as const) {
+    const bad = await call(q);
+    assert.equal(bad.status, 400, q); assert.deepEqual(await bad.json(), { status: "invalid", field }, q);
+  }
+  const refused = await call("?to=2026-11-21", "s-staff", "text/html");
+  assert.equal(refused.status, 400); assert.match(await refused.text(), /role="alert">The end is not a real day, or is after today\./);
+  assert.equal(asked.length, 2, "a refused range reads nothing");
+  assert.equal((await call("", "s-staff", "application/json", "POST")).status, 405);
+  for (const session of ["", "s-alia"]) for (const q of ["", "?from=x"]) assert.equal((await call(q, session)).status, 404, `${session} ${q}`);
+  assert.equal(asked.length, 2);
+});
+
+test("REPORTS_RECRUITERS_HTTP without the source the page is not found, and the statistics page links to it", async (t) => {
+  const x = await rig(t);
+  assert.equal((await x.call("/workspace/statistics/recruiters", "s-staff")).status, 404);
+  assert.match(await (await x.call("/workspace/statistics", "s-staff", "text/html")).text(), /<a href="\/workspace\/statistics\/recruiters">What each staff member did today<\/a>/);
 });
