@@ -230,7 +230,7 @@ export function createEpisodeHarness({
         // workspace is prepared): onRead sees how many /pulls reads came first.
         pull.onRead?.(pullReads.filter((read) => /\/pulls\/\d+$/.test(read)).length);
         if (!pull.readable) return { status: 502, ok: false, json: async () => ({}) };
-        return { status: 200, ok: true, json: async () => ({ number: pull.number, state: pull.state,
+        return { status: 200, ok: true, json: async () => ({ number: pull.number, state: pull.state, merged: pull.merged === true,
           head: { ref: pull.headRef, sha: pull.headSha, repo: { full_name: pull.headRepo } },
           base: { ref: pull.baseRef, repo: { full_name: pull.baseRepo } } }) };
       }
