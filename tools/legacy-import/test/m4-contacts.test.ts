@@ -92,3 +92,26 @@ test("issues carry no legacy text", () => {
   assert.ok(issues.length >= 3);
   assert.ok(!JSON.stringify(issues).includes("Private"));
 });
+
+test("allow_access is read as legacy stores it: only 0 makes a contact, only 1 a member, anything else is quarantined", () => {
+  const values: [string, unknown][] = [["a0", 0], ["a1", "0"], ["a2", false], ["b0", 1], ["b1", "1"], ["b2", true],
+    ["c0", null], ["c1", undefined], ["c2", ""], ["c3", 2], ["c4", "yes"], ["c5", "01"], ["c6", " 0"]];
+  const links = values.map(([id, value]) => { const row: Record<string, unknown> = link(id, "p-1", { allow_access: value }); if (value === undefined) delete row.allow_access; return row; });
+  const { contacts, issues, dispositions } = mapLegacyContacts(links, [person("p-1")], [email("e-1", "p-1", "x@example.com")], [phone("f-1", "p-1", "50000001")]);
+  assert.deepEqual(contacts.map((c) => c.legacyId), ["a0", "a1", "a2"]);
+  assert.deepEqual(dispositions, { contact: ["a0", "a1", "a2"], access: ["b0", "b1", "b2"], quarantined: ["c0", "c1", "c2", "c3", "c4", "c5", "c6"], refused: [] });
+  // A quarantined link copies nothing: no row, no channels, only its id and code.
+  assert.deepEqual(issues.filter((i) => i.rule === "contact.badAccess").map((i) => [i.legacyId, i.field]),
+    ["c0", "c1", "c2", "c3", "c4", "c5", "c6"].map((id) => [id, "allow_access"]));
+  assert.ok(!JSON.stringify({ issues, dispositions }).includes("example.com"));
+});
+
+test("every link with a usable id lands in exactly one disposition, for reconciliation by link id", () => {
+  const links = [link("l-1", "p-1"), link("l-2", "p-1", { allow_access: 1 }), link("l-3", "p-1", { allow_access: null }),
+    link("l-4", "p-404"), link("l-5", "p-1", { company_id: 0 }), link("l-6", "p-blank"), link("l-1", "p-1"), link("", "p-1")];
+  const { dispositions } = mapLegacyContacts(links, [person("p-1"), person("p-blank", { contact_name: "" })], [], []);
+  const all = [...dispositions.contact, ...dispositions.access, ...dispositions.quarantined, ...dispositions.refused];
+  assert.deepEqual([...all].sort(), ["l-1", "l-2", "l-3", "l-4", "l-5", "l-6"]);
+  assert.equal(new Set(all).size, all.length);
+  assert.deepEqual(dispositions.refused, ["l-4", "l-5", "l-6"]);
+});

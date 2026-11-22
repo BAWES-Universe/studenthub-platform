@@ -1,8 +1,9 @@
 // M-4 contacts: legacy `company_contact` links without access become the company's extra contacts
 // (migration 0402), with the person's name, position, email addresses and phone numbers. Pure.
 // The access contract decides the split: a link with `allow_access = 1` is a member who signs in,
-// and imports as a grant once the person is linked (M-3), never as a contact. A link without
-// access is a contact only. One legacy person on several companies gives one contact per link.
+// and imports as a grant once the person is linked (M-3), never as a contact. A link with
+// `allow_access = 0` is a contact only. Any other value is quarantined and copies nothing.
+// One legacy person on several companies gives one contact per link.
 // Values are normalized with the contacts screen's own rules, so an imported contact is one the
 // screen could have saved. Issues carry legacy ids, rule codes and column names only.
 
@@ -29,6 +30,7 @@ export type ContactIssueRule =
   | "contact.badId"
   | "contact.duplicateId"
   | "contact.access" // allow_access = 1: a member, imported as a grant through M-3; not a contact
+  | "contact.badAccess" // allow_access null, missing or not 0/1: quarantined; neither a contact nor a member, no channels copied
   | "contact.noCompany" // no usable company_id; not imported
   | "contact.noPerson" // the link names no legacy contact row; not imported
   | "contact.badName" // blank, over 120 characters or with control characters; not imported
@@ -37,6 +39,17 @@ export type ContactIssueRule =
   | "contact.badEmail" // one address the contacts screen would refuse; dropped
   | "contact.tooManyPhones" // more than 5 usable numbers; the first 5 are kept
   | "contact.tooManyEmails"; // more than 5 usable addresses; the first 5 are kept
+
+/**
+ * Where each legacy link went, by link id. Every link with a usable id is in exactly one list, so
+ * the reconciliation can count legacy links against the dispositions.
+ */
+export interface ContactDispositions {
+  readonly contact: readonly string[];
+  readonly access: readonly string[];
+  readonly quarantined: readonly string[];
+  readonly refused: readonly string[];
+}
 
 export interface ContactIssue {
   readonly rule: ContactIssueRule;
@@ -49,6 +62,17 @@ type Row = Readonly<Record<string, unknown>>;
 const KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 const truthy = (value: unknown) => value === true || value === 1 || value === "1";
+
+/**
+ * Legacy `company_contact.allow_access` is a nullable boolean, DEFAULT 0 (migration
+ * m210128_071555_role). Only an explicit 0 makes a contact and only an explicit 1 a member;
+ * anything else is unknown and quarantined, never guessed.
+ */
+function access(value: unknown): "member" | "contact" | "unknown" {
+  if (value === true || value === 1 || value === "1") return "member";
+  if (value === false || value === 0 || value === "0") return "contact";
+  return "unknown";
+}
 
 function key(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -100,7 +124,7 @@ function byPerson(rows: readonly Row[], keyColumn: string, createdColumn: string
  * removed, so it is never listed but the record of it stays.
  */
 export function mapLegacyContacts(links: readonly Row[], contacts: readonly Row[], emails: readonly Row[], phones: readonly Row[]):
-  { readonly contacts: readonly ContactImportRow[]; readonly issues: readonly ContactIssue[] } {
+  { readonly contacts: readonly ContactImportRow[]; readonly issues: readonly ContactIssue[]; readonly dispositions: ContactDispositions } {
   const issues: ContactIssue[] = [];
   const people = new Map<string, Row>();
   for (const person of contacts) {
@@ -112,19 +136,22 @@ export function mapLegacyContacts(links: readonly Row[], contacts: readonly Row[
 
   const seen = new Set<string>();
   const out: ContactImportRow[] = [];
+  const memberIds: string[] = [], quarantined: string[] = [], refused: string[] = [];
   for (const link of links) {
     const id = key(link.company_contact_uuid);
     if (id === null) { issues.push({ rule: "contact.badId", legacyId: "?" }); continue; }
     if (seen.has(id)) { issues.push({ rule: "contact.duplicateId", legacyId: id }); continue; }
     seen.add(id);
-    if (truthy(link.allow_access)) { issues.push({ rule: "contact.access", legacyId: id }); continue; }
+    const kind = access(link.allow_access);
+    if (kind === "member") { memberIds.push(id); issues.push({ rule: "contact.access", legacyId: id }); continue; }
+    if (kind === "unknown") { quarantined.push(id); issues.push({ rule: "contact.badAccess", legacyId: id, field: "allow_access" }); continue; }
     const company = companyId(link.company_id);
-    if (company === null) { issues.push({ rule: "contact.noCompany", legacyId: id, field: "company_id" }); continue; }
+    if (company === null) { refused.push(id); issues.push({ rule: "contact.noCompany", legacyId: id, field: "company_id" }); continue; }
     const personId = key(link.contact_uuid);
     const person = personId === null ? undefined : people.get(personId);
-    if (person === undefined || personId === null) { issues.push({ rule: "contact.noPerson", legacyId: id, field: "contact_uuid" }); continue; }
+    if (person === undefined || personId === null) { refused.push(id); issues.push({ rule: "contact.noPerson", legacyId: id, field: "contact_uuid" }); continue; }
     const name = text(person.contact_name, CONTACT_NAME_MAX);
-    if (!name) { issues.push({ rule: "contact.badName", legacyId: id, field: "contact_name" }); continue; }
+    if (!name) { refused.push(id); issues.push({ rule: "contact.badName", legacyId: id, field: "contact_name" }); continue; }
     let roleTitle = text(link.contact_position, CONTACT_NAME_MAX);
     if (roleTitle === undefined) { issues.push({ rule: "contact.badRoleTitle", legacyId: id, field: "contact_position" }); roleTitle = null; }
 
@@ -153,5 +180,7 @@ export function mapLegacyContacts(links: readonly Row[], contacts: readonly Row[
     out.push(Object.freeze({ ...draft, digest: digestOf(draft) }));
   }
   out.sort((a, b) => compare(a.legacyId, b.legacyId));
-  return Object.freeze({ contacts: Object.freeze(out), issues: Object.freeze(issues) });
+  const sorted = (ids: string[]) => Object.freeze([...ids].sort(compare));
+  const dispositions = Object.freeze({ contact: sorted(out.map((c) => c.legacyId)), access: sorted(memberIds), quarantined: sorted(quarantined), refused: sorted(refused) });
+  return Object.freeze({ contacts: Object.freeze(out), issues: Object.freeze(issues), dispositions });
 }
