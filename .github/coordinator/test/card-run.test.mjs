@@ -4048,6 +4048,10 @@ test("Self-repair A: a card a person merged at the reviewed head counts as lande
   const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
   assert.equal(run.card, "SHU-305", JSON.stringify(run));
   assert.ok(host.files.has(handLandRecord(PATHS, "SHU-301")), "the proven hand landing is recorded");
+  // The run's status lists the landed card as landed, not as queued.
+  const written = JSON.parse(host.files.get(statusPath(PATHS)).text);
+  assert.deepEqual(written.landed, ["SHU-301"], JSON.stringify(written));
+  assert.equal(written.queue.includes("SHU-301"), false, "a landed card is not shown as queued");
   const record = JSON.parse(host.files.get(handLandRecord(PATHS, "SHU-301")).text);
   assert.deepEqual({ ...record, recorded_at: null }, { card: "SHU-301", revision: REV, pr: HAND_PR, reviewed_head: PASSED, merge_commit: HAND_MERGE, recorded_at: null });
   assert.equal(host.files.get(handLandRecord(PATHS, "SHU-301")).mode, 0o600);
@@ -5013,6 +5017,24 @@ test("SHU-86 0d: a pause file that could not be written is tried again on every 
   host.now += 10 * MIN;
   assert.deepEqual((await watchOnce({ io: host.io, paths: PATHS })).alert.pause, { written: true }, "a written pause is kept, never written again");
   assert.equal(alertsOf(host).length, 1);
+});
+
+test("M18 status: landed cards in the installed queue are shown as landed, not as queued", () => {
+  const unit = { state: "inactive", running: false, since: null, start: null };
+  const done = watchHost({ status: watchStatus({ queue: [], landed: ["SHU-646", "SHU-647", "x\n-->"] }) });
+  const status = readStatus(done.io, PATHS);
+  assert.deepEqual(status.landed, ["SHU-646", "SHU-647"]);
+  const lines = renderStatus({ status, unit, paused: false, now: new Date(done.now) }).split("\n");
+  assert.ok(lines.includes("Queue: none left to run."), lines.join("\n"));
+  assert.ok(lines.includes("Landed from the installed queue: SHU-646, SHU-647."), lines.join("\n"));
+  assert.equal(lines.some((line) => line.startsWith("Queue: SHU-646")), false);
+  const mixed = watchHost({ status: watchStatus({ queue: ["SHU-302"], landed: ["SHU-301"] }) });
+  const both = renderStatus({ status: readStatus(mixed.io, PATHS), unit, paused: false, now: new Date(mixed.now) }).split("\n");
+  assert.ok(both.includes("Queue: SHU-302.") && both.includes("Landed from the installed queue: SHU-301."), both.join("\n"));
+  // A status from before this change has no landed list and reads as before.
+  const old = watchHost({ status: watchStatus() });
+  const before = renderStatus({ status: readStatus(old.io, PATHS), unit, paused: false, now: new Date(old.now) }).split("\n");
+  assert.ok(before.includes("Queue: SHU-301, SHU-302.") && !before.some((line) => line.startsWith("Landed")), before.join("\n"));
 });
 
 test("SHU-86 0d: the status the watch shows is built from validated fields only", () => {

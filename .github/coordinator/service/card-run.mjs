@@ -1129,9 +1129,19 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     // The invocation id ties the status to the unit start the outside watch
     // reads, so a run it alerted before this run wrote a status is matched.
     const invocation = typeof io.invocation === "function" ? io.invocation() : null;
+    // The watch shows the queue: cards with a landing already on record (a
+    // timer, repair or recorded hand landing; no GitHub read) are listed as
+    // landed, not as queued, since the selector passes over them.
+    const queued = [];
+    const landedQueue = [];
+    for (const id of (config.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string")) {
+      let landed = false;
+      try { landed = (await cardLanded(io, paths, id)).landed === true; } catch { /* shown as queued */ }
+      (landed ? landedQueue : queued).push(id);
+    }
     const status = createStatus({ io, paths, run: { run_id: plan.record.activation_id,
       invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: plan.id, kind: plan.kind, trigger, revision,
-      queue: (config.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string") } });
+      queue: queued, landed: landedQueue } });
     const progress = () => {
       const seen = watch ? watch.summary(io.now().getTime()) : null;
       return { ticks: ticks.length, last_tick_at: ticks.at(-1)?.at ?? null, armed_at: armedAt, watching: watch !== null,
