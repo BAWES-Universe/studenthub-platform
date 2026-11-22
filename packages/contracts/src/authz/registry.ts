@@ -53,8 +53,9 @@ export interface IssuerKeyRegistry {
   /** Register a key as ACTIVE. Idempotent for an existing (issuer, keyId). */
   registerKey(registration: IssuerKeyRegistration): Promise<IssuerKeyDescriptor>;
   /**
-   * Retire the named key of `issuer`, keeping its row for overlap
-   * verification and audit. The issuer's other keys are left as they are.
+   * Retire the named key of `issuer`, keeping its row for audit. The gateway
+   * resolver rejects a retired key, so assertions it signed no longer verify.
+   * The issuer's other keys are left as they are.
    * Idempotent for an already retired key; throws RangeError for an unknown one.
    */
   retireIssuerKey(issuer: string, keyId: string): Promise<IssuerKeyDescriptor>;
