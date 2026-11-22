@@ -54,8 +54,9 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-646",
-      "SHU-647"
+      "SHU-665",
+      "SHU-667",
+      "SHU-668"
     ]
   },
   "adapter_pause_map": {},
@@ -10078,6 +10079,75 @@
       ],
       "after": [
         "SHU-646"
+      ]
+    },
+    {
+      "id": "SHU-665",
+      "authorization_ref": "SHU-665",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-02 company pages part 1 of 3: the company overview page at /organization/:orgId over the existing read model, plus the organization-pages route and the edit and stores placeholders that SHU-667 and SHU-668 fill; workspace_mode, paths, brief and acceptance pinned in card-contracts.json. It waits on nothing.",
+      "initial_build_paths": [
+        "apps/gateway/src/organizations/pages.ts",
+        "apps/gateway/src/organizations/overview-page.ts",
+        "apps/gateway/src/organizations/edit-page.ts",
+        "apps/gateway/src/organizations/stores-page.ts",
+        "apps/gateway/src/routes/organizations.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/organization-overview-page.test.ts",
+        "apps/gateway/test/organization-overview-page-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/organizations/pages.ts",
+        "apps/gateway/src/organizations/overview-page.ts",
+        "apps/gateway/src/organizations/edit-page.ts",
+        "apps/gateway/src/organizations/stores-page.ts",
+        "apps/gateway/src/routes/organizations.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/organization-overview-page.test.ts",
+        "apps/gateway/test/organization-overview-page-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-667",
+      "authorization_ref": "SHU-667",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-03 company pages part 2 of 3: the owner's edit page with preview and confirm over the existing organizationProfile safe write; edits only edit-page.ts and its own tests. It waits on SHU-665, whose placeholder and route it fills; it runs beside SHU-668 with no shared path.",
+      "initial_build_paths": [
+        "apps/gateway/src/organizations/edit-page.ts",
+        "apps/gateway/test/organization-edit-page.test.ts",
+        "apps/gateway/test/organization-edit-page-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/organizations/edit-page.ts",
+        "apps/gateway/test/organization-edit-page.test.ts",
+        "apps/gateway/test/organization-edit-page-mutations.mjs"
+      ],
+      "after": [
+        "SHU-665"
+      ]
+    },
+    {
+      "id": "SHU-668",
+      "authorization_ref": "SHU-668",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-05 read half, company pages part 3 of 3: the company's store list page over the existing organizationStores.list; edits only stores-page.ts and its own tests. It waits on SHU-665, whose placeholder and route it fills; it runs beside SHU-667 with no shared path.",
+      "initial_build_paths": [
+        "apps/gateway/src/organizations/stores-page.ts",
+        "apps/gateway/test/organization-stores-page.test.ts",
+        "apps/gateway/test/organization-stores-page-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/organizations/stores-page.ts",
+        "apps/gateway/test/organization-stores-page.test.ts",
+        "apps/gateway/test/organization-stores-page-mutations.mjs"
+      ],
+      "after": [
+        "SHU-665"
       ]
     }
   ],
