@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StatisticsPage } from "../../../../packages/reports/src/statistics.js";
 import type { FiringHitMap } from "../../../../packages/reports/src/firing-hit-map.js";
+import { RECRUITER_ACTIVITY_COLUMNS, RECRUITER_ACTIVITY_MAX_DAYS, type RecruiterActivityPage, type RecruiterActivityRange, type rangeProblem } from "../../../../packages/reports/src/recruiter-activity.js";
 import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 
 /**
@@ -15,10 +16,13 @@ export interface StatisticsHttpService {
   firingHitMap?(viewer: string): Promise<(FiringHitMap & { readonly spikeEmail?: boolean | null }) | undefined>;
   /** False when the viewer may not, or the email is not wired. */
   firingSpikeEmail?(viewer: string, on: boolean): Promise<boolean>;
+  /** Slice 6: what each staff member recorded over a range of Kuwait days. */
+  recruiters?(viewer: string, range: RecruiterActivityRange): Promise<RecruiterActivityPage | { readonly refused: ReturnType<typeof rangeProblem> } | undefined>;
 }
 
 export const STATISTICS_PATH = "/workspace/statistics";
 export const FIRING_HIT_MAP_PATH = "/workspace/statistics/firings";
+export const RECRUITERS_PATH = "/workspace/statistics/recruiters";
 const esc = (v: string) => v.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 function notFound(req: IncomingMessage, res: ServerResponse): true {
@@ -39,7 +43,8 @@ function html(page: StatisticsPage): string {
     + `<p>An assignment counts as retained once it has lasted more than 365 days, including one that is still running.</p>`
     + `<h2>Overview</h2>${table(page.overview, "Total")}`
     + invitationsHtml(page.invitationsByMonth)
-    + `<p><a href="${FIRING_HIT_MAP_PATH}">Placements ended per company, last 12 months</a></p></main>`;
+    + `<p><a href="${FIRING_HIT_MAP_PATH}">Placements ended per company, last 12 months</a></p>`
+    + `<p><a href="${RECRUITERS_PATH}">What each staff member did today</a></p></main>`;
 }
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -67,6 +72,29 @@ function firingsHtml(map: FiringHitMap & { readonly spikeEmail?: boolean | null 
     + toggle + `<p><a href="${STATISTICS_PATH}">Back to statistics</a></p></main>`;
 }
 
+const REFUSED = { from: "The start is not a real day.", to: "The end is not a real day, or is after today.", order: "The start is after the end.",
+  too_long: `The range is longer than ${RECRUITER_ACTIVITY_MAX_DAYS} days.` } as const;
+function recruitersForm(from: string, to: string, today: string): string {
+  return `<form method="get" action="${RECRUITERS_PATH}"><label>From <input type="date" name="from" value="${esc(from)}" max="${esc(today)}" required></label> `
+    + `<label>To <input type="date" name="to" value="${esc(to)}" max="${esc(today)}" required></label> <button type="submit">Show</button></form>`;
+}
+function recruitersHtml(page: RecruiterActivityPage): string {
+  const head = RECRUITER_ACTIVITY_COLUMNS.map(c => `<th scope="col">${esc(c.label)}</th>`).join("");
+  const rows = page.staff.map(r => `<tr><th scope="row">${esc(r.name)}</th>${RECRUITER_ACTIVITY_COLUMNS.map(c => `<td>${r[c.key]}</td>`).join("")}</tr>`).join("");
+  const range = page.from === page.to ? (page.to === page.today ? `today, ${esc(page.to)}` : esc(page.to)) : `${esc(page.from)} to ${esc(page.to)}`;
+  return `<main><h1>What each staff member did</h1><p>Counted from the records for ${range} (Kuwait days), busiest first. Each count goes to the person who recorded it, `
+    + `on the day it was recorded. Accepted and declined are the invitations sent in the range, as they stand now.</p>${recruitersForm(page.from, page.to, page.today)}`
+    + (page.staff.length ? `<table><thead><tr><th scope="col">Staff</th>${head}</tr></thead><tbody>${rows}</tbody>`
+      + `<tfoot><tr><th scope="row">All staff</th>${RECRUITER_ACTIVITY_COLUMNS.map(c => `<td>${page.totals[c.key]}</td>`).join("")}</tr></tfoot></table>` : `<p>No staff yet.</p>`)
+    + `<p><a href="${STATISTICS_PATH}">Back to statistics</a></p></main>`;
+}
+/** The range asked for: each of from and to at most once, nothing else. Null when the query has anything else. */
+function rangeOf(req: IncomingMessage): RecruiterActivityRange | null {
+  const params = new URL(req.url ?? "/", "http://gateway.invalid").searchParams, keys = [...params.keys()];
+  if (keys.some(k => k !== "from" && k !== "to") || new Set(keys).size !== keys.length) return null;
+  return { from: params.get("from"), to: params.get("to") };
+}
+
 const LIMIT = 1024;
 async function emailChoice(req: IncomingMessage): Promise<"on" | "off" | null> {
   if (!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/i.test(req.headers["content-type"] ?? "") || Number(req.headers["content-length"]) > LIMIT) { req.resume(); return null; }
@@ -85,13 +113,13 @@ function json(res: ServerResponse, status: number, body: unknown): true {
 /** Handles the statistics paths; false for any other path. `viewer` is the signed-in person, if any; `origin` is this gateway's, for the email form. */
 export async function handleStatistics(req: IncomingMessage, res: ServerResponse, service: StatisticsHttpService | undefined, path: string, viewer: () => Promise<string | undefined>,
   isStaff: (viewer: string) => Promise<boolean>, origin?: string): Promise<boolean> {
-  if (path !== STATISTICS_PATH && path !== FIRING_HIT_MAP_PATH) return false;
+  if (path !== STATISTICS_PATH && path !== FIRING_HIT_MAP_PATH && path !== RECRUITERS_PATH) return false;
   const posting = req.method === "POST" && path === FIRING_HIT_MAP_PATH;
   if (!posting) req.resume();
   const person = service ? await viewer() : undefined;
   // Authorization first: everyone who is not staff gets the same not found, whatever the method.
   let allowed = false; if (person) try { allowed = await isStaff(person); } catch { /* treated as not staff */ }
-  if (!service || !person || !allowed || (path === FIRING_HIT_MAP_PATH && !service.firingHitMap)) { if (posting) req.resume(); return notFound(req, res); }
+  if (!service || !person || !allowed || (path === FIRING_HIT_MAP_PATH && !service.firingHitMap) || (path === RECRUITERS_PATH && !service.recruiters)) { if (posting) req.resume(); return notFound(req, res); }
   if (posting) {
     if (!service.firingSpikeEmail) { req.resume(); res.writeHead(405, { allow: "GET" }); res.end(); return true; }
     if (!req.headers.origin || !origin || req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); return json(res, 403, { status: "forbidden" }); }
@@ -102,6 +130,21 @@ export async function handleStatistics(req: IncomingMessage, res: ServerResponse
     return json(res, 200, { status: "ok", spikeEmail: email === "on" });
   }
   if (req.method !== "GET") { res.writeHead(405, { allow: path === FIRING_HIT_MAP_PATH && service.firingSpikeEmail ? "GET, POST" : "GET" }); res.end(); return true; }
+  if (path === RECRUITERS_PATH) {
+    const range = rangeOf(req);
+    const page = range && await service.recruiters!(person, range);
+    if (range && !page) return notFound(req, res);
+    if (!page || "refused" in page) {
+      const field = page && "refused" in page ? page.refused : null;
+      if (!wantsHtml(req.headers.accept)) return json(res, 400, { status: "invalid", field: field ?? "query" });
+      writeHtml(res, 400, pageDocument("What each staff member did", `<main><h1>What each staff member did</h1><p role="alert">${field ? REFUSED[field] : "Only a start and an end day can be given."}</p>`
+        + `<p><a href="${RECRUITERS_PATH}">Show today</a></p></main>`), { "cache-control": "no-store" });
+      return true;
+    }
+    if (!wantsHtml(req.headers.accept)) return json(res, 200, { status: "ok", ...page });
+    writeHtml(res, 200, pageDocument("What each staff member did", recruitersHtml(page)), { "cache-control": "no-store" });
+    return true;
+  }
   const page = path === STATISTICS_PATH ? await service.page(person) : await service.firingHitMap!(person);
   if (!page) return notFound(req, res);
   if (!wantsHtml(req.headers.accept)) return json(res, 200, { status: "ok", ...page });

@@ -11,3 +11,4 @@ export * from "./certificate-pdf.js";
 export * from "./statistics.js";
 export * from "./firing-hit-map.js";
 export * from "./firing-spike.js";
+export * from "./recruiter-activity.js";

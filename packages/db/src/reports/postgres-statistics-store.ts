@@ -43,6 +43,21 @@ const INVITATIONS = `SELECT to_char(k.at, 'YYYY-MM') AS month,
   WHERE i.created_at >= ($2::date::timestamp AT TIME ZONE 'Asia/Kuwait') AND i.created_at < ($3::date::timestamp AT TIME ZONE 'Asia/Kuwait')
     AND to_char(k.at, 'YYYY-MM') = ANY($1::text[])
   GROUP BY 1 ORDER BY 1`;
+// $1 staff principal ids, $2 the first Kuwait day, $3 the last (inclusive). Each count is by the staff member who did it, when it was recorded.
+const RECRUITER_ACTIVITY = `WITH r AS (SELECT ($2::date::timestamp AT TIME ZONE 'Asia/Kuwait') AS lo, (($3::date + 1)::timestamp AT TIME ZONE 'Asia/Kuwait') AS hi),
+  s AS (SELECT unnest($1::text[]) AS id),
+  placements AS (SELECT a.created_by AS id, count(*)::int AS n FROM work_assignments a, r WHERE a.created_by = ANY($1::text[]) AND a.created_at >= r.lo AND a.created_at < r.hi GROUP BY 1),
+  requests AS (SELECT q.created_by_principal_id AS id, count(*)::int AS n FROM recruit_requests q, r WHERE q.created_by_principal_id = ANY($1::text[]) AND q.created_at >= r.lo AND q.created_at < r.hi GROUP BY 1),
+  suggestions AS (SELECT e.actor_principal_id AS id, count(*)::int AS n FROM recruit_pipeline_events e, r WHERE e.from_stage IS NULL AND e.actor_principal_id = ANY($1::text[]) AND e.at >= r.lo AND e.at < r.hi GROUP BY 1),
+  notes AS (SELECT n.author_principal_id AS id, count(*)::int AS n FROM recruit_request_notes n, r WHERE n.removed_at IS NULL AND n.author_principal_id = ANY($1::text[]) AND n.created_at >= r.lo AND n.created_at < r.hi GROUP BY 1),
+  invitations AS (SELECT i.invited_by_principal_id AS id, count(*)::int AS n, count(*) FILTER (WHERE i.status = 'accepted')::int AS accepted, count(*) FILTER (WHERE i.status = 'declined')::int AS declined
+    FROM recruit_invitations i, r WHERE i.invited_by_principal_id = ANY($1::text[]) AND i.created_at >= r.lo AND i.created_at < r.hi GROUP BY 1)
+  SELECT s.id, COALESCE(pp.display_name, p.display_name) AS name,
+    COALESCE(placements.n, 0) AS placements, COALESCE(requests.n, 0) AS requests, COALESCE(suggestions.n, 0) AS suggestions, COALESCE(notes.n, 0) AS notes,
+    COALESCE(invitations.n, 0) AS invitations, COALESCE(invitations.accepted, 0) AS "invitationsAccepted", COALESCE(invitations.declined, 0) AS "invitationsDeclined"
+  FROM s LEFT JOIN principals p ON p.id = s.id LEFT JOIN person_profiles pp ON pp.principal_id = s.id
+    LEFT JOIN placements ON placements.id = s.id LEFT JOIN requests ON requests.id = s.id LEFT JOIN suggestions ON suggestions.id = s.id
+    LEFT JOIN notes ON notes.id = s.id LEFT JOIN invitations ON invitations.id = s.id`;
 
 // $1 is the Asia/Kuwait day. Requests keep legacy's KWD filter (no currency on file means KWD).
 const KWD_REQUESTS = "recruit_requests r LEFT JOIN organization_commercial_terms t ON t.org_id = r.org_id AND t.field = 'currency_code'";
@@ -113,6 +128,15 @@ export class PostgresStatisticsStore {
     return (await this.#pool.query(INVITATIONS, [months, `${sorted[0]}-01`, after])).rows;
   }
 
+  /** What each of `staff` recorded over the Kuwait days `from` to `to` (inclusive), and their names. */
+  async recruiterActivity(staff: readonly string[], from: string, to: string): Promise<{ names: Map<string, string>; counts: Map<string, RecruiterActivityRow> }> {
+    if (!DAY.test(from) || !DAY.test(to) || from > to) throw new RangeError("invalid range");
+    const { rows } = await this.#pool.query<RecruiterActivityRow & { id: string; name: string | null }>(RECRUITER_ACTIVITY, [staff, from, to]);
+    const names = new Map<string, string>(), counts = new Map<string, RecruiterActivityRow>();
+    for (const { id, name, ...c } of rows) { if (name) names.set(id, name); counts.set(id, c); }
+    return { names, counts };
+  }
+
   /** Top-level companies, and placements ended in `months` (`YYYY-MM`) up to one Asia/Kuwait day, both from one snapshot. */
   async firings(day: string, months: readonly string[]): Promise<FiringRows> {
     const c = await this.#pool.connect();
@@ -126,6 +150,7 @@ export class PostgresStatisticsStore {
   }
 }
 
+export interface RecruiterActivityRow { placements: number; requests: number; suggestions: number; notes: number; invitations: number; invitationsAccepted: number; invitationsDeclined: number }
 export interface FiringRows { companies: { orgId: string; name: string }[]; counts: { orgId: string; month: string; total: number }[] }
 /** The hit map's companies and counts, read on `client` (inside the caller's transaction). */
 export async function readFirings(client: pg.PoolClient, operators: readonly string[], day: string, months: readonly string[]): Promise<FiringRows> {
