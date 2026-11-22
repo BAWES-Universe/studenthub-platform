@@ -237,3 +237,39 @@ test("REPORTS_STATISTICS_PG invitations by month: counted in Kuwait time by how 
   await assert.rejects(store.invitationsByMonth([]), RangeError);
   await assert.rejects(store.invitationsByMonth(["2001-13"]), RangeError);
 });
+
+test("REPORTS_STATISTICS_PG recruiter activity: each count goes to who recorded it, on the Kuwait day it was recorded", async () => {
+  const a = await principal("staff-a"), b = await principal("staff-b"), other = await principal("staff-c");
+  const day = "2001-06-10", lo = "2001-06-09T21:00:00Z", hi = "2001-06-10T20:59:59Z", next = "2001-06-10T21:00:00Z";
+  const r = await request("open");
+  await pool.query("UPDATE recruit_requests SET created_by_principal_id = $1, created_at = $2 WHERE id = $3", [a, lo, r]);
+  const r2 = await request("open");
+  await pool.query("UPDATE recruit_requests SET created_by_principal_id = $1, created_at = $2 WHERE id = $3", [a, next, r2]); // next Kuwait day
+  const person = async () => principal("candidate");
+  const card = randomUUID();
+  await pool.query("INSERT INTO recruit_pipeline_cards(id,request_id,person_principal_id,stage) VALUES($1,$2,$3,'suggested')", [card, r, await person()]);
+  const event = (from: string | null, to: string, actor: string, at: string) => pool.query(
+    "INSERT INTO recruit_pipeline_events(card_id,from_stage,to_stage,actor_principal_id,actor_ref,at) VALUES($1,$2,$3,$4,$5,$6)", [card, from, to, actor, "b".repeat(64), at]);
+  await event(null, "suggested", b, hi);
+  await event("suggested", "contacted", b, hi); // a move, not a suggestion
+  const note = (author: string, at: string, removed: string | null) => pool.query(
+    "INSERT INTO recruit_request_notes(id,request_id,note_type,note_text,author_principal_id,created_at,removed_at) VALUES($1,$2,'internal_note','Called',$3,$4,$5)", [randomUUID(), r, author, at, removed]);
+  await note(a, lo, null); await note(a, hi, hi); await note(b, "2001-06-09T20:59:59Z", null);
+  const invite = async (by: string, status: string, at: string) => pool.query(
+    "INSERT INTO recruit_invitations(id,request_id,person_principal_id,invited_by_principal_id,status,created_at,answered_at) VALUES($1,$2,$3,$4,$5,$6,$7)",
+    [randomUUID(), r, await person(), by, status, at, ["accepted", "declined", "withdrawn"].includes(status) ? at : null]);
+  await invite(b, "accepted", lo); await invite(b, "declined", hi); await invite(b, "seen", hi); await invite(a, "accepted", next);
+  const placed = await pool.query(`INSERT INTO work_assignments(id,person_principal_id,org_id,store_id,contract_resolution,start_date,end_date,source,created_by,created_at)
+    VALUES($1,$2,$3,$4,'{}','2001-07-01',NULL,'staff',$5,$6) RETURNING id`, [randomUUID(), await person(), company, storeId, a, hi]);
+  assert.equal(placed.rowCount, 1);
+  await pool.query("UPDATE principals SET display_name = 'Amal Saleh' WHERE id = $1", [a]);
+  const { names, counts } = await store.recruiterActivity([a, b], day, day);
+  assert.deepEqual({ ...counts.get(a) }, { placements: 1, requests: 1, suggestions: 0, notes: 1, invitations: 0, invitationsAccepted: 0, invitationsDeclined: 0 });
+  assert.deepEqual({ ...counts.get(b) }, { placements: 0, requests: 0, suggestions: 1, notes: 0, invitations: 3, invitationsAccepted: 1, invitationsDeclined: 1 });
+  assert.equal(counts.has(other), false, "only the staff asked for");
+  assert.equal(names.get(a), "Amal Saleh", "names come back for the staff asked for");
+  const two = await store.recruiterActivity([a], day, "2001-06-11");
+  assert.equal(two.counts.get(a)!.requests, 2, "the range includes its last day");
+  assert.equal(two.counts.get(a)!.invitations, 1);
+  await assert.rejects(store.recruiterActivity([a], "2001-06-11", day), RangeError);
+});
