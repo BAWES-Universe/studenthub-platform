@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -85,4 +85,32 @@ export function jsonIssues(root = repoRoot()): ContractIssue[] {
     }
   }
   return issues;
+}
+
+/** Where the gateway's routes are defined; served routes are looked up here. */
+export const GATEWAY_SOURCE = "apps/gateway/src";
+
+/** A repository file's text, or undefined when it is not a file inside the root. */
+export function readRepoFile(root: string, file: string): string | undefined {
+  const full = path.resolve(root, file);
+  if (!full.startsWith(`${path.resolve(root)}${path.sep}`)) return undefined;
+  try {
+    return statSync(full).isFile() ? readFileSync(full, "utf8") : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Every TypeScript file under the gateway source, concatenated in a stable order. */
+export function gatewaySource(root = repoRoot()): string {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir).sort()) {
+      const full = path.join(dir, name);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (name.endsWith(".ts")) out.push(readFileSync(full, "utf8"));
+    }
+  };
+  walk(path.join(root, GATEWAY_SOURCE));
+  return out.join("\n");
 }

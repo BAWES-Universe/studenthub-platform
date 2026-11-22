@@ -7,6 +7,7 @@ import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
 import { PostgresImportedOrganizationSnapshots, PostgresOrganizationImportStore } from "@studenthub/db/import";
 import { ORGANIZATION_PARITY_REVISION, OrganizationRepository } from "../../organizations/src/index.js";
 import { mapLegacyCompanies } from "../../../tools/legacy-import/src/m4-organizations.js";
+import { fixtureIds } from "./legacy-fixture-ids.js";
 
 // Synthetic company rows only; fresh legacy ids per run so the suite can share a database.
 
@@ -25,8 +26,7 @@ before(async () => {
 });
 after(async () => pool.end());
 
-let next = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
-const ids = () => { next += 10; return next; };
+const ids = () => fixtureIds(pool);
 const company = (id: number, extra: Record<string, unknown> = {}) => ({
   company_id: id, parent_company_id: null, company_name: `Company ${id}`, company_common_name_en: `Common ${id}`,
   company_common_name_ar: null, company_description_en: null, company_description_ar: null, company_website: null,
@@ -36,7 +36,7 @@ const company = (id: number, extra: Record<string, unknown> = {}) => ({
 });
 
 test("companies import under the operator org with their parent, once; a re-run is unchanged", async () => {
-  const top = ids(), sub = top + 1;
+  const top = await ids(), sub = top + 1;
   const { organizations } = mapLegacyCompanies([company(sub, { parent_company_id: top }), company(top)]);
   assert.deepEqual(await store.importOrganizations(organizations), { inserted: 2, unchanged: 0, conflicts: [], refused: [] });
   assert.deepEqual(await store.importOrganizations(organizations), { inserted: 0, unchanged: 2, conflicts: [], refused: [] });
@@ -47,7 +47,7 @@ test("companies import under the operator org with their parent, once; a re-run 
 });
 
 test("the snapshot adapter gives the organizations package a row it accepts, with the company parent", async () => {
-  const top = ids(), sub = top + 1;
+  const top = await ids(), sub = top + 1;
   await store.importOrganizations(mapLegacyCompanies([company(top, { total_candidate: 4 }), company(sub, { parent_company_id: top })]).organizations);
   const map = await store.idMap();
   const topId = map.get(String(top))!, subId = map.get(String(sub))!;
@@ -73,7 +73,7 @@ test("the snapshot adapter gives the organizations package a row it accepts, wit
 });
 
 test("a changed company is a conflict and is never overwritten", async () => {
-  const id = ids();
+  const id = await ids();
   const first = mapLegacyCompanies([company(id)]).organizations;
   await store.importOrganizations(first);
   const changed = mapLegacyCompanies([company(id, { company_name: "Renamed" })]).organizations;
@@ -84,7 +84,7 @@ test("a changed company is a conflict and is never overwritten", async () => {
 });
 
 test("a sub-company whose parent is not imported is refused, and the batch goes on", async () => {
-  const top = ids(), sub = top + 1, other = top + 2;
+  const top = await ids(), sub = top + 1, other = top + 2;
   const { organizations } = mapLegacyCompanies([company(top), company(sub, { parent_company_id: top }), company(other)]);
   const result = await store.importOrganizations(organizations.filter((o) => o.legacyId !== String(top)));
   assert.deepEqual(result.refused, [{ legacyId: String(sub), code: "no_parent" }]);
@@ -92,7 +92,7 @@ test("a sub-company whose parent is not imported is refused, and the batch goes 
 });
 
 test("reconciliation lists reported skips apart from unexplained gaps", async () => {
-  const a = ids();
+  const a = await ids();
   await store.importOrganizations(mapLegacyCompanies([company(a)]).organizations);
   const report = await store.reconcile([String(a), String(a + 1), String(a + 2)], [String(a + 1)]);
   assert.equal(report.legacy, 3);
@@ -102,7 +102,7 @@ test("reconciliation lists reported skips apart from unexplained gaps", async ()
 });
 
 test("two import runs at once are serialized: one inserts, the other finds the companies unchanged", async () => {
-  const base = ids(); next += 200;
+  const base = await ids();
   const { organizations } = mapLegacyCompanies(Array.from({ length: 20 }, (_, i) => company(base + i)));
   const other = new PostgresOrganizationImportStore({ connectionString: URL }, ORGANIZATION_PARITY_REVISION, operator);
   try {
@@ -115,10 +115,11 @@ test("two import runs at once are serialized: one inserts, the other finds the c
 });
 
 test("a child is held when its mapped parent is no longer top level as stored; a top-level parent still takes children", async () => {
-  const a = ids(), b = a + 1, c = a + 2, d = a + 3;
+  const a = await ids(), b = a + 1, c = a + 2, d = a + 3;
   // Snapshot 1: B is a sub-company of A.
   const first = mapLegacyCompanies([company(a), company(b, { parent_company_id: a })]).organizations;
-  assert.equal((await store.importOrganizations(first)).inserted, 2);
+  // The full disposition: a fixture id already mapped by another suite would show as unchanged.
+  assert.deepEqual(await store.importOrganizations(first), { inserted: 2, unchanged: 0, conflicts: [], refused: [] });
   // Snapshot 2: legacy moved B to top level and added C under B, and D under A.
   const second = mapLegacyCompanies([company(a), company(b), company(c, { parent_company_id: b }), company(d, { parent_company_id: a })]).organizations;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -136,7 +137,7 @@ test("a child is held when its mapped parent is no longer top level as stored; a
 });
 
 test("a company archived in a later snapshot is reported by the mapper, and its imported organization stays", async () => {
-  const a = ids();
+  const a = await ids();
   await store.importOrganizations(mapLegacyCompanies([company(a)]).organizations);
   const later = mapLegacyCompanies([company(a, { deleted: 1 })]);
   assert.deepEqual(later.organizations, []);
