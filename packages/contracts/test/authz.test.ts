@@ -530,7 +530,10 @@ test("registry: unknown issuer/key is a hard miss; retirement keeps rows for ove
   assert.equal(retired.status, "retired");
   // Row is kept (audit/overlap verification), but no longer active.
   assert.equal((await registry.getIssuerKey("authentik", "k1"))?.status, "retired");
+  // Only the named key is retired; the issuer's other keys stay active.
   assert.equal((await registry.getIssuerKey("authentik", "k2"))?.status, "active");
+  // Retiring an already retired key returns it unchanged.
+  assert.deepEqual(await registry.retireIssuerKey("authentik", "k1"), retired);
 
   const listed = await registry.listIssuerKeys("authentik");
   assert.deepEqual(listed.map((k) => k.keyId).sort(), ["k1", "k2"]);
