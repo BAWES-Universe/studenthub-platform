@@ -341,9 +341,9 @@ test("stop cause S11: a review held at its final check because its pull request 
   // SHU-652, 21 Nov: #554 merged 7 s after the review launched; the final
   // check held with no worker launched. A merged pull request leaves nothing
   // to review, so no stop card is filed.
-  const decide = (notes) => deriveIncidentEvent({
-    activation: { requested: true, state: "armed", valid: true, activation_id: "stopcause0011", target_issue_id: DESK, coordinator_revision: REVISION },
-    receipts: [heldReceipt({ issue: DESK, activationId: "stopcause0011", notes, worker: "claude-verifier" })],
+  const decide = (notes, { reviewOnly = true, issue = DESK, worker = "claude-verifier" } = {}) => deriveIncidentEvent({
+    activation: { requested: true, state: "armed", valid: true, activation_id: "stopcause0011", target_issue_id: issue, coordinator_revision: REVISION },
+    receipts: [{ ...heldReceipt({ issue, activationId: "stopcause0011", notes, worker }), ...(reviewOnly ? { review_base_sha: HEAD_B } : {}) }],
     config: {},
     episodeDecision: HOLD,
   });
@@ -354,6 +354,10 @@ test("stop cause S11: a review held at its final check because its pull request 
   assert.equal(moved?.cause, STOP_CAUSE.UNCLASSIFIED);
   // Only the latest code counts: a merged note followed by another code is a stop.
   assert.ok(decide(["adapter reason code: FINAL_CHECK_REVIEW_PR_MERGED", "adapter reason code: SUPERVISOR_WORKER_EXIT"]));
+  // The code on an attempt that is not a bound review-only one is still a stop.
+  const merged = ["adapter reason code: FINAL_CHECK_REVIEW_PR_MERGED"];
+  assert.equal(decide(merged, { reviewOnly: false })?.reason_code, INCIDENT_REASON.AMBIGUOUS_HOLD);
+  assert.equal(decide(merged, { reviewOnly: false, issue: CARD, worker: "codex-builder" })?.reason_code, INCIDENT_REASON.AMBIGUOUS_HOLD);
 });
 
 test("stop cause S10: only the coordinator's own stop cards count toward a loop", async () => {
@@ -479,8 +483,14 @@ const MUTATIONS = [
   },
   {
     name: "file a stop for a review whose pull request merged",
-    from: '  if (latest?.stage === "HOLD" && adapterReasonCode(latest) === REVIEW_PR_MERGED_CODE) return null;\n',
+    from: '  if (reviewPullMerged(latest)) return null;\n',
     to: "  // MUTANT\n",
+    named: /stop cause S11/,
+  },
+  {
+    name: "skip a merged-pull-request hold that is not a review",
+    from: '  return receipt?.stage === "HOLD" && SHA_RE.test(receipt.review_base_sha ?? "")\n',
+    to: '  return receipt?.stage === "HOLD" // MUTANT\n',
     named: /stop cause S11/,
   },
 ];

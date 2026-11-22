@@ -418,6 +418,7 @@ test("SHU-303 P4: a pull request that moves while the workspace is prepared stop
       assert.equal(held?.stage, "HOLD", tick.text);
       assert.ok(held.notes.includes(`adapter reason code: ${code}`), JSON.stringify(held.notes));
       assert.match(tick.text, new RegExp(`final activation check refused \\(${code}\\)`));
+      assert.equal(held.review_base_sha, BASE, "the held attempt stays bound to its review base");
     } finally { h.cleanup(); }
   }
 });

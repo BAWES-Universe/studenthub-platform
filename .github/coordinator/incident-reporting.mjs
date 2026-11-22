@@ -272,7 +272,13 @@ function adapterReasonCode(receipt) {
 // A review-only run held at its final check because the pull request it was
 // to review had merged meanwhile: no worker launched and nothing is left to
 // review, so it is not a stop (SHU-652, 21 Nov: #554 merged 7 s after launch).
+// Only a review-only attempt (bound to its review base) qualifies: the same
+// code on any other HOLD is still a stop.
 export const REVIEW_PR_MERGED_CODE = "FINAL_CHECK_REVIEW_PR_MERGED";
+function reviewPullMerged(receipt) {
+  return receipt?.stage === "HOLD" && SHA_RE.test(receipt.review_base_sha ?? "")
+    && adapterReasonCode(receipt) === REVIEW_PR_MERGED_CODE;
+}
 
 export function stopCauseFromReceipt(receipt) {
   const notes = Array.isArray(receipt?.notes) ? receipt.notes.filter((note) => typeof note === "string") : [];
@@ -388,7 +394,7 @@ export function deriveIncidentEvent({ activation, receipts = [], config = {}, ep
   const launched = episodeReceipts.some((receipt) => receipt?.timestamps?.launch || !["RESERVED"].includes(receipt?.stage));
   if (!launched) return null;
   const latest = latestAttempt(episodeReceipts);
-  if (latest?.stage === "HOLD" && adapterReasonCode(latest) === REVIEW_PR_MERGED_CODE) return null;
+  if (reviewPullMerged(latest)) return null;
   const stopCode = episodeReceipts.slice().reverse().find((receipt) => [INCIDENT_REASON.STALE_HEAD, INCIDENT_REASON.UNREADABLE_HEAD].includes(receipt?.stop_reason_code))?.stop_reason_code;
   let reasonCode = stopCode ?? null;
   if (!reasonCode && episodeDecision?.ended) reasonCode = classifyEndedReason(episodeDecision.reason);

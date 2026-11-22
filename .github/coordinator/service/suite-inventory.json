@@ -3529,6 +3529,7 @@
     "stop cause mutation: accept any cause in the title",
     "stop cause mutation: refuse to file when a route label is missing",
     "stop cause mutation: file a stop for a review whose pull request merged",
+    "stop cause mutation: skip a merged-pull-request hold that is not a review",
     "SHU-250: real tick returns while a long-running supervised child executes",
     "SHU-250: concurrent ticks recover the same durable attempt with one launch",
     "SHU-250: crash after submission recovers once and ambiguous restart HOLDs",
@@ -27380,6 +27381,10 @@
     },
     {
       "name": "stop cause mutation: file a stop for a review whose pull request merged",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause mutation: skip a merged-pull-request hold that is not a review",
       "capabilities": []
     },
     {
