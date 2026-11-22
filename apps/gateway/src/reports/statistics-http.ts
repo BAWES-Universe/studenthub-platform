@@ -38,7 +38,20 @@ function html(page: StatisticsPage): string {
     + `<h2>Hiring</h2><dl>${hiring.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`
     + `<p>An assignment counts as retained once it has lasted more than 365 days, including one that is still running.</p>`
     + `<h2>Overview</h2>${table(page.overview, "Total")}`
+    + invitationsHtml(page.invitationsByMonth)
     + `<p><a href="${FIRING_HIT_MAP_PATH}">Placements ended per company, last 12 months</a></p></main>`;
+}
+
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const monthName = (m: string) => { const [y, n] = m.split("-"); return `${MONTH_NAMES[Number(n) - 1] ?? m} ${y}`; };
+const rate = (n: number | null) => n === null ? "–" : `${n}%`;
+function invitationsHtml(months: StatisticsPage["invitationsByMonth"]): string {
+  const most = Math.max(1, ...months.map(m => m.total));
+  const rows = months.map(m => `<tr><th scope="row">${esc(monthName(m.month))}</th><td><meter min="0" max="${most}" value="${m.total}"></meter> ${m.total}</td>`
+    + `<td>${m.noAnswer}</td><td>${m.accepted}</td><td>${m.declined}</td><td>${m.withdrawn}</td><td>${rate(m.acceptanceRate)}</td><td>${rate(m.declineRate)}</td></tr>`).join("");
+  return `<h2>Invitations by month</h2><p>Invitations sent in each of the last 12 whole months (Kuwait time), oldest first, and how each one stands now.</p>`
+    + `<table><thead><tr><th scope="col">Month</th><th scope="col">Sent</th><th scope="col">No answer yet</th><th scope="col">Accepted</th><th scope="col">Declined</th>`
+    + `<th scope="col">Withdrawn</th><th scope="col">Acceptance rate</th><th scope="col">Decline rate</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 const LEVEL = { danger: "more than twice the average", warning: "more than the average" } as const;

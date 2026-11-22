@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MORNING_SUMMARY_COUNTERS, STAFF_STATISTICS_COUNTERS, STATISTICS_OVERVIEW, StatisticsService, percent, type StatisticsStore } from "../src/index.js";
+import { MORNING_SUMMARY_COUNTERS, STAFF_STATISTICS_COUNTERS, STATISTICS_OVERVIEW, StatisticsService, invitationMonths, invitationsByMonth, percent, type StatisticsStore } from "../src/index.js";
 
 const AVAILABLE = STAFF_STATISTICS_COUNTERS.filter(c => c.source.kind === "available").map(c => c.key);
 
 const OVERVIEW = { candidates: 100, assigned: 7, suggested: 20, requests: 9, requestsDelivered: 4 };
 function rig(raw: Record<string, number>, hiring = { hired: 8, retained: 3, invitations: 40 }, overview: Record<string, number> = OVERVIEW) {
   const calls: string[] = [];
-  const store: StatisticsStore = { async staffCounts(day) { calls.push(`counts ${day}`); return raw; }, async hiring(day) { calls.push(`hiring ${day}`); return hiring; }, async overviewCounts() { return overview; } };
+  const store: StatisticsStore = { async invitationsByMonth() { return []; }, async staffCounts(day) { calls.push(`counts ${day}`); return raw; }, async hiring(day) { calls.push(`hiring ${day}`); return hiring; }, async overviewCounts() { return overview; } };
   const service = new StatisticsService(store, { isStaff: async id => id === "staff" }, () => new Date("2026-11-20T22:30:00Z"));
   return { service, calls };
 }
@@ -50,7 +50,7 @@ test("REPORTS_STATISTICS an available counter the store did not answer is an err
 });
 
 test("REPORTS_STATISTICS overview: store, company directory and staff time figures in legacy's order; a source not given or not answering is not available", async () => {
-  const store: StatisticsStore = { async staffCounts() { return full(); }, async hiring() { return { hired: 1, retained: 0, invitations: 2 }; }, async overviewCounts() { return OVERVIEW; } };
+  const store: StatisticsStore = { async invitationsByMonth() { return []; }, async staffCounts() { return full(); }, async hiring() { return { hired: 1, retained: 0, invitations: 2 }; }, async overviewCounts() { return OVERVIEW; } };
   const isStaff = async (id: string) => id === "staff";
   const now = () => new Date("2026-11-20T06:00:00Z");
   const days: string[] = [];
@@ -69,4 +69,20 @@ test("REPORTS_STATISTICS overview: store, company directory and staff time figur
   assert.match(bare.overview.find(r => r.key === "companies")!.waitsOn!, /company directory/);
   assert.match(bare.overview.find(r => r.key === "staff")!.waitsOn!, /work lane/);
   await assert.rejects(new StatisticsService({ ...store, async overviewCounts() { return { ...OVERVIEW, requests: undefined as never }; } }, { isStaff }, now).page("staff"), /requests/);
+});
+
+test("REPORTS_STATISTICS invitations by month: the 12 whole months before the Kuwait month, oldest first, with rates", async () => {
+  assert.deepEqual(invitationMonths("2026-11-21"), ["2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"]);
+  assert.deepEqual(invitationMonths("2027-01-01").slice(-2), ["2026-11", "2026-12"], "across the new year");
+  const asked: (readonly string[])[] = [];
+  const store: StatisticsStore = { async invitationsByMonth(months) { asked.push(months); return [{ month: "2026-10", noAnswer: 3, accepted: 4, declined: 2, withdrawn: 1 }]; },
+    async staffCounts() { return full(); }, async hiring() { return { hired: 0, retained: 0, invitations: 0 }; }, async overviewCounts() { return OVERVIEW; } };
+  // 31 October 21:30 UTC is already 1 November in Kuwait, so October is the newest whole month.
+  const page = (await new StatisticsService(store, { isStaff: async () => true }, () => new Date("2026-10-31T21:30:00Z")).page("staff"))!;
+  assert.deepEqual(asked, [invitationMonths("2026-11-01")]);
+  assert.equal(page.invitationsByMonth.length, 12);
+  assert.deepEqual(page.invitationsByMonth.at(-1), { month: "2026-10", noAnswer: 3, accepted: 4, declined: 2, withdrawn: 1, total: 10, acceptanceRate: 40, declineRate: 20 });
+  assert.deepEqual(page.invitationsByMonth[0], { month: "2025-11", noAnswer: 0, accepted: 0, declined: 0, withdrawn: 0, total: 0, acceptanceRate: null, declineRate: null }, "a month with none is zeros, with no rate");
+  assert.throws(() => invitationsByMonth(["2026-10"], [{ month: "2026-09", noAnswer: 1, accepted: 0, declined: 0, withdrawn: 0 }]), /not asked for/);
+  assert.throws(() => invitationsByMonth(["2026-10"], [{ month: "2026-10", noAnswer: -1, accepted: 0, declined: 0, withdrawn: 0 }]), /noAnswer/);
 });

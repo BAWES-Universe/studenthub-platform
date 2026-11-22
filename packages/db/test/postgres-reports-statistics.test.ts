@@ -211,3 +211,29 @@ test("REPORTS_STATISTICS_PG firings: placements ended per top-level company and 
   await assert.rejects(scoped.firings(DAY, []), RangeError);
   await assert.rejects(scoped.firings(DAY, ["2026-1"]), RangeError);
 });
+
+test("REPORTS_STATISTICS_PG invitations by month: counted in Kuwait time by how each stands now, only the months asked for", async () => {
+  const months = ["2001-03", "2001-04"];
+  const read = async () => Object.fromEntries((await store.invitationsByMonth(months)).map(r => [r.month, r]));
+  const before = await read();
+  const r = await request("open");
+  const invite = async (at: string, status: string) => pool.query(
+    "INSERT INTO recruit_invitations(id,request_id,person_principal_id,invited_by_principal_id,status,created_at,answered_at) VALUES($1,$2,$3,$4,$5,$6,$7)",
+    [randomUUID(), r, await principal("invitee"), creator, status, at, ["accepted", "declined", "withdrawn"].includes(status) ? at : null]);
+  await invite("2001-02-28T21:00:00Z", "sent"); // 1 March 00:00 in Kuwait: March
+  await invite("2001-02-28T20:59:59Z", "accepted"); // still February in Kuwait: not asked for
+  await invite("2001-03-15T10:00:00Z", "seen");
+  await invite("2001-03-20T10:00:00Z", "accepted");
+  await invite("2001-03-31T20:59:59Z", "declined"); // last second of March in Kuwait
+  await invite("2001-03-31T21:00:00Z", "withdrawn"); // 1 April in Kuwait
+  await invite("2001-04-30T21:00:00Z", "accepted"); // 1 May in Kuwait: not asked for
+  const after = await read();
+  const diff = (m: string) => Object.fromEntries((["noAnswer", "accepted", "declined", "withdrawn"] as const).map(k => [k, (after[m]?.[k] ?? 0) - (before[m]?.[k] ?? 0)]));
+  assert.deepEqual(diff("2001-03"), { noAnswer: 2, accepted: 1, declined: 1, withdrawn: 0 });
+  assert.deepEqual(diff("2001-04"), { noAnswer: 0, accepted: 0, declined: 0, withdrawn: 1 });
+  assert.deepEqual(Object.keys(after).sort(), months, "nothing outside the months asked for");
+  const december = await store.invitationsByMonth(["2000-12"]);
+  assert.ok(december.every(m => m.month === "2000-12"), "a December range ends at 1 January of the next year");
+  await assert.rejects(store.invitationsByMonth([]), RangeError);
+  await assert.rejects(store.invitationsByMonth(["2001-13"]), RangeError);
+});
