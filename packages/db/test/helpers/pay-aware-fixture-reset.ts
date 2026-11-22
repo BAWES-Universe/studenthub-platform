@@ -58,6 +58,8 @@ const guards = [
   ["work_staff_sessions", "work_staff_sessions_no_truncate"],
   // The lifecycle audit has a statement-level retention guard as well.
   ["pay_transfer_lifecycle_history", "pay_transfer_lifecycle_history_no_truncate"],
+  // Transfer invoices (invoices lane) cascade from pay_transfers and organizations.
+  ["transfer_invoice", "transfer_invoice_no_truncate"],
 ] as const;
 
 export async function resetPayAwareFixture(pool: pg.Pool, statement: string): Promise<void> {
