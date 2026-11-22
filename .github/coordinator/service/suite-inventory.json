@@ -3515,6 +3515,7 @@
     "stop cause S5: the incident identity and reason code stay exactly as before",
     "stop cause S6: the third stop with the same card, cause and contract is looping; the second is not",
     "stop cause S7: review desk stops on different reviewed heads are not a loop",
+    "stop cause S11: a review held at its final check because its pull request merged is not a stop",
     "stop cause S10: only the coordinator's own stop cards count toward a loop",
     "stop cause S8: a missing route or looping label still files and names only the missing label",
     "stop cause S9: the card contract key follows the card's committed contract",
@@ -3527,6 +3528,7 @@
     "stop cause mutation: trust any issue id",
     "stop cause mutation: accept any cause in the title",
     "stop cause mutation: refuse to file when a route label is missing",
+    "stop cause mutation: file a stop for a review whose pull request merged",
     "SHU-250: real tick returns while a long-running supervised child executes",
     "SHU-250: concurrent ticks recover the same durable attempt with one launch",
     "SHU-250: crash after submission recovers once and ambiguous restart HOLDs",
@@ -27325,6 +27327,10 @@
       "capabilities": []
     },
     {
+      "name": "stop cause S11: a review held at its final check because its pull request merged is not a stop",
+      "capabilities": []
+    },
+    {
       "name": "stop cause S10: only the coordinator's own stop cards count toward a loop",
       "capabilities": []
     },
@@ -27370,6 +27376,10 @@
     },
     {
       "name": "stop cause mutation: refuse to file when a route label is missing",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause mutation: file a stop for a review whose pull request merged",
       "capabilities": []
     },
     {

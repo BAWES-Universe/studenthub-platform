@@ -337,6 +337,25 @@ test("stop cause S7: review desk stops on different reviewed heads are not a loo
   assert.ok(buildLinear.labelNames(buildLinear.creates[0]).includes(STOP_LOOPING_LABEL));
 });
 
+test("stop cause S11: a review held at its final check because its pull request merged is not a stop", () => {
+  // SHU-652, 21 Nov: #554 merged 7 s after the review launched; the final
+  // check held with no worker launched. A merged pull request leaves nothing
+  // to review, so no stop card is filed.
+  const decide = (notes) => deriveIncidentEvent({
+    activation: { requested: true, state: "armed", valid: true, activation_id: "stopcause0011", target_issue_id: DESK, coordinator_revision: REVISION },
+    receipts: [heldReceipt({ issue: DESK, activationId: "stopcause0011", notes, worker: "claude-verifier" })],
+    config: {},
+    episodeDecision: HOLD,
+  });
+  assert.equal(decide(["adapter reason code: FINAL_CHECK_REVIEW_PR_MERGED"]), null);
+  // A pull request that moved, or one closed without merging, still stops.
+  const moved = decide(["adapter reason code: FINAL_CHECK_REVIEW_STALE_HEAD"]);
+  assert.equal(moved?.reason_code, INCIDENT_REASON.AMBIGUOUS_HOLD);
+  assert.equal(moved?.cause, STOP_CAUSE.UNCLASSIFIED);
+  // Only the latest code counts: a merged note followed by another code is a stop.
+  assert.ok(decide(["adapter reason code: FINAL_CHECK_REVIEW_PR_MERGED", "adapter reason code: SUPERVISOR_WORKER_EXIT"]));
+});
+
 test("stop cause S10: only the coordinator's own stop cards count toward a loop", async () => {
   const event = holdEvent({ activationId: "stopcause0003", notes: adapterNote("RESULT_SCOPE_REFUSED") });
   const first = priorDescription({ activationId: "stopcause0001" });
@@ -406,8 +425,8 @@ test("stop cause S9: the card contract key follows the card's committed contract
 const MUTATIONS = [
   {
     name: "remove the adapter code mapping",
-    from: "    if (match) return ADAPTER_REASON_CAUSES[match[1]] ?? STOP_CAUSE.UNCLASSIFIED;",
-    to: "    if (match) return STOP_CAUSE.UNCLASSIFIED; // MUTANT",
+    from: "  if (code !== null) return ADAPTER_REASON_CAUSES[code] ?? STOP_CAUSE.UNCLASSIFIED;",
+    to: "  if (code !== null) return STOP_CAUSE.UNCLASSIFIED; // MUTANT",
     named: /stop cause S1/,
   },
   {
@@ -457,6 +476,12 @@ const MUTATIONS = [
     from: "  const missingLabels = wantedLabels.filter((name) => !labelNamed(name));",
     to: "  const missingLabels = wantedLabels.filter((name) => !labelNamed(name)); if (missingLabels.length) throw new Error('MUTANT');",
     named: /stop cause S8/,
+  },
+  {
+    name: "file a stop for a review whose pull request merged",
+    from: '  if (latest?.stage === "HOLD" && adapterReasonCode(latest) === REVIEW_PR_MERGED_CODE) return null;\n',
+    to: "  // MUTANT\n",
+    named: /stop cause S11/,
   },
 ];
 

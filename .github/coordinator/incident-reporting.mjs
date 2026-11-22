@@ -259,12 +259,25 @@ function classifyEndedReason(reason) {
   return INCIDENT_REASON.UNKNOWN;
 }
 
-export function stopCauseFromReceipt(receipt) {
+// The latest adapter reason code a receipt's notes carry, or null.
+function adapterReasonCode(receipt) {
   const notes = Array.isArray(receipt?.notes) ? receipt.notes.filter((note) => typeof note === "string") : [];
   for (let index = notes.length - 1; index >= 0; index -= 1) {
     const match = ADAPTER_REASON_NOTE_RE.exec(notes[index]);
-    if (match) return ADAPTER_REASON_CAUSES[match[1]] ?? STOP_CAUSE.UNCLASSIFIED;
+    if (match) return match[1];
   }
+  return null;
+}
+
+// A review-only run held at its final check because the pull request it was
+// to review had merged meanwhile: no worker launched and nothing is left to
+// review, so it is not a stop (SHU-652, 21 Nov: #554 merged 7 s after launch).
+export const REVIEW_PR_MERGED_CODE = "FINAL_CHECK_REVIEW_PR_MERGED";
+
+export function stopCauseFromReceipt(receipt) {
+  const notes = Array.isArray(receipt?.notes) ? receipt.notes.filter((note) => typeof note === "string") : [];
+  const code = adapterReasonCode(receipt);
+  if (code !== null) return ADAPTER_REASON_CAUSES[code] ?? STOP_CAUSE.UNCLASSIFIED;
   if (notes.some((note) => PROVENANCE_HOLD_NOTE_RE.test(note))) return STOP_CAUSE.PROVENANCE_UNREADABLE;
   if (notes.some((note) => VERDICT_NOT_APPLIED_NOTE_RE.test(note))) return STOP_CAUSE.VERDICT_NOT_APPLIED;
   return STOP_CAUSE.UNCLASSIFIED;
@@ -375,6 +388,7 @@ export function deriveIncidentEvent({ activation, receipts = [], config = {}, ep
   const launched = episodeReceipts.some((receipt) => receipt?.timestamps?.launch || !["RESERVED"].includes(receipt?.stage));
   if (!launched) return null;
   const latest = latestAttempt(episodeReceipts);
+  if (latest?.stage === "HOLD" && adapterReasonCode(latest) === REVIEW_PR_MERGED_CODE) return null;
   const stopCode = episodeReceipts.slice().reverse().find((receipt) => [INCIDENT_REASON.STALE_HEAD, INCIDENT_REASON.UNREADABLE_HEAD].includes(receipt?.stop_reason_code))?.stop_reason_code;
   let reasonCode = stopCode ?? null;
   if (!reasonCode && episodeDecision?.ended) reasonCode = classifyEndedReason(episodeDecision.reason);

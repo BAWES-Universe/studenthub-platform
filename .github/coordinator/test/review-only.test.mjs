@@ -401,6 +401,9 @@ test("SHU-303 P4: a pull request that moves while the workspace is prepared stop
     [(pull) => { pull.headSha = "b".repeat(40); }, "FINAL_CHECK_REVIEW_STALE_HEAD"],
     [(pull) => { pull.headRef = "feature/renamed"; }, "FINAL_CHECK_REVIEW_STALE_HEAD"],
     [(pull) => { pull.readable = false; }, "FINAL_CHECK_REVIEW_UNREADABLE_HEAD"],
+    // SHU-652: a pull request that merged meanwhile is named as merged, not moved.
+    [(pull) => { pull.state = "closed"; pull.merged = true; }, "FINAL_CHECK_REVIEW_PR_MERGED"],
+    [(pull) => { pull.state = "closed"; }, "FINAL_CHECK_REVIEW_STALE_HEAD"],
   ];
   for (const [change, code] of cases) {
     const h = createEpisodeHarness({ issueId: DESK, authorizationRef: DESK, reviewerLane: "codex-verifier", githubToken: "tok",
