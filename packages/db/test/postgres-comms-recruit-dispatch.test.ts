@@ -4,7 +4,7 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, PostgresNotificationsStore, runMigrations } from "@studenthub/db";
-import { PostgresRecruitDispatchStore } from "@studenthub/db/comms";
+import { PostgresPersonRemindersStore, PostgresRecruitDispatchStore } from "@studenthub/db/comms";
 import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { EmailOutboxService, FakeEmailPort, type EmailClass } from "../../notifications/src/index.js";
 import type { StoredEmailClass } from "../src/postgres-email-outbox-store.js";
@@ -96,7 +96,7 @@ test("COMMS_RECRUIT_DISPATCH_PG each recruit event reaches its recipient once: a
 function workerRun(port: FakeEmailPort) {
   const emailStore = new PostgresEmailOutboxStore({ pool });
   return emailDeliveryWork({ recruitDispatch: dispatcher, service: new EmailOutboxService(emailStore, port, true, true),
-    summaryStore: new PostgresMorningSummaryStore({ pool }), spikeStore: new PostgresFiringSpikeStore({ pool }), volumeStore: emailStore, alert: () => undefined });
+    summaryStore: new PostgresMorningSummaryStore({ pool }), spikeStore: new PostgresFiringSpikeStore({ pool }), reminders: new PostgresPersonRemindersStore({ pool }), volumeStore: emailStore, alert: () => undefined });
 }
 
 test("COMMS_RECRUIT_DISPATCH_PG the worker's email delivery job dispatches first, so with no backlog the invitation email goes out in the same run", async () => {

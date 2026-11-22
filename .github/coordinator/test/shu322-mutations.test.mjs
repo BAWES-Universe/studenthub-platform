@@ -181,7 +181,7 @@ const CASES = [
   {
     name: "M28 refuse an install without a finished status",
     file: "service/card-run.mjs",
-    from: '  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(install.result?.outcome)) installRefusedStatus({ io, paths, config, result: install.result });',
+    from: '  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(install.result?.outcome)) await installRefusedStatus({ io, paths, config, result: install.result });',
     to: "  // SHU322-M28",
     pattern: "SHU-322 B19:",
   },

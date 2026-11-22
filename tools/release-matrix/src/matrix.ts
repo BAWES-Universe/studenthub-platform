@@ -166,7 +166,10 @@ export const RELEASE_STEPS: Readonly<Record<string, string>> = {
 export const REQUIREMENT_REVISION: Readonly<Record<string, number>> = {
   // r2: the M-5 table map (docs/lanes/cutover/PLAN.md) adds per-table import rules and a
   // reconciliation count per table for staff sessions and stand-up questions and answers.
-  "import M-5": 2,
+  // r3: the M-5 rules on record (docs/parity/work/README.md, #584): a table reconciles only
+  // when `clean` (no ref held for an unknown digest or a conflict), and runs stay dry runs
+  // until the legacy writer's time_zone is read from the mirror and recorded.
+  "import M-5": 3,
 };
 
 export const requirementSubject = (section: "import" | "release", id: string): string =>

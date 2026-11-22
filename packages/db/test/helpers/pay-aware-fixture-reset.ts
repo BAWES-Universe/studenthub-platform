@@ -40,6 +40,9 @@ const guards = [
   ["pay_transfers", "pay_transfers_no_truncate"],
   ["pay_transfer_lines", "pay_transfer_lines_no_truncate"],
   ["pay_line_audit", "pay_line_audit_no_truncate"],
+  ["pay_generation_claims", "pay_generation_claims_no_truncate"],
+  ["pay_generation_roots", "pay_generation_roots_no_truncate"],
+  ["pay_generation_receipts", "pay_generation_receipts_no_truncate"],
   ["id_cards", "id_cards_no_truncate"],
   ["id_card_events", "id_card_events_no_truncate"],
   ["id_card_public_views", "id_card_public_views_no_truncate"],
@@ -53,6 +56,8 @@ const guards = [
   ["work_appeals", "work_appeals_no_truncate"],
   ["work_appeal_updates", "work_appeal_updates_no_truncate"],
   ["work_staff_sessions", "work_staff_sessions_no_truncate"],
+  // The lifecycle audit has a statement-level retention guard as well.
+  ["pay_transfer_lifecycle_history", "pay_transfer_lifecycle_history_no_truncate"],
 ] as const;
 
 export async function resetPayAwareFixture(pool: pg.Pool, statement: string): Promise<void> {

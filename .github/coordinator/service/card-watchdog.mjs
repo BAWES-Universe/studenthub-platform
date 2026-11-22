@@ -134,6 +134,7 @@ export function readStatus(io, paths) {
     trigger: raw.trigger === "timer" || raw.trigger === "operator" ? raw.trigger : null,
     revision: SHA_RE.test(raw.revision ?? "") ? raw.revision : null,
     queue: Array.isArray(raw.queue) ? raw.queue.filter((id) => CARD_RE.test(id ?? "")).slice(0, 10) : [],
+    landed: Array.isArray(raw.landed) ? raw.landed.filter((id) => CARD_RE.test(id ?? "")).slice(0, 10) : [],
     step: STATUS_STEPS.has(raw.step) ? raw.step : null,
     ticks: count(raw.ticks),
     last_tick_at: iso(raw.last_tick_at),
@@ -288,6 +289,8 @@ export function renderStatus({ status, unit, paused, now, service = AUTO_SERVICE
     return lines.join("\n");
   }
   if (status.queue.length) lines.push(`Queue: ${status.queue.join(", ")}.`);
+  else if (status.landed.length) lines.push("Queue: none left to run.");
+  if (status.landed.length) lines.push(`Landed from the installed queue: ${status.landed.join(", ")}.`);
   lines.push(`Latest run: ${status.card ?? "unknown card"} (${status.kind ?? "unknown"}, ${status.trigger ?? "unknown"}), step ${status.step ?? "unknown"}, ${status.ticks ?? 0} tick(s)${status.last_tick_at ? `, last tick ${status.last_tick_at}` : ""}.`);
   lines.push(`Progress: ${status.first_dispatch_at ? `first dispatch ${status.first_dispatch_at}` : "no dispatch seen"}${status.last_progress_at ? `, last progress ${status.last_progress_at}` : ""}.`);
   if (status.outcome) lines.push(`Outcome: ${status.outcome}${status.land ? `, landing ${status.land}` : ""}${status.needs_owner ? "; needs the owner" : ""}.`);

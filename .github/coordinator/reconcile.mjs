@@ -1838,6 +1838,11 @@ export async function verifyReviewOnlyPull({ repo, pr, head_sha, base_sha, githu
   } catch (error) {
     return { ok: false, code: "UNREADABLE_HEAD", reason: `pull request #${pr} could not be read (${error.message})` };
   }
+  // A pull request that merged while its review waited is not a moved one:
+  // the review is moot, and the final check names it so (SHU-652, 21 Nov).
+  if (pull?.number === pr && pull?.state === "closed" && pull?.merged === true) {
+    return { ok: false, code: "STALE_HEAD", merged: true, reason: `pull request #${pr} has merged` };
+  }
   if (pull?.number !== pr || pull?.state !== "open") return { ok: false, code: "STALE_HEAD", reason: `pull request #${pr} is not open` };
   if (pull.head?.repo?.full_name !== repo || pull.base?.repo?.full_name !== repo) {
     return { ok: false, code: "STALE_HEAD", reason: `pull request #${pr} is not a branch of ${repo}` };
@@ -3622,7 +3627,8 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
           ? await verifyReviewOnlyPull({ repo: receipt.repo, pr: singleRunActivation.review_pr, head_sha: receipt.target_sha,
             base_sha: receipt.review_base_sha, githubToken, fetchImpl })
           : { ok: false, code: "STALE_HEAD" };
-        const code = !pull.ok ? `REVIEW_${pull.code}` : pull.branch !== receipt.branch ? "REVIEW_STALE_HEAD" : null;
+        const code = !pull.ok && pull.merged === true ? "REVIEW_PR_MERGED"
+          : !pull.ok ? `REVIEW_${pull.code}` : pull.branch !== receipt.branch ? "REVIEW_STALE_HEAD" : null;
         if (code) throw Object.assign(new Error("the pull request is no longer the approved review"), { activationCode: code });
       }
     } catch (error) {

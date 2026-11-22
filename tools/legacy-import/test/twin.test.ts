@@ -1,0 +1,573 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { renderDay, renderHistory } from "../../../apps/gateway/src/work/pages.js";
+import { WORK_COPY } from "../../../apps/gateway/src/work/copy.js";
+import type { WorkHttpServices } from "../../../apps/gateway/src/work/http.js";
+import { compareSheets, validateExplanations, type Explanation } from "../src/twin/compare.js";
+import { parseDuration, SheetBuilder, type FactSheet } from "../src/twin/facts.js";
+import { parseHtml, query, queryAll, textOf } from "../src/twin/html.js";
+import type { LegacyParam, LegacyReader, OpenedPage } from "../src/twin/journey.js";
+import { workHistory } from "../src/twin/journeys/work-history.js";
+import { assertPrivate, closeSucceeded, closeVerified, MINIMUM_PEOPLE_FLOOR, verdictOf, walkReceipt, walkVerified, type TwinReport } from "../src/twin/report.js";
+import { candidateMatchesWalk, isEvidenceOnly, refreshIdentity, type Git } from "../src/twin/cli.js";
+import { JOURNEYS } from "../src/twin/journeys/index.js";
+import { bind, MAX_REDIRECT_HOPS, parseRows, stagingApp, stagingOnly, STAGING_ORIGIN, type BrowserLike, type RouteLike } from "../src/twin/staging.js";
+import { walk, WalkFailure, type NewApp } from "../src/twin/walk.js";
+
+const REVISION = "a".repeat(40);
+const REFRESH = { startedAt: "2026-11-20T00:30:00.000Z", finishedAt: "2026-11-20T00:41:00.000Z", totalRows: 865915 };
+const MONTH = "2026-10";
+const sheet = (entries: Record<string, string | number | boolean | null>): FactSheet => {
+  const b = new SheetBuilder();
+  for (const [k, v] of Object.entries(entries)) b.set(k, v);
+  return b.build();
+};
+
+// ---- page reader -------------------------------------------------------------------------
+
+test("the page reader finds elements by simple selectors and reads text as a person sees it", () => {
+  const doc = parseHtml(`<!DOCTYPE html><html lang="ar"><body><main id="main"><section class="p-card x" aria-labelledby="h"><h2 id="h">Days &amp; hours</h2>
+<ul><li><a href="/work/history/2026-10-02">Fri</a>: 1 session<script>var hidden = "<li>no</li>";</script></li><li hidden>gone</li></ul><input type="hidden" value="v"><br/>
+<p>a&nbsp;&#x41;&#66;<!-- comment --> b</p></section></main></body></html>`);
+  assert.equal(query(doc, "html")?.attrs.get("lang"), "ar");
+  assert.equal(textOf(query(doc, "#h")!), "Days & hours");
+  assert.equal(queryAll(doc, "section[aria-labelledby=\"h\"] ul > li").length, 2);
+  assert.equal(textOf(query(doc, "ul")!), "Fri: 1 session", "scripts and hidden elements are not read");
+  assert.equal(query(doc, "a[href^=\"/work/history/\"]")?.attrs.get("href"), "/work/history/2026-10-02");
+  assert.equal(textOf(query(doc, "section.p-card.x > p")!), "a AB b".replace(/\s+/g, " "));
+  assert.throws(() => queryAll(doc, "li:first-child"), /unsupported selector/);
+  const links = parseHtml('<p><a class="x" href="/help.html#top">Help</a></p>');
+  assert.equal(query(links, 'a[href="/help.html#top"]')?.attrs.get("class"), "x", "a dot or hash inside an attribute value is not a class or id");
+  assert.equal(query(links, 'a.x[href^="/help.html"]') !== undefined, true);
+  assert.equal(query(parseHtml('<a href="/a].html#top">x</a>'), 'a[href="/a].html#top"]')?.attrs.get("href"), "/a].html#top", "a quoted ] ends no attribute");
+});
+
+// ---- facts -------------------------------------------------------------------------------
+
+test("fact paths are built from words, dates and ids only, so a value can never become a path", () => {
+  const b = new SheetBuilder();
+  b.set("day[2026-10-02].sessions", 1).set("month.approvedMinutes", 0).set("person[candidate:42].open", false)
+    .set("row[aaaaaaaa-0000-4000-8000-000000000001].x", null);
+  assert.throws(() => b.set("day[2026-10-02].sessions", 2), /twin.fact.duplicatePath/);
+  for (const bad of ["name[Fatima].x", "profile.first name", "day[2026-10-02] .x", "Profile.name", "x[1;drop]", "x.", "x[]"]) {
+    assert.throws(() => new SheetBuilder().set(bad, 1), /twin.fact.badPath/, bad);
+  }
+  assert.throws(() => new SheetBuilder().set("x", Number.NaN), /twin.fact.badNumber/);
+});
+
+test("durations read back as the gateway shows them, in English and Arabic", () => {
+  for (const seconds of [0, 59, 60, 3599, 3600, 9000, 86400 + 61]) {
+    const minutes = Math.floor(seconds / 60);
+    assert.equal(parseDuration(WORK_COPY.en.duration(seconds)), minutes);
+    assert.equal(parseDuration(WORK_COPY.ar.duration(seconds)), minutes);
+  }
+  for (const bad of ["", "2 hours", "h", "1h 2m 3s", "٢ س"]) assert.throws(() => parseDuration(bad), /twin.fact.badDuration/, bad);
+});
+
+// ---- comparison --------------------------------------------------------------------------
+
+const EXPLAINED: Explanation = { journey: "work-history", path: "day[*].rejectedMinutes", kinds: ["missing"], decision: "contracts/decisions-2026-10-27.md" };
+
+test("a comparison counts matches, and lists explained differences and regressions by path only", () => {
+  const legacy = sheet({ "a.x": 1, "day[2026-10-02].rejectedMinutes": 5, "day[2026-10-03].rejectedMinutes": 5, "b.only": true });
+  const next = sheet({ "a.x": 1, "day[2026-10-03].rejectedMinutes": 6, "c.new": 0 });
+  const c = compareSheets("work-history", legacy, next, [EXPLAINED]);
+  assert.deepEqual(c, {
+    matched: 1,
+    explained: [{ path: "day[2026-10-02].rejectedMinutes", kind: "missing", decision: EXPLAINED.decision }],
+    regressions: [{ path: "b.only", kind: "missing" }, { path: "c.new", kind: "extra" }, { path: "day[2026-10-03].rejectedMinutes", kind: "differs" }],
+  });
+  assert.equal(compareSheets("other", legacy, next, [EXPLAINED]).explained.length, 0, "an explanation covers its own journey only");
+  assert.equal(compareSheets("work-history", sheet({ "a.x": 0 }), sheet({ "a.x": false }), []).regressions.length, 1, "0 and false differ");
+});
+
+test("an explanation must cite a decision record or a desk comment, as a whole citation", () => {
+  assert.deepEqual(validateExplanations([EXPLAINED, { ...EXPLAINED, path: "month.truncated", decision: "PR #393 comment 6951406632" }], ["work-history"]), []);
+  const bad: Explanation[] = [
+    { ...EXPLAINED, path: "z", decision: "agreed in chat" },
+    { ...EXPLAINED, path: "a", decision: "contracts/decisions-2026-10-27.md because Fatima said so" },
+    { ...EXPLAINED, path: "b", journey: "nope" },
+    { ...EXPLAINED, path: "c", kinds: [] },
+    { ...EXPLAINED, path: "name[Fatima]" },
+    EXPLAINED, EXPLAINED,
+  ];
+  const problems = validateExplanations(bad, ["work-history"]);
+  assert.deepEqual(problems.map((p) => p.replace(/^explanation \d+: /, "")),
+    ["cites no decision record", "cites no decision record", "unknown journey", "bad kinds", "bad path", "duplicate path for journey"]);
+});
+
+// ---- work history journey ----------------------------------------------------------------
+
+/**
+ * Legacy rows for one candidate: two days, every status, an open session, a null total, a
+ * manual log. Times are Kuwait wall time, as legacy wrote them.
+ */
+const LEGACY_ROWS = [
+  { date: "2026-10-02", status: 1, open: 0, seconds: 9000, start: "2026-10-02 08:00:00", end: "2026-10-02 10:30:00", late: 0 },
+  { date: "2026-10-02", status: 0, open: 0, seconds: 1830, start: "2026-10-02 11:00:00", end: "2026-10-02 11:30:30", late: 1 },
+  { date: "2026-10-02", status: 2, open: 0, seconds: 600, start: "2026-10-02 13:00:00", end: "2026-10-02 13:10:00", late: 0 },
+  { date: "2026-10-15", status: 1, open: 0, seconds: 3600, start: "2026-10-15 09:00:00", end: "2026-10-15 10:00:00", late: 0 },
+  { date: "2026-10-15", status: 0, open: 1, seconds: null, start: "2026-10-15 14:00:00", end: null, late: 0 },
+];
+
+function reader(rows: readonly Record<string, unknown>[], calls: { sql: string; params: readonly LegacyParam[] }[] = []): LegacyReader {
+  return { rows: async (sql, params) => { calls.push({ sql, params }); bind(sql, params); return rows; } };
+}
+
+/** The same hours as the new app holds them after the M-5 import, stored in another order. */
+function newSessions(over: Partial<Record<number, Record<string, unknown>>> = {}) {
+  const base = [
+    { workDate: "2026-10-15", status: "pending", durationSeconds: null, startedAt: "2026-10-15T11:00:00.000Z", endedAt: null, source: "timer" },
+    { workDate: "2026-10-02", status: "rejected", durationSeconds: 600, startedAt: "2026-10-02T10:00:00.000Z", endedAt: "2026-10-02T10:10:00.000Z", source: "timer" },
+    { workDate: "2026-10-02", status: "approved", durationSeconds: 9000, startedAt: "2026-10-02T05:00:00.000Z", endedAt: "2026-10-02T07:30:00.000Z", source: "timer" },
+    { workDate: "2026-10-02", status: "pending", durationSeconds: 1830, startedAt: "2026-10-02T08:00:00.000Z", endedAt: "2026-10-02T08:30:30.000Z", source: "manual" },
+    { workDate: "2026-10-15", status: "approved", durationSeconds: 3600, startedAt: "2026-10-15T06:00:00.000Z", endedAt: "2026-10-15T07:00:00.000Z", source: "timer" },
+  ];
+  return base.map((s, i) => ({ id: `aaaaaaaa-0000-4000-8000-00000000000${i}`, storeId: "store-1", flags: [] as string[], note: null, ...s, ...(over[i] ?? {}) }));
+}
+type NewSession = ReturnType<typeof newSessions>[number];
+
+function views(sessions: readonly NewSession[]): WorkHttpServices {
+  const mine = async (_person: string, range: { from: string; to: string }) => {
+    const inRange = sessions.filter((s) => s.workDate >= range.from && s.workDate <= range.to);
+    const totals = { approvedSeconds: 0, pendingSeconds: 0, rejectedSeconds: 0, open: 0 };
+    for (const s of inRange) {
+      if (s.endedAt === null) totals.open++;
+      else totals[`${s.status as "approved" | "pending" | "rejected"}Seconds`] += s.durationSeconds ?? 0;
+    }
+    return { rows: inRange.map((session) => ({ session, decision: null })), totals, next: null };
+  };
+  return { views: { mine } } as unknown as WorkHttpServices;
+}
+
+async function historyPage(sessions: readonly NewSession[], language: "en" | "ar" = "en"): Promise<string> {
+  return renderHistory(views(sessions), "person", MONTH, "2026-11", WORK_COPY[language]);
+}
+
+/** What the walk opens for one person: the month page and each legacy day's page. */
+async function walkedPages(legacy: FactSheet, sessions: readonly NewSession[], language: "en" | "ar" = "en"): Promise<OpenedPage[]> {
+  const out: OpenedPage[] = [];
+  for (const path of workHistory.pages({ month: MONTH }, legacy)) {
+    const day = /^\/work\/history\/(\d{4}-\d{2}-\d{2})$/.exec(path)?.[1];
+    out.push({ path, html: day ? await renderDay(views(sessions), undefined, "person", day, null, WORK_COPY[language]) : await historyPage(sessions, language) });
+  }
+  return out;
+}
+
+test("work history: the legacy month and days and the new pages read to the same sheet, in English and Arabic", async () => {
+  const calls: { sql: string; params: readonly LegacyParam[] }[] = [];
+  const legacy = await workHistory.legacySheet(reader(LEGACY_ROWS, calls), "42", { month: MONTH });
+  assert.deepEqual(calls[0]!.params, [42, { date: "2026-10-01" }, { date: "2026-10-31" }]);
+  assert.deepEqual(workHistory.pages({ month: MONTH }, legacy), ["/work/history?month=2026-10", "/work/history/2026-10-02", "/work/history/2026-10-15"]);
+  const facts = Object.fromEntries(legacy);
+  assert.deepEqual(Object.fromEntries(Object.entries(facts).filter(([k]) => !k.startsWith("dayDetail"))), {
+    "day[2026-10-02].approvedMinutes": 150, "day[2026-10-02].open": false, "day[2026-10-02].rejectedMinutes": 10,
+    "day[2026-10-02].sessions": 3, "day[2026-10-02].waitingMinutes": 30,
+    "day[2026-10-15].approvedMinutes": 60, "day[2026-10-15].open": true, "day[2026-10-15].sessions": 2,
+    "month.approvedMinutes": 210, "month.rejectedMinutes": 10, "month.truncated": false, "month.waitingMinutes": 30,
+  });
+  assert.deepEqual(Object.fromEntries(Object.entries(facts).filter(([k]) => k.startsWith("dayDetail[2026-10-15]"))), {
+    "dayDetail[2026-10-15].approvedMinutes": 60, "dayDetail[2026-10-15].rejectedMinutes": 0, "dayDetail[2026-10-15].sessions": 2,
+    "dayDetail[2026-10-15].truncated": false, "dayDetail[2026-10-15].waitingMinutes": 0,
+    "dayDetail[2026-10-15].session[1].end": "10:00", "dayDetail[2026-10-15].session[1].late": false, "dayDetail[2026-10-15].session[1].minutes": 60,
+    "dayDetail[2026-10-15].session[1].start": "09:00", "dayDetail[2026-10-15].session[1].status": "approved",
+    "dayDetail[2026-10-15].session[2].end": null, "dayDetail[2026-10-15].session[2].late": false, "dayDetail[2026-10-15].session[2].minutes": null,
+    "dayDetail[2026-10-15].session[2].start": "14:00", "dayDetail[2026-10-15].session[2].status": "open",
+  });
+  assert.equal(facts["dayDetail[2026-10-02].session[2].late"], true);
+  for (const language of ["en", "ar"] as const) {
+    const next = workHistory.newSheet(await walkedPages(legacy, newSessions(), language), { month: MONTH });
+    assert.deepEqual(compareSheets("work-history", legacy, next, []), { matched: legacy.size, explained: [], regressions: [] }, language);
+  }
+});
+
+test("work history: a session whose status changed in the import is a regression at that day's paths", async () => {
+  const legacy = await workHistory.legacySheet(reader(LEGACY_ROWS), "42", { month: MONTH });
+  const next = workHistory.newSheet(await walkedPages(legacy, newSessions({ 1: { status: "approved" } })), { month: MONTH });
+  assert.deepEqual(compareSheets("work-history", legacy, next, []).regressions, [
+    { path: "dayDetail[2026-10-02].approvedMinutes", kind: "differs" },
+    { path: "dayDetail[2026-10-02].rejectedMinutes", kind: "differs" },
+    { path: "dayDetail[2026-10-02].session[3].status", kind: "differs" },
+    { path: "day[2026-10-02].approvedMinutes", kind: "differs" },
+    { path: "day[2026-10-02].rejectedMinutes", kind: "missing" },
+    { path: "month.approvedMinutes", kind: "differs" },
+    { path: "month.rejectedMinutes", kind: "differs" },
+  ]);
+  const dropped = workHistory.newSheet(await walkedPages(legacy, newSessions().slice(1)), { month: MONTH });
+  const lost = compareSheets("work-history", legacy, dropped, []).regressions;
+  assert.ok(lost.some((r) => r.path === "dayDetail[2026-10-15].session[2].start" && r.kind === "missing"), "the open session is missing on the day page");
+  assert.ok(lost.some((r) => r.path === "dayDetail[2026-10-15].sessions" && r.kind === "differs"));
+});
+
+test("work history: the day page shows each session's own time, end, duration and manual mark", async () => {
+  const legacy = await workHistory.legacySheet(reader(LEGACY_ROWS), "42", { month: MONTH });
+  for (const [over, path] of [
+    [{ 2: { startedAt: "2026-10-02T05:01:00.000Z" } }, "dayDetail[2026-10-02].session[1].start"],
+    [{ 2: { endedAt: "2026-10-02T07:31:00.000Z" } }, "dayDetail[2026-10-02].session[1].end"],
+    [{ 3: { source: "timer" } }, "dayDetail[2026-10-02].session[2].late"],
+    [{ 1: { source: "manual" } }, "dayDetail[2026-10-02].session[3].late"],
+  ] as const) {
+    for (const language of ["en", "ar"] as const) {
+      const next = workHistory.newSheet(await walkedPages(legacy, newSessions(over), language), { month: MONTH });
+      assert.deepEqual(compareSheets("work-history", legacy, next, []).regressions, [{ path, kind: "differs" }], `${path} ${language}`);
+    }
+  }
+  // A day cut short by paging reads as truncated, never as a full day.
+  const cut = (await walkedPages(legacy, newSessions())).map((p) => p.path.endsWith("2026-10-02")
+    ? { ...p, html: p.html.replace("</section>", '<p><a href="/work/history/2026-10-02?after=x">Later sessions on this day</a></p></section>') } : p);
+  assert.deepEqual(compareSheets("work-history", legacy, workHistory.newSheet(cut, { month: MONTH }), []).regressions,
+    [{ path: "dayDetail[2026-10-02].truncated", kind: "differs" }]);
+});
+
+test("work history: an empty month reads as zero totals on both sides; a page it cannot read fails", async () => {
+  const legacy = await workHistory.legacySheet(reader([]), "42", { month: MONTH });
+  assert.deepEqual(workHistory.pages({ month: MONTH }, legacy), ["/work/history?month=2026-10"]);
+  const next = workHistory.newSheet(await walkedPages(legacy, []), { month: MONTH });
+  assert.deepEqual(compareSheets("work-history", legacy, next, []).regressions, []);
+  const month = { path: "/work/history?month=2026-10", html: await historyPage([]) };
+  assert.throws(() => workHistory.newSheet([{ ...month, html: "<html><main>Sign in</main></html>" }], { month: MONTH }), /twin.page.noSummary/);
+  assert.throws(() => workHistory.newSheet([{ ...month, path: "/work/history?month=2026-09" }], { month: MONTH }), /twin.page.notMonth/);
+  assert.throws(() => workHistory.newSheet([month, { path: "/work/history/2026-09-30", html: "" }], { month: MONTH }), /twin.page.notDay/);
+  assert.throws(() => workHistory.newSheet([month, { path: "/work/history/2026-10-02", html: "<html><main>Sign in</main></html>" }], { month: MONTH }), /twin.page.noDayTotals/);
+  await assert.rejects(workHistory.legacySheet(reader([{ ...LEGACY_ROWS[0], status: 7 }]), "42", { month: MONTH }), /twin.legacy.badStatus/);
+});
+
+// ---- walk, report and gates --------------------------------------------------------------
+
+function app(pages: (personId: string, paths: readonly string[]) => Promise<readonly string[]>, linked = (id: string) => (id === "404" ? undefined : `p-${id}`)): NewApp {
+  return { personFor: async (id) => linked(id), open: async (personId, paths) => pages(personId, paths) };
+}
+
+test("a walk records each person's outcome, and failures as fixed codes that never carry a value", async () => {
+  const people = ["1", "2", "3", "404", "5"];
+  const legacy: LegacyReader = { rows: async (sql) => (sql.includes("GROUP BY candidate_id") ? people.map((id) => ({ id })) : LEGACY_ROWS) };
+  const people6 = [...people, "6"];
+  const legacy6: LegacyReader = { rows: async (sql, params) => (sql.includes("GROUP BY candidate_id") ? people6.map((id) => ({ id })) : legacy.rows(sql, params)) };
+  const legacySheet = await workHistory.legacySheet(reader(LEGACY_ROWS), "1", { month: MONTH });
+  const same = await walkedPages(legacySheet, newSessions());
+  const changed = await walkedPages(legacySheet, newSessions({ 2: { durationSeconds: 9060 } }));
+  const report = await walk([workHistory], legacy6, app(async (p, paths) => {
+    if (p === "p-3") throw new Error("Fatima Al-Sabah's page timed out");
+    if (p === "p-5") throw new WalkFailure("sign_in_failed");
+    assert.deepEqual(paths, same.map((x) => x.path));
+    if (p === "p-6") return [same[0]!.html];
+    return (p === "p-2" ? changed : same).map((x) => x.html);
+  }), { month: MONTH }, { revision: REVISION, refresh: REFRESH, limit: 10, minimumPeople: 1, explanations: [], now: () => new Date("2026-11-20T00:00:00Z") });
+  const outcomes = report.journeys[0]!.people.map((p) => [p.legacyId, p.outcome, "code" in p ? p.code : p.regressions.length]);
+  assert.deepEqual(outcomes, [["1", "match", 0], ["2", "regression", 4], ["3", "error", "page_failed"], ["404", "error", "persona_unlinked"], ["5", "error", "sign_in_failed"],
+    ["6", "error", "page_failed"]]);
+  assert.ok(!JSON.stringify(report).includes("Fatima"), "no error text reaches the report");
+  assert.deepEqual(verdictOf(report.journeys[0]!, 1), { verdict: "open", reason: "regression", walked: 2 });
+});
+
+const person = (legacyId: string, outcome: "match" | "explained" | "regression" = "match") => ({
+  legacyId, outcome, matched: 3,
+  explained: outcome === "explained" ? [{ path: "a.x", kind: "differs" as const, decision: "contracts/decisions-2026-10-27.md" }] : [],
+  regressions: outcome === "regression" ? [{ path: "a.y", kind: "missing" as const }] : [],
+});
+function report(journeys: TwinReport["journeys"], minimumPeople = 2): TwinReport {
+  return { schemaVersion: 2, revision: REVISION, month: MONTH, refresh: REFRESH, startedAt: "2026-11-20T00:00:00.000Z", finishedAt: "2026-11-20T00:10:00.000Z", minimumPeople, journeys };
+}
+
+test("a journey is verified only with enough people walked, no regression and no failed walk", () => {
+  const j = (people: TwinReport["journeys"][number]["people"]) => ({ journey: "work-history", screens: ["C-12"], people });
+  assert.deepEqual(verdictOf(j([person("1"), person("2", "explained")]), 2), { verdict: "verified", walked: 2 });
+  assert.deepEqual(verdictOf(j([person("1")]), 2), { verdict: "open", reason: "too_few_people", walked: 1 });
+  assert.deepEqual(verdictOf(j([person("1"), person("2"), { legacyId: "3", outcome: "error", code: "persona_unlinked" }]), 2), { verdict: "open", reason: "error", walked: 2 });
+  assert.deepEqual(verdictOf(j([person("1"), person("2", "regression")]), 1), { verdict: "open", reason: "regression", walked: 2 });
+  assert.deepEqual(verdictOf(j([]), 1), { verdict: "open", reason: "too_few_people", walked: 0 });
+});
+
+test("the privacy check refuses any report field that could carry a value", () => {
+  const ok = report([{ journey: "work-history", screens: ["C-12"], people: [person("1"), person("2", "explained"), person("3", "regression")] }]);
+  assertPrivate(ok);
+  const breaks: [string, (r: Record<string, any>) => void][] = [
+    ["legacyId", (r) => { r.journeys[0].people[0].legacyId = "fatima@example.com"; }],
+    ["regression.path", (r) => { r.journeys[0].people[2].regressions[0].path = "name[Fatima]"; }],
+    ["explained.decision", (r) => { r.journeys[0].people[1].explained[0].decision = "contracts/decisions-2026-10-27.md: salary 450"; }],
+    ["code", (r) => { r.journeys[0].people[0] = { legacyId: "1", outcome: "error", code: "timeout: 12 Salmiya" }; }],
+    ["person.value", (r) => { r.journeys[0].people[0].value = "x"; }],
+    ["report.note", (r) => { r.note = "x"; }],
+    ["outcome", (r) => { r.journeys[0].people[2].outcome = "match"; }],
+    ["revision", (r) => { r.revision = "main"; }],
+    ["screens", (r) => { r.journeys[0].screens = ["C-12 /work"]; }],
+    ["legacyId", (r) => { r.journeys[0].people[1].legacyId = "01"; }],
+    ["schemaVersion", (r) => { r.schemaVersion = 1; }],
+    ["month", (r) => { r.month = "October"; }],
+    ["refresh.note", (r) => { r.refresh.note = "x"; }],
+    ["refresh.totalRows", (r) => { r.refresh.totalRows = "865915 rows"; }],
+    ["people.duplicate", (r) => { r.journeys[0].people[1].legacyId = "1"; }],
+  ];
+  for (const [field, mutate] of breaks) {
+    const copy = JSON.parse(JSON.stringify(ok));
+    mutate(copy);
+    assert.throws(() => assertPrivate(copy), new RegExp(`twin.report.notPrivate: ${field.replace(".", "\\.")}$`), field);
+  }
+});
+
+const REGISTRY = [
+  { id: "work-history", screens: ["C-12", "C-11"] },
+  { id: "approvals", screens: ["M-03"] },
+  { id: "staff-logs", screens: ["A-12"] },
+  { id: "staff-logs-two", screens: ["A-12"] },
+];
+const RULES = { registry: REGISTRY, revision: REVISION, minimumPeople: 2 };
+const EVIDENCE = "PR #600 comment 7000000001";
+const gates = (built: string) => ({ gates: { built: built === "done" ? { state: "done", evidence: "PR #588 at 4581829" } : { state: "open" }, verified: { state: "open" } } });
+const SCREENS = { "C-12": gates("done"), "C-11": gates("open"), "M-03": gates("done"), "A-12": gates("done") };
+const FULL = () => report([
+  { journey: "work-history", screens: ["C-12", "C-11"], people: [person("1"), person("2")] },
+  { journey: "approvals", screens: ["M-03"], people: [person("1")] },
+  { journey: "staff-logs", screens: ["A-12"], people: [person("1"), person("2", "explained")] },
+  { journey: "staff-logs-two", screens: ["A-12"], people: [person("1"), person("2", "regression")] },
+]);
+
+test("closing gates: only built screens of verified journeys close, citing the published report", () => {
+  const r = FULL();
+  assert.throws(() => closeVerified(SCREENS, r, "the walk on staging", RULES), /twin.gate.evidenceUnsourced/);
+  const { screens: out, changes } = closeVerified(SCREENS, r, EVIDENCE, RULES);
+  assert.deepEqual(changes.map((c) => `${c.screen} ${c.journey} ${c.change}`), [
+    "C-12 work-history closed", "C-11 work-history built_open", "M-03 approvals not_verified", "A-12 staff-logs not_verified", "A-12 staff-logs-two not_verified",
+  ]);
+  assert.deepEqual(out["C-12"]!.gates.verified, { state: "done", evidence: `legacy twin walk at ${REVISION.slice(0, 12)}: work-history (2 people); ${EVIDENCE}` });
+  assert.deepEqual(SCREENS["C-12"].gates.verified, { state: "open" }, "the input is not changed");
+  assert.equal(closeVerified(out, r, EVIDENCE, RULES).changes[0]!.change, "already_closed");
+});
+
+test("closing gates: a report is checked against the code's journeys, revision and floor, not trusted to describe itself", () => {
+  const without = (id: string) => ({ ...FULL(), journeys: FULL().journeys.filter((j) => j.journey !== id) });
+  const passingTwo = { ...FULL(), journeys: FULL().journeys.map((j) => j.journey === "staff-logs-two" ? { ...j, people: [person("1"), person("2")] } : j) };
+  const cases: [string, TwinReport, RegExp][] = [
+    ["unknown journey", { ...FULL(), journeys: [...FULL().journeys, { journey: "made-up", screens: ["C-12"], people: [person("1"), person("2")] }] }, /twin.gate.unknownJourney/],
+    ["altered mapping (extra screen)", { ...FULL(), journeys: FULL().journeys.map((j) => j.journey === "approvals" ? { ...j, screens: ["M-03", "A-12"] } : j) }, /twin.gate.screensMismatch/],
+    ["altered mapping (screen dropped)", { ...FULL(), journeys: FULL().journeys.map((j) => j.journey === "work-history" ? { ...j, screens: ["C-12"] } : j) }, /twin.gate.screensMismatch/],
+    ["duplicate journey", { ...FULL(), journeys: [...FULL().journeys, FULL().journeys[0]!] }, /twin.gate.duplicateJourney/],
+    ["omitted co-owner", without("staff-logs-two"), /twin.gate.coOwnerMissing/],
+    ["stale revision", { ...FULL(), revision: "b".repeat(40) }, /twin.gate.staleRevision/],
+    ["minimum below the floor", { ...FULL(), minimumPeople: 1 }, /twin.gate.minimumTooLow/],
+  ];
+  for (const [name, r, error] of cases) assert.throws(() => closeVerified(SCREENS, r, EVIDENCE, RULES), error, name);
+  assert.throws(() => closeVerified(SCREENS, FULL(), EVIDENCE, { ...RULES, revision: "main" }), /twin.gate.staleRevision/);
+  // With both co-owners in the report and verified, the shared screen closes, naming both.
+  const both = closeVerified(SCREENS, passingTwo, EVIDENCE, RULES);
+  assert.match(String((both.screens["A-12"]!.gates.verified as { evidence?: string }).evidence), /staff-logs \(2 people\), staff-logs-two \(2 people\)/);
+  // A journey the report leaves out entirely is fine when it shares no screen with the ones present.
+  assert.equal(closeVerified(SCREENS, without("approvals"), EVIDENCE, RULES).changes.some((c) => c.screen === "M-03"), false);
+});
+
+test("the walker registry maps each journey to screens the release matrix knows", () => {
+  for (const j of JOURNEYS) {
+    assert.ok(j.screens.length > 0 && j.screens.every((s) => /^[A-Z]-\d{2}$/.test(s)), j.id);
+    assert.deepEqual(validateExplanations([], [j.id]), []);
+  }
+  assert.equal(new Set(JOURNEYS.map((j) => j.id)).size, JOURNEYS.length, "journey ids are unique");
+  assert.ok(MINIMUM_PEOPLE_FLOOR >= 5);
+});
+
+/** A git stand-in: `files` differ committed since the walk, `pending` are uncommitted. */
+function fakeGit(files: string[], pending: string[] = [], ancestor = true): Git {
+  return (args) => args[0] === "merge-base" ? { status: ancestor ? 0 : 1, stdout: "" }
+    : args[0] === "diff" ? { status: 0, stdout: files.map((f) => `${f}\n`).join("") }
+    : { status: 0, stdout: pending.map((f) => ` M ${f}\n`).join("") };
+}
+
+test("a close is bound to the walked candidate: evidence-only changes pass, app, config or walker changes refuse", () => {
+  assert.equal(candidateMatchesWalk("main", fakeGit([])), false, "a revision must be a full commit");
+  assert.equal(candidateMatchesWalk(REVISION, fakeGit([], [], false)), false, "not in this tree");
+  assert.equal(candidateMatchesWalk(REVISION, fakeGit([])), true, "the walked revision itself");
+  // Control 1: an evidence-only update is accepted.
+  assert.equal(candidateMatchesWalk(REVISION, fakeGit(["tools/release-matrix/matrix.json", "docs/lanes/cutover/PLAN.md", "README.md"])), true);
+  // Control 2: a new Work renderer or route config is refused, committed or not.
+  for (const changed of ["apps/gateway/src/work/pages.ts", "apps/gateway/src/work/copy.ts", "apps/gateway/src/routes.ts", "deploy/staging.env.example",
+    "tools/legacy-import/src/twin/journeys/work-history.ts", "tools/legacy-import/twin-explanations.json", "package-lock.json"]) {
+    assert.equal(candidateMatchesWalk(REVISION, fakeGit(["tools/release-matrix/matrix.json", changed])), false, changed);
+    assert.equal(candidateMatchesWalk(REVISION, fakeGit([], [changed])), false, `${changed} uncommitted`);
+  }
+  assert.equal(candidateMatchesWalk(REVISION, (args) => (args[0] === "status" ? { status: 128, stdout: "" } : fakeGit([])(args))), false, "git failing refuses");
+  for (const f of ["tools/release-matrix/matrix.json", "docs/x/y.md", "a/b/README.md"]) assert.equal(isEvidenceOnly(f), true, f);
+  for (const f of ["tools/release-matrix/src/matrix.ts", "docs", "apps/gateway/src/work/pages.ts", "x.mdx"]) assert.equal(isEvidenceOnly(f), false, f);
+});
+
+test("a walk names the refresh it read, and refuses one that is not ok or does not say which run it was", () => {
+  assert.deepEqual(refreshIdentity({ ok: true, code: "ok", ...REFRESH, durationMs: 1, tables: {} }), REFRESH);
+  for (const bad of [null, { ...REFRESH, ok: false }, { ok: true }, { ok: true, ...REFRESH, finishedAt: "yesterday" }, { ok: true, ...REFRESH, totalRows: -1 }]) {
+    assert.equal(refreshIdentity(bad), undefined, JSON.stringify(bad));
+  }
+});
+
+test("the receipt carries verdicts and counts only, and a run succeeds only when everything is verified", () => {
+  const people = [person("1"), person("2", "explained"), person("3")];
+  const ok = report([{ journey: "work-history", screens: ["C-12"], people }], 2);
+  assert.deepEqual(walkReceipt(ok), [
+    `legacy-twin: receipt revision=${REVISION} month=2026-10 refresh=2026-11-20T00:41:00.000Z refreshRows=865915 minimum=2`,
+    "legacy-twin: work-history [C-12] verified walked=3 distinct=3 match=2 explained=1 regression=0 error=0",
+  ]);
+  assert.equal(walkVerified(ok), true);
+  const open = report([{ journey: "work-history", screens: ["C-12"], people: [...people, { legacyId: "4", outcome: "error", code: "persona_unlinked" }] }], 2);
+  assert.match(walkReceipt(open)[1]!, / open\.error walked=3 distinct=4 .* error=1$/);
+  assert.equal(walkVerified(open), false);
+  assert.equal(walkVerified(report([], 2)), false, "walking nothing is not a success");
+  const named = report([{ journey: "work-history", screens: ["C-12"], people: [person("70001"), person("70002"), { legacyId: "70003", outcome: "error", code: "timeout" }] }], 2);
+  assert.ok(!walkReceipt(named).join("\n").includes("7000"), "no person id reaches the receipt");
+  assert.equal(closeSucceeded([{ screen: "C-12", journey: "work-history", change: "closed" }, { screen: "C-13", journey: "x", change: "already_closed" }]), true);
+  for (const change of ["not_verified", "built_open"] as const) {
+    assert.equal(closeSucceeded([{ screen: "C-12", journey: "work-history", change: "closed" }, { screen: "C-13", journey: "x", change }]), false, change);
+  }
+  assert.equal(closeSucceeded([]), false);
+});
+
+// ---- staging adapters --------------------------------------------------------------------
+
+test("legacy queries bind integers and real ISO dates only, and are single SELECT JSON_OBJECT statements", () => {
+  assert.equal(bind("SELECT JSON_OBJECT('d', DATE_FORMAT(d, '%Y-%m-%d')) FROM t WHERE a = ? AND d BETWEEN ? AND ?", [7, { date: "2026-10-01" }, { date: "2026-10-31" }]),
+    "SELECT JSON_OBJECT('d', DATE_FORMAT(d, '%Y-%m-%d')) FROM t WHERE a = 7 AND d BETWEEN '2026-10-01' AND '2026-10-31'");
+  const sql = "SELECT JSON_OBJECT('a', a) FROM t WHERE a = ?";
+  for (const p of [1.5, Number.MAX_SAFE_INTEGER + 2, { date: "2026-02-30" }, { date: "2026-10-01' OR '1" }, "1" as unknown as number]) {
+    assert.throws(() => bind(sql, [p as LegacyParam]), /twin.legacy.badParam/);
+  }
+  assert.throws(() => bind(sql, []), /twin.legacy.badParam/);
+  assert.throws(() => bind(sql, [1, 2]), /twin.legacy.paramCount/);
+  for (const bad of ["DELETE FROM t", "SELECT a FROM t", "SELECT JSON_OBJECT('a', a) FROM t; DROP TABLE t", "SELECT JSON_OBJECT('a', a) FROM t -- x", "SELECT JSON_OBJECT('a', a) FROM t /* x */"]) {
+    assert.throws(() => bind(bad, []), /twin.legacy.unsafeSql/, bad);
+  }
+  assert.deepEqual(parseRows('{"a":1,"b":"x\\ny"}\n{"a":2}\n'), [{ a: 1, b: "x\ny" }, { a: 2 }]);
+  assert.throws(() => parseRows("[1]\n"), /twin.legacy.badRow/);
+});
+
+type RouteHandler = Parameters<Awaited<ReturnType<BrowserLike["newContext"]>>["route"]>[1];
+function fakeBrowser(responses: Record<string, { status: number; finalPath?: string; html?: string }>, log: string[], routes: RouteHandler[] = []): BrowserLike {
+  return {
+    newContext: async () => ({
+      route: async (_url, handler) => { routes.push(handler); },
+      addCookies: async (cookies) => { log.push(`cookie ${cookies[0]!.name} ${cookies[0]!.domain} secure=${cookies[0]!.secure}`); },
+      newPage: async () => {
+        let at = "";
+        return {
+          goto: async (url: string) => { at = url; const r = responses[new URL(url).pathname]; log.push(`goto ${new URL(url).pathname}`); if (!r) throw new Error("net"); at = r.finalPath?.startsWith("https://") ? r.finalPath : `${STAGING_ORIGIN}${r.finalPath ?? new URL(url).pathname}`; return { status: () => r.status }; },
+          content: async () => responses[new URL(at).pathname]?.html ?? "<html></html>",
+          url: () => at,
+        };
+      },
+      close: async () => { log.push("close"); },
+    }),
+  };
+}
+
+test("the staging app signs one person in for their pages only, and always removes the session", async () => {
+  const log: string[] = [];
+  const sessions = { put: async (r: { id: string; personId: string }) => { log.push(`put ${r.personId}`); }, delete: async () => { log.push("delete"); } };
+  assert.throws(() => stagingApp(fakeBrowser({}, log), sessions, async () => "p", "https://studenthub.co"), /twin.app.notStaging/);
+  const staging = stagingApp(fakeBrowser({ "/work/history": { status: 200, html: "<html>ok</html>" }, "/expired": { status: 200, finalPath: "/login/universe" }, "/missing": { status: 404 }, "/refused": { status: 401 }, "/elsewhere-day": { status: 200, finalPath: "/work/history/2026-10-03" }, "/away": { status: 200, finalPath: "https://elsewhere.example/page" } }, log), sessions, async () => "p");
+  assert.deepEqual(await staging.open("p-1", ["/work/history"]), ["<html>ok</html>"]);
+  assert.deepEqual(log, ["put p-1", "cookie __Host-studenthub_session staging.studenthub.co secure=true", "goto /work/history", "close", "delete"]);
+  for (const [path, code] of [["/expired", "sign_in_failed"], ["/refused", "sign_in_failed"], ["/elsewhere-day", "page_failed"], ["/missing", "page_failed"], ["/timeout", "timeout"], ["//evil.example", "page_failed"], ["/away", "page_failed"]] as const) {
+    log.length = 0;
+    await assert.rejects(staging.open("p-1", [path]), (e: unknown) => e instanceof WalkFailure && e.code === code, path);
+    assert.deepEqual(log.slice(-2), ["close", "delete"], `${path}: session removed`);
+  }
+  // Every request the page makes goes through the route guard: staging continues, anything else is aborted.
+  const routes: RouteHandler[] = [];
+  await stagingApp(fakeBrowser({ "/work/history": { status: 200 } }, [], routes), sessions, async () => "p").open("p-1", ["/work/history"]);
+  assert.equal(routes.length, 1);
+  assert.equal(routes.length, 1, "the guard is installed on the context before any page opens");
+});
+
+/**
+ * A route as Playwright gives one: `fetch` with redirects off returns one hop, and
+ * `fetched` records every URL a hop was actually sent to.
+ */
+function fakeRoute(url: string, hops: Record<string, { status: number; location?: string }>, fetched: string[]) {
+  let did = "";
+  const route: RouteLike = {
+    request: () => ({ url: () => url }),
+    abort: async () => { did = "abort"; },
+    fetch: async ({ url: at }) => {
+      fetched.push(at);
+      const h = hops[at];
+      if (!h) throw new Error("connection refused");
+      return { status: () => h.status, headers: (): Record<string, string> => (h.location ? { location: h.location } : {}) };
+    },
+    fulfill: async () => { did = "fulfill"; },
+  };
+  return { route, did: () => did };
+}
+
+test("the staging guard follows every redirect hop itself and refuses one that leaves staging, before sending it", async () => {
+  const O = STAGING_ORIGIN;
+  const hops = {
+    [`${O}/work/history`]: { status: 200 },
+    [`${O}/same`]: { status: 302, location: "/work/history" },
+    [`${O}/off`]: { status: 302, location: "https://tracker.example/leak" },
+    [`${O}/port`]: { status: 307, location: "https://staging.studenthub.co:8443/x" },
+    [`${O}/chain`]: { status: 301, location: `${O}/off` },
+    [`${O}/loop`]: { status: 302, location: "/loop" },
+    [`${O}/bad`]: { status: 302, location: "http://[" },
+  };
+  for (const [path, outcome, lands] of [
+    ["/work/history", "fulfill", "/work/history"], ["/same", "fulfill", "/work/history"],
+    ["/off", "abort", null], ["/port", "abort", null], ["/chain", "abort", null], ["/loop", "abort", null], ["/bad", "abort", null], ["/gone", "abort", null],
+  ] as const) {
+    const landed = new Map<string, string>(), blocked = new Set<string>(), fetched: string[] = [];
+    const { route, did } = fakeRoute(`${O}${path}`, hops, fetched);
+    await stagingOnly(O, landed, blocked)(route);
+    assert.equal(did(), outcome, path);
+    assert.equal(landed.get(`${O}${path}`) ?? null, lands === null ? null : `${O}${lands}`, `${path} landed`);
+    assert.equal(blocked.has(`${O}${path}`), outcome === "abort", `${path} blocked`);
+    assert.ok(fetched.every((u) => new URL(u).origin === O), `${path}: no hop was sent off staging`);
+    assert.ok(fetched.length <= MAX_REDIRECT_HOPS + 1, `${path}: hops are bounded`);
+  }
+  for (const url of ["https://tracker.example/beacon", "https://staging.studenthub.co.evil.example/x", "https://staging.studenthub.co:8443/x", "not a url"]) {
+    const fetched: string[] = [];
+    const { route, did } = fakeRoute(url, {}, fetched);
+    await stagingOnly(O, new Map(), new Set())(route);
+    assert.equal(did(), "abort", url);
+    assert.deepEqual(fetched, [], `${url}: never sent`);
+  }
+});
+
+test("the staging app reads where the guard landed, and a blocked hop is a page failure, not a timeout", async () => {
+  const O = STAGING_ORIGIN;
+  const hops: Record<string, { status: number; location?: string }> = {
+    [`${O}/work/history`]: { status: 200 }, [`${O}/expired`]: { status: 302, location: "/login" }, [`${O}/login`]: { status: 200 },
+    [`${O}/off`]: { status: 302, location: "https://tracker.example/leak" }, [`${O}/moved`]: { status: 302, location: "/work/history" },
+  };
+  // A browser that, like Playwright, sends each navigation through the context's route handler.
+  const browser: BrowserLike = {
+    newContext: async () => {
+      let handler: ((r: RouteLike) => Promise<void>) | undefined;
+      return {
+        route: async (_u, h) => { handler = h; },
+        addCookies: async () => undefined,
+        newPage: async () => {
+          let at = "";
+          return {
+            goto: async (url: string) => {
+              at = url;
+              const { route, did } = fakeRoute(url, hops, []);
+              await handler!(route);
+              if (did() === "abort") throw new Error("net::ERR_FAILED");
+              return { status: () => 200 };
+            },
+            content: async () => `<html>${new URL(at).pathname}</html>`,
+            url: () => at,
+          };
+        },
+        close: async () => undefined,
+      };
+    },
+  };
+  const sessions = { put: async () => undefined, delete: async () => undefined };
+  const app = stagingApp(browser, sessions, async () => "p");
+  assert.deepEqual(await app.open("p-1", ["/work/history"]), ["<html>/work/history</html>"]);
+  for (const [path, code] of [["/expired", "sign_in_failed"], ["/off", "page_failed"], ["/moved", "page_failed"]] as const) {
+    await assert.rejects(app.open("p-1", [path]), (e: unknown) => e instanceof WalkFailure && e.code === code, path);
+  }
+});
+
+test("a session is removed even when no browser context could be made", async () => {
+  const log: string[] = [];
+  const sessions = { put: async (r: { id: string; personId: string }) => { log.push(`put ${r.personId}`); }, delete: async () => { log.push("delete"); } };
+  const broken: BrowserLike = { newContext: async () => { throw new Error("browser gone"); } };
+  await assert.rejects(stagingApp(broken, sessions, async () => "p").open("p-1", ["/work/history"]), (e: unknown) => e instanceof WalkFailure && e.code === "page_failed");
+  assert.deepEqual(log, ["put p-1", "delete"], "a session is removed even when no browser context could be made");
+});

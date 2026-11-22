@@ -2944,7 +2944,7 @@
     "M-5": {
       "title": "Work, recruit and finance history, each reconciled to legacy totals",
       "lane": "cutover",
-      "subject": "requirement r2",
+      "subject": "requirement r3",
       "gates": {
         "built": {
           "state": "open"
@@ -3147,7 +3147,8 @@
       "subject": "requirement r1",
       "gates": {
         "done": {
-          "state": "open"
+          "state": "done",
+          "evidence": "Export rule landed in #597; hours per day stored per principal (0509) and wired as staffHoursPerDay in PR #600 at 9333c3e, with STAFF_HOURS_PG and WORK_EXPORT staff hours tests."
         }
       }
     }

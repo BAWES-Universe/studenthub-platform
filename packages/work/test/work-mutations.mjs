@@ -12,6 +12,7 @@ const pages = "apps/gateway/src/work/pages.js", pagesSuite = "apps/gateway/test/
 const staffPages = "apps/gateway/src/work/staff-pages.js", staffSuite = "apps/gateway/test/work-staff-pages.test.js";
 const review = "apps/gateway/src/work/review-pages.js", reviewSuite = "apps/gateway/test/work-review-pages.test.js";
 const legacy = "packages/work/src/legacy.js", legacySuite = "packages/work/test/legacy.test.js";
+const legacyStaff = "packages/work/src/legacy-staff.js", legacyStaffSuite = "packages/work/test/legacy-staff.test.js";
 const staffTime = "packages/work/src/staff-time.js", staffTimeSuite = "packages/work/test/staff-time.test.js";
 const staffTimePages = "apps/gateway/src/work/staff-time-pages.js", staffTimePagesSuite = "apps/gateway/test/work-staff-time-pages.test.js";
 const standup = "packages/work/src/standup.js", standupSuite = "packages/work/test/standup.test.js";
@@ -121,6 +122,23 @@ const mutations = [
   ["removal is on the staff logs only", "const remove = staff && !open ?", "const remove = !open ?", "WORK_REVIEW staff remove closed hours", review, reviewSuite],
   ["private note hidden", "note: d.notePublic ? d.note : null", "note: d.note", "W5_PRIVATE", views, decisionSuite],
   ["stable paging cursor", "next: sessions.length > filter.limit && last ? { workDate: last.workDate, id: last.id } : null", "next: null", "W5_PAGING", views, decisionSuite],
+  ["a staff session ends at updated_at only when it matches the stored minutes", "/ 60_000) === minutes)", "/ 60_000) >= 0)", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
+  ["a staff day of zero minutes counts the staff record's hours per day, as legacy did", "if (d.open || d.minutes === 0)", "if (d.open)", "WORK_EXPORT staff hours", exportsFile, exportsSuite],
+  ["an answer whose copied prompt has no visible text is reported", "if (!/[^\\s]/u.test(question) || chars(question) < 1", "if (chars(question) < 1", "LEGACY_STANDUP answers", legacyStaff, legacyStaffSuite],
+  ["a staff session whose end disagrees with its minutes is reported", 'issues: [issue("minutes_mismatch", String(minutes))]', "issues: []", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
+  ["a staff session with no minutes is imported open", "return { session: Object.freeze({ ...base, endedAt: null }), issues: [] };", "return { issues: [] };", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
+  ["legacy staff ids are positive integers", "/^[1-9][0-9]{0,18}$/", "/^[0-9]+$/", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
+  ["stand-up answers keep the Kuwait day", "workDate: kuwaitDay(createdAt), createdAt })", "workDate: createdAt.toISOString().slice(0, 10), createdAt })", "LEGACY_STANDUP", legacyStaff, legacyStaffSuite],
+  ["stand-up text is counted as Postgres counts it", "const chars = (s) => [...s].length;", "const chars = (s) => s.length;", "LEGACY_STANDUP", legacyStaff, legacyStaffSuite],
+  ["stand-up answers holding NUL are reported, not imported", " || hasNul(answer))", ")", "LEGACY_STANDUP", legacyStaff, legacyStaffSuite],
+  ["non-numeric minutes stay out of the issue", "Number.isFinite(minutes) ? String(minutes) : undefined", "String(row.total_minutes)", "LEGACY_STAFF", legacyStaff, legacyStaffSuite],
+  ["blank stand-up answers are not imported", "!/[^\\s]/u.test(answer) || ", "", "LEGACY_STANDUP", legacyStaff, legacyStaffSuite],
+  ["a missing hours per day is reported, not read as a number", "? Number.NaN : Number(raw)", "? 0 : Number(raw)", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
+  ["fractional hours per day are reported", "!Number.isInteger(hours) || hours < 0", "hours < 0", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
+  ["hours per day over 24 are reported", " || hours > 24)", ")", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
+  ["negative hours per day are reported", " || hours < 0 ||", " ||", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
+  ["hours per day keep the staff: ref", "`staff:${staff}`", "`${staff}`", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
+  ["non-numeric hours stay out of the issue", "Number.isFinite(hours) ? String(hours) : undefined", "String(raw)", "LEGACY_STAFF_HOURS", legacyStaff, legacyStaffSuite],
 ];
 
 const root = new URL("../../../", import.meta.url);

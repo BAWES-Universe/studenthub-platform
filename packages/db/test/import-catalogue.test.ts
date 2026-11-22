@@ -197,10 +197,13 @@ test("a later alias maps only to an active item of the same kind and name: a del
 /** Holds `change` open in its own transaction while an alias import starts, so the import must wait for it. */
 async function aliasDuringOpenChange(change: (c: pg.PoolClient) => Promise<unknown>, alias: () => Promise<unknown>) {
   const writer = await pool.connect();
+  let open = false;
+  let pending: Promise<unknown> | undefined;
   try {
     await writer.query("BEGIN");
+    open = true;
     await change(writer);
-    const pending = alias();
+    pending = alias();
     // Commit only once the import is waiting on the writer's lock, and fail if it never waits.
     let waited = false;
     for (let i = 0; i < 200 && !waited; i++) {
@@ -210,9 +213,13 @@ async function aliasDuringOpenChange(change: (c: pg.PoolClient) => Promise<unkno
       if (!waited) await new Promise((r) => setTimeout(r, 25));
     }
     await writer.query("COMMIT");
+    open = false;
     assert.ok(waited, "the import did not wait for the open write");
     return await pending;
   } finally {
+    // On any failure: roll the writer back, let the import finish, and only then release.
+    if (open) await writer.query("ROLLBACK").catch(() => undefined);
+    if (pending) await pending.catch(() => undefined);
     writer.release();
   }
 }

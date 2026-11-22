@@ -3,3 +3,5 @@ export type { StaffMessageDraftRow, StaffMessageKindRow, StaffMessageSendRow } f
 export { recordWorkSessionDecision, retractWorkSessionDecision } from "./work-session-notifications.js";
 export type { WorkSessionDecisionNotice } from "./work-session-notifications.js";
 export { PostgresRecruitDispatchStore } from "./postgres-recruit-dispatch.js";
+export { PostgresPersonRemindersStore, PERSON_REMINDER_KINDS, CIVIL_ID_EXPIRING_DAYS } from "./postgres-person-reminders-store.js";
+export type { PersonReminderKind } from "./postgres-person-reminders-store.js";
