@@ -24,7 +24,7 @@ function typeContract(document: InvoiceDocument, decimal: DecimalString): void {
 void typeContract;
 
 test("SHU-264/AC-04 document-immutable", () => {
-  assert.deepEqual(Object.keys(store).filter(name => /invoice/i.test(name)).sort(), ["PostgresLegacyInvoiceStore", "allocateInvoiceNumber", "issueInvoice", "resolveInvoice"]);
+  assert.deepEqual(Object.keys(store).filter(name => /invoice/i.test(name)).sort(), ["PostgresLegacyInvoiceStore", "PostgresTransferInvoiceEffects", "TRANSFER_INVOICE_SERIES", "allocateInvoiceNumber", "issueInvoice", "listTransferInvoices", "resolveInvoice", "transferInvoiceForLine"]);
   assert.equal(Object.keys(store).some(name => /update|delete|void|edit/i.test(name)), false);
   const original = captureInvoiceDocument("ACME-2026-09-000001", content);
   assert.ok(Object.isFrozen(original));
