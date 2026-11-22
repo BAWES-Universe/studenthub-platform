@@ -13,7 +13,9 @@ const reads = "packages/db/dist/billing/postgres-transfer-invoice-reads.js";
 const decision = "dist/packages/billing/src/transfer-invoice-access.js";
 const mutations = [
   ["let recruiters read invoices", "TRANSFER_INVOICE_READS_REFUSED", decision,
-    'Object.freeze(["staff", "admin", "org-owner", "finance"])', 'Object.freeze(["staff", "admin", "org-owner", "finance", "recruiter"])'],
+    'Object.freeze(["org-owner", "finance"])', 'Object.freeze(["org-owner", "finance", "recruiter"])'],
+  ["let operator-level finance read company invoices", "TRANSFER_INVOICE_READS_REFUSED", decision,
+    "&& !operators.includes(row.org_id)", ""],
   ["bill an operator organization", "TRANSFER_INVOICE_READS_REFUSED", decision,
     "if (operators.includes(orgId))\n        return false;", ""],
   ["treat a self grant as subtree", "TRANSFER_INVOICE_READS_SCOPE", decision,
