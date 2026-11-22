@@ -5,14 +5,17 @@
  *                                                   fails while a gate due by that checkpoint
  *                                                   is open (default candidate, the 17 Dec test)
  * node dist/tools/release-matrix/src/cli.js seed      rewrite matrix.json from sources
+ * node dist/tools/release-matrix/src/cli.js burndown [YYYY-MM-DD]
+ *                                                   closed gates by section and the daily
+ *                                                   rate needed to meet each date
  */
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { checkContract, type ContractIssue, type ParsedContract } from "./contract.js";
-import { MATRIX_PATH, jsonIssues, loadContract, loadInventory, loadMatrix, repoRoot } from "./files.js";
-import { blockers, checkInventory, checkMatrix, PHASES, type Blocker, type Matrix, type MobileInventory, type Phase } from "./matrix.js";
+import { MATRIX_PATH, gatewaySource, jsonIssues, loadContract, loadInventory, loadMatrix, readRepoFile, repoRoot } from "./files.js";
+import { blockers, burndown, checkInventory, checkMatrix, checkServed, PHASES, type Blocker, type Burndown, type Matrix, type MobileInventory, type Phase } from "./matrix.js";
 import { seedMatrix } from "./seed.js";
 
 /**
@@ -45,6 +48,14 @@ export function renderReport(open: readonly Blocker[], totalRows: number): strin
   return `${lines.join("\n")}\n`;
 }
 
+export function renderBurndown(result: Burndown, today: string): string {
+  const lines = [`# Release readiness on ${today}`, "", "| Section | Gate | Closed | Waived | Total |", "|---|---|---|---|---|"];
+  for (const row of result.rows) lines.push(`| ${row.section} | ${row.gate} | ${row.done} | ${row.waived} | ${row.total} |`);
+  lines.push("", "| Due by | Open gates due by then | Days left | Gates to close per day |", "|---|---|---|---|");
+  for (const due of result.due) lines.push(`| ${due.date} | ${due.open} | ${due.days ?? "-"} | ${due.days === null ? "-" : (due.perDay ?? "overdue")} |`);
+  return `${lines.join("\n")}\n`;
+}
+
 function main(command: string | undefined, phaseArg?: string): number {
   const root = repoRoot();
   const contract = loadContract(root);
@@ -63,9 +74,25 @@ function main(command: string | undefined, phaseArg?: string): number {
   }
 
   const matrix = loadMatrix(root);
-  const issues = [...duplicates, ...checkContract(contract), ...checkInventory(inventory, contract), ...checkMatrix(matrix, contract, inventory)];
+  const issues = [
+    ...duplicates,
+    ...checkContract(contract),
+    ...checkInventory(inventory, contract),
+    ...checkMatrix(matrix, contract, inventory),
+    ...checkServed(matrix, (file) => readRepoFile(root, file), gatewaySource(root)),
+  ];
   for (const issue of issues) console.error(`${issue.rule}: ${issue.detail}`);
   if (issues.length > 0) return 1;
+
+  if (command === "burndown") {
+    const today = phaseArg ?? new Date().toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(today) || Number.isNaN(Date.parse(`${today}T00:00:00Z`)) || new Date(`${today}T00:00:00Z`).toISOString().slice(0, 10) !== today) {
+      console.error("usage: cli.js burndown [YYYY-MM-DD]");
+      return 2;
+    }
+    process.stdout.write(renderBurndown(burndown(matrix, today), today));
+    return 0;
+  }
 
   const phase = (phaseArg ?? "candidate") as Phase;
   if (command === "release" && !PHASES.includes(phase)) {
@@ -85,7 +112,7 @@ function main(command: string | undefined, phaseArg?: string): number {
     return 0;
   }
   if (command !== "report") {
-    console.error("usage: cli.js check|report|release|seed");
+    console.error("usage: cli.js check|report|release|seed|burndown");
     return 2;
   }
   return 0;

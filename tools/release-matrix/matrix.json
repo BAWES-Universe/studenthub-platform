@@ -79,9 +79,17 @@
     "U-01": {
       "lane": "shell",
       "subject": "`/app` \u2014 context home",
+      "served": [
+        {
+          "route": "/workspace",
+          "test": "apps/gateway/test/context-navigation.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -91,9 +99,22 @@
     "U-02": {
       "lane": "access",
       "subject": "`/sign-in`, `/auth/callback` \u2014 Universe sign-in",
+      "served": [
+        {
+          "route": "/login/universe",
+          "test": "apps/gateway/test/web-ui.test.ts",
+          "via": "gateway"
+        },
+        {
+          "route": "/login/callback",
+          "test": "apps/gateway/test/web-ui.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -105,7 +126,8 @@
       "subject": "`/account` \u2014 account and local session security",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): /profile/access shows grants; no session list or sign-out-everywhere page"
         },
         "verified": {
           "state": "open"
@@ -115,9 +137,17 @@
     "U-04": {
       "lane": "comms",
       "subject": "`/notifications` \u2014 event feed",
+      "served": [
+        {
+          "route": "/notifications",
+          "test": "packages/notifications/test/notifications.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -129,10 +159,12 @@
       "subject": "`/messages`, `/messages/:id` \u2014 conversations",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "waived",
+          "decision": "Chat was dropped by Khalid's 10-04 \"Drop all\" card (no chat messages in the 12 months before); see contracts/decisions-2026-10-04.md"
         },
         "verified": {
-          "state": "open"
+          "state": "waived",
+          "decision": "Chat was dropped by Khalid's 10-04 \"Drop all\" card (no chat messages in the 12 months before); see contracts/decisions-2026-10-04.md"
         }
       }
     },
@@ -141,10 +173,12 @@
       "subject": "`/support`, `/support/:id` \u2014 tickets",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "waived",
+          "decision": "Support tickets were dropped by Khalid's 10-04 \"Drop all\" card (no tickets in the 12 months before); see contracts/decisions-2026-10-04.md"
         },
         "verified": {
-          "state": "open"
+          "state": "waived",
+          "decision": "Support tickets were dropped by Khalid's 10-04 \"Drop all\" card (no tickets in the 12 months before); see contracts/decisions-2026-10-04.md"
         }
       }
     },
@@ -153,7 +187,8 @@
       "subject": "`/error/:kind`, wildcard \u2014 accessible failure states",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): Not found and error pages exist per route; no shared /error/:kind page"
         },
         "verified": {
           "state": "open"
@@ -163,9 +198,17 @@
     "U-08": {
       "lane": "access",
       "subject": "context chooser in app shell",
+      "served": [
+        {
+          "route": "/workspace",
+          "test": "apps/gateway/test/context-navigation.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -175,9 +218,17 @@
     "C-01": {
       "lane": "people",
       "subject": "`/profile` \u2014 own profile projection/completion",
+      "served": [
+        {
+          "route": "/profile",
+          "test": "apps/gateway/test/web-ui.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -187,9 +238,22 @@
     "C-02": {
       "lane": "people",
       "subject": "`/profile/edit` \u2014 safe self edits",
+      "served": [
+        {
+          "route": "/profile/edit/:field",
+          "test": "apps/gateway/test/web-ui.test.ts",
+          "via": "gateway"
+        },
+        {
+          "route": "/profile/edit/:field",
+          "test": "apps/gateway/test/profile-browser-edit-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -199,9 +263,17 @@
     "C-03": {
       "lane": "people",
       "subject": "`/profile/history` \u2014 education, experience, skills, links",
+      "served": [
+        {
+          "route": "/profile/background",
+          "test": "apps/gateway/test/profile-records-http.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -211,9 +283,17 @@
     "C-04": {
       "lane": "people",
       "subject": "`/profile/documents` \u2014 private files",
+      "served": [
+        {
+          "route": "/profile/documents",
+          "test": "apps/gateway/test/documents-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -223,9 +303,17 @@
     "C-05": {
       "lane": "people",
       "subject": "`/profile/civil-id` \u2014 civil verification state",
+      "served": [
+        {
+          "route": "/profile/civil-id",
+          "test": "apps/gateway/test/civil-id-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -235,9 +323,22 @@
     "C-06": {
       "lane": "recruit",
       "subject": "`/discover`, `/discover/:jobId` \u2014 job board",
+      "served": [
+        {
+          "route": "/recruit/jobs",
+          "test": "apps/gateway/test/recruit-jobs-http.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/recruit/jobs/:jobId",
+          "test": "apps/gateway/test/recruit-jobs-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -249,7 +350,8 @@
       "subject": "`/applications`, `/applications/:id` \u2014 applications/request detail",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): apply exists; no page listing the person's own applications"
         },
         "verified": {
           "state": "open"
@@ -261,7 +363,8 @@
       "subject": "`/invitations`, `/invitations/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /recruit/invitations list with accept/decline; no invitation detail page"
         },
         "verified": {
           "state": "open"
@@ -273,7 +376,8 @@
       "subject": "`/interviews`, `/interviews/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /recruit/my-interviews list; no interview detail page"
         },
         "verified": {
           "state": "open"
@@ -283,9 +387,22 @@
     "C-10": {
       "lane": "work",
       "subject": "`/work/assignment`, `/work/assignment/:id`",
+      "served": [
+        {
+          "route": "/work/assignment",
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/work/assignment/:assignmentId",
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -295,9 +412,17 @@
     "C-11": {
       "lane": "work",
       "subject": "`/work/track` \u2014 clock/manual session",
+      "served": [
+        {
+          "route": "/work/track",
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -307,9 +432,22 @@
     "C-12": {
       "lane": "work",
       "subject": "`/work/history`, `/work/history/:date`",
+      "served": [
+        {
+          "route": "/work/history",
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/work/history/:date",
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -319,9 +457,22 @@
     "C-13": {
       "lane": "work",
       "subject": "`/work/appeals`, `/work/appeals/:id`",
+      "served": [
+        {
+          "route": "/work/appeals",
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/work/appeals/:appealId",
+          "test": "apps/gateway/test/work-pages.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -333,7 +484,8 @@
       "subject": "`/pay`, `/pay/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): pay lane (GPT): no payslip page"
         },
         "verified": {
           "state": "open"
@@ -345,7 +497,8 @@
       "subject": "`/profile/bank`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "backend only (audit 2026-11-20): bank details preview/confirm API, no page"
         },
         "verified": {
           "state": "open"
@@ -357,7 +510,8 @@
       "subject": "`/profile/certificates`, `/profile/certificates/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): certificate PDF and ID card page; no certificates list page"
         },
         "verified": {
           "state": "open"
@@ -367,9 +521,17 @@
     "O-01": {
       "lane": "organizations",
       "subject": "`/organization/onboarding` \u2014 registration/review status",
+      "served": [
+        {
+          "route": "/companies/register",
+          "test": "apps/gateway/test/company-registration.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -381,7 +543,8 @@
       "subject": "`/organization/:orgId` \u2014 overview/read model",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "backend only (audit 2026-11-20): organization profile API, no overview page"
         },
         "verified": {
           "state": "open"
@@ -393,7 +556,8 @@
       "subject": "`/organization/:orgId/edit`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "backend only (audit 2026-11-20): profile preview/confirm API, no edit page"
         },
         "verified": {
           "state": "open"
@@ -403,9 +567,17 @@
     "O-04": {
       "lane": "organizations",
       "subject": "`/organization/:orgId/team` \u2014 members/invitations",
+      "served": [
+        {
+          "route": "/workspace/companies/:orgId/team",
+          "test": "apps/gateway/test/company-team.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -417,7 +589,8 @@
       "subject": "`/organization/:orgId/stores`, `/stores/:storeId`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "backend only (audit 2026-11-20): stores API, no page"
         },
         "verified": {
           "state": "open"
@@ -429,7 +602,8 @@
       "subject": "`/organization/:orgId/notes`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "backend only (audit 2026-11-20): notes API, no page"
         },
         "verified": {
           "state": "open"
@@ -441,7 +615,8 @@
       "subject": "`/organization/:orgId/candidates`, `/candidates/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): person view through a request link only"
         },
         "verified": {
           "state": "open"
@@ -451,9 +626,22 @@
     "O-08": {
       "lane": "recruit",
       "subject": "`/organization/:orgId/requests`, `/requests/:id`",
+      "served": [
+        {
+          "route": "/recruit/requests",
+          "test": "apps/gateway/test/recruit-requests-http.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/recruit/requests/:requestId",
+          "test": "apps/gateway/test/recruit-requests-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -465,7 +653,8 @@
       "subject": "`/requests/:id/matches` \u2014 suggestions/invitations",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): request people view; no suggestions page"
         },
         "verified": {
           "state": "open"
@@ -477,7 +666,8 @@
       "subject": "`/organization/:orgId/interviews`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): per-request interviews page /recruit/requests/:requestId/interviews only; no organization-wide interviews list"
         },
         "verified": {
           "state": "open"
@@ -487,9 +677,17 @@
     "O-11": {
       "lane": "work",
       "subject": "`/organization/:orgId/work` \u2014 work logs/decisions",
+      "served": [
+        {
+          "route": "/organization/:orgId/work",
+          "test": "apps/gateway/test/work-review-pages.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -501,7 +699,8 @@
       "subject": "`/organization/:orgId/contracts`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "backend only (audit 2026-11-20): pay contracts API, no page"
         },
         "verified": {
           "state": "open"
@@ -513,7 +712,8 @@
       "subject": "`/organization/:orgId/transfers`, `/transfers/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): pay lane: transfers"
         },
         "verified": {
           "state": "open"
@@ -525,7 +725,8 @@
       "subject": "`/organization/:orgId/statements`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): pay lane: statements"
         },
         "verified": {
           "state": "open"
@@ -535,9 +736,22 @@
     "M-01": {
       "lane": "access",
       "subject": "`/store/:storeId/overview`",
+      "served": [
+        {
+          "route": "/workspace/my-stores",
+          "test": "apps/gateway/test/store-manager.test.ts",
+          "via": "gateway"
+        },
+        {
+          "route": "/workspace/stores/:storeId",
+          "test": "apps/gateway/test/store-manager.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -549,7 +763,8 @@
       "subject": "`/store/:storeId/candidates`, `/store/:storeId/candidates/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): store manager sees people through work pages only"
         },
         "verified": {
           "state": "open"
@@ -559,9 +774,22 @@
     "M-03": {
       "lane": "work",
       "subject": "`/store/:storeId/time-approvals`, `/:sessionId`",
+      "served": [
+        {
+          "route": "/store/:storeId/time-approvals",
+          "test": "apps/gateway/test/work-review-pages.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/store/:storeId/time-approvals/:sessionId",
+          "test": "apps/gateway/test/work-review-pages.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -571,9 +799,17 @@
     "M-04": {
       "lane": "work",
       "subject": "`/store/:storeId/assignment-changes`",
+      "served": [
+        {
+          "route": "/store/:storeId/assignment-changes",
+          "test": "apps/gateway/test/work-review-pages.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -585,7 +821,8 @@
       "subject": "`/store/:storeId/candidates/:id/documents`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): employer document delivery by signed link; no store page"
         },
         "verified": {
           "state": "open"
@@ -597,7 +834,8 @@
       "subject": "`/people/candidates`, `/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /workspace/people list only; no candidate detail or full-timer view"
         },
         "verified": {
           "state": "open"
@@ -609,7 +847,8 @@
       "subject": "`/people/candidates/:id/lifecycle`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): pause and resume only"
         },
         "verified": {
           "state": "open"
@@ -621,7 +860,8 @@
       "subject": "`/people/candidate-documents/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /workspace/civil-ids review queue only; no per-candidate documents page"
         },
         "verified": {
           "state": "open"
@@ -631,9 +871,17 @@
     "A-04": {
       "lane": "people",
       "subject": "`/people/id-cards`",
+      "served": [
+        {
+          "route": "/workspace/id-cards",
+          "test": "apps/gateway/test/id-cards-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -643,9 +891,17 @@
     "A-05": {
       "lane": "organizations",
       "subject": "`/organizations`",
+      "served": [
+        {
+          "route": "/workspace/companies",
+          "test": "apps/gateway/test/company-directory.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -657,7 +913,8 @@
       "subject": "`/organizations/:orgId/admin`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "backend only (audit 2026-11-20): status, terms, approved-to-hire, account manager, deletion APIs; no admin page"
         },
         "verified": {
           "state": "open"
@@ -669,7 +926,8 @@
       "subject": "`/reference-data/:catalogue`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "backend only (audit 2026-11-20): catalogue API, no page"
         },
         "verified": {
           "state": "open"
@@ -681,7 +939,8 @@
       "subject": "`/recruiting/requests`, `/recruiting/requests/:id`, `/stories/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /recruit/staff/requests list and pipeline exist; no stories/:id page"
         },
         "verified": {
           "state": "open"
@@ -691,9 +950,17 @@
     "A-09": {
       "lane": "recruit",
       "subject": "`/recruiting/search`",
+      "served": [
+        {
+          "route": "/recruit/staff/people",
+          "test": "apps/gateway/test/recruit-search-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -705,7 +972,8 @@
       "subject": "`/recruiting/matches`, `/recruiting/jobs`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): /recruit/staff/jobs exists; no matches page"
         },
         "verified": {
           "state": "open"
@@ -717,7 +985,8 @@
       "subject": "`/recruiting/interviews`, `/evaluations`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): interview cancel/evaluate actions; no staff interviews page"
         },
         "verified": {
           "state": "open"
@@ -727,9 +996,22 @@
     "A-12": {
       "lane": "work",
       "subject": "`/work/assignments`, `/work/logs`",
+      "served": [
+        {
+          "route": "/work/assignments",
+          "test": "apps/gateway/test/work-staff-pages.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/work/logs",
+          "test": "apps/gateway/test/work-staff-pages.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -739,9 +1021,22 @@
     "A-13": {
       "lane": "work",
       "subject": "`/work/appeals`, `/work/corrections`",
+      "served": [
+        {
+          "route": "/work/appeals",
+          "test": "apps/gateway/test/work-staff-pages.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/work/corrections",
+          "test": "apps/gateway/test/work-staff-pages.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -753,7 +1048,8 @@
       "subject": "`/me/work` \u2014 standup, leave, expense, session",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): sessions and stand-up done; leave and expenses wait on pay"
         },
         "verified": {
           "state": "open"
@@ -763,9 +1059,17 @@
     "A-15": {
       "lane": "access",
       "subject": "`/access/accounts`",
+      "served": [
+        {
+          "route": "/admin/access",
+          "test": "apps/gateway/test/access-admin.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -775,9 +1079,17 @@
     "A-16": {
       "lane": "access",
       "subject": "`/access/act-as`",
+      "served": [
+        {
+          "route": "/admin/access/people/:principalId/view",
+          "test": "apps/gateway/test/staff-view.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -789,7 +1101,8 @@
       "subject": "`/finance/contracts`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "backend only (audit 2026-11-20): pay contracts API, no staff page"
         },
         "verified": {
           "state": "open"
@@ -801,7 +1114,8 @@
       "subject": "`/finance/transfers`, `/:id`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): pay lane: transfers"
         },
         "verified": {
           "state": "open"
@@ -813,7 +1127,8 @@
       "subject": "`/finance/bank-files`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): pay lane: bank files"
         },
         "verified": {
           "state": "open"
@@ -825,7 +1140,8 @@
       "subject": "`/finance/settled`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): pay lane: settled"
         },
         "verified": {
           "state": "open"
@@ -837,10 +1153,12 @@
       "subject": "`/service` \u2014 conversations, tickets, voicemail records",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "waived",
+          "decision": "The service inbox's chat and tickets were dropped by Khalid's 10-04 \"Drop all\" card, and voicemail by his 11-20 addendum (Yeastar no longer used); see contracts/decisions-2026-10-04.md"
         },
         "verified": {
-          "state": "open"
+          "state": "waived",
+          "decision": "The service inbox's chat and tickets were dropped by Khalid's 10-04 \"Drop all\" card, and voicemail by his 11-20 addendum (Yeastar no longer used); see contracts/decisions-2026-10-04.md"
         }
       }
     },
@@ -849,7 +1167,8 @@
       "subject": "`/communications/campaigns`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): one-to-one staff messages and emails; no campaigns page"
         },
         "verified": {
           "state": "open"
@@ -861,7 +1180,8 @@
       "subject": "`/communications/webhooks`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): webhooks only if staging table has rows (SHU-210), undecided"
         },
         "verified": {
           "state": "open"
@@ -873,7 +1193,8 @@
       "subject": "`/reports/operations`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): morning summary page with 3 of 12 counters live"
         },
         "verified": {
           "state": "open"
@@ -883,9 +1204,17 @@
     "A-25": {
       "lane": "reports",
       "subject": "`/reports/statistics`",
+      "served": [
+        {
+          "route": "/workspace/statistics",
+          "test": "apps/gateway/test/statistics-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -895,9 +1224,17 @@
     "A-26": {
       "lane": "reports",
       "subject": "`/reports/exports`",
+      "served": [
+        {
+          "route": "/workspace/lists",
+          "test": "apps/gateway/test/list-exports-http.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #588 at 5f816c25"
         },
         "verified": {
           "state": "open"
@@ -909,7 +1246,8 @@
       "subject": "`/platform/integrations`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): platform integrations page"
         },
         "verified": {
           "state": "open"
@@ -921,7 +1259,8 @@
       "subject": "`/platform/operations`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): /admin/jobs and /admin/outbox pages"
         },
         "verified": {
           "state": "open"
@@ -933,7 +1272,8 @@
       "subject": "`/platform/events`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): platform events page"
         },
         "verified": {
           "state": "open"
@@ -945,7 +1285,8 @@
       "subject": "`/candidate-evaluations`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): candidate evaluations"
         },
         "verified": {
           "state": "open"
@@ -957,7 +1298,8 @@
       "subject": "`/reports/revenue`",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "not started (audit 2026-11-20): revenue roll-ups (P-4)"
         },
         "verified": {
           "state": "open"
@@ -969,7 +1311,8 @@
       "subject": "`/access/grants/catalogue` \u2014 roles, capabilities, scopes, versions",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): admin access page; no grant catalogue page"
         },
         "verified": {
           "state": "open"
@@ -981,7 +1324,8 @@
       "subject": "`/access/grants/assign` \u2014 principal/org/store search, effective preview, assign/revoke",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): admin access assigns; no effective preview"
         },
         "verified": {
           "state": "open"
@@ -993,7 +1337,8 @@
       "subject": "`/access/grants/audit` \u2014 effective grants, provenance, history, next-request result",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "open",
+          "note": "partly built (audit 2026-11-20): authz audit API; no audit page"
         },
         "verified": {
           "state": "open"

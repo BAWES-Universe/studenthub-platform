@@ -54,6 +54,25 @@ Two active rows of one kind whose names normalize the same become one item: the 
 - The snapshot holds the columns the organization projections read (`company_name`, common names, descriptions, website, email, `currency_code`, approved to hire, hourly rate, bonus commission, status override) and the three activity counters, each normalized to what the package parses: blank text is null, decimals lose padding zeros, the currency code is upper case, and the status override is 0, 9 or 10. An unusable value becomes null and is reported by column; the company still imports.
 - Stamped with the organizations package's parity revision, as `snapshotRow` requires.
 
+## M-4 stores and brand links map
+
+`tools/legacy-import/src/m4-stores.ts` maps legacy `brand` company links and `store` rows; `PostgresStoreImportStore` (`@studenthub/db/import`) writes `organization_brands` (migration 0200), `organization_stores` (migration 0202) and the id map (legacy tables `brand_company` and `store`). Companies, brands and malls import first; this step resolves them through the id map.
+
+- Each legacy brand belongs to one company (`brand.company_id`), and the platform links each brand item to one organization. Two same-name legacy brands share one catalogue item: the first company's link is kept, and the other is refused as `brand_taken`, never moved. A link that is already in place for the same organization is adopted.
+- A store keeps its legacy name and location trimmed. A blank name, or one longer than the platform's 120 characters, is reported as `store.badName` and left out, never cut to fit. A location longer than 500 characters is reported and imported as none.
+- A store's brand must be its own company's, as in legacy's store form and the platform's stores screen. Another company's brand, an unknown brand and an unusable reference are reported and dropped from the store. At write time a brand that is not linked to the store's organization is refused as `brand_not_linked`.
+- A store deleted in legacy (`deleted = 1`) imports as removed, with its last update time as the removal time, so later work and assignment history can still name it. `store_status` is not read: legacy sets it to 10 on every store and never reads it. The store manager is a sign-in role, so it comes with the grant import (M-3), not with contacts.
+- Legacy times are Asia/Kuwait wall time. A row whose company, brand or mall has no id map row is refused by code (`no_organization`, `no_brand`, `no_mall`), and the batch goes on.
+
+## M-4 contacts map
+
+`tools/legacy-import/src/m4-contacts.ts` maps legacy `company_contact` links with their `contact`, `contact_email` and `contact_phone` rows; `PostgresContactImportStore` (`@studenthub/db/import`) writes `company_contacts` and `company_contact_channels` (migration 0402) and the id map (legacy table `company_contact`). Companies import first.
+
+- The access contract decides the split. A link with `allow_access = 1` is a member who signs in: it imports as a grant once the person is linked (M-3), never as a contact, and is reported here as `contact.access`. A link with `allow_access = 0` becomes one contact. The column is a nullable boolean with default 0 (legacy migration `m210128_071555_role`), so only an explicit 0 or 1 is trusted: null, a missing column or any other value is quarantined as `contact.badAccess` and copies nothing. One legacy person on several companies gives one contact per company link. The mapper returns each link id in exactly one disposition (contact, access, quarantined, refused), so reconciliation counts by link id.
+- Name and position (as the role title) are trimmed. A blank name, a name over 120 characters, or one with control characters is reported as `contact.badName` and left out. An unusable position is reported and imported as none.
+- Email addresses: the person's sign-in address first, then the extra addresses oldest first. Phone numbers: oldest first. Each is normalized with the contacts screen's own rules, and repeats are kept once. An address or number the screen would refuse is reported and dropped. Past five of a kind, the first five are kept and the rest reported. An imported contact is one the screen could have saved.
+- A contact deleted in legacy imports as removed, so it is never listed but the record of it stays. Legacy times are Asia/Kuwait wall time. A link whose company has no id map row is refused as `no_organization`, and the batch goes on. The import takes the contacts screen's company lock.
+
 ## M-5 table map (work)
 
 Legacy staff ids resolve to the platform principal the same way for every row below; a staff id with no principal is reported by legacy id, not imported. Each table gets its own reconciliation count: legacy rows against imported rows by `legacy_ref`, by legacy id only. Legacy times are Asia/Kuwait wall time: a `work_date` is the Kuwait date read straight from that wall time, with no UTC conversion, so an answer or session at 21:00 to 23:59 keeps its own day.
