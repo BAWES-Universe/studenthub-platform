@@ -219,7 +219,7 @@
       "served": [
         {
           "route": "/profile",
-          "test": "apps/gateway/test/profile-journey.test.ts",
+          "test": "apps/gateway/test/web-ui.test.ts",
           "via": "gateway"
         }
       ],
@@ -238,9 +238,14 @@
       "subject": "`/profile/edit` \u2014 safe self edits",
       "served": [
         {
-          "route": "/profile/edit",
-          "test": "apps/gateway/test/profile-journey.test.ts",
+          "route": "/profile/edit/:field",
+          "test": "apps/gateway/test/web-ui.test.ts",
           "via": "gateway"
+        },
+        {
+          "route": "/profile/edit/:field",
+          "test": "apps/gateway/test/profile-browser-edit-http.test.ts",
+          "via": "handler"
         }
       ],
       "gates": {
@@ -279,7 +284,7 @@
       "served": [
         {
           "route": "/profile/documents",
-          "test": "apps/gateway/test/web-ui.test.ts",
+          "test": "apps/gateway/test/documents-page.test.ts",
           "via": "gateway"
         }
       ],
@@ -657,17 +662,10 @@
     "O-10": {
       "lane": "recruit",
       "subject": "`/organization/:orgId/interviews`",
-      "served": [
-        {
-          "route": "/recruit/requests/:requestId/interviews",
-          "test": "apps/gateway/test/recruit-interviews-http.test.ts",
-          "via": "handler"
-        }
-      ],
       "gates": {
         "built": {
-          "state": "done",
-          "evidence": "page and test on main, proven by checkServed; PR #588 at 4581829"
+          "state": "open",
+          "note": "partly built (audit 2026-11-22): per-request interviews page /recruit/requests/:requestId/interviews only; no organization-wide interviews list"
         },
         "verified": {
           "state": "open"
