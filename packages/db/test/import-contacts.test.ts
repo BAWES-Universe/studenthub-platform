@@ -7,6 +7,7 @@ import { PostgresContactImportStore, PostgresOrganizationImportStore } from "@st
 import { ORGANIZATION_PARITY_REVISION } from "../../organizations/src/index.js";
 import { mapLegacyCompanies } from "../../../tools/legacy-import/src/m4-organizations.js";
 import { mapLegacyContacts } from "../../../tools/legacy-import/src/m4-contacts.js";
+import { fixtureIds } from "./legacy-fixture-ids.js";
 
 // Synthetic company and contact rows only; fresh legacy ids per run so the suite can share a database.
 
@@ -25,8 +26,7 @@ before(async () => {
 });
 after(async () => pool.end());
 
-let next = Math.floor(Date.now() / 1000) * 1000 + 700 + Math.floor(Math.random() * 200);
-const companyId = () => { next += 10; return next; };
+const companyId = () => fixtureIds(pool);
 const run = () => randomUUID().slice(0, 8);
 const link = (id: string, person: string, company: number, extra: Record<string, unknown> = {}) => ({
   company_contact_uuid: id, contact_uuid: person, company_id: company, contact_position: "Accountant", allow_access: 0,
@@ -35,7 +35,9 @@ const link = (id: string, person: string, company: number, extra: Record<string,
 const person = (id: string, extra: Record<string, unknown> = {}) => ({ contact_uuid: id, contact_name: `Person ${id}`, contact_email: `${id}@example.com`, deleted: 0, ...extra });
 
 async function importCompanies(...ids: number[]) {
-  await organizations.importOrganizations(mapLegacyCompanies(ids.map((id) => ({ company_id: id, parent_company_id: null, company_name: `Company ${id}` }))).organizations);
+  const result = await organizations.importOrganizations(mapLegacyCompanies(ids.map((id) => ({ company_id: id, parent_company_id: null, company_name: `Company ${id}` }))).organizations);
+  // Every seed company must be new: a fixture id another suite already mapped would hide behind "unchanged".
+  assert.deepEqual(result, { inserted: ids.length, unchanged: 0, conflicts: [], refused: [] });
   return organizations.idMap();
 }
 async function contactFor(legacyId: string) {
@@ -47,7 +49,7 @@ async function contactFor(legacyId: string) {
 }
 
 test("contacts import once with their channels and times; a re-run is unchanged", async () => {
-  const c = companyId(), r = run();
+  const c = await companyId(), r = run();
   const orgs = await importCompanies(c);
   const { contacts: mapped } = mapLegacyContacts([link(`${r}-1`, `${r}-p`, c), link(`${r}-2`, `${r}-q`, c, { updated_at: null })],
     [person(`${r}-p`), person(`${r}-q`, { deleted: 1 })], [],
@@ -74,7 +76,7 @@ test("contacts import once with their channels and times; a re-run is unchanged"
 });
 
 test("a changed contact is a conflict and is never overwritten", async () => {
-  const c = companyId(), r = run();
+  const c = await companyId(), r = run();
   await importCompanies(c);
   const first = mapLegacyContacts([link(`${r}-1`, `${r}-p`, c)], [person(`${r}-p`)], [], []).contacts;
   await contacts.importContacts(first, NOW);
@@ -85,7 +87,7 @@ test("a changed contact is a conflict and is never overwritten", async () => {
 });
 
 test("a contact whose company is not imported is refused, and the batch goes on", async () => {
-  const c = companyId(), missing = companyId(), r = run();
+  const c = await companyId(), missing = await companyId(), r = run();
   await importCompanies(c);
   const result = await contacts.importContacts(mapLegacyContacts([link(`${r}-1`, `${r}-p`, missing), link(`${r}-2`, `${r}-p`, c)], [person(`${r}-p`)], [], []).contacts, NOW);
   assert.deepEqual([result.inserted, result.refused], [1, [{ legacyId: `${r}-1`, code: "no_organization" }]]);
@@ -93,7 +95,7 @@ test("a contact whose company is not imported is refused, and the batch goes on"
 });
 
 test("reconciliation lists reported skips apart from unexplained gaps", async () => {
-  const c = companyId(), r = run();
+  const c = await companyId(), r = run();
   await importCompanies(c);
   await contacts.importContacts(mapLegacyContacts([link(`${r}-1`, `${r}-p`, c)], [person(`${r}-p`)], [], []).contacts, NOW);
   const report = await contacts.reconcile([`${r}-1`, `${r}-2`, `${r}-3`], [`${r}-2`]);
@@ -101,7 +103,7 @@ test("reconciliation lists reported skips apart from unexplained gaps", async ()
 });
 
 test("two import runs at once are serialized: one inserts, the other finds the contacts unchanged", async () => {
-  const c = companyId(), r = run();
+  const c = await companyId(), r = run();
   await importCompanies(c);
   const mapped = mapLegacyContacts(Array.from({ length: 20 }, (_, i) => link(`${r}-${i}`, `${r}-p`, c)), [person(`${r}-p`)], [], []).contacts;
   const other = new PostgresContactImportStore({ connectionString: URL }, ACTOR);
