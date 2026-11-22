@@ -62,7 +62,7 @@ test("TRANSFER_INVOICE_READS_TREE a company reader sees its own and its sub-comp
   const group = await transfer([["P", "4.000"], ["C1", "2.500"], ["C2", "1.000"]], "P");
   const other = await transfer([["X", "9.000"]], "X");
   await move(group, "lock"); await move(other, "lock");
-  await grant("fin-p", "P", "finance");
+  await grant("fin-p", "P", "finance", "subtree");
   const page = await reads.listForOrganization("fin-p", "P");
   assert.ok(page);
   assert.equal(page.name, "Parent Trading Co", "the profile's English name");
@@ -74,15 +74,20 @@ test("TRANSFER_INVOICE_READS_TREE a company reader sees its own and its sub-comp
   assert.equal(await reads.listForOrganization("fin-p", "X"), null);
 });
 
-test("TRANSFER_INVOICE_READS_SCOPE a self grant covers only its organization; a subtree grant covers the companies below", async () => {
+test("TRANSFER_INVOICE_READS_SCOPE a self grant covers only its organization; a subtree grant or a grant on the sub-company covers the companies below", async () => {
   const group = await transfer([["P", "4.000"], ["C1", "2.500"]], "P");
   await move(group, "lock");
   await grant("fin-c1", "C1", "finance"); await grant("self-p", "P", "org-owner"); await grant("owner-p", "P", "org-owner", "subtree");
   assert.deepEqual((await reads.listForOrganization("fin-c1", "C1"))?.invoices.map(i => i.orgId), ["C1"], "a sub-company sees only its own invoice");
   assert.equal(await reads.listForOrganization("fin-c1", "P"), null, "a sub-company cannot read its parent");
   assert.equal(await reads.listForOrganization("self-p", "C1"), null, "a self grant on the parent does not reach the child page");
-  assert.equal((await reads.listForOrganization("self-p", "P"))?.invoices.length, 2);
+  assert.deepEqual((await reads.listForOrganization("self-p", "P"))?.invoices.map(i => i.orgId), ["P"], "a self grant on the parent shows only the parent's own invoice");
+  assert.equal(await reads.document("self-p", "P", await numberOf(group, "C1")), null, "nor the sub-company's PDF through the parent");
+  assert.deepEqual((await reads.listForOrganization("owner-p", "P"))?.invoices.map(i => i.orgId).sort(), ["C1", "P"], "a subtree grant on the parent shows its sub-companies");
+  assert.equal((await reads.document("owner-p", "P", await numberOf(group, "C1")))?.orgId, "C1");
   assert.deepEqual((await reads.listForOrganization("owner-p", "C1"))?.invoices.map(i => i.orgId), ["C1"]);
+  await grant("self-p", "C1", "finance");
+  assert.deepEqual((await reads.listForOrganization("self-p", "P"))?.invoices.map(i => i.orgId).sort(), ["C1", "P"], "a grant on the sub-company itself adds it to the parent's page");
   await grant("staff", "root", "staff", "subtree");
   assert.equal((await reads.listForOrganization("staff", "P"))?.invoices.length, 2, "StudentHub staff reach every company through root");
 });
@@ -107,7 +112,7 @@ test("TRANSFER_INVOICE_READS_REFUSED recruiters, candidates, operator orgs, miss
 test("TRANSFER_INVOICE_READS_DOCUMENT one live invoice with its period; voided ones are gone; a paid one carries its payment day", async () => {
   const group = await transfer([["P", "4.000"], ["C1", "2.500"]], "P");
   await move(group, "lock");
-  await grant("fin-p", "P", "finance");
+  await grant("fin-p", "P", "finance", "subtree");
   const c1 = await numberOf(group, "C1");
   assert.deepEqual(await reads.document("fin-p", "P", c1), {
     invoiceNumber: c1, transferId: group, orgId: "C1", companyName: "C1", currencyCode: "KWD",

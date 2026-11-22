@@ -19,13 +19,15 @@ const mutations = [
   ["treat a self grant as subtree", "TRANSFER_INVOICE_READS_SCOPE", decision,
     '(row.scope === "subtree" && ancestors.includes(row.org_id))', "ancestors.includes(row.org_id)"],
   ["read a deleted company", "TRANSFER_INVOICE_READS_REFUSED", reads,
-    "if (!await organizationLive(this.#pool, orgId))", "if (false)"],
+    "if (!await organizationLive(this.#pool, orgId))\n            return null;", ""],
   ["show voided invoices", "TRANSFER_INVOICE_READS_DOCUMENT", reads,
     "WHERE NOT i.deleted AND", "WHERE"],
   ["show every company's invoices", "TRANSFER_INVOICE_READS_TREE", reads,
-    "AND i.org_id IN (SELECT id FROM tree)", "AND $1::text IS NOT NULL"],
-  ["serve a document without the read check", "TRANSFER_INVOICE_READS_REFUSED", reads,
-    "if (!await this.#allowed(principalId, orgId))\n            return null;\n        return (await", "return (await"],
+    "WHERE NOT i.deleted AND i.org_id = ANY($1::text[])", "WHERE NOT i.deleted AND $1::text[] IS NOT NULL"],
+  ["let the parent's answer cover its sub-companies", "TRANSFER_INVOICE_READS_SCOPE", reads,
+    "node.id === orgId || this.#decision(", "true || this.#decision("],
+  ["skip the read check on the asked organization", "TRANSFER_INVOICE_READS_REFUSED", reads,
+    "if (!this.#decision(grants.rows, orgId, above))\n            return null;", ""],
 ];
 
 function run(files, pattern) {
