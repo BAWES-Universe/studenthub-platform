@@ -1,0 +1,136 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import test, { type TestContext } from "node:test";
+import { inflateSync } from "node:zlib";
+import type { TransferInvoiceDocument } from "@studenthub/db/billing";
+import { createInvoicesHttp, handleInvoices, type TransferInvoiceReads } from "../src/billing/invoices-http.js";
+import { invoiceBankInfo, invoicePdf } from "../src/billing/invoice-pdf.js";
+
+// Synthetic companies and amounts only.
+const FIN = "f".repeat(43), OTHER = "o".repeat(43);
+const UNPAID: TransferInvoiceDocument = { invoiceNumber: "SH-2026-11-000001", transferId: "t-1", orgId: "C1", companyName: "Sultan <Center>", currencyCode: "KWD",
+  invoiceDate: "2026-11-22", total: "12.500", lineCount: 3, status: "unpaid", paidOn: null, periodStart: "2026-10-01", periodEnd: "2026-10-31" };
+const PAID: TransferInvoiceDocument = { ...UNPAID, invoiceNumber: "SH-2026-11-000002", orgId: "P", companyName: "Parent", status: "paid", paidOn: "2026-11-25", lineCount: 1 };
+const BANK = { accountName: "Synthetic Account", bankName: "Synthetic Bank", iban: "KW00SYNT0000000000000000000000", accountNumber: "0000000000", swiftCode: "SYNTKWKW" };
+
+/** Text drawn on the PDF's page, from its content stream. */
+function pdfText(bytes: Buffer): string {
+  const raw = bytes.toString("latin1"), out: string[] = [];
+  for (const m of raw.matchAll(/stream\n([\s\S]*?)\nendstream/g)) {
+    const body = m[1]!; let text = body;
+    try { text = inflateSync(Buffer.from(body, "latin1")).toString("latin1"); } catch { /* not compressed */ }
+    for (const t of text.matchAll(/\(((?:\\.|[^\\)])*)\) Tj/g)) out.push(t[1]!.replace(/\\([()\\])/g, "$1").replace(/\\(\d{3})/g, (_, o: string) => String.fromCharCode(parseInt(o, 8))));
+  }
+  return out.join("\n");
+}
+
+async function rig(t: TestContext) {
+  const calls: string[] = [];
+  const reads: TransferInvoiceReads = {
+    async listForOrganization(principal, orgId) { calls.push(`list:${principal}:${orgId}`); return principal === "fin" && orgId === "P" ? { orgId: "P", name: "Parent <Co>", invoices: [PAID, UNPAID] } : null; },
+    async document(principal, orgId, number) { calls.push(`doc:${principal}:${orgId}:${number}`); return principal === "fin" && orgId === "P" ? [UNPAID, PAID].find(i => i.invoiceNumber === number) ?? null : null; },
+  };
+  const service = createInvoicesHttp({ sessions: { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [OTHER]: { personId: "other" } } as Record<string, { personId: string }>)[id] as never }, reads, bank: BANK });
+  const server = createServer(async (req, res) => { if (!await handleInvoices(req, res, service)) { res.writeHead(418); res.end(); } });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>(r => server.close(() => r())));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const call = (path: string, session?: string, accept = "application/json", method = "GET") =>
+    fetch(base + path, { method, headers: { ...(session ? { cookie: `__Host-studenthub_session=${session}` } : {}), accept } });
+  return { call, calls };
+}
+
+test("INVOICES_HTTP a company reader lists its invoices as JSON or a page, with a PDF link for each", async (t) => {
+  const x = await rig(t);
+  const json = await (await x.call("/organization/invoices/P", FIN)).json() as { name: string; invoices: { invoiceNumber: string }[] };
+  assert.deepEqual([json.name, json.invoices.map(i => i.invoiceNumber)], ["Parent <Co>", ["SH-2026-11-000002", "SH-2026-11-000001"]]);
+  const page = await x.call("/organization/invoices/P", FIN, "text/html");
+  assert.equal(page.status, 200); assert.equal(page.headers.get("cache-control"), "no-store");
+  const html = await page.text();
+  assert.match(html, /Parent &lt;Co&gt;/); assert.match(html, /Sultan &lt;Center&gt;/); assert.doesNotMatch(html, /<Center>/);
+  assert.match(html, /href="\/organization\/invoices\/P\/SH-2026-11-000001\.pdf">Invoice \(PDF\)/);
+  assert.match(html, /href="\/organization\/invoices\/P\/SH-2026-11-000002\.pdf">Receipt \(PDF\)/);
+  assert.match(html, /Paid on 25 November 2026/); assert.match(html, /KWD 12\.500/);
+});
+
+test("INVOICES_HTTP an unpaid invoice downloads as an Invoice with bank details; a paid one as a Receipt without them", async (t) => {
+  const x = await rig(t);
+  const invoice = await x.call("/organization/invoices/P/SH-2026-11-000001.pdf", FIN, "*/*");
+  assert.equal(invoice.status, 200); assert.equal(invoice.headers.get("content-type"), "application/pdf");
+  assert.equal(invoice.headers.get("content-disposition"), 'attachment; filename="studenthub-invoice-SH-2026-11-000001.pdf"');
+  const text = pdfText(Buffer.from(await invoice.arrayBuffer()));
+  for (const line of ["Invoice", "Sultan <Center>", "Invoice number: SH-2026-11-000001", "Transfer number: t-1", "Issue date: 22 November 2026", "Payment terms: Due immediately",
+    "Amount due in KWD: 12.500", "For time period: 1 October 2026 to 31 October 2026", "Amount Due for 3 interns", "KWD 12.500", "Khalid Al-Mutawa", "Bank Info", `IBAN: ${BANK.iban}`, `Swift: ${BANK.swiftCode}`]) {
+    assert.ok(text.split("\n").includes(line), `invoice prints ${line}`);
+  }
+  const receipt = await x.call("/organization/invoices/P/SH-2026-11-000002.pdf", FIN, "*/*");
+  assert.equal(receipt.headers.get("content-disposition"), 'attachment; filename="studenthub-receipt-SH-2026-11-000002.pdf"');
+  const paid = pdfText(Buffer.from(await receipt.arrayBuffer())).split("\n");
+  for (const line of ["Receipt", "Payment date: 25 November 2026", "Amount paid in KWD: 12.500", "Amount paid for 1 intern",
+    "No payment is required. This is a confirmation that we have received the requested amount."]) assert.ok(paid.includes(line), `receipt prints ${line}`);
+  for (const line of ["Payment terms: Due immediately", "Bank Info", "Invoice"]) assert.ok(!paid.includes(line), `receipt leaves out ${line}`);
+});
+
+test("INVOICES_HTTP sign in first; a refused reader, another company and a malformed number are the same not found", async (t) => {
+  const x = await rig(t);
+  assert.equal((await x.call("/organization/invoices/P")).status, 401);
+  assert.equal((await x.call("/organization/invoices/P/SH-2026-11-000001.pdf", "x".repeat(43))).status, 401, "an unknown session");
+  const refused = await x.call("/organization/invoices/P", OTHER), missing = await x.call("/organization/invoices/Nope", FIN);
+  assert.equal(refused.status, 404); assert.deepEqual(await refused.text(), await missing.text());
+  const theirs = await x.call("/organization/invoices/P/SH-2026-11-000001.pdf", OTHER), none = await x.call("/organization/invoices/P/SH-2026-11-000009.pdf", FIN);
+  assert.equal(theirs.status, 404); assert.deepEqual(await theirs.text(), await none.text());
+  const before = x.calls.length;
+  for (const bad of ["LEGACY-1", "SH-2026-13-000001", "SH-2026-11-1", "..%2Fx"]) assert.equal((await x.call(`/organization/invoices/P/${bad}.pdf`, FIN)).status, 404, bad);
+  assert.equal((await x.call("/organization/invoices/%E0%A4%A/SH-2026-11-000001.pdf", FIN)).status, 404, "a broken escape");
+  assert.equal(x.calls.length, before, "malformed paths never reach the store");
+  assert.equal((await x.call("/organization/invoices/P", FIN, "application/json", "POST")).status, 405);
+  assert.equal((await x.call("/organization/invoices", FIN)).status, 418, "not this route's path");
+  assert.equal((await x.call("/organization/invoices/P/extra/x", FIN)).status, 418);
+});
+
+test("INVOICES_HTTP unavailable without a service, and a store failure is a 503, not a leak", async (t) => {
+  const server = createServer(async (req, res) => { if (!await handleInvoices(req, res, undefined)) { res.writeHead(418); res.end(); } });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>(r => server.close(() => r())));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  assert.equal((await fetch(`${base}/organization/invoices/P`)).status, 503);
+  const failing = createInvoicesHttp({ sessions: { get: async () => ({ personId: "fin" }) as never },
+    reads: { listForOrganization: async () => { throw new Error("db down: secret"); }, document: async () => null } });
+  const s2 = createServer(async (req, res) => { await handleInvoices(req, res, failing); });
+  await new Promise<void>(r => s2.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>(r => s2.close(() => r())));
+  const r = await fetch(`http://127.0.0.1:${(s2.address() as AddressInfo).port}/organization/invoices/P`, { headers: { cookie: `__Host-studenthub_session=${FIN}` } });
+  assert.equal(r.status, 503); assert.doesNotMatch(await r.text(), /secret/);
+});
+
+test("INVOICES_PDF bank info config: unset means none; anything malformed stops startup; a non-Latin name still prints", () => {
+  assert.equal(invoiceBankInfo(undefined), undefined); assert.equal(invoiceBankInfo(" "), undefined);
+  assert.deepEqual(invoiceBankInfo(JSON.stringify(BANK)), BANK);
+  for (const bad of ["{", "[]", JSON.stringify({ ...BANK, extra: "x" }), JSON.stringify({ ...BANK, iban: "" }), JSON.stringify({ ...BANK, accountName: "حساب" })]) {
+    assert.throws(() => invoiceBankInfo(bad), /BILLING_BANK_INFO/, bad);
+  }
+  const text = pdfText(invoicePdf({ ...UNPAID, companyName: "شركة" })).split("\n");
+  assert.ok(text.includes("Company"), "an Arabic-only name falls back to a placeholder rather than an empty line");
+  assert.ok(!text.includes("Bank Info"), "no bank block without config");
+});
+
+test("INVOICES_ROUTE the gateway's route table reaches the invoices handler; no earlier route takes its paths", async (t) => {
+  const { ROUTES } = await import("../src/routes/index.js");
+  const { runRoutes } = await import("../src/routes/context.js");
+  const web = await import("../src/web-ui.js");
+  const reads: TransferInvoiceReads = { listForOrganization: async () => ({ orgId: "P", name: "P", invoices: [UNPAID] }), document: async () => UNPAID };
+  const invoices = createInvoicesHttp({ sessions: { get: async () => ({ personId: "fin" }) as never }, reads });
+  const server = createServer(async (request, response) => {
+    const ctx = { request, response, login: { invoices } as never, authz: undefined as never, documents: undefined, catalogue: undefined, profileRecords: undefined,
+      organizationDocuments: undefined, writeHtml: web.writeHtml, pageDocument: web.pageDocument, renderError: web.renderError };
+    if (!await runRoutes(ROUTES, ctx)) { response.writeHead(418); response.end(); }
+  });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>(r => server.close(() => r())));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`, headers = { cookie: `__Host-studenthub_session=${FIN}` };
+  const list = await fetch(`${base}/organization/invoices/P`, { headers });
+  assert.equal(list.status, 200); assert.equal(((await list.json()) as { invoices: unknown[] }).invoices.length, 1);
+  const pdf = await fetch(`${base}/organization/invoices/P/SH-2026-11-000001.pdf`, { headers });
+  assert.equal(pdf.status, 200); assert.equal(pdf.headers.get("content-type"), "application/pdf");
+});
