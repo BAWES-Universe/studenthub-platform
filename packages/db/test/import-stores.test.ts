@@ -8,6 +8,7 @@ import { ORGANIZATION_PARITY_REVISION } from "../../organizations/src/index.js";
 import { mapLegacyCatalogue } from "../../../tools/legacy-import/src/m4-catalogue.js";
 import { mapLegacyCompanies } from "../../../tools/legacy-import/src/m4-organizations.js";
 import { mapLegacyBrandLinks, mapLegacyStores } from "../../../tools/legacy-import/src/m4-stores.js";
+import { fixtureIds } from "./legacy-fixture-ids.js";
 
 // Synthetic company, brand, mall and store rows only; fresh legacy ids per run so the suite can share a database.
 
@@ -27,8 +28,7 @@ before(async () => {
 });
 after(async () => pool.end());
 
-let next = Math.floor(Date.now() / 1000) * 1000 + 500 + Math.floor(Math.random() * 400);
-const ids = () => { next += 10; return next; };
+const ids = () => fixtureIds(pool);
 const company = (id: number) => ({ company_id: id, parent_company_id: null, company_name: `Company ${id}`, company_approved_to_hire: 1 });
 const brand = (uuid: string, companyId: number, name = uuid) => ({ brand_uuid: uuid, company_id: companyId, brand_name_en: `Brand ${name}` });
 const store = (id: number, companyId: number, extra: Record<string, unknown> = {}) => ({
@@ -38,14 +38,19 @@ const store = (id: number, companyId: number, extra: Record<string, unknown> = {
 
 /** Imports companies, brands (catalogue items) and malls, as the importer does before stores. */
 async function seed(companies: number[], brands: ReturnType<typeof brand>[], malls: string[] = []) {
-  await organizations.importOrganizations(mapLegacyCompanies(companies.map(company)).organizations);
-  await catalogue.importItems(mapLegacyCatalogue("brand", brands).items, NOW);
-  await catalogue.importItems(mapLegacyCatalogue("mall", malls.map((m) => ({ mall_uuid: m, mall_name_en: `Mall ${m}` }))).items, NOW);
+  // Every seed row must be new: a fixture id another suite already mapped would hide behind "unchanged".
+  const orgs = await organizations.importOrganizations(mapLegacyCompanies(companies.map(company)).organizations);
+  assert.deepEqual(orgs, { inserted: companies.length, unchanged: 0, conflicts: [], refused: [] });
+  const items = mapLegacyCatalogue("brand", brands).items;
+  const brandResult = await catalogue.importItems(items, NOW);
+  assert.deepEqual([brandResult.inserted + brandResult.merged, brandResult.adopted, brandResult.unchanged, brandResult.conflicts, brandResult.refused], [items.length, 0, 0, [], []]);
+  const mallItems = mapLegacyCatalogue("mall", malls.map((m) => ({ mall_uuid: m, mall_name_en: `Mall ${m}` }))).items;
+  assert.deepEqual(await catalogue.importItems(mallItems, NOW), { inserted: mallItems.length, merged: 0, adopted: 0, unchanged: 0, conflicts: [], refused: [] });
   return { org: await organizations.idMap(), brand: await catalogue.idMap("brand"), mall: await catalogue.idMap("mall") };
 }
 
 test("brand links and stores import once with their brand, mall and times; a re-run is unchanged", async () => {
-  const c = ids(), s = ids(), run = randomUUID().slice(0, 8);
+  const c = await ids(), s = await ids(), run = randomUUID().slice(0, 8);
   const brands = [brand(`${run}-b`, c)];
   const maps = await seed([c], brands, [`${run}-m`]);
   const links = mapLegacyBrandLinks(brands).links;
@@ -78,7 +83,7 @@ test("brand links and stores import once with their brand, mall and times; a re-
 });
 
 test("a changed store or link is a conflict and is never overwritten", async () => {
-  const c = ids(), other = ids(), s = ids(), run = randomUUID().slice(0, 8);
+  const c = await ids(), other = await ids(), s = await ids(), run = randomUUID().slice(0, 8);
   const brands = [brand(`${run}-b`, c)];
   const maps = await seed([c, other], brands);
   const first = mapLegacyBrandLinks(brands).links;
@@ -99,7 +104,7 @@ test("a changed store or link is a conflict and is never overwritten", async () 
 });
 
 test("rows whose company, brand or mall is not imported are refused, and the batch goes on", async () => {
-  const c = ids(), missing = ids(), s = ids(), run = randomUUID().slice(0, 8);
+  const c = await ids(), missing = await ids(), s = await ids(), run = randomUUID().slice(0, 8);
   const brands = [brand(`${run}-b`, c), brand(`${run}-nobrand`, c), brand(`${run}-noorg`, missing)];
   await seed([c], [brands[0]!, brands[2]!]);
   const links = await stores.importBrandLinks(mapLegacyBrandLinks(brands).links);
@@ -117,7 +122,7 @@ test("rows whose company, brand or mall is not imported are refused, and the bat
 });
 
 test("two legacy brands that share a catalogue item: the first company keeps it, the second is refused", async () => {
-  const a = ids(), b = ids(), run = randomUUID().slice(0, 8);
+  const a = await ids(), b = await ids(), run = randomUUID().slice(0, 8);
   // Same name, so the catalogue maps the second brand to the first one's item.
   const brands = [brand(`${run}-1`, a, run), brand(`${run}-2`, b, run), brand(`${run}-3`, a, run)];
   const maps = await seed([a, b], brands);
@@ -127,7 +132,7 @@ test("two legacy brands that share a catalogue item: the first company keeps it,
 });
 
 test("a store whose brand is not linked to the store's organization is refused", async () => {
-  const a = ids(), b = ids(), s = ids(), run = randomUUID().slice(0, 8);
+  const a = await ids(), b = await ids(), s = await ids(), run = randomUUID().slice(0, 8);
   const brands = [brand(`${run}-b`, b)];
   await seed([a, b], brands);
   await stores.importBrandLinks(mapLegacyBrandLinks(brands).links);
@@ -137,7 +142,7 @@ test("a store whose brand is not linked to the store's organization is refused",
 });
 
 test("reconciliation lists reported skips apart from unexplained gaps", async () => {
-  const c = ids(), s = ids();
+  const c = await ids(), s = await ids();
   await seed([c], []);
   await stores.importStores(mapLegacyStores([store(s, c)], []).stores, NOW);
   const report = await stores.reconcile("store", [String(s), String(s + 1), String(s + 2)], [String(s + 1)]);
@@ -145,7 +150,7 @@ test("reconciliation lists reported skips apart from unexplained gaps", async ()
 });
 
 test("two import runs at once are serialized: one inserts, the other finds the stores unchanged", async () => {
-  const c = ids(), base = ids(); next += 200;
+  const c = await ids(), base = await ids();
   await seed([c], []);
   const mapped = mapLegacyStores(Array.from({ length: 20 }, (_, i) => store(base + i, c)), []).stores;
   const other = new PostgresStoreImportStore({ connectionString: URL }, ACTOR);
