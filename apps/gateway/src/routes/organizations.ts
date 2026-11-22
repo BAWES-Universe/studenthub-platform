@@ -8,6 +8,7 @@ import { handleOrganizationStores } from "../organization-stores.js";
 import { handleOrganizationDeletion } from "../organization-deletion.js";
 import { handleOrganizationCreation } from "../organization-creation.js";
 import { handleOrganizationAccountManager, handleOrganizationAccountManagerPage } from "../organization-account-manager.js";
+import { handleOrganizationPages } from "../organizations/pages.js";
 import type { GatewayRoute } from "./context.js";
 
 export const organizationProfileRoute: GatewayRoute = { name: "organization-profile", handle: (ctx) =>
@@ -34,3 +35,4 @@ export const organizationAccountManagerPageRoute: GatewayRoute = { name: "organi
     async (session, orgId) => { const result = await ctx.login?.navigation?.open(session, new URLSearchParams({ org_id: orgId, role: "admin" })); return result?.status === 200 && result.body.active?.orgId === orgId ? result.body.active.organizationName : undefined; }) };
 export const organizationAccountManagerRoute: GatewayRoute = { name: "organization-account-manager", handle: (ctx) =>
   handleOrganizationAccountManager(ctx.request, ctx.response, ctx.login?.organizationAccountManager, ctx.login?.web?.origin) };
+export const organizationPagesRoute: GatewayRoute = { name: "organization-pages", handle: (ctx) => handleOrganizationPages(ctx) };
