@@ -54,8 +54,9 @@ export interface IssuerKeyRegistry {
   registerKey(registration: IssuerKeyRegistration): Promise<IssuerKeyDescriptor>;
   /**
    * Retire the named key of `issuer`, keeping its row for audit. The gateway
-   * resolver rejects a retired key, so assertions it signed no longer verify.
-   * The issuer's other keys are left as they are.
+   * resolver no longer returns this row, whether an assertion names its key ID
+   * or omits `kid`. Retirement is scoped to this key ID: the issuer's other keys
+   * are left as they are, including any that hold the same public key.
    * Idempotent for an already retired key; throws RangeError for an unknown one.
    */
   retireIssuerKey(issuer: string, keyId: string): Promise<IssuerKeyDescriptor>;
