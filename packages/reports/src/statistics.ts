@@ -109,7 +109,36 @@ export interface HiringFigures extends HiringCounts {
   readonly recruitmentYield: number | null;
 }
 
+/**
+ * Invitations by the month they were sent (slice 5, legacy admin `StatisticController::actionInvitationGraphData`,
+ * `Invitation::getDataByMonths`): the 12 whole months before the current Kuwait month, oldest first, with how many were
+ * sent and how each stands now.
+ *
+ * Changes from legacy:
+ * - Legacy keyed months by name only ("November"), so the month a year back and the current month shared one key, and
+ *   grouped by `MONTH()` across years. Here a month is `YYYY-MM`, counted in Kuwait time.
+ * - Legacy had no withdrawn invitations; here they are their own column, and still count in the total.
+ * - "No answer yet" is sent or seen, legacy's "Invited/ No Response".
+ */
+export interface InvitationMonthCounts { readonly month: string; readonly noAnswer: number; readonly accepted: number; readonly declined: number; readonly withdrawn: number }
+export interface InvitationMonth extends InvitationMonthCounts {
+  readonly total: number;
+  /** Percent of the month's invitations accepted (or declined), to one decimal; null with none sent. */
+  readonly acceptanceRate: number | null; readonly declineRate: number | null;
+}
+
+/** The 12 whole months before the month of `day` (`YYYY-MM-DD`), oldest first. */
+export function invitationMonths(day: string): string[] {
+  const [y, m] = day.split("-").map(Number) as [number, number];
+  return Array.from({ length: 12 }, (_, i) => {
+    const n = y * 12 + (m - 1) - 12 + i;
+    return `${Math.floor(n / 12)}-${String(n % 12 + 1).padStart(2, "0")}`;
+  });
+}
+
 export interface StatisticsStore {
+  /** Invitations sent in each of `months` (`YYYY-MM`, Kuwait time), by how they stand now. A month with none may be left out. */
+  invitationsByMonth(months: readonly string[]): Promise<readonly InvitationMonthCounts[]>;
   /** The available counters for one Asia/Kuwait day, by key. */
   staffCounts(day: string, now: Date): Promise<Readonly<Record<string, number>>>;
   hiring(day: string): Promise<HiringCounts>;
@@ -117,12 +146,30 @@ export interface StatisticsStore {
   overviewCounts(day: string): Promise<Readonly<Record<string, number>>>;
 }
 export interface StatisticRow { readonly key: string; readonly label: string; readonly value: number | null; readonly waitsOn: string | null }
-export interface StatisticsPage { readonly day: string; readonly counters: readonly StatisticRow[]; readonly hiring: HiringFigures; readonly overview: readonly StatisticRow[] }
+export interface StatisticsPage {
+  readonly day: string; readonly counters: readonly StatisticRow[]; readonly hiring: HiringFigures; readonly overview: readonly StatisticRow[];
+  readonly invitationsByMonth: readonly InvitationMonth[];
+}
 
 const count = (n: unknown, key: string): number => {
   if (!Number.isSafeInteger(n) || (n as number) < 0) throw new TypeError(`statistic ${key} has no value`);
   return n as number;
 };
+/** One row per month of `months`, in that order; a month the store left out is all zeros. A month outside `months` is an error. */
+export function invitationsByMonth(months: readonly string[], rows: readonly InvitationMonthCounts[]): InvitationMonth[] {
+  const by = new Map<string, InvitationMonthCounts>();
+  for (const r of rows) {
+    if (!months.includes(r.month) || by.has(r.month)) throw new TypeError(`invitation month ${r.month} was not asked for`);
+    by.set(r.month, r);
+  }
+  return months.map(month => {
+    const r = by.get(month);
+    const c = { noAnswer: count(r?.noAnswer ?? 0, "noAnswer"), accepted: count(r?.accepted ?? 0, "accepted"), declined: count(r?.declined ?? 0, "declined"), withdrawn: count(r?.withdrawn ?? 0, "withdrawn") };
+    const total = c.noAnswer + c.accepted + c.declined + c.withdrawn;
+    return { month, ...c, total, acceptanceRate: percent(c.accepted, total), declineRate: percent(c.declined, total) };
+  });
+}
+
 /** A percentage to one decimal place, or null when there is nothing to divide by. */
 export const percent = (part: number, whole: number): number | null => whole > 0 ? Math.round(part * 1000 / whole) / 10 : null;
 
@@ -146,8 +193,9 @@ export class StatisticsService {
   async page(viewer: string): Promise<StatisticsPage | undefined> {
     if (!(await this.#authority.isStaff(viewer))) return undefined;
     const now = this.#now(), day = kuwaitDay(now);
-    const [raw, hiring, stored, companies, staffTime] = await Promise.all([this.#store.staffCounts(day, now), this.#store.hiring(day), this.#store.overviewCounts(day),
-      this.#companies?.counts(viewer), this.#staffToday(day)]);
+    const months = invitationMonths(day);
+    const [raw, hiring, stored, companies, staffTime, invited] = await Promise.all([this.#store.staffCounts(day, now), this.#store.hiring(day), this.#store.overviewCounts(day),
+      this.#companies?.counts(viewer), this.#staffToday(day), this.#store.invitationsByMonth(months)]);
     const counters = STAFF_STATISTICS_COUNTERS.map(c => c.source.kind === "missing"
       ? { key: c.key, label: c.label, value: null, waitsOn: c.source.waitsOn }
       : { key: c.key, label: c.label, value: count(raw[c.key], c.key), waitsOn: null });
@@ -159,6 +207,7 @@ export class StatisticsService {
       const from = answered[f.source];
       return from ? { key: f.key, label: f.label, value: count(from[f.key], f.key), waitsOn: null } : { key: f.key, label: f.label, value: null, waitsOn: unanswered[f.source] };
     });
-    return { day, counters, hiring: { ...h, retentionRatio: percent(h.retained, h.hired), recruitmentYield: percent(h.hired, h.invitations) }, overview };
+    return { day, counters, hiring: { ...h, retentionRatio: percent(h.retained, h.hired), recruitmentYield: percent(h.hired, h.invitations) }, overview,
+      invitationsByMonth: invitationsByMonth(months, invited) };
   }
 }
