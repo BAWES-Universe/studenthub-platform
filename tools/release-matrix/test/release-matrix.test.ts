@@ -532,6 +532,8 @@ test("a built screen proves itself: no served route, a deleted page or a silent 
   assert.deepEqual(rules(checkServed(claimsWiring, read, source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.notThroughGateway"]);
   const wired: Record<string, string> = { ...pages, "apps/gateway/test/fake-page.test.ts": `const server = createGatewayServer(); ${pages["apps/gateway/test/fake-page.test.ts"]}` };
   assert.deepEqual(checkServed(claimsWiring, (file) => wired[file], source).filter((i) => i.detail.startsWith("screen C-11")), []);
+  const importOnly: Record<string, string> = { ...pages, "apps/gateway/test/fake-page.test.ts": `import { createGatewayServer } from "../src/server.js"; ${pages["apps/gateway/test/fake-page.test.ts"]}` };
+  assert.deepEqual(rules(checkServed(claimsWiring, (file) => importOnly[file], source).filter((i) => i.detail.startsWith("screen C-11"))), ["matrix.served.notThroughGateway"], "an unused import is not gateway wiring");
 
   const noVia = clone(proven);
   (noVia.screens["C-11"] as unknown as Record<string, unknown>).served = [{ route: "/fake/page", test: "apps/gateway/test/fake-page.test.ts" }];
