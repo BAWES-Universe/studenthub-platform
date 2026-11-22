@@ -27,7 +27,7 @@ The evidence is Hermes's read-only usage check against live legacy prod, window 
 
 ## Later decisions that touch this one
 
-- On 2026-10-27, Khalid set the rule "do whats best practice and dont break anything. use prod code as benchmark with no regressions". It is recorded in `contracts/decisions-2026-10-27.md`.
+- On 2026-10-27, Khalid set the rule "do whats best practice and dont break anything. use prod code as benchmark with no regressions". It is recorded in `docs/contracts/decisions-2026-10-27.md`.
 - Since then, several items on the list above have been rebuilt as new work (interviews, applications, full-timers and stand-up exist on main). The card allowed this: "any dropped item can come back later as new work".
 - This file does not say which other items are still dropped. It only records what was decided on 10-04.
 
