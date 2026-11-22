@@ -8,3 +8,7 @@ An Orca bot works only on a ticket listed here, read fresh from `main`, and only
 | #581 | `running-tests-guide` | studenthub-universe | 2 | work | `7051422072` | `docs/runbooks/running-tests.md` only; no migrations | Claude | done | 2026-11-23 18:00 |
 | #603 | `fixtures-readme` | studenthub-universe | 1 | work | `7063400979` | `tools/fixtures/README.md` only; no migrations | Claude | done | 2026-11-24 18:00 |
 | #604 | `observability-exercise-readme` | studenthub-universe | 1 | work | `7063401402` | `tools/observability/README.md` only; no migrations | Claude | done | 2026-11-24 18:00 |
+| #613 | `reconciliation-readme` | studenthub-universe | 1 | work | `7078448038` | `tools/reconciliation/README.md` only; no migrations | Claude | active | 2026-11-29 18:00 |
+| #614 | `test-runner-readme` | studenthub-universe | 1 | work | `7078448340` | `tools/test-runner/README.md` only; no migrations | Claude | active | 2026-11-29 18:00 |
+| #615 | `actor-assertion-readme` | studenthub-universe | 1 | work | `7078448641` | `packages/actor-assertion/README.md` only; no migrations | Claude | active | 2026-11-29 18:00 |
+| #616 | `contracts-readme` | studenthub-universe | 1 | work | `7078448927` | `packages/contracts/README.md` only; no migrations | Claude | active | 2026-11-29 18:00 |
