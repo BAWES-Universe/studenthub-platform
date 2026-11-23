@@ -118,7 +118,6 @@ test("OVW_PASSTHROUGH reserved and nested organization routes pass through", asy
     ["/organization/create", 503, '{"error":"organization_creation_unavailable"}'],
     ["/organization/assigned-companies", 503, '{"error":"unavailable"}'],
     ["/organization/onboarding", 404, fallback],
-    ["/organization/org-a/stores", 404, fallback],
   ] as const;
   for (const [path, status, expectedBody] of passthroughs) {
     const response = await f.get(path); const body = await response.text();
@@ -126,6 +125,8 @@ test("OVW_PASSTHROUGH reserved and nested organization routes pass through", asy
     assert.equal(response.status, status, `OVW_PASSTHROUGH ${path} status`);
     assert.equal(body, expectedBody, `OVW_PASSTHROUGH ${path} bytes`);
   }
+  await (await f.get("/organization/org-a/stores")).text();
+  assert.equal(calls.length, 0, "OVW_PASSTHROUGH stores bypasses overview navigation");
   const work = await f.get("/organization/org-a/work"); const workBody = await work.text();
   assert.equal(calls.length, 0, "OVW_PASSTHROUGH work bypasses overview navigation");
   assert.notEqual(workBody, fallback, "OVW_PASSTHROUGH work reaches its own lane");

@@ -15,7 +15,7 @@ const active: OrganizationStoreRow[] = [
   { store_id: STORE_C, name: "Removed", location: "Hidden", status: "inactive", brand_id: null, brand_name: null, brand_status: null, mall_id: null, mall_name: null, mall_status: null },
 ];
 
-async function fixture(t: TestContext, option: { configured?: boolean; service?: OrganizationStores; rows?: OrganizationStoreRow[] } = {}) {
+async function fixture(t: TestContext, option: { configured?: boolean; web?: boolean; service?: OrganizationStores; rows?: OrganizationStoreRow[] } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   for (const [personId, id] of Object.entries(sessions)) await rig.sessions.put({ id, personId });
   const authz = new InMemoryAuthzStore({
@@ -42,7 +42,7 @@ async function fixture(t: TestContext, option: { configured?: boolean; service?:
   };
   const service = option.service ?? createOrganizationStores({ sessions: rig.sessions, store });
   const organizations = new OrganizationRepository({ store: authz, source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([["org-a", SYNTHETIC_ORGANIZATION_FIXTURES.parentA], ["org-b", SYNTHETIC_ORGANIZATION_FIXTURES.unrelatedB]])) });
-  const login = { ...rig.app, navigation: createContextNavigation(rig.sessions, authz, organizations), ...(option.configured === false ? {} : { organizationStores: service }), web: { origin: "https://studenthub.example.invalid", returnTo: "https://studenthub.example.invalid/workspace" } } as never;
+  const login = { ...rig.app, navigation: createContextNavigation(rig.sessions, authz, organizations), ...(option.configured === false ? {} : { organizationStores: service }), ...(option.web === false ? {} : { web: { origin: "https://studenthub.example.invalid", returnTo: "https://studenthub.example.invalid/workspace" } }) } as never;
   const server = createGatewayServer(undefined, undefined, undefined, login);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
@@ -93,7 +93,7 @@ test("STORES_ESCAPE store names and locations are HTML escaped", async (t) => {
 });
 
 test("STORES_DEGRADE unavailable and failed store services render a safe 503", async (t) => {
-  for (const option of [{ configured: false }, { service: { list: async () => { throw new Error("private stack"); } } as unknown as OrganizationStores }, { service: { list: async () => ({ status: 503, body: { error: "down" } }) } as unknown as OrganizationStores }]) {
+  for (const option of [{ configured: false }, { configured: false, web: false }, { service: { list: async () => { throw new Error("private stack"); } } as unknown as OrganizationStores }, { service: { list: async () => ({ status: 503, body: { error: "down" } }) } as unknown as OrganizationStores }]) {
     const f = await fixture(t, option), response = await f.request("/organization/org-a/stores", "owner"), body = await response.text();
     assert.equal(response.status, 503, "STORES_DEGRADE failure is 503"); assert.match(body, /Stores unavailable/); assert.doesNotMatch(body, /No stores yet|private stack/);
   }
