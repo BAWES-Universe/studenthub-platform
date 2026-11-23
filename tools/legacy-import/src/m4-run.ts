@@ -150,7 +150,8 @@ function step(name: string, legacy: number, mapped: number, issues: readonly { r
 export async function runM4(sources: M4Sources, writers: M4Writers | null, now: string,
   onStep: (step: M4Step) => void = () => undefined, plan: M4Plan = planM4(sources)): Promise<M4Report> {
   const steps: M4Step[] = [];
-  // Each step is reported the moment it is committed, so a later failure still shows what was written.
+  // A step is reported once its writer returned and its result passed the checks. A failed run
+  // therefore lists the confirmed steps; the step after them may have committed in part.
   const add = (item: M4Step) => { steps.push(item); onStep(item); };
   for (const c of plan.catalogue) {
     add(step(`catalogue.${c.table}`, sources[c.table].length, c.items.length, c.issues, writers ? await writers.catalogue(c.table, c.items, now) : undefined));
@@ -176,12 +177,27 @@ export function receiptSafe(report: M4Report): boolean {
     && (!s.write || (ids(s.write.conflicts) && Object.entries(s.write.refused).every(([c, list]) => RULE.test(c) && ids(list)))));
 }
 
+/** What a plan is bound to besides its rows. None of it is secret. */
+export interface PlanBinding {
+  /** The platform commit the importer was built from, as the operator states it. */
+  readonly revision: string;
+  /** sha256 over the built files the importer actually runs (see `artifactDigest` in m4-cli). */
+  readonly artifact: string;
+  readonly refresh: { readonly startedAt: string; readonly finishedAt: string; readonly totalRows: number };
+  /** The marked staging database's target_id (legacy_import_target, migration 0652). */
+  readonly target: string;
+  /** The operator organization that top-level companies are written under. */
+  readonly operator: string;
+}
+
 /**
- * The identity of a plan: the importer revision, the refresh it read, and every mapped row's
- * legacy id and digest, step by step. A write run must find the same identity as the plan that
- * was reviewed, so it imports exactly what that plan showed. A sha256, so it carries no row.
+ * The identity of a plan: everything it is bound to (revision, built artifact, refresh read,
+ * destination database and operator parent) and every mapped row's legacy id and digest, step by
+ * step. A write run must find the same identity as the plan that was reviewed, so it imports
+ * exactly what that plan showed, with the same code, into the same place. A sha256, so it carries
+ * no row.
  */
-export function planIdentity(plan: M4Plan, revision: string, refresh: { readonly startedAt: string; readonly finishedAt: string; readonly totalRows: number }): string {
+export function planIdentity(plan: M4Plan, binding: PlanBinding): string {
   const rows = (list: readonly { readonly digest: string }[], id: (row: never) => string) => list.map((r) => `${id(r as never)}:${r.digest}`);
   const steps = [
     ...plan.catalogue.map((c) => [`catalogue.${c.table}`, rows(c.items, (r: { legacyId: string }) => r.legacyId)]),
@@ -190,7 +206,10 @@ export function planIdentity(plan: M4Plan, revision: string, refresh: { readonly
     ["store", rows(plan.stores.stores, (r: { legacyId: string }) => r.legacyId)],
     ["company_contact", rows(plan.contacts.contacts, (r: { legacyId: string }) => r.legacyId)],
   ];
-  return createHash("sha256").update(JSON.stringify({ revision, refresh: [refresh.startedAt, refresh.finishedAt, refresh.totalRows], steps })).digest("hex");
+  const { revision, artifact, refresh, target, operator } = binding;
+  return createHash("sha256").update(JSON.stringify({
+    revision, artifact, refresh: [refresh.startedAt, refresh.finishedAt, refresh.totalRows], target, operator, steps,
+  })).digest("hex");
 }
 
 /** A step as a receipt shows it: counts and rule codes only, never a legacy id. */

@@ -55,17 +55,18 @@ test("a write run imports every step in order through the real stores; a second 
   assert.deepEqual(rows, [{ store: "Store A", org: `Sub ${c}`, branded: false, in_mall: true }, { store: "Store B", org: `Company ${c}`, branded: true, in_mall: false }]);
 });
 
-test("the write target is staging only when the database's own marker row says so", async () => {
+test("the write target is staging only when the database's own marker row says so, and names its target id", async () => {
   // The one test that touches the singleton marker; it leaves the table empty as it found it.
   const target = postgresTarget(URL, ACTOR, operator);
   try {
     await pool.query("DELETE FROM legacy_import_target");
-    assert.equal(await target.environment(), null);
+    assert.equal(await target.marker(), null);
     for (const bad of ["production", "Staging", ""]) {
       await assert.rejects(pool.query("INSERT INTO legacy_import_target (environment) VALUES ($1)", [bad]), (e: { code?: string }) => e.code === "23514");
     }
-    await pool.query("INSERT INTO legacy_import_target (environment) VALUES ('staging')");
-    assert.equal(await target.environment(), "staging");
+    const { rows: [row] } = await pool.query<{ target_id: string }>("INSERT INTO legacy_import_target (environment) VALUES ('staging') RETURNING target_id::text");
+    assert.match(row!.target_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.deepEqual(await target.marker(), { environment: "staging", targetId: row!.target_id });
     await assert.rejects(pool.query("INSERT INTO legacy_import_target (environment) VALUES ('staging')"), (e: { code?: string }) => e.code === "23505");
     await assert.rejects(pool.query("INSERT INTO legacy_import_target (singleton, environment) VALUES (false, 'staging')"), (e: { code?: string }) => e.code === "23514");
   } finally {
@@ -74,5 +75,33 @@ test("the write target is staging only when the database's own marker row says s
   }
   // A database the importer cannot read the marker from is no target either.
   const elsewhere = postgresTarget(URL.replace(/\/[^/?]+(\?|$)/, "/no_such_database$1"), ACTOR, operator);
-  try { assert.equal(await elsewhere.environment(), null); } finally { await elsewhere.close(); }
+  try {
+    assert.equal(await elsewhere.marker(), null);
+    assert.equal(await elsewhere.hasOperator(operator), false);
+    assert.equal(await elsewhere.claimWriter(), false);
+  } finally { await elsewhere.close(); }
+});
+
+test("the operator parent must exist in the target database", async () => {
+  const target = postgresTarget(URL, ACTOR, operator);
+  try {
+    assert.equal(await target.hasOperator(operator), true);
+    assert.equal(await target.hasOperator(`absent-${randomUUID()}`), false);
+  } finally { await target.close(); }
+});
+
+test("one writer per target database: a second writer is refused until the first has closed", async () => {
+  const first = postgresTarget(URL, ACTOR, operator), second = postgresTarget(URL, ACTOR, operator);
+  try {
+    assert.equal(await first.claimWriter(), true);
+    assert.equal(await first.claimWriter(), true);
+    assert.equal(await second.claimWriter(), false);
+    // The lock is the session's own: batch transactions on other connections do not release it.
+    await first.writers().companies([]);
+    assert.equal(await second.claimWriter(), false);
+    await first.close();
+    assert.equal(await second.claimWriter(), true);
+  } finally {
+    await second.close();
+  }
 });
