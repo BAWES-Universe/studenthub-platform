@@ -50,7 +50,7 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
   // Reports is subpath-only too (reports lane, migrations 0600 to 0649).
   assert.deepEqual(manifest.exports["./reports"], { types: "./dist/reports/index.d.ts", import: "./dist/reports/index.js" });
   const reports = await moduleFor("@studenthub/db/reports");
-  assert.deepEqual(Object.keys(reports).sort(), ["PostgresCatalogueListStore", "PostgresFiringSpikeStore", "PostgresIdCardsStore", "PostgresMorningSummaryStore", "PostgresStatisticsStore", "idCardAssigned", "idCardExpiredCount", "idCardNeedsCount"]);
+  assert.deepEqual(Object.keys(reports).sort(), ["PostgresCampaignsStore", "PostgresCatalogueListStore", "PostgresFiringSpikeStore", "PostgresIdCardsStore", "PostgresMorningSummaryStore", "PostgresStatisticsStore", "idCardAssigned", "idCardExpiredCount", "idCardNeedsCount"]);
   // Universe embed is subpath-only too (E2): the root golden stays unchanged.
   assert.deepEqual(manifest.exports["./universe"], {
     types: "./dist/universe/index.d.ts", import: "./dist/universe/index.js",
@@ -62,7 +62,7 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
     types: "./dist/billing/index.d.ts", import: "./dist/billing/index.js",
   });
   const billing = await moduleFor("@studenthub/db/billing");
-  assert.deepEqual(Object.keys(billing).sort(), ["PostgresBillingAccountStore", "PostgresLegacyInvoiceStore", "PostgresOrgRegistry", "PostgresTransferInvoiceEffects", "PostgresTransferInvoiceReads", "TRANSFER_INVOICE_SERIES", "allocateInvoiceNumber", "issueInvoice", "listTransferInvoices", "resolveInvoice", "transferInvoiceForLine"]);
+  assert.deepEqual(Object.keys(billing).sort(), ["PAY_HISTORY_CALCULATION_VERSION", "PAY_HISTORY_PAGE_SIZE", "PostgresBillingAccountStore", "PostgresLegacyInvoiceStore", "PostgresOrgRegistry", "PostgresPayHistoryReads", "PostgresTransferInvoiceEffects", "PostgresTransferInvoiceReads", "TRANSFER_INVOICE_SERIES", "allocateInvoiceNumber", "candidateWorked", "issueInvoice", "listTransferInvoices", "resolveInvoice", "transferInvoiceForLine"]);
 });
 
 test("PREP_ROOT_SAME root database exports are the unchanged golden set and identical area objects", async () => {
