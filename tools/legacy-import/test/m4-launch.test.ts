@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,21 +11,36 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // git checkout with a stand-in importer that records, outside the checkout, whether it was loaded.
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const LAUNCHER = path.join(REPO, "tools/legacy-import/m4-launch.mjs");
+const WRAPPER = path.join(REPO, "tools/legacy-import/m4");
 
-interface Checkout { readonly root: string; readonly head: string; readonly loaded: string; readonly out: string; readonly scratch: string }
+// A protected runtime belongs to someone other than the user running it. Only root can build that
+// here: the checkout stays root's, the launcher runs as `nobody`, and the scratch directory sits
+// under a root-owned directory that nobody else can write (not the world-writable tmp). Without
+// root, every load would be refused for ownership, so the cases that need a load are skipped.
+const AS_ROOT = process.getuid?.() === 0;
+const RUNNER = 65534;
+const needsRoot = "needs root to give the runtime an owner other than the user running it";
+
+interface Checkout { readonly root: string; readonly head: string; readonly loaded: string; readonly out: string; readonly scratch: string; readonly outDir: string }
 
 const chmodTree = (dir: string, writable: boolean) => {
   spawnSync("chmod", ["-R", writable ? "u+w" : "a-w", dir]);
 };
 
 function checkout(): Checkout {
-  const scratch = mkdtempSync(path.join(tmpdir(), "m4-launch-"));
+  const scratch = mkdtempSync(path.join(AS_ROOT ? path.dirname(REPO) : tmpdir(), ".m4-launch-"));
+  chmodSync(scratch, 0o755);
   const root = path.join(scratch, "repo");
+  const outDir = path.join(scratch, "out");
+  mkdirSync(outDir);
+  chmodSync(outDir, 0o777);
   const write = (rel: string, text: string) => { mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); writeFileSync(path.join(root, rel), text); };
-  const loaded = path.join(scratch, "loaded.txt");
-  const out = path.join(scratch, "out.json");
+  const loaded = path.join(outDir, "loaded.txt");
+  const out = path.join(outDir, "out.json");
   mkdirSync(path.join(root, "tools/legacy-import"), { recursive: true });
   copyFileSync(LAUNCHER, path.join(root, "tools/legacy-import/m4-launch.mjs"));
+  copyFileSync(WRAPPER, path.join(root, "tools/legacy-import/m4"));
+  chmodSync(path.join(root, "tools/legacy-import/m4"), 0o755);
   write("package.json", "{}");
   write("package-lock.json", '{"lockfileVersion":3}');
   write("packages/db/package.json", '{"name":"@studenthub/db"}');
@@ -53,21 +68,22 @@ export async function main(argv, deps) {
   write("node_modules/pg/lib/index.js", "module.exports = {};\n");
   mkdirSync(path.join(root, "node_modules/@studenthub"), { recursive: true });
   symlinkSync("../../packages/db", path.join(root, "node_modules/@studenthub/db"));
-  return { root, head: git("rev-parse", "HEAD"), loaded, out, scratch };
+  return { root, head: git("rev-parse", "HEAD"), loaded, out, scratch, outDir };
 }
 
 const remove = (c: Checkout) => { chmodTree(c.scratch, true); rmSync(c.scratch, { recursive: true, force: true }); };
 
-function run(c: Checkout, argv: string[], env: Record<string, string> = {}, nodeArgs: string[] = []) {
+// Runs the launcher as the unprivileged runner (when the tests run as root), or as `asUser`.
+function run(c: Checkout, argv: string[], env: Record<string, string> = {}, nodeArgs: string[] = [], asUser = AS_ROOT ? RUNNER : undefined) {
   const r = spawnSync(process.execPath, [...nodeArgs, path.join(c.root, "tools/legacy-import/m4-launch.mjs"), ...argv],
-    { cwd: c.scratch, encoding: "utf8", env: { PATH: process.env.PATH, ...env } });
+    { cwd: c.outDir, encoding: "utf8", env: { PATH: process.env.PATH, ...env }, ...(asUser === undefined ? {} : { uid: asUser, gid: asUser }) });
   return { status: r.status, stdout: r.stdout.trim(), stderr: r.stderr.trim() };
 }
 
 const LINE = /^m4 provenance source=(\S+) head=([0-9a-f]{40}|none) clean=(true|false) platform=(\S+) node=(\S+) artifact=([0-9a-f]{64}|incomplete)$/;
 
 function pin(c: Checkout): string {
-  const r = run(c, ["provenance", "--expect", c.head, "--source", "test"]);
+  const r = run(c, ["provenance", "--expect", c.head, "--source", "test"], {}, [], process.getuid?.());
   assert.equal(r.status, 0, r.stdout);
   const match = LINE.exec(r.stdout);
   assert.ok(match, r.stdout);
@@ -107,7 +123,8 @@ test("a pin is issued only for a clean, complete build of exactly the declared c
   }
 });
 
-test("a verified, read-only runtime loads the importer once and hands it the verified provenance", () => {
+test("a verified, protected runtime loads the importer once and hands it the verified provenance", (t) => {
+  if (!AS_ROOT) { t.skip(needsRoot); return; }
   const c = checkout();
   try {
     const digest = pin(c);
@@ -115,14 +132,16 @@ test("a verified, read-only runtime loads the importer once and hands it the ver
     const r = run(c, ["plan"], approved(c, digest));
     assert.equal(r.status, 0, r.stderr);
     assert.equal(readFileSync(c.loaded, "utf8"), "loaded\n");
-    assert.deepEqual(JSON.parse(readFileSync(c.out, "utf8")), { argv: ["plan"], built: { head: c.head, clean: true, artifact: digest, readOnly: true } });
+    assert.deepEqual(JSON.parse(readFileSync(c.out, "utf8")), { argv: ["plan"], built: { head: c.head, clean: true, artifact: digest, protectedRuntime: true, linksInside: true } });
   } finally { remove(c); }
 });
 
-test("a missing or mismatched runtime, a wrong commit, a writable tree or a changed file refuses before the importer loads", () => {
+test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a changed file refuses before the importer loads", (t) => {
+  if (!AS_ROOT) { t.skip(needsRoot); return; }
   type Change = (c: Checkout, digest: string) => Record<string, string>;
   const same: Change = (c, d) => approved(c, d);
-  const cases: { name: string; change: Change; writable?: boolean }[] = [
+  // `before` runs before the pin, so the digest matches and only the protection check can refuse.
+  const cases: { name: string; change: Change; writable?: boolean; before?: (c: Checkout) => void; asUser?: number }[] = [
     { name: "no pin", change: (c) => ({ M4_REVISION: c.head }) },
     { name: "malformed pin", change: (c) => ({ M4_REVISION: c.head, M4_ARTIFACT_DIGEST: "nope" }) },
     { name: "other pin", change: (c) => approved(c, "f".repeat(64)) },
@@ -150,14 +169,23 @@ test("a missing or mismatched runtime, a wrong commit, a writable tree or a chan
     { name: "not a git checkout", change: (c, d) => { rmSync(path.join(c.root, ".git"), { recursive: true }); return same(c, d); } },
     { name: "writable tree", change: same, writable: true },
     { name: "one writable file", change: (c, d) => { chmodTree(c.root, false); chmodSync(path.join(c.root, "node_modules/pg/lib/index.js"), 0o644); return same(c, d); }, writable: true },
+    { name: "a file owned by the runner", change: (c, d) => { chmodTree(c.root, false); chownSync(path.join(c.root, "node_modules/pg/lib/index.js"), RUNNER, RUNNER); return same(c, d); }, writable: true },
+    { name: "a directory owned by the runner", change: (c, d) => { chmodTree(c.root, false); chownSync(path.join(c.root, "dist"), RUNNER, RUNNER); return same(c, d); }, writable: true },
+    { name: "parent directory writable by others", change: (c, d) => { chmodSync(c.scratch, 0o777); return same(c, d); } },
+    { name: "parent directory owned by the runner", change: (c, d) => { chownSync(c.scratch, RUNNER, RUNNER); return same(c, d); } },
+    { name: "run as root", change: same, asUser: 0 },
+    { name: "link out of the checkout", before: (c) => { symlinkSync("../../../outside", path.join(c.root, "node_modules/@studenthub/out")); }, change: same },
+    { name: "absolute link", before: (c) => { symlinkSync(path.join(c.root, "node_modules/pg"), path.join(c.root, "node_modules/@studenthub/abs")); }, change: same },
+    { name: "dangling link", before: (c) => { symlinkSync("../../packages/none", path.join(c.root, "node_modules/@studenthub/none")); }, change: same },
   ];
   for (const k of cases) {
     const c = checkout();
     try {
+      k.before?.(c);
       const env = k.change(c, pin(c));
       if (!k.writable) chmodTree(c.root, false);
       for (const mode of ["plan", "write"]) {
-        const r = run(c, [mode], env);
+        const r = run(c, [mode], env, [], k.asUser ?? RUNNER);
         assert.equal(r.status, 2, `${k.name} ${mode}: ${r.stderr}`);
         assert.equal(r.stderr, "m4: refused.provenance", k.name);
         assert.equal(existsSync(c.loaded), false, `${k.name}: the importer was loaded`);
@@ -171,10 +199,10 @@ test("a Node start with a preload, loader or module path override refuses before
   try {
     const digest = pin(c);
     chmodTree(c.root, false);
-    const preload = path.join(c.scratch, "preload.cjs");
+    const preload = path.join(c.outDir, "preload.cjs");
     writeFileSync(preload, "require('node:fs').appendFileSync(process.env.MARK, 'preloaded\\n');\n");
     // A preload runs before any script, so the launcher cannot stop it running; it refuses to go on.
-    const env = { ...approved(c, digest), MARK: path.join(c.scratch, "preloaded.txt") };
+    const env = { ...approved(c, digest), MARK: path.join(c.outDir, "preloaded.txt") };
     for (const [label, extraEnv, nodeArgs] of [
       ["--require", {}, ["--require", preload]],
       ["--import", {}, ["--import", `data:text/javascript,`]],
@@ -190,7 +218,7 @@ test("a Node start with a preload, loader or module path override refuses before
 });
 
 test("a runtime file that cannot be read refuses as provenance, before the importer loads", (t) => {
-  if (process.getuid?.() === 0) { t.skip("root reads any file"); return; }
+  if (!AS_ROOT) { t.skip(needsRoot); return; }
   const c = checkout();
   const file = path.join(c.root, "dist/tools/legacy-import/src/m4-run.js");
   try {
@@ -203,7 +231,7 @@ test("a runtime file that cannot be read refuses as provenance, before the impor
   } finally { chmodSync(file, 0o444); remove(c); }
 });
 
-test("the importer module is not an entry point: run directly, it does nothing", () => {
+test("the importer module is not an entry point: run directly, it evaluates its imports but never calls main", () => {
   const scratch = mkdtempSync(path.join(tmpdir(), "m4-direct-"));
   try {
     const r = spawnSync(process.execPath, [path.join(REPO, "dist/tools/legacy-import/src/m4-cli.js"), "write"],
@@ -223,6 +251,7 @@ test("the digest covers the runtime it was installed for, and a load needs every
   const launcher = await import(pathToFileURL(LAUNCHER).href) as {
     platformKey(): string;
     runtimeManifest(root: string): { lines: string[] };
+    ancestorProblems(root: string, euid: number, stat: (p: string) => { uid: number; mode: number }): string[];
     runtimeDigest(root: string): { digest: string | null };
     verified(built: Record<string, unknown>, env: Record<string, string>): boolean;
   };
@@ -237,11 +266,39 @@ test("the digest covers the runtime it was installed for, and a load needs every
   const head = "a".repeat(40);
   const artifact = "b".repeat(64);
   const env = { M4_REVISION: head, M4_ARTIFACT_DIGEST: artifact };
-  const good = { head, clean: true, artifact, readOnly: true };
+  const good = { head, clean: true, artifact, protectedRuntime: true, linksInside: true };
   assert.equal(launcher.verified(good, env), true);
-  for (const change of [{ head: "c".repeat(40) }, { clean: false }, { artifact: "d".repeat(64) }, { artifact: null }, { readOnly: false }]) {
+  for (const change of [{ head: "c".repeat(40) }, { clean: false }, { artifact: "d".repeat(64) }, { artifact: null }, { protectedRuntime: false }, { linksInside: false }]) {
     assert.equal(launcher.verified({ ...good, ...change }, env), false, JSON.stringify(change));
   }
   assert.equal(launcher.verified(good, { ...env, M4_REVISION: "" }), false);
+  // The path above the checkout: any directory the runner owns, or that group or others can write.
+  const safe = (dir: string) => ({ uid: 0, mode: 0o040755, dir });
+  assert.deepEqual(launcher.ancestorProblems(REPO, 1000, safe), []);
+  assert.deepEqual(launcher.ancestorProblems(REPO, 0, (d) => ({ ...safe(d), uid: 1 })), ["root user"]);
+  const parent = path.dirname(REPO);
+  assert.deepEqual(launcher.ancestorProblems(REPO, 1000, (d) => d === parent ? { uid: 1000, mode: 0o040555 } : safe(d)), [parent]);
+  assert.deepEqual(launcher.ancestorProblems(REPO, 1000, (d) => d === "/" ? { uid: 0, mode: 0o041777 } : safe(d)), ["/"]);
+  assert.deepEqual(launcher.ancestorProblems(REPO, 1000, (d) => d === parent ? { uid: 0, mode: 0o040775 } : safe(d)), [parent]);
   assert.equal(launcher.verified({ ...good, artifact: "" }, { ...env, M4_ARTIFACT_DIGEST: "" }), false);
+});
+
+test("the operator entry starts Node with a cleared environment, so startup settings never reach it", (t) => {
+  if (!AS_ROOT) { t.skip(needsRoot); return; }
+  const c = checkout();
+  try {
+    const digest = pin(c);
+    chmodTree(c.root, false);
+    const preload = path.join(c.outDir, "preload.cjs");
+    const mark = path.join(c.outDir, "preloaded.txt");
+    writeFileSync(preload, `require("node:fs").appendFileSync(${JSON.stringify(mark)}, "preloaded\\n");\n`);
+    const r = spawnSync("sh", [path.join(c.root, "tools/legacy-import/m4"), "plan"], {
+      cwd: c.outDir, encoding: "utf8", uid: RUNNER, gid: RUNNER,
+      env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, ...approved(c, digest), NODE_OPTIONS: `--require ${preload}`, NODE_PATH: c.outDir, UNRELATED: "x" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(existsSync(mark), false, "the preload ran");
+    assert.equal(readFileSync(c.loaded, "utf8"), "loaded\n");
+    assert.equal(JSON.parse(readFileSync(c.out, "utf8")).built.artifact, digest);
+  } finally { remove(c); }
 });

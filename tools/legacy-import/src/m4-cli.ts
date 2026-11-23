@@ -3,13 +3,15 @@
  *
  * On the staging host (a Hermes card runs it, with a fresh M4_INVOCATION each time), only
  * through the launcher, which verifies the runtime before this module is loaded:
- *   node tools/legacy-import/m4-launch.mjs plan
- *   node tools/legacy-import/m4-launch.mjs write
- * This module is not an entry point: it only exports `main`, which the launcher calls.
+ *   tools/legacy-import/m4 plan
+ *   tools/legacy-import/m4 write
+ * (a shell entry that clears the environment and starts Node on tools/legacy-import/m4-launch.mjs).
+ * This module is not an entry point: run directly, it evaluates its imports but never calls `main`.
  *
  * Build provenance. The launcher loads this module only from a clean git checkout whose HEAD is
- * M4_REVISION, with nothing untracked outside .gitignore, after a clean Node start, from a
- * read-only tree whose every file and symlink outside .git, together with the platform and Node
+ * M4_REVISION, with nothing untracked outside .gitignore, after a clean Node start, from a tree
+ * the running user cannot change (owned by another user, no write bits, protected parent path,
+ * links inside it) whose every file and symlink outside .git, together with the platform and Node
  * major version, hashes to M4_ARTIFACT_DIGEST, the digest CI printed for that same commit.
  * It hands the verified provenance in, and plan and write check it again against the pins.
  *

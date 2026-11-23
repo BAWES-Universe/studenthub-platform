@@ -1,0 +1,19 @@
+#!/bin/sh
+# M-4 importer entry for operators: `tools/legacy-import/m4 plan|write`.
+# It starts Node from outside JavaScript with a cleared environment: only PATH, LANG and the M-4
+# settings below are passed, and Node gets no flags. So no NODE_OPTIONS, NODE_PATH, preload or
+# loader setting can reach Node before the launcher runs. The launcher then verifies the runtime.
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+node=$(command -v node) || { echo "m4: refused.startup" >&2; exit 2; }
+set -- "$node" "$here/m4-launch.mjs" "$@"
+for name in M4_INVOCATION M4_REVISION M4_ARTIFACT_DIGEST M4_TARGET_ID M4_OPERATOR_ORG_ID \
+  M4_EXPECTED_PLAN M4_OUTPUT_DIR M4_LEGACY_MIRROR_URL M4_DATABASE_URL M4_IMPORT_ACTOR \
+  LEGACY_REFRESH_REPORT LEGACY_REFRESH_LOCK; do
+  eval "present=\${$name+yes}"
+  if [ -n "$present" ]; then
+    eval "value=\$$name"
+    set -- "$name=$value" "$@"
+  fi
+done
+exec /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C "$@"
