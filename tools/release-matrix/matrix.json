@@ -496,8 +496,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "not started (audit 2026-11-20): pay lane (GPT): no payslip page"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #661 at 7bcf0f52"
         },
         "verified": {
           "state": "open"
