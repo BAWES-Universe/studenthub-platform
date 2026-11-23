@@ -1332,8 +1332,9 @@
       ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "revenue page built on branch (P-4, live from pay transfer lines, operator admins only); evidence set once the PR head is known. Staff salaries and expenses show as not available."
+          "state": "done",
+          "evidence": "PR #675 at 48d437c",
+          "note": "P-4, live from pay transfer lines, operator admins only. Staff salaries, expenses and net profit show as not available."
         },
         "verified": {
           "state": "open"
