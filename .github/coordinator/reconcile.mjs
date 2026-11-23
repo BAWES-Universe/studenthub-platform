@@ -1393,7 +1393,44 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
 // caller, exactly like a first dispatch, and the launch still writes RESERVED
 // before anything reaches an adapter. With no armed activation the map is empty
 // and parking behaviour is byte-for-byte unchanged.
-export function selectNextReservation({ ready = [], config = {}, receipts = [], episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set() }) {
+// The host's reviewer sandbox runs one review at a time, so a review waits
+// while another review receipt is active (SHU-71 run 6). A review receipt from
+// a card-run episode that has certainly ended cannot hold the sandbox, though:
+// card-run names each episode `<card>-run-<UTC start stamp>` (card-run.mjs
+// buildRecord), its window is at most CARD_RUN_LIMITS.runMs, its revert stops
+// every worker process by the end of workerGraceMs, and systemd ends the whole
+// unit at AUTO_TIMEOUT_START_MS. Past that last bound nothing from the episode
+// runs. With more than one card worker such a receipt is only ever reconciled
+// by a worker armed on its own card (receiptsForLifecycle), so until then it
+// stayed active and held every other card's review: SHU-304's LAUNCH_UNKNOWN
+// review from 11:00Z on 23 Nov (a Linear quota error mid-launch) held the
+// SHU-698 and SHU-699 reviews from 18:18Z. Capacity and lifecycle still count
+// it; only the one-review-at-a-time gate looks past it. A receipt without a
+// card-run episode id, or with no clock supplied, still counts (fail closed).
+export const CARD_RUN_EPISODE_MAX_MS = 8 * 60 * 60 * 1000;
+const CARD_RUN_EPISODE_RE = /-run-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
+
+export function cardRunEpisodeOver(receipt, now) {
+  const at = now instanceof Date ? now.getTime() : now;
+  if (!Number.isFinite(at)) return false;
+  const m = CARD_RUN_EPISODE_RE.exec(typeof receipt?.episode_id === "string" ? receipt.episode_id : "");
+  if (!m) return false;
+  const start = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  return Number.isFinite(start) && at - start > CARD_RUN_EPISODE_MAX_MS;
+}
+
+// Names the receipt that holds the gate, so a tick's own line says which one
+// (on 23 Nov the operator had to replay receipts by hand to find it).
+export function describeReviewHolder(receipt) {
+  return `${receipt?.issue_id ?? "?"} attempt ${receipt?.attempt_id ?? "?"} ${receipt?.stage ?? "?"} in episode ${receipt?.episode_id ?? "none"}`;
+}
+
+export function reviewHoldsSandbox(receipt, now = null) {
+  return Boolean(receipt) && !TERMINAL_STAGES.includes(receipt.stage) &&
+    roleForReceipt(receipt) === ROLE_REVIEW && !cardRunEpisodeOver(receipt, now);
+}
+
+export function selectNextReservation({ ready = [], config = {}, receipts = [], episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set(), now = null }) {
   const scope = resolveDispatchScope(config);
   if (!scope.valid) {
     return { candidate: null, adapter: null, skipped: [{ id: "*", reason: `invalid dispatch_scope — ${scope.reason}; no fallback` }] };
@@ -1471,8 +1508,9 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [], 
     // (reviewer-sandbox.sh holds a root lock and refuses a second at once), so a
     // review that starts beside another fails REVIEW_EXECUTION_UNAVAILABLE and
     // ends its lane. It waits for a later tick instead.
-    if (successor?.role === ROLE_REVIEW && active.some((r) => roleForReceipt(r) === ROLE_REVIEW)) {
-      skipped.push({ id: issue.id, reason: "a review is already running — the reviewer sandbox runs one review at a time" });
+    const holder = successor?.role === ROLE_REVIEW ? active.find((r) => reviewHoldsSandbox(r, now)) : null;
+    if (holder) {
+      skipped.push({ id: issue.id, reason: `a review is already running — the reviewer sandbox runs one review at a time (held by ${describeReviewHolder(holder)})` });
       continue;
     }
     const requestedWorker = successor?.requested_worker ?? issue.requested_worker;
@@ -2287,9 +2325,9 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled, 
 
 // reconcileOnce — pure-ish orchestration shared by dry-run and dispatch paths.
 // Returns { report, plan } and performs NO I/O except what the caller injects.
-export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set(), writerLanes = null, repairCard = null }) {
+export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set(), writerLanes = null, repairCard = null, now = null }) {
   const eligibility = computeEligibility({ issues, openPRs, config, writerLanes, repairCard });
-  const selection = selectNextReservation({ ready: eligibility.ready, config, receipts, episodeContinuations, episodeScope, episodeIssueIds });
+  const selection = selectNextReservation({ ready: eligibility.ready, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, now });
   return { eligibility, selection };
 }
 
@@ -3247,7 +3285,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         ? new Map([[singleRunActivation.target_issue_id, singleRunActivation.reviewer_lane]]) : null;
   // Self-repair B1: only an armed landing repair builds this; otherwise null.
   const repairCard = await repairCardFor(singleRunActivation, { config, githubToken, fetchImpl, openPRsOverride });
-  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, writerLanes, repairCard });
+  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, writerLanes, repairCard, now: io.now?.() ?? new Date() });
   // Self-watch 0b: the armed card's progress, from the receipts this tick
   // already read (trusted writers only). Output only; nothing reads it here.
   const watchActors = new Set(config.linear_receipt_actor_ids ?? []);
@@ -3598,8 +3636,9 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         : { ok: false, reason: "the repair binding cannot be read" };
       if (!still.ok) return held(`landing repair no longer eligible: ${still.reason}`);
     }
-    if (role === ROLE_REVIEW && receipts.some((r) => r !== receipt && !TERMINAL_STAGES.includes(r.stage) && roleForReceipt(r) === ROLE_REVIEW)) {
-      if (io.stdout) io.stdout(`dispatch: reservation ${receipt.attempt_id} on ${receipt.issue_id} waits — another review is active`);
+    const holder = role === ROLE_REVIEW ? receipts.find((r) => r !== receipt && reviewHoldsSandbox(r, io.now?.() ?? new Date())) : null;
+    if (holder) {
+      if (io.stdout) io.stdout(`dispatch: reservation ${receipt.attempt_id} on ${receipt.issue_id} waits — another review is active (${describeReviewHolder(holder)})`);
       return 0;
     }
     const tmpRefusal = tmpFloorRefusal(io);

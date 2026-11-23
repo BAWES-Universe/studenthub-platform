@@ -136,6 +136,47 @@ test("SHU71_ONE_REVIEW_AT_A_TIME: a review successor waits while another card's 
   assert.equal(select([built, running], [readyIssue()], new Map([[TARGET, { successor: revise }]])).candidate?.id, TARGET, "SHU71_WRITER_NOT_HELD_BY_A_REVIEW");
 });
 
+// SHU-71, 23 Nov: with two card workers, SHU-304's review receipt stuck at
+// LAUNCH_UNKNOWN in episode shu-304-run-20261123T110018Z (a Linear quota error
+// mid-launch) was reconciled by no worker, so from 18:18Z it held the SHU-698 and
+// SHU-699 reviews behind "a review is already running" for their whole window.
+test("SHU71_ENDED_EPISODE_REVIEW: a review from a card-run episode that has ended does not hold the sandbox", () => {
+  const built = receipt({ stage: "COMPLETED", verdict: "BUILD_READY", result: SHA_WRITE });
+  const stuck = { ...receipt({ issue: OTHER, attempt: ATTEMPT("rereview"), worker: "claude-verifier", stage: "LAUNCH_UNKNOWN", verdict: undefined, identity: null }),
+    episode_id: "shu-304-run-20261123T110018Z" };
+  assert.equal(roleForReceipt(stuck), "review");
+  const select = (receipts, now) => reconcile.selectNextReservation({ ready: [readyIssue()], config: { max_dispatch: 2 }, receipts,
+    episodeContinuations: new Map([[TARGET, { successor: successorOrder() }]]), now });
+  const start = Date.parse("2026-11-23T11:00:18Z");
+  const max = reconcile.CARD_RUN_EPISODE_MAX_MS;
+  assert.equal(select([built, stuck], new Date(start + max + 1000)).candidate?.id, TARGET, "SHU71_ENDED_REVIEW_RELEASES_THE_GATE");
+  assert.equal(select([built, stuck], new Date(start + max - 1000)).candidate, null, "SHU71_REVIEW_INSIDE_ITS_BOUND_STILL_HOLDS");
+  assert.ok(select([built, stuck], new Date(start + max - 1000)).skipped.at(-1).reason.endsWith(
+    `(held by ${OTHER} attempt ${ATTEMPT("rereview")} LAUNCH_UNKNOWN in episode shu-304-run-20261123T110018Z)`), "SHU71_GATE_NAMES_ITS_HOLDER");
+  assert.equal(select([built, stuck], null).candidate, null, "SHU71_NO_CLOCK_FAILS_CLOSED");
+  assert.equal(select([built, stuck]).candidate, null, "SHU71_DEFAULT_IS_UNCHANGED");
+  const unnamed = { ...stuck, episode_id: undefined };
+  assert.equal(select([built, unnamed], new Date(start + max * 3)).candidate, null, "SHU71_NO_EPISODE_ID_STILL_HOLDS");
+  const handMinted = { ...stuck, episode_id: "shu71-card-1" };
+  assert.equal(select([built, handMinted], new Date(start + max * 3)).candidate, null, "SHU71_NON_CARD_RUN_EPISODE_STILL_HOLDS");
+  const live = { ...stuck, stage: "RUNNING", episode_id: "shu-699-run-20261123T180014Z" };
+  assert.equal(select([built, live], new Date(Date.parse("2026-11-23T20:30:00Z"))).candidate, null, "SHU71_LIVE_EPISODE_REVIEW_STILL_HOLDS");
+  assert.equal(reconcile.reviewHoldsSandbox({ ...stuck, stage: "HOLD" }, new Date(start)), false, "SHU71_TERMINAL_NEVER_HOLDS");
+  assert.equal(reconcile.reviewHoldsSandbox(receipt({ issue: OTHER, stage: "RUNNING", verdict: undefined }), new Date(start)), false, "SHU71_BUILD_NEVER_HOLDS");
+});
+
+test("SHU71_ENDED_EPISODE_BOUND: the bound covers a card run's window, its grace and the unit's own limit", async () => {
+  const cardRun = await import("../service/card-run.mjs");
+  const { runMs, workerGraceMs } = cardRun.CARD_RUN_LIMITS;
+  assert.ok(reconcile.CARD_RUN_EPISODE_MAX_MS >= runMs + workerGraceMs, "SHU71_BOUND_COVERS_WINDOW_AND_GRACE");
+  assert.ok(reconcile.CARD_RUN_EPISODE_MAX_MS >= cardRun.AUTO_TIMEOUT_START_MS, "SHU71_BOUND_COVERS_THE_UNIT_TIMEOUT");
+  const stamp = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const at = new Date("2026-11-23T18:00:13.456Z");
+  const episode = { stage: "LAUNCH_UNKNOWN", episode_id: `shu-698-run-${stamp(at)}` };
+  assert.equal(reconcile.cardRunEpisodeOver(episode, at.getTime() + reconcile.CARD_RUN_EPISODE_MAX_MS - 1000), false, "SHU71_STAMP_PARSES_AS_CARD_RUN_WRITES_IT");
+  assert.equal(reconcile.cardRunEpisodeOver(episode, at.getTime() + reconcile.CARD_RUN_EPISODE_MAX_MS + 1000), true);
+});
+
 test("SHU-225 I2 (M1): a terminal receipt on ANOTHER card never becomes selectable", () => {
   const selection = reconcile.selectNextReservation({
     ready: [readyIssue(OTHER)],
