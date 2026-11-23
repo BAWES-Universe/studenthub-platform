@@ -75,17 +75,19 @@ Two active rows of one kind whose names normalize the same become one item: the 
 
 ## M-4 run on staging
 
-`tools/legacy-import/src/m4-cli.js` runs all of M-4 against the refreshed legacy copy. A Hermes card runs it on the staging host as `node dist/tools/legacy-import/src/m4-cli.js plan|write`, with no wrapper: every control below is in the CLI.
+`tools/legacy-import/src/m4-cli.js` runs all of M-4 against the refreshed legacy copy. A Hermes card runs it on the staging host only through the launcher, `node tools/legacy-import/m4-launch.mjs plan|write`. The launcher verifies the runtime before any importer module loads. Run directly, the importer refuses with `refused.launcher`. Every control below is in the repository; no other wrapper is needed.
 
 - **Invocation.** Every run is named by `M4_INVOCATION`, a fresh UUID, and owns its own files in `M4_OUTPUT_DIR` (default `/var/lib/legacy-import/m4`): `<invocation>.<mode>.receipt.json` and `<invocation>.<mode>.report.json`. It first claims the name by creating `<invocation>.claim` exclusively. A reused name is refused (`refused.invocationUsed`) and touches nothing. After the claim, every outcome, refusals included, ends in a terminal receipt for that invocation.
 - **Pass rule.** A write passed only when `acceptWrite` holds: that invocation's own terminal receipt says `ok` for the expected plan, and that same invocation exited 0. An older receipt, even for the same plan, never counts.
 - **Refresh lock.** The CLI takes a shared, non-waiting `flock` on `LEGACY_REFRESH_LOCK` and holds it until it exits. It reads `last-run.json` and every legacy table under it. A refresh holding the lock makes the run refuse (`refused.locked`).
 - **Writer lock.** A write also takes the target database's one-writer lock: a session advisory lock on its own connection, independent of the refresh lock. It is taken before the first write and held until the terminal receipt is published, across every batch. A second writer on the same database is refused (`refused.writerBusy`).
-  - Every import transaction runs on that same session (`WriterSessionPool`), and each checkout first re-checks there that the lock is still held. Exclusivity is checked again before the outcome is published.
+  - Every import transaction runs on that same session (`WriterSessionPool`), and each checkout first re-checks there that the lock is still held. The lock is checked once more immediately before the outcome is published. That check and the receipt file write are not one atomic step.
   - If the session is lost, the transaction in flight dies with it and no later batch starts. The run ends `failed` with `m4.writerLost`, and the receipt separates confirmed from unconfirmed steps.
-- **Build provenance.** Plan and write run only from a clean git checkout whose HEAD is `M4_REVISION`. The built closure must hash to `M4_ARTIFACT_DIGEST`. The closure is the entrypoint, every relative and workspace module it imports, and `package-lock.json`.
-  - The pinned digest comes from an independent build: CI's "Pin the M-4 importer build" step prints `m4 provenance head=<commit> clean=<…> artifact=<digest>` for every commit it builds, including each commit on `main`.
-  - A missing closure file, a dirty tree, another HEAD or a different digest refuses with `refused.provenance`, before any read.
+- **Build provenance (launcher, before the importer loads).** The launcher uses node builtins only. It loads the importer only from a clean git checkout whose HEAD is `M4_REVISION`, so the launcher itself is the reviewed one.
+  - The installed runtime must also hash to `M4_ARTIFACT_DIGEST`. The runtime is the root `dist/`, each workspace package's `package.json` and `dist/`, all of `node_modules` as installed (file bytes and symlink targets), `package.json`, `package-lock.json`, the entrypoint, and the Node major version.
+  - The pinned digest comes from an independent build. The workflow "M-4 importer build pin" does a fresh `npm ci --ignore-scripts` and `npm run build` of the exact commit, with nothing run first. It then prints `m4 provenance head=<commit> clean=<…> artifact=<digest>` for every pull request and every commit on `main`.
+  - A missing entrypoint or `node_modules`, any changed, added or missing runtime file, a dirty tree, another HEAD or a different digest refuses with `refused.provenance`. Nothing is loaded and no receipt is written: there is no receipt, so no pass.
+  - The importer re-checks the verified provenance it is handed against the pins.
 - **Reading.** It reads only the tables and columns listed in `M4_SOURCES`, one `SELECT JSON_OBJECT(...)` per table, through the walker's read-only mirror reader. It refuses unless the last refresh says ok.
 - **Plan identity.** A sha256 over:
   - the stated revision (`M4_REVISION`);
@@ -112,7 +114,7 @@ Two active rows of one kind whose names normalize the same become one item: the 
 
   A `failed` receipt lists the confirmed steps (written, and their results checked) and the unconfirmed ones. The first unconfirmed step may have committed in part.
 - **Report.** Private, mode 600, never attached to a pull request. Per step it holds legacy and mapped counts, issue counts and legacy ids by rule, and the write results. `receiptSafe` re-checks every field before the file is written. Errors print fixed codes only.
-- **Refusal codes.** `usage`, `invocation`, `invocationUsed`, `revision`, `destination`, `writeConfig`, `provenance`, `locked`, `refreshNotOk`, `planMismatch`, `target`, `operator`, `writerBusy`.
+- **Refusal codes.** Launcher: `provenance`, `launcher`. Importer: `usage`, `invocation`, `invocationUsed`, `revision`, `destination`, `writeConfig`, `provenance`, `locked`, `refreshNotOk`, `planMismatch`, `target`, `operator`, `writerBusy`.
 - **Exit codes.**
   - 0: ok.
   - 3: a write step refused rows or found conflicts.
@@ -121,11 +123,11 @@ Two active rows of one kind whose names normalize the same become one item: the 
 - **Operator steps (Hermes card, staging only).**
   - **Once, after migration 0652 is applied:** `INSERT INTO legacy_import_target (environment) VALUES ('staging') RETURNING target_id` on the staging database, and record that `target_id` (not a secret). No other database gets the row. Production refuses until a separate value is added with the owner's explicit go at cutover.
   - **Each rehearsal:**
-    1. Check out the deployed `main` commit cleanly and build it (`npm ci`, `npm run build`).
-    2. Take the `artifact=` digest that Platform CI's "Pin the M-4 importer build" step printed for that same commit on `main`.
-    3. Run `plan` with a fresh `M4_INVOCATION`, `M4_REVISION`, `M4_ARTIFACT_DIGEST`, `M4_TARGET_ID` and `M4_OPERATOR_ORG_ID`.
+    1. Check out the deployed `main` commit cleanly. Install and build exactly as the pin does: `npm ci --ignore-scripts`, then `npm run build`, on Node 22.
+    2. Take the `artifact=` digest that the "M-4 importer build pin" workflow printed for that same commit on `main`.
+    3. Run `node tools/legacy-import/m4-launch.mjs plan` with a fresh `M4_INVOCATION`, `M4_REVISION`, `M4_ARTIFACT_DIGEST`, `M4_TARGET_ID` and `M4_OPERATOR_ORG_ID`.
     4. Review its receipt.
-    5. Run `write` with a new `M4_INVOCATION`, the same settings, and `M4_EXPECTED_PLAN` set to the reviewed `plan`.
+    5. Run `node tools/legacy-import/m4-launch.mjs write` with a new `M4_INVOCATION`, the same settings, and `M4_EXPECTED_PLAN` set to the reviewed `plan`.
     6. Report a pass only by `acceptWrite` on that write invocation's receipt and exit code.
 
 ## M-5 table map (work)

@@ -1,15 +1,16 @@
 /**
  * M-4 importer CLI: organizations, stores, contacts and catalogues from the refreshed legacy copy.
  *
- * On the staging host (a Hermes card runs it, with a fresh M4_INVOCATION each time):
- *   node dist/tools/legacy-import/src/m4-cli.js plan
- *   node dist/tools/legacy-import/src/m4-cli.js write
- *   node dist/tools/legacy-import/src/m4-cli.js provenance   (read-only; CI prints it per commit)
+ * On the staging host (a Hermes card runs it, with a fresh M4_INVOCATION each time), only
+ * through the launcher, which verifies the runtime before this module is loaded:
+ *   node tools/legacy-import/m4-launch.mjs plan
+ *   node tools/legacy-import/m4-launch.mjs write
+ * Run directly, this module refuses (`refused.launcher`).
  *
- * Build provenance. Plan and write run only from a clean git checkout whose HEAD is M4_REVISION
- * and whose built closure (the entrypoint, every relative and workspace module it imports, and
- * package-lock.json) hashes to M4_ARTIFACT_DIGEST, the digest CI printed for that same commit.
- * A missing file in the closure, a dirty tree or any mismatch refuses (`refused.provenance`).
+ * Build provenance. The launcher loads this module only from a clean git checkout whose HEAD is
+ * M4_REVISION and whose installed runtime (built dist trees, workspace manifests, node_modules as
+ * installed, lockfile) hashes to M4_ARTIFACT_DIGEST, the digest CI printed for that same commit.
+ * It hands the verified provenance in, and plan and write check it again against the pins.
  *
  * Every invocation is named by M4_INVOCATION (a fresh UUID) and owns its own files in
  * M4_OUTPUT_DIR: `<invocation>.<mode>.receipt.json` and `<invocation>.<mode>.report.json`. It
@@ -25,10 +26,11 @@
  * target database's one-writer lock (a session advisory lock, independent of the refresh lock)
  * before its first write and holds it until its terminal receipt is published, so two writers
  * can never overlap on one staging database. Every import transaction runs on that same session
- * (WriterSessionPool), each checkout first re-checking there that the lock is still held, and
- * exclusivity is re-checked before the outcome is published: if the session is lost, the
- * transaction in flight dies with it, no later batch starts, and the run ends `failed` with
- * `m4.writerLost`.
+ * (WriterSessionPool), each checkout first re-checking there that the lock is still held, and the
+ * lock is checked once more immediately before the outcome is published: if the session is lost,
+ * the transaction in flight dies with it, no later batch starts, and the run ends `failed` with
+ * `m4.writerLost`. That last check and the receipt file are not one atomic step; the database
+ * lock is not held across the filesystem write.
  *
  *   plan   Reads the legacy copy and maps every table. Writes nothing to the platform. Publishes
  *          the plan identity: a sha256 over the stated revision, the built artifact's digest,
@@ -54,7 +56,7 @@
  *   M4_OUTPUT_DIR          default /var/lib/legacy-import/m4
  *   M4_LEGACY_MIRROR_URL   mysql://user:pass@host:port/legacy_mirror (read-only account)
  *   M4_REVISION            the 40-character platform commit this importer was built from
- *   M4_ARTIFACT_DIGEST     the digest CI's "Pin the M-4 importer build" step printed for it
+ *   M4_ARTIFACT_DIGEST     the runtime digest CI's "Pin the M-4 importer build" step printed for it
  *   M4_TARGET_ID           the staging database's legacy_import_target.target_id
  *   M4_OPERATOR_ORG_ID     the operator organization top-level companies hang under
  *   LEGACY_REFRESH_REPORT  the refresh's last-run.json; the run refuses unless it says ok
@@ -65,11 +67,10 @@
  *   M4_IMPORT_ACTOR        sha256 hex recorded as the creator of imported rows
  */
 
-import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { PostgresCatalogueImportStore, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresStoreImportStore } from "@studenthub/db/import";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
@@ -181,85 +182,16 @@ export function acquireSharedLock(lockPath: string): Promise<SharedLock> {
   });
 }
 
-export const ENTRYPOINT = "dist/tools/legacy-import/src/m4-cli.js";
-const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)["']([^"']+)["']/g;
-
-/**
- * The built closure the importer runs: from the entrypoint, every relative import and every
- * `@studenthub/*` workspace import (through its package's `exports`), plus package-lock.json,
- * which pins every other dependency. The digest is a sha256 over each file's relative path and
- * content. Any file the closure names that is missing, outside the repository, or unresolvable
- * is listed, and then there is no digest: the run refuses rather than hash a partial build.
- */
-export function artifactDigest(root: string, entry = ENTRYPOINT): { readonly digest: string | null; readonly files: number; readonly missing: readonly string[] } {
-  const realRoot = (() => { try { return realpathSync(root); } catch { return root; } })();
-  const inside = (file: string) => { const rel = path.relative(realRoot, file); return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel); };
-  const seen = new Set<string>();
-  const missing: string[] = [];
-  const queue: string[] = [];
-  const add = (file: string, label: string) => {
-    let real: string;
-    try { real = realpathSync(file); } catch { missing.push(label); return; }
-    if (!inside(real) || !statSync(real).isFile()) { missing.push(label); return; }
-    if (!seen.has(real)) { seen.add(real); queue.push(real); }
-  };
-  const workspace = (spec: string): string | null => {
-    const [, name, sub] = /^@studenthub\/([a-z0-9-]+)(\/.*)?$/.exec(spec) ?? [];
-    if (!name) return null;
-    try {
-      const dir = realpathSync(path.join(realRoot, "node_modules/@studenthub", name));
-      const manifest = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as { exports?: Record<string, unknown> };
-      const target = manifest.exports?.[sub ? `.${sub}` : "."];
-      const file = typeof target === "string" ? target : (target as { import?: unknown } | undefined)?.import;
-      return typeof file === "string" ? path.join(dir, file) : null;
-    } catch { return null; }
-  };
-  add(path.join(realRoot, entry), entry);
-  add(path.join(realRoot, "package-lock.json"), "package-lock.json");
-  while (queue.length > 0) {
-    const file = queue.shift()!;
-    if (!file.endsWith(".js")) continue;
-    const source = readFileSync(file, "utf8");
-    for (const [, spec] of source.matchAll(SPECIFIER)) {
-      if (spec!.startsWith(".")) add(path.resolve(path.dirname(file), spec!), `${path.relative(realRoot, file)} -> ${spec}`);
-      else if (spec!.startsWith("@studenthub/")) {
-        const resolved = workspace(spec!);
-        if (resolved) add(resolved, spec!); else missing.push(spec!);
-      }
-      // node: builtins and registry packages are pinned by package-lock.json.
-    }
-  }
-  if (missing.length > 0) return { digest: null, files: seen.size, missing: [...new Set(missing)].sort() };
-  const hash = createHash("sha256");
-  for (const rel of [...seen].map((f) => path.relative(realRoot, f)).sort()) {
-    hash.update(`${rel}\0`).update(readFileSync(path.join(realRoot, rel))).update("\0");
-  }
-  return { digest: hash.digest("hex"), files: seen.size, missing: [] };
-}
-
 /** What the running build can prove about itself. */
 export interface Provenance {
   /** The checkout's HEAD commit, or null when it is not a git checkout. */
   readonly head: string | null;
   /** No tracked file differs from HEAD. */
   readonly clean: boolean;
-  /** The built closure's digest, or null when the closure is incomplete. */
+  /** The installed runtime digest the launcher computed, or null when the runtime is incomplete. */
   readonly artifact: string | null;
 }
 
-export function buildProvenance(root: string): Provenance {
-  const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { PATH: process.env.PATH, LANG: "C" } });
-  const head = git(["rev-parse", "HEAD"]);
-  const status = git(["status", "--porcelain", "--untracked-files=no"]);
-  return {
-    head: head.status === 0 && /^[0-9a-f]{40}\n?$/.test(head.stdout) ? head.stdout.trim() : null,
-    clean: status.status === 0 && status.stdout.trim() === "",
-    artifact: artifactDigest(root).digest,
-  };
-}
-
-/** The repository root of the built CLI: dist/tools/legacy-import/src/m4-cli.js is four levels down. */
-const BUILT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 
 export interface WriteTarget {
   /** The legacy_import_target row, or null when the database has none or cannot be read. */
@@ -398,12 +330,13 @@ export interface CliDeps {
   readonly error: (line: string) => void;
 }
 
-export const defaultDeps = (env: NodeJS.ProcessEnv): CliDeps => ({
+/** `built` is the provenance tools/legacy-import/m4-launch.mjs verified before loading this module. */
+export const defaultDeps = (env: NodeJS.ProcessEnv, built: Provenance): CliDeps => ({
   env,
   lock: acquireSharedLock,
   reader: (e) => mirrorReader(parseDatabaseUrl(e.M4_LEGACY_MIRROR_URL, "mirror")),
   target: (e) => postgresTarget(e.M4_DATABASE_URL ?? "", e.M4_IMPORT_ACTOR ?? "", e.M4_OPERATOR_ORG_ID ?? ""),
-  provenance: () => buildProvenance(BUILT_ROOT),
+  provenance: () => built,
   now: () => new Date(),
   log: (line) => console.log(line),
   error: (line) => console.error(line),
@@ -418,12 +351,6 @@ class Refusal extends Error {}
 export async function main(argv: readonly string[], deps: CliDeps): Promise<number> {
   const { env } = deps;
   const mode = argv[0];
-  if (mode === "provenance") {
-    // Read-only: what an independent build of a revision pins (CI prints it for every head).
-    const built = deps.provenance();
-    deps.log(`m4 provenance head=${built.head ?? "none"} clean=${built.clean} artifact=${built.artifact ?? "incomplete"}`);
-    return built.head && built.artifact ? 0 : 1;
-  }
   if (mode !== "plan" && mode !== "write") { deps.error("m4: refused.usage"); return 2; }
   const invocation = env.M4_INVOCATION ?? "";
   // Without a fresh, unclaimed name there is nowhere this run's outcome could be published.
@@ -454,8 +381,8 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     if (!UUID.test(targetId) || !ORG_ID.test(operator)) refuse("destination");
     const expected = env.M4_EXPECTED_PLAN ?? "";
     if (mode === "write" && (!HEX64.test(expected) || !HEX64.test(env.M4_IMPORT_ACTOR ?? "") || !env.M4_DATABASE_URL)) refuse("writeConfig");
-    // The approved build: a clean checkout at the stated revision whose built closure matches the
-    // digest pinned for that revision by an independent build (CI's `m4-cli.js provenance` line).
+    // The approved build, as the launcher verified it before loading this module: a clean checkout
+    // at the stated revision whose installed runtime matches the digest CI pinned for that commit.
     const artifact = env.M4_ARTIFACT_DIGEST ?? "";
     if (!HEX64.test(artifact)) refuse("provenance");
     const built = deps.provenance();
@@ -496,7 +423,7 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     writing = true;
     const report = await runM4(sources, target.writers(), deps.now().toISOString(), (s) => confirmed.push(s), plan);
     if (!receiptSafe(report)) throw new Error("m4.report.unsafe");
-    // Exclusivity must still hold when the outcome is published.
+    // The lock is checked once more immediately before the outcome is published.
     if (!await target.stillHeld()) throw new Error("m4.writerLost");
     writeWhole(reportPath, { ...report, schemaVersion: 2, invocation, ...bound });
     publish(report.ok ? "ok" : "refused_rows");
@@ -521,5 +448,7 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main(process.argv.slice(2), defaultDeps(process.env)).then((code) => { process.exitCode = code; });
+  // Run directly, nothing verified the runtime before it loaded: only the launcher may run this.
+  console.error("m4: refused.launcher");
+  process.exitCode = 2;
 }

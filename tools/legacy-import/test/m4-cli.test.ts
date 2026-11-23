@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { M4_SOURCES, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
-import { acceptWrite, acquireSharedLock, artifactDigest, main, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
+import { acceptWrite, acquireSharedLock, main, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
 
 // Synthetic legacy rows only. SECRET marks every value that must never reach a receipt or a log.
 const SECRET = "Secret";
@@ -401,70 +401,6 @@ test("every refusal exits 2 before any write; after the name is claimed it publi
       assert.equal(h.state.locked, false, label);
     } finally { cleanup(h); }
   }
-});
-
-test("the artifact digest covers the entrypoint's closure and the lockfile, and refuses an incomplete build", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "m4-artifact-"));
-  const write = (rel: string, text: string) => { mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); writeFileSync(path.join(root, rel), text); };
-  try {
-    write("package-lock.json", "{}");
-    write("dist/tools/legacy-import/src/m4-cli.js", 'import pg from "pg";\nimport { a } from "./m4-run.js";\nimport { b } from "@studenthub/db/import";\n');
-    write("dist/tools/legacy-import/src/m4-run.js", 'export const a = 1; const later = () => import("./twin/x.js");\n');
-    write("dist/tools/legacy-import/src/twin/x.js", "export {};\n");
-    write("dist/tools/legacy-import/src/unused.js", "export {};\n");
-    write("packages/db/package.json", JSON.stringify({ exports: { "./import": { import: "./dist/import/index.js" } } }));
-    write("packages/db/dist/import/index.js", 'export * from "./store.js";\n');
-    write("packages/db/dist/import/store.js", "export const b = 2;\n");
-    mkdirSync(path.join(root, "node_modules/@studenthub"), { recursive: true });
-    symlinkSync("../../packages/db", path.join(root, "node_modules/@studenthub/db"));
-    const base = artifactDigest(root);
-    assert.match(base.digest!, /^[0-9a-f]{64}$/);
-    assert.equal(base.files, 6);
-    assert.equal(artifactDigest(root).digest, base.digest);
-    // Anything in the closure or the lockfile changes it; a file outside the closure does not.
-    for (const [rel, text] of [["dist/tools/legacy-import/src/twin/x.js", "export const x = 1;\n"], ["packages/db/dist/import/store.js", "export const b = 3;\n"], ["package-lock.json", '{"v":2}']] as const) {
-      const before = readFileSync(path.join(root, rel), "utf8");
-      write(rel, text);
-      assert.notEqual(artifactDigest(root).digest, base.digest, rel);
-      write(rel, before);
-    }
-    write("dist/tools/legacy-import/src/unused.js", "export const changed = 1;\n");
-    assert.equal(artifactDigest(root).digest, base.digest);
-    // A missing file anywhere in the closure, or a missing entrypoint, gives no digest.
-    rmSync(path.join(root, "packages/db/dist/import/store.js"));
-    assert.deepEqual([artifactDigest(root).digest, artifactDigest(root).missing], [null, ["packages/db/dist/import/index.js -> ./store.js"]]);
-    write("packages/db/dist/import/store.js", "export const b = 2;\n");
-    rmSync(path.join(root, "node_modules/@studenthub/db"));
-    assert.deepEqual(artifactDigest(root).missing, ["@studenthub/db/import"]);
-    symlinkSync("../../packages/db", path.join(root, "node_modules/@studenthub/db"));
-    assert.equal(artifactDigest(root).digest, base.digest);
-    assert.deepEqual(artifactDigest(root, "dist/absent.js").missing, ["dist/absent.js"]);
-    rmSync(path.join(root, "package-lock.json"));
-    assert.deepEqual(artifactDigest(root).missing, ["package-lock.json"]);
-    // A closure that reaches outside the repository is refused.
-    write("package-lock.json", "{}");
-    const outside = mkdtempSync(path.join(tmpdir(), "m4-outside-"));
-    writeFileSync(path.join(outside, "evil.js"), "export {};\n");
-    write("dist/tools/legacy-import/src/twin/x.js", `import "${path.relative(path.join(root, "dist/tools/legacy-import/src/twin"), path.join(outside, "evil.js"))}";\n`);
-    assert.equal(artifactDigest(root).digest, null);
-    rmSync(outside, { recursive: true, force: true });
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
-
-test("the real build's closure is complete and the provenance command prints it", async () => {
-  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../..");
-  const real = artifactDigest(root);
-  assert.deepEqual(real.missing, []);
-  assert.ok(real.files > 10);
-  const out: string[] = [];
-  const h = harness();
-  try {
-    const code = await main(["provenance"], { ...h.deps, provenance: () => ({ head: REVISION, clean: true, artifact: real.digest }), log: (l) => out.push(l) });
-    assert.equal(code, 0);
-    assert.deepEqual(out, [`m4 provenance head=${REVISION} clean=true artifact=${real.digest}`]);
-    assert.equal(existsSync(h.file("out")), false, "provenance claims nothing and writes nothing");
-    assert.equal(await main(["provenance"], { ...h.deps, provenance: () => ({ head: REVISION, clean: true, artifact: null }), log: () => undefined }), 1);
-  } finally { cleanup(h); }
 });
 
 test("losing the lock session mid-write stops further writes, fails the attempt and keeps confirmed and unconfirmed apart", async () => {

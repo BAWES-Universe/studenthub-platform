@@ -1,0 +1,29 @@
+name: M-4 importer build pin
+
+# A fresh install and build of this exact commit, with exactly the operator's steps and nothing
+# else run first, prints the digest of the installed runtime the M-4 importer would load. A staging
+# run is given this digest for the same commit (M4_ARTIFACT_DIGEST); its launcher
+# (tools/legacy-import/m4-launch.mjs) refuses to load the importer unless its own runtime matches.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  m4-build-pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Pin the M-4 importer build
+        run: node tools/legacy-import/m4-launch.mjs provenance

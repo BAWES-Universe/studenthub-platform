@@ -114,11 +114,6 @@ jobs:
       - run: npm test
       - run: npm run test:db
       - run: npm run build
-      # The M-4 importer's build pin: an independent build of this exact commit prints the digest
-      # of the closure the importer runs. A staging run must be given this digest for the same
-      # commit (M4_ARTIFACT_DIGEST) and refuses unless its own build matches it.
-      - name: Pin the M-4 importer build
-        run: node dist/tools/legacy-import/src/m4-cli.js provenance
       - name: Validate Coolify Compose package
         env:
           SOURCE_REVISION: ${{ github.sha }}
