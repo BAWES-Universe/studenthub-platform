@@ -1,3 +1,4 @@
+import { EMAIL_VOLUME_THRESHOLD } from "../../notifications/src/email-volume.js";
 import { kuwaitDay } from "./id-cards.js";
 
 /**
@@ -136,7 +137,40 @@ export function invitationMonths(day: string): string[] {
   });
 }
 
+/**
+ * Emails sent per day (slice 7, legacy admin `MailLogController::actionStats`, `MailLog::getTotalByDays`): the last
+ * 14 Kuwait days up to today, oldest first, with the emails sent and the delivery attempts that failed, and whether the
+ * day passed the daily volume alert threshold (legacy `mailThreshold`, see the volume check in `packages/notifications`).
+ *
+ * Changes from legacy: legacy grouped by weekday name, so a 14-day view folded two weeks onto seven days, and it
+ * counted every logged email; here a day is a Kuwait date, and only emails the provider accepted count as sent.
+ */
+export const EMAIL_DAYS = 14;
+export interface EmailDayCounts { readonly day: string; readonly sent: number; readonly failed: number }
+export interface EmailDay extends EmailDayCounts { readonly overThreshold: boolean }
+
+/** The `EMAIL_DAYS` Kuwait days up to and including `day`, oldest first. */
+export function emailDays(day: string): string[] {
+  const at = Date.parse(`${day}T00:00:00Z`);
+  return Array.from({ length: EMAIL_DAYS }, (_, i) => new Date(at - (EMAIL_DAYS - 1 - i) * 86_400_000).toISOString().slice(0, 10));
+}
+
+/** One row per day of `days`, in that order; a day the store left out is zeros. A day outside `days` is an error. */
+export function emailsByDay(days: readonly string[], rows: readonly EmailDayCounts[]): EmailDay[] {
+  const by = new Map<string, EmailDayCounts>();
+  for (const r of rows) {
+    if (!days.includes(r.day) || by.has(r.day)) throw new TypeError(`email day ${r.day} was not asked for`);
+    by.set(r.day, r);
+  }
+  return days.map(day => {
+    const sent = count(by.get(day)?.sent ?? 0, "sent"), failed = count(by.get(day)?.failed ?? 0, "failed");
+    return { day, sent, failed, overThreshold: sent > EMAIL_VOLUME_THRESHOLD };
+  });
+}
+
 export interface StatisticsStore {
+  /** Emails sent, and delivery attempts that failed, on each of `days` (Kuwait dates). A day with none may be left out. */
+  emailsByDay(days: readonly string[]): Promise<readonly EmailDayCounts[]>;
   /** Invitations sent in each of `months` (`YYYY-MM`, Kuwait time), by how they stand now. A month with none may be left out. */
   invitationsByMonth(months: readonly string[]): Promise<readonly InvitationMonthCounts[]>;
   /** The available counters for one Asia/Kuwait day, by key. */
@@ -149,6 +183,7 @@ export interface StatisticRow { readonly key: string; readonly label: string; re
 export interface StatisticsPage {
   readonly day: string; readonly counters: readonly StatisticRow[]; readonly hiring: HiringFigures; readonly overview: readonly StatisticRow[];
   readonly invitationsByMonth: readonly InvitationMonth[];
+  readonly emailsByDay: readonly EmailDay[]; readonly emailThreshold: number;
 }
 
 const count = (n: unknown, key: string): number => {
@@ -193,9 +228,9 @@ export class StatisticsService {
   async page(viewer: string): Promise<StatisticsPage | undefined> {
     if (!(await this.#authority.isStaff(viewer))) return undefined;
     const now = this.#now(), day = kuwaitDay(now);
-    const months = invitationMonths(day);
-    const [raw, hiring, stored, companies, staffTime, invited] = await Promise.all([this.#store.staffCounts(day, now), this.#store.hiring(day), this.#store.overviewCounts(day),
-      this.#companies?.counts(viewer), this.#staffToday(day), this.#store.invitationsByMonth(months)]);
+    const months = invitationMonths(day), days = emailDays(day);
+    const [raw, hiring, stored, companies, staffTime, invited, emails] = await Promise.all([this.#store.staffCounts(day, now), this.#store.hiring(day), this.#store.overviewCounts(day),
+      this.#companies?.counts(viewer), this.#staffToday(day), this.#store.invitationsByMonth(months), this.#store.emailsByDay(days)]);
     const counters = STAFF_STATISTICS_COUNTERS.map(c => c.source.kind === "missing"
       ? { key: c.key, label: c.label, value: null, waitsOn: c.source.waitsOn }
       : { key: c.key, label: c.label, value: count(raw[c.key], c.key), waitsOn: null });
@@ -208,6 +243,6 @@ export class StatisticsService {
       return from ? { key: f.key, label: f.label, value: count(from[f.key], f.key), waitsOn: null } : { key: f.key, label: f.label, value: null, waitsOn: unanswered[f.source] };
     });
     return { day, counters, hiring: { ...h, retentionRatio: percent(h.retained, h.hired), recruitmentYield: percent(h.hired, h.invitations) }, overview,
-      invitationsByMonth: invitationsByMonth(months, invited) };
+      invitationsByMonth: invitationsByMonth(months, invited), emailsByDay: emailsByDay(days, emails), emailThreshold: EMAIL_VOLUME_THRESHOLD };
   }
 }

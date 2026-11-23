@@ -273,3 +273,27 @@ test("REPORTS_STATISTICS_PG recruiter activity: each count goes to who recorded 
   assert.equal(two.counts.get(a)!.invitations, 1);
   await assert.rejects(store.recruiterActivity([a], "2001-06-11", day), RangeError);
 });
+
+test("REPORTS_STATISTICS_PG emails per day: sent and failed attempts by Kuwait date, only the days asked for", async () => {
+  const person = await principal("mail");
+  const [{ id }] = (await pool.query("INSERT INTO email_outbox(class,recipient_principal_id,template_parameters,idempotency_key,state) VALUES('account.notice',$1,'{\"heading\":\"H\",\"message\":\"M\"}',$2,'sent') RETURNING id", [person, randomUUID()])).rows;
+  let n = 0;
+  const attempt = (outcome: string, at: string) => pool.query("INSERT INTO email_attempts(message_id,class,attempt_number,outcome,failure_code,at) VALUES($1,'account.notice',$2,$3,$4,$5)",
+    [id, ++n, outcome, outcome === "sent" ? null : outcome === "failed" ? "provider_timeout" : outcome === "suppressed" ? null : "delivery_not_configured", at]);
+  const days = ["2001-08-01", "2001-08-02"];
+  const read = async () => Object.fromEntries((await store.emailsByDay(days)).map(r => [r.day, r]));
+  const before = await read();
+  await attempt("sent", "2001-07-31T21:00:00Z"); // 1 August 00:00 in Kuwait
+  await attempt("sent", "2001-07-31T20:59:59Z"); // 31 July in Kuwait: not asked for
+  await attempt("failed", "2001-08-01T12:00:00Z");
+  await attempt("not_sent", "2001-08-01T12:00:00Z"); // neither sent nor failed
+  await attempt("suppressed", "2001-08-01T12:00:00Z");
+  await attempt("sent", "2001-08-02T20:59:59Z"); // last second of 2 August in Kuwait
+  await attempt("sent", "2001-08-02T21:00:00Z"); // 3 August: not asked for
+  const after = await read();
+  const diff = (d: string) => ({ sent: (after[d]?.sent ?? 0) - (before[d]?.sent ?? 0), failed: (after[d]?.failed ?? 0) - (before[d]?.failed ?? 0) });
+  assert.deepEqual(diff("2001-08-01"), { sent: 1, failed: 1 });
+  assert.deepEqual(diff("2001-08-02"), { sent: 1, failed: 0 });
+  assert.deepEqual(Object.keys(after).sort(), days);
+  await assert.rejects(store.emailsByDay([]), RangeError);
+});
