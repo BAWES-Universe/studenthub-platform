@@ -24,7 +24,7 @@ const SAME = "retired_at IS NULL AND utm_source IS NOT DISTINCT FROM $2 AND utm_
 
 interface Row {
   id: string; utm_source: string; utm_medium: string; utm_campaign: string; utm_content: string | null; utm_term: string | null;
-  investment: string; retired: boolean; recent: number; total: number;
+  investment: string; retired: boolean; recent: string; total: string;
 }
 
 export class PostgresCampaignsStore {
@@ -40,13 +40,13 @@ export class PostgresCampaignsStore {
     const result = await this.#pool.query<Row>(
       `SELECT m.id, m.utm_source, m.utm_medium, m.utm_campaign, m.utm_content, m.utm_term,
               m.investment::text AS investment, (m.retired_at IS NOT NULL) AS retired,
-              COALESCE((SELECT sum(c.clicks) FROM marketing_campaign_clicks c WHERE c.campaign_id = m.id AND c.day > $1::date - $2::int), 0)::int AS recent,
-              COALESCE((SELECT sum(c.clicks) FROM marketing_campaign_clicks c WHERE c.campaign_id = m.id), 0)::int AS total
+              COALESCE((SELECT sum(c.clicks) FROM marketing_campaign_clicks c WHERE c.campaign_id = m.id AND c.day > $1::date - $2::int AND c.day <= $1::date), 0)::bigint AS recent,
+              COALESCE((SELECT sum(c.clicks) FROM marketing_campaign_clicks c WHERE c.campaign_id = m.id AND c.day <= $1::date), 0)::bigint AS total
          FROM marketing_campaigns m
         ORDER BY (m.retired_at IS NOT NULL), m.utm_campaign, m.id`, [day, clickDays]);
     return result.rows.map(r => ({
       id: r.id, utmSource: r.utm_source, utmMedium: r.utm_medium, utmCampaign: r.utm_campaign, utmContent: r.utm_content, utmTerm: r.utm_term,
-      investment: r.investment, retired: r.retired, clicks: { recent: r.recent, total: r.total },
+      investment: r.investment, retired: r.retired, clicks: { recent: Number(r.recent), total: Number(r.total) },
     }));
   }
 

@@ -73,7 +73,8 @@ function campaignsHtml(page: CampaignsPage, alert?: string): string {
     + `<p><a href="${STATISTICS_PATH}">Back to statistics</a></p></main>`;
 }
 
-const LIMIT = 4096;
+// The largest valid form: five 100-unit fields of 3-byte characters, each byte percent-encoded (9 characters a unit), plus the id, investment, action and keys.
+const LIMIT = 8192;
 const KEYS = new Set<string>(["action", "id", ...CAMPAIGN_FIELDS, "investment"]);
 interface Body { action: string; id: string | null; input: CampaignInput }
 /** The POST body, or null when it is not a single well-formed urlencoded form of the known keys. */

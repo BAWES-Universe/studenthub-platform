@@ -26,12 +26,19 @@ CREATE UNIQUE INDEX marketing_campaigns_utm_live_idx ON marketing_campaigns(utm_
 CREATE INDEX marketing_campaigns_live_idx ON marketing_campaigns(utm_campaign, id) WHERE retired_at IS NULL;
 
 CREATE FUNCTION enforce_marketing_campaign() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE kept marketing_campaigns;
 BEGIN
  IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'campaigns are kept; retire it instead' USING ERRCODE = '23514'; END IF;
  IF NEW.created_at <> OLD.created_at OR NEW.legacy_utm_uuid IS DISTINCT FROM OLD.legacy_utm_uuid THEN
   RAISE EXCEPTION 'a campaign cannot change when it was created or which legacy campaign it is' USING ERRCODE = '23514';
  END IF;
- IF OLD.retired_at IS NOT NULL AND ROW(NEW.*) IS DISTINCT FROM ROW(OLD.*) THEN
+ -- A creator only ever goes away (the principal is removed: ON DELETE SET NULL), never changes to someone else.
+ IF NEW.created_by_principal_id IS NOT NULL AND NEW.created_by_principal_id IS DISTINCT FROM OLD.created_by_principal_id THEN
+  RAISE EXCEPTION 'a campaign''s creator cannot change' USING ERRCODE = '23514';
+ END IF;
+ -- A retired campaign cannot change, except losing its creator when that principal is removed.
+ kept := NEW; kept.created_by_principal_id := OLD.created_by_principal_id;
+ IF OLD.retired_at IS NOT NULL AND ROW(kept.*) IS DISTINCT FROM ROW(OLD.*) THEN
   RAISE EXCEPTION 'a retired campaign cannot change' USING ERRCODE = '23514';
  END IF;
  RETURN NEW;

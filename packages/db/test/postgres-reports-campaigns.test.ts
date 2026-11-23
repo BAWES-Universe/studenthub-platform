@@ -101,3 +101,24 @@ test("REPORTS_CAMPAIGNS update racing another writer for the same UTM values is 
     assert.deepEqual(await racing, { refused: "duplicate" });
   } finally { other.release(); }
 });
+
+test("REPORTS_CAMPAIGNS removing the creator works on live and retired campaigns; the creator cannot be swapped", async () => {
+  const creator = `camp-gone-${randomUUID()}`;
+  await authz.registerPrincipal(createPrincipal({ id: creator, pbuuids: [], email: `${creator}@example.invalid` }));
+  const live = await store.create(vals(), creator, AT), retired = await store.create(vals(), creator, AT);
+  assert.ok("id" in live && "id" in retired);
+  assert.equal(await store.retire(retired.id, AT), true);
+  await assert.rejects(pool.query("UPDATE marketing_campaigns SET created_by_principal_id = $2 WHERE id = $1", [live.id, staff]), /creator cannot change/);
+  await pool.query("DELETE FROM principals WHERE id = $1", [creator]);
+  const rows = (await pool.query("SELECT id, created_by_principal_id, retired_at IS NOT NULL AS retired FROM marketing_campaigns WHERE id = ANY($1::uuid[]) ORDER BY retired", [[live.id, retired.id]])).rows;
+  assert.deepEqual(rows, [{ id: live.id, created_by_principal_id: null, retired: false }, { id: retired.id, created_by_principal_id: null, retired: true }]);
+  await assert.rejects(pool.query("UPDATE marketing_campaigns SET investment = 1 WHERE id = $1", [retired.id]), /retired campaign cannot change/, "anything else on a retired campaign is still refused");
+});
+
+test("REPORTS_CAMPAIGNS clicks after the as-of day are not counted", async () => {
+  const c = await store.create(vals(), staff, AT);
+  assert.ok("id" in c);
+  await click(c.id, "2026-11-23", 2); await click(c.id, "2026-11-24", 5);
+  const row = (await store.list("2026-11-23", 30)).find(r => r.id === c.id)!;
+  assert.deepEqual(row.clicks, { recent: 2, total: 2 });
+});

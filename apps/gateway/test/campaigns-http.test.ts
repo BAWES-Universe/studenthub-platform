@@ -110,3 +110,16 @@ test("CAMPAIGNS_HTTP staff update and retire a campaign; unknown and retired are
   assert.equal(retired.status, 200); assert.equal(x.rows.get("seed")!.retired, true);
   assert.deepEqual(await (await x.post("s-staff", "action=retire&id=seed", { accept: "application/json" })).json(), { status: "invalid", field: "retired" });
 });
+
+test("CAMPAIGNS_HTTP a full multilingual form of 100-character fields round-trips", async (t) => {
+  const x = await rig(t);
+  // 3-byte characters percent-encode to 9 bytes each, so five full fields pass 4,096 bytes.
+  const cjk = (c: string) => c.repeat(100), ar = "ح".repeat(100);
+  const fields = { utmSource: cjk("広"), utmMedium: cjk("告"), utmCampaign: ar, utmContent: cjk("内"), utmTerm: cjk("語") };
+  const body = new URLSearchParams({ action: "create", ...fields, investment: "123456789.999" }).toString();
+  assert.ok(Buffer.byteLength(body) > 4096, `the form is ${Buffer.byteLength(body)} bytes`);
+  const created = await x.post("s-staff", body, { accept: "application/json" });
+  assert.equal(created.status, 201);
+  const row = [...x.rows.values()].find(r => r.utmCampaign === ar)!;
+  assert.deepEqual({ utmSource: row.utmSource, utmMedium: row.utmMedium, utmCampaign: row.utmCampaign, utmContent: row.utmContent, utmTerm: row.utmTerm, investment: row.investment }, { ...fields, investment: "123456789.999" });
+});
