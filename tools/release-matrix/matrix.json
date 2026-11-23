@@ -1174,8 +1174,9 @@
       ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "UTM campaigns page built on branch; email-campaign half dropped 2026-10-04. Evidence set once the PR head is known. Signups and revenue show as not available (access and pay lanes)."
+          "state": "done",
+          "evidence": "PR #666 at 967c74e",
+          "note": "UTM campaigns only; the email-campaign half of A-22 was dropped 2026-10-04. Signups and revenue show as not available (access and pay lanes)."
         },
         "verified": {
           "state": "open"
