@@ -482,6 +482,18 @@
     "C-14": {
       "lane": "pay",
       "subject": "`/pay`, `/pay/:id`",
+      "served": [
+        {
+          "route": "/pay",
+          "test": "apps/gateway/test/billing-pay-history-http.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/pay/:lineId",
+          "test": "apps/gateway/test/billing-pay-history-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",
