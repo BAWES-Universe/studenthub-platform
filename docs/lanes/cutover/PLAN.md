@@ -71,7 +71,18 @@ Two active rows of one kind whose names normalize the same become one item: the 
 - The access contract decides the split. A link with `allow_access = 1` is a member who signs in: it imports as a grant once the person is linked (M-3), never as a contact, and is reported here as `contact.access`. A link with `allow_access = 0` becomes one contact. The column is a nullable boolean with default 0 (legacy migration `m210128_071555_role`), so only an explicit 0 or 1 is trusted: null, a missing column or any other value is quarantined as `contact.badAccess` and copies nothing. One legacy person on several companies gives one contact per company link. The mapper returns each link id in exactly one disposition (contact, access, quarantined, refused), so reconciliation counts by link id.
 - Name and position (as the role title) are trimmed. A blank name, a name over 120 characters, or one with control characters is reported as `contact.badName` and left out. An unusable position is reported and imported as none.
 - Email addresses: the person's sign-in address first, then the extra addresses oldest first. Phone numbers: oldest first. Each is normalized with the contacts screen's own rules, and repeats are kept once. An address or number the screen would refuse is reported and dropped. Past five of a kind, the first five are kept and the rest reported. An imported contact is one the screen could have saved.
-- A contact deleted in legacy imports as removed, so it is never listed but the record of it stays. Legacy times are Asia/Kuwait wall time. A link whose company has no id map row is refused as `no_organization`, and the batch goes on. The import takes the contacts screen's company lock.
+- A contact deleted in legacy imports as removed, so it is never listed but the record of it stays. Legacy times are Asia/Kuwait wall time. A link whose company has no id map row is refused as `no_organization`, and the batch goes on. The import takes the contacts screen's company lock. A deleted person's removal time is the link's last update time, because legacy keeps no deletion time.
+
+## M-4 run on staging
+
+`tools/legacy-import/src/m4-cli.js` runs all of M-4 against the refreshed legacy copy. A Hermes card runs it on the staging host, under the refresh's shared lock (`flock --shared "$LEGACY_REFRESH_LOCK" node dist/tools/legacy-import/src/m4-cli.js plan|write`). It refuses unless the last refresh says ok.
+
+- **Reading.** It reads only the tables and columns listed in `M4_SOURCES`, one `SELECT JSON_OBJECT(...)` per table, through the walker's read-only mirror reader.
+- **`plan`.** Maps every table and writes nothing to the platform. This is the dry run.
+- **`write`.** Also imports, in dependency order: catalogues, companies, brand links, stores, contacts. Each step is idempotent, so a re-run writes only new rows and reports changed rows as conflicts.
+- **Report.** Written to `M4_REPORT_PATH` with mode 600, and never attached to a pull request. Per step it holds legacy and mapped counts, issue counts by rule, legacy ids by rule, and the write results (inserted, merged, adopted, unchanged, conflict ids, refused ids by code). `receiptSafe` re-checks every field before the file is written. Errors print fixed codes only.
+- **Exit codes.** 0 when ok, 3 when a write step refused rows or found conflicts, 2 when it refused to start.
+- **Write settings.** `M4_DATABASE_URL`, `M4_IMPORT_ACTOR` (sha256 hex) and `M4_OPERATOR_ORG_ID`.
 
 ## M-5 table map (work)
 
