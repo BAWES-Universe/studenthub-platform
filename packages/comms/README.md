@@ -145,7 +145,7 @@ Run from the repository root with Node 22 or newer. Root commands are defined in
 | --- | --- |
 | `npm ci` | Passed. |
 | `npm run typecheck` | Passed. |
-| `npm test` (includes build) | In progress; final result will be recorded before ready review. |
+| `npm test` (includes build) | Passed, including all 10 comms mutation checks. |
 | Relative links and source/export inventory | Passed: all 28 links resolve at the PR base; all 24 exports are documented. |
 | `npm run test:db` | Not run locally: no disposable PostgreSQL 17 database configured for this documentation task; database execution is left to CI. |
 
