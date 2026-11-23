@@ -198,10 +198,11 @@ async function launch(argv, env, execArgv) {
   if (argv[0] === "provenance") {
     const expect = option(argv, "--expect");
     const source = option(argv, "--source") ?? "local";
-    console.log(`m4 provenance source=${source} head=${built.head ?? "none"} clean=${built.clean} platform=${platformKey()} node=${process.versions.node} runtime=${built.runtimeNode ? "pinned" : "other"} artifact=${built.artifact ?? "incomplete"}`);
+    console.log(`m4 provenance source=${source} head=${built.head ?? "none"} clean=${built.clean} platform=${platformKey()} node=${process.versions.node} runtime=${built.runtimeNode ? "pinned" : "other"} links=${built.linksInside ? "inside" : "outside"} artifact=${built.artifact ?? "incomplete"}`);
     // A pin is issued only for a clean, complete build of exactly the declared commit, made by
-    // the pinned runtime it contains.
-    const issued = Boolean(built.head && built.clean && built.artifact && built.runtimeNode && /^[0-9a-f]{40}$/.test(expect ?? "") && built.head === expect);
+    // the pinned runtime it contains, whose links all resolve to hashed files: never for a build
+    // the launcher would refuse.
+    const issued = Boolean(built.head && built.clean && built.artifact && built.runtimeNode && built.linksInside && /^[0-9a-f]{40}$/.test(expect ?? "") && built.head === expect);
     return issued ? 0 : 1;
   }
   if (!verified(built, env)) {

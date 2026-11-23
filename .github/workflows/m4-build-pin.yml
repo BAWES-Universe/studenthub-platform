@@ -6,8 +6,9 @@ name: M-4 importer build pin
 # It prints the digest of the whole checkout the M-4 importer would load, runtime included. The pin
 # line is issued (exit 0) only for a clean, complete build whose HEAD is the declared commit, made
 # by the checkout's own pinned runtime, and says where it came from (source=push or pull_request).
-# For a main push it also keeps that exact verified build as the artifact m4-runtime-<commit>, so
-# staging can run the very bytes this run hashed instead of rebuilding them.
+# Every run packages that exact build and smoke-tests the package the way staging runs it; a main
+# push also keeps it as the artifact m4-runtime-<commit>, so staging can run the very bytes this
+# run hashed instead of rebuilding them.
 on:
   pull_request:
   push:
@@ -40,12 +41,36 @@ jobs:
         shell: bash
         run: .runtime/node/bin/node tools/legacy-import/m4-launch.mjs provenance --expect "$PIN_COMMIT" --source "$PIN_SOURCE" | tee "$RUNNER_TEMP/m4-pin.txt"
       - name: Package the exact verified build
-        if: github.event_name == 'push'
+        env:
+          PIN_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           mkdir "$RUNNER_TEMP/m4-runtime"
-          tar --numeric-owner --owner=0 --group=0 -czf "$RUNNER_TEMP/m4-runtime/m4-runtime-$GITHUB_SHA.tar.gz" .
+          tar --numeric-owner --owner=0 --group=0 -czf "$RUNNER_TEMP/m4-runtime/m4-runtime-$PIN_COMMIT.tar.gz" .
           cp "$RUNNER_TEMP/m4-pin.txt" "$RUNNER_TEMP/m4-runtime/m4-pin.txt"
-          (cd "$RUNNER_TEMP/m4-runtime" && sha256sum "m4-runtime-$GITHUB_SHA.tar.gz" > SHA256SUMS)
+          (cd "$RUNNER_TEMP/m4-runtime" && sha256sum "m4-runtime-$PIN_COMMIT.tar.gz" > SHA256SUMS)
+      # Credential-free smoke of the package, on every run: check the sum, unpack it as root under a
+      # root-only path, make it read-only, and start it through the operator entry as `nobody`.
+      # It must verify and reach the importer, which refuses for the missing invocation before it
+      # connects anywhere.
+      - name: Smoke-test the package as staging would run it
+        env:
+          PIN_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          digest=$(sed -n 's/.* artifact=\([0-9a-f]\{64\}\)$/\1/p' "$RUNNER_TEMP/m4-runtime/m4-pin.txt")
+          test -n "$digest"
+          (cd "$RUNNER_TEMP/m4-runtime" && sha256sum -c SHA256SUMS)
+          smoke="/srv/m4-smoke/$PIN_COMMIT"
+          sudo mkdir -p "$smoke"
+          sudo tar -xzpf "$RUNNER_TEMP/m4-runtime/m4-runtime-$PIN_COMMIT.tar.gz" -C "$smoke" --no-same-owner
+          sudo chmod -R a-w "$smoke"
+          set +e
+          out=$(cd /tmp && sudo -u nobody env M4_REVISION="$PIN_COMMIT" M4_ARTIFACT_DIGEST="$digest" sh "$smoke/tools/legacy-import/m4" plan 2>&1)
+          code=$?
+          set -e
+          echo "exit=$code $out"
+          test "$code" = 2
+          test "$out" = "m4: refused.invocation"
       - name: Keep the exact verified build
         if: github.event_name == 'push'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

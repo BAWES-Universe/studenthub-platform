@@ -93,7 +93,7 @@ function run(c: Checkout, argv: string[], env: Record<string, string> = {}, node
   return { status: r.status, stdout: r.stdout.trim(), stderr: r.stderr.trim() };
 }
 
-const LINE = /^m4 provenance source=(\S+) head=([0-9a-f]{40}|none) clean=(true|false) platform=(\S+) node=(\S+) runtime=(pinned|other) artifact=([0-9a-f]{64}|incomplete)$/;
+const LINE = /^m4 provenance source=(\S+) head=([0-9a-f]{40}|none) clean=(true|false) platform=(\S+) node=(\S+) runtime=(pinned|other) links=(inside|outside) artifact=([0-9a-f]{64}|incomplete)$/;
 
 function pin(c: Checkout): string {
   const r = run(c, ["provenance", "--expect", c.head, "--source", "test"], {}, [], process.getuid?.());
@@ -101,8 +101,15 @@ function pin(c: Checkout): string {
   const match = LINE.exec(r.stdout);
   assert.ok(match, r.stdout);
   assert.deepEqual([match[1], match[2], match[3], match[4]], ["test", c.head, "true", `${process.platform}-${process.arch}-node${process.versions.node.split(".")[0]}`]);
-  assert.equal(match[6], "pinned");
-  return match[7]!;
+  assert.deepEqual([match[6], match[7]], ["pinned", "inside"]);
+  return match[8]!;
+}
+
+async function digestOf(c: Checkout): Promise<string> {
+  const launcher = await import(pathToFileURL(LAUNCHER).href) as { runtimeDigest(root: string, euid: number): { digest: string | null } };
+  const { digest } = launcher.runtimeDigest(c.root, -1);
+  assert.ok(digest);
+  return digest;
 }
 
 const approved = (c: Checkout, digest: string) => ({ M4_REVISION: c.head, M4_ARTIFACT_DIGEST: digest });
@@ -129,6 +136,16 @@ test("a pin is issued only for a clean, complete build of exactly the declared c
     assert.equal(run(c, ["provenance", "--expect", c.head]).status, 1, "untracked file");
     assert.equal(existsSync(c.loaded), false);
   } finally { remove(c); }
+  // A build the launcher would refuse for its links is never issued a pin.
+  for (const [label, target] of [["escaping", "../../../outside"], ["into git's store", "../../.git/HEAD"], ["dangling", "../../packages/none"], ["absolute", "/usr/bin"]] as const) {
+    const c3 = checkout();
+    try {
+      symlinkSync(target, path.join(c3.root, "node_modules/@studenthub/link"));
+      const r = run(c3, ["provenance", "--expect", c3.head], {}, [], process.getuid?.());
+      assert.equal(r.status, 1, `${label}: ${r.stdout}`);
+      assert.match(r.stdout, / links=outside /, label);
+    } finally { remove(c3); }
+  }
   // A runtime missing a required part has no digest at all.
   for (const rel of ["node_modules", "dist/tools/legacy-import/src/m4-cli.js", "package-lock.json", RUNTIME_NODE]) {
     const c2 = checkout();
@@ -155,7 +172,7 @@ test("a verified, protected runtime loads the importer once and hands it the ver
   } finally { remove(c); }
 });
 
-test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a changed file refuses before the importer loads", (t) => {
+test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a changed file refuses before the importer loads", async (t) => {
   if (!AS_ROOT) { t.skip(needsRoot); return; }
   type Change = (c: Checkout, digest: string) => Record<string, string>;
   const same: Change = (c, d) => approved(c, d);
@@ -241,8 +258,11 @@ test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a 
   for (const k of cases) {
     const c = checkout();
     try {
-      k.before?.(c);
-      const env = k.change(c, pin(c));
+      // A tree with a bad link is never issued a pin, so its digest is taken directly: the digest
+      // then matches and only the launch's own link check can refuse.
+      let digest: string;
+      if (k.before) { k.before(c); digest = await digestOf(c); } else { digest = pin(c); }
+      const env = k.change(c, digest);
       if (!k.writable) chmodTree(c.root, false);
       for (const mode of ["plan", "write"]) {
         const r = run(c, [mode], env, [], k.asUser ?? RUNNER, k.node);
