@@ -1201,7 +1201,7 @@
       "gates": {
         "built": {
           "state": "done",
-          "evidence": "PR #637 at 2b3d5d4"
+          "evidence": "PR #637 at 523b1a6"
         },
         "verified": {
           "state": "open"
