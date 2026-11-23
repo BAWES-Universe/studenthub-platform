@@ -19,7 +19,8 @@ import {
   renderActivationLine,
   episodeVerdict,
 } from "../single-run-activation.mjs";
-import { createReceipt, nextReceiptState, validateReceipt, verifyReviewOnlyPull, receiptCommentBody, parseReceiptsFromComments, RECEIPT_IMMUTABLE_FIELDS } from "../reconcile.mjs";
+import { createReceipt, nextReceiptState, validateReceipt, verifyReviewOnlyPull, receiptCommentBody, parseReceiptsFromComments, RECEIPT_IMMUTABLE_FIELDS,
+  foreignReviewReceipt, foreignReviewDisposition } from "../reconcile.mjs";
 import { resolveReviewOnlyLane, fixtureReviewTests } from "../workspace-scope.mjs";
 import { readPullChange, reviewRule, REVIEW_ONLY_VERDICT_RULE, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { REVIEW_ONLY_BRIEF } from "../card-contracts.mjs";
@@ -917,4 +918,92 @@ test("M18 G2: max_parallel is 1 to 8 and absent is one slot, and slot_lanes name
   assert.throws(() => resolve({ max_parallel: 9, slot_lanes: Array.from({ length: 9 }, () => policy.lane) }), /max_parallel must be 1 to 8/);
   assert.throws(() => resolve({ max_parallel: 2 }), /max_parallel above 1 needs slot_lanes/);
   assert.throws(() => resolve({ slot_lanes: [policy.lane] }), /slot_lanes needs max_parallel/);
+});
+
+// 23 Nov: a review receipt launched for ANOTHER pull request (#666's head, its
+// tick killed by a Linear quota error before the launch was folded) sat under the
+// armed #665 activation. It was verified against #665 at #666's head, read
+// STALE_HEAD every tick, and held the only slot until the activation expired.
+// A receipt from another episode at another head is not this activation's: it
+// is never checked against this activation's pull request, and its slot is
+// released unless the supervisor reports the run live.
+const FOREIGN_HEAD = "c".repeat(40);
+
+function foreignHarness({ episode = "shu303-review-run-0001", target = FOREIGN_HEAD } = {}) {
+  return import("./fixture/episode-harness.mjs").then(({ createEpisodeHarness }) => {
+    const h = createEpisodeHarness({ issueId: DESK, authorizationRef: DESK, reviewerLane: "codex-verifier", githubToken: "tok",
+      activationId: "shu303-review-run-0008", reviewOnly: { pr: 240, baseSha: BASE, authorFamily: "claude" },
+      configOverrides: { fixture_lane: undefined, review_lanes: CONFIG.review_lanes } });
+    const made = createReceipt({ receipt_version: "1.1.0", issue_id: DESK, authorization_ref: DESK, requested_worker: "codex-verifier",
+      role: "review", runtime: "codex-cli", repo: REPO, branch: "feature/other-pr", target_sha: target,
+      workspace_scope: "full", scope_phase: "review", episode_id: episode === "armed" ? h.record.activation_id : episode, review_base_sha: BASE });
+    assert.ok(made.ok, JSON.stringify(made.errors));
+    const unknown = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+    h.comments.push({ body: receiptCommentBody(unknown), createdAt: unknown.last_activity });
+    const operations = [];
+    const tick = (answer) => h.runTick({
+      env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET },
+      io: { supervisorTransport: async ({ request }) => {
+        operations.push(request.operation);
+        return typeof answer === "function" ? answer(request.order) : answer;
+      } },
+    });
+    return { h, unknown, operations, tick };
+  });
+}
+
+test("foreign review receipt: another PR's review the supervisor holds no run for is released, never read as STALE_HEAD", async () => {
+  const cases = [
+    ["bare MISSING_CLAIM", () => ({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" })],
+    ["MISSING_CLAIM NO_RECORDS", () => ({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS" })],
+    ["finished COMPLETED", (order) => supervisorAnswer(order)],
+  ];
+  for (const [label, answer] of cases) {
+    const { h, unknown, operations, tick } = await foreignHarness();
+    try {
+      const run = await tick(answer);
+      const held = h.receiptFor(unknown.attempt_id);
+      assert.equal(held.stage, "HOLD", `${label}\n${run.text}`);
+      assert.ok(held.notes.some((n) => n.includes("FOREIGN_REVIEW_RECEIPT")), `${label}: ${JSON.stringify(held.notes)}`);
+      assert.equal(held.verdict_stage ?? null, null, `${label}: no verdict is applied`);
+      assert.equal(operations[0], "status", `${label}: the supervisor is asked for status first, never submit`);
+      assert.match(run.text, /LAUNCH_UNKNOWN -> HOLD \(FOREIGN_REVIEW_RECEIPT, attempt [0-9a-f-]+\) — review of head c{40} is not the armed review of pull request #240; slot released/, label);
+      assert.doesNotMatch(run.text, /review-only HOLD=STALE_HEAD/, label);
+      assert.deepEqual(h.pauses, [], `${label}: no adapter is paused`);
+    } finally { h.cleanup(); }
+  }
+});
+
+test("foreign review receipt: a run the supervisor reports live, or a supervisor that cannot be asked, keeps the slot and writes nothing", async () => {
+  const cases = [
+    ["RUNNING", (order) => supervisorAnswer(order, { stage: "RUNNING", result: null })],
+    ["ACCEPTED", (order) => supervisorAnswer(order, { stage: "ACCEPTED", result: null })],
+    ["transport throw", async () => { throw new Error("socket vanished"); }],
+  ];
+  for (const [label, answer] of cases) {
+    const { h, unknown, operations, tick } = await foreignHarness();
+    try {
+      const before = h.comments.length;
+      const run = await tick(answer);
+      assert.equal(h.receiptFor(unknown.attempt_id).stage, "LAUNCH_UNKNOWN", `${label}\n${run.text}`);
+      assert.equal(h.comments.length, before, `${label}: no receipt is written`);
+      assert.deepEqual(operations, ["status"], label);
+      assert.equal(h.launched.length, 0, label);
+      assert.match(run.text, /SKIPPED — review of head c{40} is not the armed review of pull request #240, and the supervisor (reports it live|could not be asked); slot held/, label);
+      assert.doesNotMatch(run.text, /review-only HOLD=STALE_HEAD/, label);
+    } finally { h.cleanup(); }
+  }
+});
+
+test("foreign review receipt: the armed episode's own receipt, or one at the approved head, keeps the pull-request check", () => {
+  const activation = { review_only: true, initial_target_sha: HEAD };
+  const base = { stage: "LAUNCH_UNKNOWN", review_base_sha: BASE, episode_id: "old-episode", target_sha: FOREIGN_HEAD };
+  assert.equal(foreignReviewReceipt(base, activation, "armed-episode"), true);
+  assert.equal(foreignReviewReceipt({ ...base, episode_id: "armed-episode" }, activation, "armed-episode"), false, "same episode");
+  assert.equal(foreignReviewReceipt({ ...base, target_sha: HEAD }, activation, "armed-episode"), false, "the approved head");
+  assert.equal(foreignReviewReceipt(base, { ...activation, review_only: false }, "armed-episode"), false, "no review-only activation");
+  assert.equal(foreignReviewReceipt(base, activation, null), false, "nothing armed");
+  assert.equal(foreignReviewReceipt({ ...base, stage: "RUNNING" }, activation, "armed-episode"), false, "only an unfolded launch");
+  assert.equal(foreignReviewReceipt({ ...base, review_base_sha: undefined }, activation, "armed-episode"), false, "only a review-only receipt");
+  assert.equal(foreignReviewDisposition({ ok: false, stage: "HOLD", reason: "supervisor configuration unavailable: x" }, null), "hold", "a transport fault carries no hold code");
 });
