@@ -1,5 +1,5 @@
 import type { GatewayRoute } from "./context.js";
-import { catalogueRoute } from "./catalogue.js";
+import { catalogueRoute, referenceDataPageRoute } from "./catalogue.js";
 import { candidateDocumentsRoute, organizationDocumentsRoute } from "./documents.js";
 import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, languagePreferencePageRoute, languagePreferenceRoute, bankDetailsRoute, profileRecordsRoute, peopleDirectoryRoute, civilIdReviewRoute } from "./profile.js";
 import { organizationProfileRoute, organizationStatusRoute, organizationCommercialTermsRoute, organizationApprovedToHireRoute, organizationNotesRoute, organizationBrandsRoute, organizationStoresRoute, organizationDeletionRoute, organizationCreationRoute, organizationAccountManagerPageRoute, organizationAccountManagerRoute, organizationPagesRoute } from "./organizations.js";
@@ -59,6 +59,7 @@ import { workRoute } from "./work.js";
 export const ROUTES: readonly GatewayRoute[] = [
   abuseGateRoute,
   catalogueRoute,
+  referenceDataPageRoute,
   candidateDocumentsRoute,
   documentsUploadRoute,
   documentsActionsRoute,
