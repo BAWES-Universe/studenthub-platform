@@ -114,3 +114,35 @@ test("two import runs at once are serialized: one inserts, the other finds the c
     await other.close();
   }
 });
+
+test("a row the database refuses rolls back alone: its savepoint undoes it and the next row imports", async () => {
+  const c = await companyId(), r = run();
+  await importCompanies(c);
+  const [good] = mapLegacyContacts([link(`${r}-2`, `${r}-p`, c)], [person(`${r}-p`)], [], []).contacts;
+  // Six phones pass no mapper, but a hand-built row can carry them: position 5 breaks the channel check.
+  const bad = { ...good!, legacyId: `${r}-1`, phones: ["50000001", "50000002", "50000003", "50000004", "50000005", "50000006"] };
+  const result = await contacts.importContacts([bad, good!], NOW);
+  assert.deepEqual([result.inserted, result.refused], [1, [{ legacyId: `${r}-1`, code: "invalid" }]]);
+  assert.equal(await contactFor(`${r}-1`), undefined);
+  const { rows } = await pool.query("SELECT count(*)::int AS n FROM company_contacts WHERE org_id = (SELECT platform_id FROM legacy_id_maps WHERE legacy_table = 'company' AND legacy_id = $1)", [String(c)]);
+  assert.equal(rows[0].n, 1, "the refused row's contact insert was rolled back with its savepoint");
+});
+
+test("an import waits for the contacts screen's company lock", async () => {
+  const c = await companyId(), r = run();
+  const orgs = await importCompanies(c);
+  const holder = await pool.connect();
+  let finished = false;
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5960))", [`access:org:${orgs.get(String(c))}`]);
+    const running = contacts.importContacts(mapLegacyContacts([link(`${r}-1`, `${r}-p`, c)], [person(`${r}-p`)], [], []).contacts, NOW)
+      .then((result) => { finished = true; return result; });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.equal(finished, false, "the import must wait while the screen holds the company");
+    await holder.query("COMMIT");
+    assert.equal((await running).inserted, 1);
+  } finally {
+    holder.release();
+  }
+});
