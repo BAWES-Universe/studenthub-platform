@@ -51,6 +51,11 @@ export function m4Writers(pool: pg.Pool, actorRef: string, operatorOrgId: string
   };
 }
 
+/** Our own fixed codes (`m4.read.store`, `m4.report.unsafeRefusal`) pass; anything else, which may quote legacy values, prints as `m4.failed`. */
+export function errorCode(error: unknown): string {
+  return error instanceof Error && /^m4(?:\.[A-Za-z_]+)+$/.test(error.message) ? error.message : "m4.failed";
+}
+
 /** One line per step: counts and rule codes only. */
 export function receipt(report: M4Report): string[] {
   return report.steps.map((s) => {
@@ -89,8 +94,7 @@ export async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Pro
     return report.ok ? 0 : 3;
   } catch (error) {
     // Only fixed codes: an error from a driver or the mysql client may quote legacy values.
-    const message = error instanceof Error && /^m4\.[a-z_.]+$/.test(error.message) ? error.message : "m4.failed";
-    console.error(`m4: ${message}`);
+    console.error(`m4: ${errorCode(error)}`);
     return 1;
   } finally {
     await pool?.end();
