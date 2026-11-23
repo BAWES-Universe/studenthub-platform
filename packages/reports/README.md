@@ -1,7 +1,7 @@
 # Reports
 
 Report services, printable documents and daily staff-email orchestration live here.
-[src/index.ts](src/index.ts) re-exports the fourteen source modules described below.
+[src/index.ts](src/index.ts) re-exports the fifteen source modules described below.
 The gateway composes the services with database stores and authorization in
 [comms/wiring.ts](../../apps/gateway/src/comms/wiring.ts); the worker calls the daily
 email wrapper in [email-delivery.ts](../../apps/worker/src/email-delivery.ts).
@@ -104,6 +104,26 @@ non-integer counts are refused. SQL counting belongs to
 [PostgresStatisticsStore](../db/src/reports/postgres-statistics-store.ts); the UI is
 [statistics-http.ts](../../apps/gateway/src/reports/statistics-http.ts).
 
+## Operations entry
+
+[operations.ts](src/operations.ts) exports `OperationsService`, `OperationsSources`
+and `OperationsPage`. `page` checks existing staff access before reading sources,
+then combines the morning summary's attention rows with team activity requested
+for that same Kuwait day. It preserves unavailable counters, reports the team's
+staff count and totals, returns `undefined` when either source does not answer,
+and throws if the team source refuses the day. It introduces no separate store.
+
+[Gateway wiring](../../apps/gateway/src/comms/wiring.ts) supplies the existing
+morning-summary and recruiter-activity services plus the work lane's
+`isOperatorAdmin` check. [statistics-http.ts](../../apps/gateway/src/reports/statistics-http.ts)
+serves `GET /reports/operations` as HTML or JSON under the existing staff check;
+unavailable or unauthorized requests get not found. The HTML links to existing
+report pages and shows Standup and Staff time links only when `operatorAdmin` is
+true. [operations.test.ts](test/operations.test.ts) checks same-day composition,
+authorization before reads, admin flag propagation, and absent/refused sources;
+[statistics-http.test.ts](../../apps/gateway/test/statistics-http.test.ts) checks
+the route, access, admin-only links and unavailable source behavior.
+
 ## Actual import consumers
 
 These are production-source imports at this README's base, distinguished from
@@ -124,6 +144,7 @@ re-exported by [index.ts](src/index.ts).
 | Statistics, hit map, recruiter activity | [statistics-http.ts](../../apps/gateway/src/reports/statistics-http.ts) imports page types and recruiter column/range exports; [firing-spike.ts](src/firing-spike.ts) imports hit-map builders and types. |
 | Morning-summary counters | [morning-summary.ts](src/morning-summary.ts) reads the registry; [notifications/email-templates.ts](../notifications/src/email-templates.ts) imports the registry, keys, hidden-at-zero list and counts type for rendering/validation. |
 | Morning summary, firing spikes | [firing-spike.ts](src/firing-spike.ts) imports summary orchestration; [worker/email-delivery.ts](../../apps/worker/src/email-delivery.ts) imports `deliverWithDailyStaffEmails` through the barrel. |
+| Operations | [gateway comms/wiring.ts](../../apps/gateway/src/comms/wiring.ts) imports `OperationsService` through the barrel and exposes `operations.page`; [statistics-http.ts](../../apps/gateway/src/reports/statistics-http.ts) imports `OperationsPage` as a type and handles the route. [operations.ts](src/operations.ts) imports morning-summary row and recruiter-activity count types. |
 
 The database's [reports/index.ts](../db/src/reports/index.ts) exports stores with
 structurally compatible ports; those store source files do not import this package.
@@ -144,9 +165,9 @@ split are in [run.mjs](../../tools/test-runner/run.mjs) and
 | --- | --- |
 | `npm ci` | Passed in the coordinator's Windows checkout before this worker started. |
 | `npm run build` | Passed in that same authorized run before dispatch to this worker. |
-| `npm run typecheck` | Passed with Windows Node 24.11.0 on the unchanged source base. |
+| `npm run typecheck` | Passed with Windows Node 24.11.0 after synchronizing with main for the operations documentation revision. |
 | `npm test` | Build passed; runner self-tests stopped the command (14 passed, 8 failed): seven workflow-parser assertions on the Windows CRLF checkout and one `EPERM` creating a symlink. The full application suite did not run locally. See [ci-workflow.test.mjs](../../tools/test-runner/test/ci-workflow.test.mjs) and [run.test.mjs](../../tools/test-runner/test/run.test.mjs). |
-| `node --test dist/packages/reports/test/*.test.js` | Passed: all 60 report tests, zero failures or skips, using Windows Node after the build. |
+| `node --test dist/packages/reports/test/*.test.js dist/apps/gateway/test/statistics-http.test.js` | Passed: all 72 report and statistics HTTP tests, zero failures or skips, using Windows Node after the build, including operations service and route coverage. |
 | `npm run test:db` | Not run locally: no disposable PostgreSQL 17 instance was provisioned for this documentation-only task. Database CI is assessed on the PR. |
 
 The focused source tests are [certificates.test.ts](test/certificates.test.ts),
@@ -154,6 +175,7 @@ The focused source tests are [certificates.test.ts](test/certificates.test.ts),
 [pdf.test.ts](test/pdf.test.ts), [qr.test.ts](test/qr.test.ts),
 [public-photo.test.ts](test/public-photo.test.ts), [statistics.test.ts](test/statistics.test.ts),
 [morning-summary.test.ts](test/morning-summary.test.ts),
-[firing-hit-map.test.ts](test/firing-hit-map.test.ts) (including spikes), and
-[recruiter-activity.test.ts](test/recruiter-activity.test.ts).
+[firing-hit-map.test.ts](test/firing-hit-map.test.ts) (including spikes),
+[recruiter-activity.test.ts](test/recruiter-activity.test.ts), and
+[operations.test.ts](test/operations.test.ts).
 They exercise synthetic fixtures; this README does not claim live acceptance.
