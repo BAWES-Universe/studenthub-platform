@@ -6,7 +6,7 @@ import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { PostgresWorkStaffTimeStore } from "@studenthub/db/work";
 import { PostgresFiringSpikeStore, PostgresIdCardsStore, PostgresMorningSummaryStore, PostgresStatisticsStore } from "@studenthub/db/reports";
 import { DEFAULT_OPERATOR_ORG_IDS, type OrganizationDirectory } from "@studenthub/organizations";
-import { CertificatesService, IdCardsService, IdCardVerifier, MorningSummaryService, RecruiterActivityService, StatisticsService, FiringHitMapService, type IdCardPhotoSource, type StatisticsCompanies, type IdCardPublicPhotoSource } from "../../../../packages/reports/src/index.js";
+import { CertificatesService, IdCardsService, IdCardVerifier, MorningSummaryService, OperationsService, RecruiterActivityService, StatisticsService, FiringHitMapService, type IdCardPhotoSource, type StatisticsCompanies, type IdCardPublicPhotoSource } from "../../../../packages/reports/src/index.js";
 import { openPersonalPhotoSourceFromEnv } from "../../../../packages/private-documents/src/personal-photo-source.js";
 import { StaffMessagesService } from "../../../../packages/comms/src/staff-messages.js";
 import { blockListOf, parseTrustedProxies } from "../../../../packages/access/src/index.js";
@@ -82,6 +82,7 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
   const staffTime = new PostgresWorkStaffTimeStore(pool);
   const statistics = new StatisticsService(statisticsStore, authority, undefined, { companies, staffTime });
   const recruiters = new RecruiterActivityService(statisticsStore, authority, staffTime);
+  const operations = new OperationsService({ summary: viewer => summary.today(viewer), team: (viewer, day) => recruiters.page(viewer, { from: day, to: day }) }, authority);
   const firings = new FiringHitMapService(statisticsStore, authority, undefined, new PostgresFiringSpikeStore({ pool, operatorOrgIds: DEFAULT_OPERATOR_ORG_IDS }));
   return { http: { isStaff: authority.isStaff, send: (sender, input) => service.send(sender, input),
     deliveryLog: (person, offset, limit) => emails.deliveryLog(person, offset, limit),
@@ -90,7 +91,7 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
       ownPdf: (person, origin) => idCards.ownPdf(person, origin), staffPdf: (viewer, people, origin) => idCards.staffPdf(viewer, people, origin), check: token => idCards.check(token),
       certificates: { own: person => certificates.own(person), staffList: (viewer, person) => certificates.staffList(viewer, person), pdf: (viewer, assignment) => certificates.pdf(viewer, assignment) },
       statistics: { page: viewer => statistics.page(viewer), firingHitMap: viewer => firings.page(viewer), firingSpikeEmail: (viewer, on) => firings.subscribe(viewer, on),
-        recruiters: (viewer, range) => recruiters.page(viewer, range) }, publicPhoto: (token, key, client) => idCards.publicPhoto(token, key, client),
+        recruiters: (viewer, range) => recruiters.page(viewer, range), operations: viewer => operations.page(viewer) }, publicPhoto: (token, key, client) => idCards.publicPhoto(token, key, client),
       // The public check is limited per client address, read behind the same trusted proxies as the abuse gate.
       publicLimit: options.idCardVerifyKey && env ? publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies(env.GATEWAY_TRUSTED_PROXIES)),
         // A key derived from the verification key, so the recorded client hash is the same across gateway processes and restarts.
