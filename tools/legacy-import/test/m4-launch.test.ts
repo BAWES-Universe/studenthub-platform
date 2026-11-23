@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, chownSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // The launcher is plain JavaScript run from the source tree; each case copies it into a synthetic
@@ -21,6 +21,17 @@ const AS_ROOT = process.getuid?.() === 0;
 const RUNNER = 65534;
 const needsRoot = "needs root to give the runtime an owner other than the user running it";
 
+// The checkout carries its own pinned runtime at .runtime/node/bin/node. Here that is a private copy
+// of the Node running the tests, hard-linked into each synthetic checkout.
+const BASE = AS_ROOT ? path.dirname(REPO) : tmpdir();
+const NODE_DIR = mkdtempSync(path.join(BASE, ".m4-node-"));
+chmodSync(NODE_DIR, 0o755);
+const NODE_COPY = path.join(NODE_DIR, "node");
+copyFileSync(process.execPath, NODE_COPY);
+chmodSync(NODE_COPY, 0o755);
+after(() => { rmSync(NODE_DIR, { recursive: true, force: true }); });
+const RUNTIME_NODE = ".runtime/node/bin/node";
+
 interface Checkout { readonly root: string; readonly head: string; readonly loaded: string; readonly out: string; readonly scratch: string; readonly outDir: string }
 
 const chmodTree = (dir: string, writable: boolean) => {
@@ -28,7 +39,7 @@ const chmodTree = (dir: string, writable: boolean) => {
 };
 
 function checkout(): Checkout {
-  const scratch = mkdtempSync(path.join(AS_ROOT ? path.dirname(REPO) : tmpdir(), ".m4-launch-"));
+  const scratch = mkdtempSync(path.join(BASE, ".m4-launch-"));
   chmodSync(scratch, 0o755);
   const root = path.join(scratch, "repo");
   const outDir = path.join(scratch, "out");
@@ -44,7 +55,7 @@ function checkout(): Checkout {
   write("package.json", "{}");
   write("package-lock.json", '{"lockfileVersion":3}');
   write("packages/db/package.json", '{"name":"@studenthub/db"}');
-  write(".gitignore", "dist/\nnode_modules/\npackages/*/dist/\n");
+  write(".gitignore", "dist/\nnode_modules/\npackages/*/dist/\n/.runtime/\n");
   const git = (...args: string[]) => {
     const r = spawnSync("git", ["-c", "user.email=t@example.test", "-c", "user.name=t", ...args], { cwd: root, encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
@@ -58,7 +69,7 @@ function checkout(): Checkout {
 appendFileSync(${JSON.stringify(loaded)}, "loaded\\n");
 export const defaultDeps = (env, built) => ({ env, built });
 export async function main(argv, deps) {
-  writeFileSync(${JSON.stringify(out)}, JSON.stringify({ argv, built: deps.built }));
+  writeFileSync(${JSON.stringify(out)}, JSON.stringify({ argv, built: deps.built, processArgv: process.argv, execArgv: process.execArgv, env: process.env }));
   return 0;
 }
 `);
@@ -68,19 +79,21 @@ export async function main(argv, deps) {
   write("node_modules/pg/lib/index.js", "module.exports = {};\n");
   mkdirSync(path.join(root, "node_modules/@studenthub"), { recursive: true });
   symlinkSync("../../packages/db", path.join(root, "node_modules/@studenthub/db"));
+  mkdirSync(path.join(root, ".runtime/node/bin"), { recursive: true });
+  linkSync(NODE_COPY, path.join(root, RUNTIME_NODE));
   return { root, head: git("rev-parse", "HEAD"), loaded, out, scratch, outDir };
 }
 
 const remove = (c: Checkout) => { chmodTree(c.scratch, true); rmSync(c.scratch, { recursive: true, force: true }); };
 
 // Runs the launcher as the unprivileged runner (when the tests run as root), or as `asUser`.
-function run(c: Checkout, argv: string[], env: Record<string, string> = {}, nodeArgs: string[] = [], asUser = AS_ROOT ? RUNNER : undefined) {
-  const r = spawnSync(process.execPath, [...nodeArgs, path.join(c.root, "tools/legacy-import/m4-launch.mjs"), ...argv],
+function run(c: Checkout, argv: string[], env: Record<string, string> = {}, nodeArgs: string[] = [], asUser = AS_ROOT ? RUNNER : undefined, node = path.join(c.root, RUNTIME_NODE)) {
+  const r = spawnSync(node, [...nodeArgs, path.join(c.root, "tools/legacy-import/m4-launch.mjs"), ...argv],
     { cwd: c.outDir, encoding: "utf8", env: { PATH: process.env.PATH, ...env }, ...(asUser === undefined ? {} : { uid: asUser, gid: asUser }) });
   return { status: r.status, stdout: r.stdout.trim(), stderr: r.stderr.trim() };
 }
 
-const LINE = /^m4 provenance source=(\S+) head=([0-9a-f]{40}|none) clean=(true|false) platform=(\S+) node=(\S+) artifact=([0-9a-f]{64}|incomplete)$/;
+const LINE = /^m4 provenance source=(\S+) head=([0-9a-f]{40}|none) clean=(true|false) platform=(\S+) node=(\S+) runtime=(pinned|other) artifact=([0-9a-f]{64}|incomplete)$/;
 
 function pin(c: Checkout): string {
   const r = run(c, ["provenance", "--expect", c.head, "--source", "test"], {}, [], process.getuid?.());
@@ -88,7 +101,8 @@ function pin(c: Checkout): string {
   const match = LINE.exec(r.stdout);
   assert.ok(match, r.stdout);
   assert.deepEqual([match[1], match[2], match[3], match[4]], ["test", c.head, "true", `${process.platform}-${process.arch}-node${process.versions.node.split(".")[0]}`]);
-  return match[6]!;
+  assert.equal(match[6], "pinned");
+  return match[7]!;
 }
 
 const approved = (c: Checkout, digest: string) => ({ M4_REVISION: c.head, M4_ARTIFACT_DIGEST: digest });
@@ -104,6 +118,10 @@ test("a pin is issued only for a clean, complete build of exactly the declared c
       assert.equal(r.status, 1, argv.join(" "));
       assert.match(r.stdout, LINE);
     }
+    // Only the checkout's own pinned runtime may issue the pin.
+    const other = run(c, ["provenance", "--expect", c.head], {}, [], process.getuid?.(), process.execPath);
+    assert.equal(other.status, 1, other.stdout);
+    assert.match(other.stdout, / runtime=other /);
     writeFileSync(path.join(c.root, "package.json"), '{"changed":true}');
     assert.equal(run(c, ["provenance", "--expect", c.head]).status, 1, "dirty tracked file");
     writeFileSync(path.join(c.root, "package.json"), "{}");
@@ -112,11 +130,11 @@ test("a pin is issued only for a clean, complete build of exactly the declared c
     assert.equal(existsSync(c.loaded), false);
   } finally { remove(c); }
   // A runtime missing a required part has no digest at all.
-  for (const rel of ["node_modules", "dist/tools/legacy-import/src/m4-cli.js", "package-lock.json"]) {
+  for (const rel of ["node_modules", "dist/tools/legacy-import/src/m4-cli.js", "package-lock.json", RUNTIME_NODE]) {
     const c2 = checkout();
     try {
       rmSync(path.join(c2.root, rel), { recursive: true });
-      const r = run(c2, ["provenance", "--expect", c2.head]);
+      const r = run(c2, ["provenance", "--expect", c2.head], {}, [], undefined, rel === RUNTIME_NODE ? process.execPath : undefined);
       assert.equal(r.status, 1, rel);
       assert.match(r.stdout, /artifact=incomplete$/, rel);
     } finally { remove(c2); }
@@ -132,7 +150,8 @@ test("a verified, protected runtime loads the importer once and hands it the ver
     const r = run(c, ["plan"], approved(c, digest));
     assert.equal(r.status, 0, r.stderr);
     assert.equal(readFileSync(c.loaded, "utf8"), "loaded\n");
-    assert.deepEqual(JSON.parse(readFileSync(c.out, "utf8")), { argv: ["plan"], built: { head: c.head, clean: true, artifact: digest, protectedRuntime: true, linksInside: true } });
+    const seen = JSON.parse(readFileSync(c.out, "utf8"));
+    assert.deepEqual([seen.argv, seen.built], [["plan"], { head: c.head, clean: true, artifact: digest, protectedRuntime: true, linksInside: true, runtimeNode: true }]);
   } finally { remove(c); }
 });
 
@@ -141,7 +160,7 @@ test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a 
   type Change = (c: Checkout, digest: string) => Record<string, string>;
   const same: Change = (c, d) => approved(c, d);
   // `before` runs before the pin, so the digest matches and only the protection check can refuse.
-  const cases: { name: string; change: Change; writable?: boolean; before?: (c: Checkout) => void; asUser?: number }[] = [
+  const cases: { name: string; change: Change; writable?: boolean; before?: (c: Checkout) => void; asUser?: number; node?: string }[] = [
     { name: "no pin", change: (c) => ({ M4_REVISION: c.head }) },
     { name: "malformed pin", change: (c) => ({ M4_REVISION: c.head, M4_ARTIFACT_DIGEST: "nope" }) },
     { name: "other pin", change: (c) => approved(c, "f".repeat(64)) },
@@ -176,6 +195,10 @@ test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a 
     { name: "run as root", change: same, asUser: 0 },
     { name: "link out of the checkout", before: (c) => { symlinkSync("../../../outside", path.join(c.root, "node_modules/@studenthub/out")); }, change: same },
     { name: "absolute link", before: (c) => { symlinkSync(path.join(c.root, "node_modules/pg"), path.join(c.root, "node_modules/@studenthub/abs")); }, change: same },
+    { name: "link into git's store", before: (c) => { symlinkSync("../../.git/HEAD", path.join(c.root, "node_modules/@studenthub/head")); }, change: same },
+    { name: "link to npm's install record", before: (c) => { writeFileSync(path.join(c.root, "node_modules/.package-lock.json"), "{}\n"); symlinkSync("../.package-lock.json", path.join(c.root, "node_modules/@studenthub/record")); }, change: same },
+    { name: "another Node binary", change: same, node: process.execPath },
+    { name: "pinned runtime replaced", change: (c, d) => { rmSync(path.join(c.root, RUNTIME_NODE)); copyFileSync(NODE_COPY, path.join(c.root, RUNTIME_NODE)); writeFileSync(path.join(c.root, RUNTIME_NODE), "#!/bin/sh\n", { flag: "a" }); chmodSync(path.join(c.root, RUNTIME_NODE), 0o755); return same(c, d); } },
     { name: "dangling link", before: (c) => { symlinkSync("../../packages/none", path.join(c.root, "node_modules/@studenthub/none")); }, change: same },
   ];
   for (const k of cases) {
@@ -185,7 +208,7 @@ test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a 
       const env = k.change(c, pin(c));
       if (!k.writable) chmodTree(c.root, false);
       for (const mode of ["plan", "write"]) {
-        const r = run(c, [mode], env, [], k.asUser ?? RUNNER);
+        const r = run(c, [mode], env, [], k.asUser ?? RUNNER, k.node);
         assert.equal(r.status, 2, `${k.name} ${mode}: ${r.stderr}`);
         assert.equal(r.stderr, "m4: refused.provenance", k.name);
         assert.equal(existsSync(c.loaded), false, `${k.name}: the importer was loaded`);
@@ -241,10 +264,10 @@ test("the importer module is not an entry point: run directly, it evaluates its 
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 });
 
-test("the real checkout's runtime is complete", () => {
-  const r = spawnSync(process.execPath, [LAUNCHER, "provenance"], { cwd: REPO, encoding: "utf8", env: { PATH: process.env.PATH } });
-  assert.match(r.stdout.trim(), LINE);
-  assert.doesNotMatch(r.stdout, /artifact=incomplete/);
+test("the real checkout's runtime is complete apart from the pinned Node runtime, which only the pin and staging install", async () => {
+  const launcher = await import(pathToFileURL(LAUNCHER).href) as { runtimeDigest(root: string, euid: number): { missing: string[] } };
+  const { missing } = launcher.runtimeDigest(REPO, -1);
+  assert.deepEqual(missing.filter((rel) => rel !== RUNTIME_NODE), []);
 });
 
 test("the digest covers the runtime it was installed for, and a load needs every check to hold", async () => {
@@ -266,9 +289,9 @@ test("the digest covers the runtime it was installed for, and a load needs every
   const head = "a".repeat(40);
   const artifact = "b".repeat(64);
   const env = { M4_REVISION: head, M4_ARTIFACT_DIGEST: artifact };
-  const good = { head, clean: true, artifact, protectedRuntime: true, linksInside: true };
+  const good = { head, clean: true, artifact, protectedRuntime: true, linksInside: true, runtimeNode: true };
   assert.equal(launcher.verified(good, env), true);
-  for (const change of [{ head: "c".repeat(40) }, { clean: false }, { artifact: "d".repeat(64) }, { artifact: null }, { protectedRuntime: false }, { linksInside: false }]) {
+  for (const change of [{ head: "c".repeat(40) }, { clean: false }, { artifact: "d".repeat(64) }, { artifact: null }, { protectedRuntime: false }, { linksInside: false }, { runtimeNode: false }]) {
     assert.equal(launcher.verified({ ...good, ...change }, env), false, JSON.stringify(change));
   }
   assert.equal(launcher.verified(good, { ...env, M4_REVISION: "" }), false);
@@ -292,13 +315,24 @@ test("the operator entry starts Node with a cleared environment, so startup sett
     const preload = path.join(c.outDir, "preload.cjs");
     const mark = path.join(c.outDir, "preloaded.txt");
     writeFileSync(preload, `require("node:fs").appendFileSync(${JSON.stringify(mark)}, "preloaded\\n");\n`);
+    // Synthetic values only. A `node` first on PATH must never be the one started.
+    const decoy = path.join(c.outDir, "bin");
+    mkdirSync(decoy);
+    writeFileSync(path.join(decoy, "node"), `#!/bin/sh\necho decoy > ${JSON.stringify(mark)}\n`, { mode: 0o755 });
+    const secret = "postgres://synthetic-user:synthetic-pass@synthetic-host/synthetic";
     const r = spawnSync("sh", [path.join(c.root, "tools/legacy-import/m4"), "plan"], {
       cwd: c.outDir, encoding: "utf8", uid: RUNNER, gid: RUNNER,
-      env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, ...approved(c, digest), NODE_OPTIONS: `--require ${preload}`, NODE_PATH: c.outDir, UNRELATED: "x" },
+      env: { PATH: `${decoy}:/usr/bin:/bin`, ...approved(c, digest), M4_DATABASE_URL: secret, NODE_OPTIONS: `--require ${preload}`, NODE_PATH: c.outDir, UNRELATED: "x" },
     });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(existsSync(mark), false, "the preload ran");
+    assert.equal(existsSync(mark), false, "the preload or the PATH node ran");
     assert.equal(readFileSync(c.loaded, "utf8"), "loaded\n");
-    assert.equal(JSON.parse(readFileSync(c.out, "utf8")).built.artifact, digest);
+    const seen = JSON.parse(readFileSync(c.out, "utf8"));
+    assert.equal(seen.built.artifact, digest);
+    assert.equal(seen.built.runtimeNode, true);
+    assert.deepEqual(seen.execArgv, []);
+    assert.deepEqual(Object.keys(seen.env).sort(), ["LANG", "M4_ARTIFACT_DIGEST", "M4_DATABASE_URL", "M4_REVISION", "PATH"]);
+    assert.equal(seen.env.M4_DATABASE_URL, secret);
+    assert.equal(JSON.stringify(seen.processArgv).includes("synthetic"), false, "a setting was passed as an argument");
   } finally { remove(c); }
 });
