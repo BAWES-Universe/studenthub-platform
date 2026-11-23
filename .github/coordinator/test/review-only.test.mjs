@@ -952,9 +952,8 @@ function foreignHarness({ episode = "shu303-review-run-0001", target = FOREIGN_H
   });
 }
 
-test("foreign review receipt: another PR's review the supervisor holds no run for is released, never read as STALE_HEAD", async () => {
+test("foreign review receipt: another PR's review the supervisor finished or holds no record of is released, never read as STALE_HEAD", async () => {
   const cases = [
-    ["bare MISSING_CLAIM", () => ({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" })],
     ["MISSING_CLAIM NO_RECORDS", () => ({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS" })],
     ["finished COMPLETED", (order) => supervisorAnswer(order)],
   ];
@@ -974,10 +973,13 @@ test("foreign review receipt: another PR's review the supervisor holds no run fo
   }
 });
 
-test("foreign review receipt: a run the supervisor reports live, or a supervisor that cannot be asked, keeps the slot and writes nothing", async () => {
+test("foreign review receipt: a run the supervisor reports live, an inconclusive answer, or a supervisor that cannot be asked keeps the slot and writes nothing", async () => {
   const cases = [
     ["RUNNING", (order) => supervisorAnswer(order, { stage: "RUNNING", result: null })],
     ["ACCEPTED", (order) => supervisorAnswer(order, { stage: "ACCEPTED", result: null })],
+    ["bare MISSING_CLAIM (attempt state unreadable)", () => ({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" })],
+    ["another hold code", () => ({ ok: false, stage: "HOLD", hold_code: "BRANCH_OCCUPIED" })],
+    ["malformed answer", () => ({ nonsense: true })],
     ["transport throw", async () => { throw new Error("socket vanished"); }],
   ];
   for (const [label, answer] of cases) {
@@ -989,7 +991,7 @@ test("foreign review receipt: a run the supervisor reports live, or a supervisor
       assert.equal(h.comments.length, before, `${label}: no receipt is written`);
       assert.deepEqual(operations, ["status"], label);
       assert.equal(h.launched.length, 0, label);
-      assert.match(run.text, /SKIPPED — review of head c{40} is not the armed review of pull request #240, and the supervisor (reports it live|could not be asked); slot held/, label);
+      assert.match(run.text, /SKIPPED — review of head c{40} is not the armed review of pull request #240, and the supervisor (reports it (RUNNING|ACCEPTED)|gave no conclusive answer \([^)]*\)|could not be asked); slot held/, label);
       assert.doesNotMatch(run.text, /review-only HOLD=STALE_HEAD/, label);
     } finally { h.cleanup(); }
   }
@@ -1005,5 +1007,8 @@ test("foreign review receipt: the armed episode's own receipt, or one at the app
   assert.equal(foreignReviewReceipt(base, activation, null), false, "nothing armed");
   assert.equal(foreignReviewReceipt({ ...base, stage: "RUNNING" }, activation, "armed-episode"), false, "only an unfolded launch");
   assert.equal(foreignReviewReceipt({ ...base, review_base_sha: undefined }, activation, "armed-episode"), false, "only a review-only receipt");
-  assert.equal(foreignReviewDisposition({ ok: false, stage: "HOLD", reason: "supervisor configuration unavailable: x" }, null), "hold", "a transport fault carries no hold code");
+  assert.equal(foreignReviewDisposition({ ok: false, stage: "HOLD", reason: "supervisor configuration unavailable: x" }, null), "hold", "a transport fault");
+  assert.equal(foreignReviewDisposition({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM" }, null), "hold", "a bare MISSING_CLAIM is not proof of absence");
+  assert.equal(foreignReviewDisposition({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS" }, null), "release", "affirmative absence");
+  assert.equal(foreignReviewDisposition(null, "COMPLETED"), "release", "a finished run bound to attempt and head");
 });

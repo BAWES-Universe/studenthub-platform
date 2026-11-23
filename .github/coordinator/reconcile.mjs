@@ -109,15 +109,13 @@ export function foreignReviewReceipt(receipt, activation, armedEpisodeId) {
   return receipt.episode_id !== armedEpisodeId && receipt.target_sha !== activation.initial_target_sha;
 }
 
-// "release" when the supervisor answered and holds no live run for the
-// attempt: it finished (durable COMPLETED/FAILED bound to attempt and head),
-// or it answered not-ok with a hold code of its own. "hold" for a run it
-// reports admitted or running, and for no answer at all (a transport fault
-// carries no hold code): an unreachable supervisor proves nothing.
+// "release" only on a conclusive answer: a durable COMPLETED/FAILED bound to
+// this attempt and head (finished), or the supervisor's affirmative absence
+// (MISSING_CLAIM with NO_RECORDS, supervisorDisownsLaunch). A bare
+// MISSING_CLAIM is also the supervisor's answer for attempt state it cannot
+// read, so it, a malformed answer, a live run and a transport fault all "hold".
 export function foreignReviewDisposition(answer, finished) {
-  if (finished) return "release";
-  if (!answer || typeof answer !== "object") return "hold";
-  return answer.ok === false && typeof answer.hold_code === "string" && answer.hold_code.length > 0 ? "release" : "hold";
+  return finished || supervisorDisownsLaunch(answer) ? "release" : "hold";
 }
 
 // The supervisor's status answer for an attempt it provably holds no record of:
@@ -2937,7 +2935,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
               continue;
             }
           }
-          if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — review of head ${receipt.target_sha} is not the armed review of pull request #${singleRunActivation.review_pr}, and the supervisor ${answer ? "reports it live" : "could not be asked"}; slot held`);
+          if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — review of head ${receipt.target_sha} is not the armed review of pull request #${singleRunActivation.review_pr}, and the supervisor ${answer?.ok === true ? `reports it ${answer.stage ?? "admitted"}` : answer ? `gave no conclusive answer (${answer.hold_code ?? answer.reason ?? "unrecognised"})` : "could not be asked"}; slot held`);
           continue;
         }
         const pull = singleRunActivation.review_only === true
