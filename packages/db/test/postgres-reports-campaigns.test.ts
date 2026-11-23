@@ -77,10 +77,27 @@ test("REPORTS_CAMPAIGNS retire: unknown id, once only, and the clicks keep their
 });
 
 test("REPORTS_CAMPAIGNS list puts retired campaigns last", async () => {
-  const live = await store.create(vals({ utmCampaign: "zzz-live" }), staff, AT), dead = await store.create(vals({ utmCampaign: "aaa-dead" }), staff, AT);
+  const tag = randomUUID().slice(0, 8);
+  const live = await store.create(vals({ utmCampaign: `zzz-live-${tag}` }), staff, AT), dead = await store.create(vals({ utmCampaign: `aaa-dead-${tag}` }), staff, AT);
   assert.ok("id" in live && "id" in dead);
   await store.retire(dead.id, AT);
   const rows = await store.list("2026-11-23", 30);
   const iLive = rows.findIndex(r => r.id === live.id), iDead = rows.findIndex(r => r.id === dead.id);
   assert.ok(iLive < iDead, "a live campaign sorts before a retired one even when its name sorts later");
+});
+
+test("REPORTS_CAMPAIGNS update racing another writer for the same UTM values is refused as duplicate, not an error", async () => {
+  const a = await store.create(vals(), staff, AT), b = await store.create(vals(), staff, AT);
+  assert.ok("id" in a && "id" in b);
+  const target = vals({ utmCampaign: `race-${randomUUID().slice(0, 8)}` });
+  const other = await pool.connect();
+  try {
+    // Another writer takes the values first and has not committed, so the store's pre-check cannot see it.
+    await other.query("BEGIN");
+    await other.query("UPDATE marketing_campaigns SET utm_campaign = $2 WHERE id = $1", [a.id, target.utmCampaign]);
+    const racing = store.update(b.id, target, AT);
+    await new Promise(r => setTimeout(r, 200));
+    await other.query("COMMIT");
+    assert.deepEqual(await racing, { refused: "duplicate" });
+  } finally { other.release(); }
 });

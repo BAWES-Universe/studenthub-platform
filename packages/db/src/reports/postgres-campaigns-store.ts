@@ -75,7 +75,12 @@ export class PostgresCampaignsStore {
         [id, values.utmSource, values.utmMedium, values.utmCampaign, values.utmContent, values.utmTerm, values.investment, at]);
       await c.query("COMMIT");
       return true;
-    } catch (error) { await c.query("ROLLBACK").catch(() => undefined); throw error; }
+    } catch (error) {
+      await c.query("ROLLBACK").catch(() => undefined);
+      // A concurrent create or update can take the same UTM values between the check and the write.
+      if ((error as { code?: string }).code === "23505") return { refused: "duplicate" };
+      throw error;
+    }
     finally { c.release(); }
   }
 
