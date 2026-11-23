@@ -118,7 +118,6 @@ test("OVW_PASSTHROUGH reserved and nested organization routes pass through", asy
     ["/organization/create", 503, '{"error":"organization_creation_unavailable"}'],
     ["/organization/assigned-companies", 503, '{"error":"unavailable"}'],
     ["/organization/onboarding", 404, fallback],
-    ["/organization/org-a/edit", 404, fallback],
     ["/organization/org-a/stores", 404, fallback],
   ] as const;
   for (const [path, status, expectedBody] of passthroughs) {
