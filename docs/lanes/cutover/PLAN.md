@@ -75,14 +75,18 @@ Two active rows of one kind whose names normalize the same become one item: the 
 
 ## M-4 run on staging
 
-`tools/legacy-import/src/m4-cli.js` runs all of M-4 against the refreshed legacy copy. A Hermes card runs it on the staging host, under the refresh's shared lock (`flock --shared "$LEGACY_REFRESH_LOCK" node dist/tools/legacy-import/src/m4-cli.js plan|write`). It refuses unless the last refresh says ok.
+`tools/legacy-import/src/m4-cli.js` runs all of M-4 against the refreshed legacy copy. A Hermes card runs it on the staging host as `node dist/tools/legacy-import/src/m4-cli.js plan|write`, with no wrapper: the CLI takes the refresh's lock itself.
 
-- **Reading.** It reads only the tables and columns listed in `M4_SOURCES`, one `SELECT JSON_OBJECT(...)` per table, through the walker's read-only mirror reader.
-- **`plan`.** Maps every table and writes nothing to the platform. This is the dry run.
-- **`write`.** Also imports, in dependency order: catalogues, companies, brand links, stores, contacts. Each step is idempotent, so a re-run writes only new rows and reports changed rows as conflicts.
+- **Lock.** The CLI takes a shared, non-waiting `flock` on `LEGACY_REFRESH_LOCK` and holds it until it exits. It reads `last-run.json` and every legacy table under that lock, so the refresh identity it records is the copy it read. A refresh holding the lock makes the run refuse with `refused.locked`.
+- **Reading.** It reads only the tables and columns listed in `M4_SOURCES`, one `SELECT JSON_OBJECT(...)` per table, through the walker's read-only mirror reader. It refuses unless the last refresh says ok.
+- **Plan identity.** A sha256 over the importer revision (`M4_REVISION`, the 40-character commit the CLI was built from), the refresh identity (started, finished, row count) and every mapped row's legacy id and digest, step by step. Any change to the code, the copy or a mapped row gives a new identity.
+- **`plan`.** Maps every table and writes nothing to the platform. This is the dry run. It publishes the plan receipt with the plan identity.
+- **`write`.** Refuses unless `M4_EXPECTED_PLAN` equals the plan identity it computes now, so it imports exactly the reviewed plan, and unless the target database's `legacy_import_target` row says `staging` (migration 0652). Then it replaces the write receipt with `started` before the first write and imports in dependency order: catalogues, companies, brand links, stores, contacts. Each step is idempotent, so a re-run writes only new rows and reports changed rows as conflicts.
+- **Receipts.** `M4_PLAN_RECEIPT` and `M4_WRITE_RECEIPT` are separate files, each written whole (temporary file, then rename) with mode 600. Each carries the revision, refresh identity, plan identity, status and per-step counts and rule codes, never a legacy id or value. Write status is `started`, then `ok`, `refused_rows` or `failed`. A run that fails after some steps committed ends `failed` with its fixed code and the steps that did commit, so a late failure can never read as an earlier pass.
 - **Report.** Written to `M4_REPORT_PATH` with mode 600, and never attached to a pull request. Per step it holds legacy and mapped counts, issue counts by rule, legacy ids by rule, and the write results (inserted, merged, adopted, unchanged, conflict ids, refused ids by code). `receiptSafe` re-checks every field before the file is written. Errors print fixed codes only.
-- **Exit codes.** 0 when ok, 3 when a write step refused rows or found conflicts, 2 when it refused to start.
-- **Write settings.** `M4_DATABASE_URL`, `M4_IMPORT_ACTOR` (sha256 hex) and `M4_OPERATOR_ORG_ID`.
+- **Exit codes.** 0 when ok, 3 when a write step refused rows or found conflicts, 2 when it refused before any write (`usage`, `revision`, `writeConfig`, `locked`, `refreshNotOk`, `planMismatch`, `target`), 1 when it failed.
+- **Write settings.** `M4_EXPECTED_PLAN`, `M4_DATABASE_URL`, `M4_IMPORT_ACTOR` (sha256 hex) and `M4_OPERATOR_ORG_ID`.
+- **Operator steps (Hermes card, staging only).** Once, after migration 0652 is applied: `INSERT INTO legacy_import_target (environment) VALUES ('staging')` on the staging database. No other database gets the row; production refuses until a separate value is added with the owner's explicit go at cutover. Each rehearsal: run `plan`, review the plan receipt, then run `write` with `M4_EXPECTED_PLAN` set to that receipt's `plan`. The card sets `M4_REVISION` from the deployed commit.
 
 ## M-5 table map (work)
 

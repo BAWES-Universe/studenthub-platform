@@ -1,41 +1,62 @@
 /**
  * M-4 importer CLI: organizations, stores, contacts and catalogues from the refreshed legacy copy.
  *
- * On the staging host (a Hermes card runs it), under the refresh's shared lock:
- *   flock --shared "$LEGACY_REFRESH_LOCK" node dist/tools/legacy-import/src/m4-cli.js plan
- *   flock --shared "$LEGACY_REFRESH_LOCK" node dist/tools/legacy-import/src/m4-cli.js write
+ * On the staging host (a Hermes card runs it):
+ *   node dist/tools/legacy-import/src/m4-cli.js plan
+ *   node dist/tools/legacy-import/src/m4-cli.js write
  *
- *   plan   Reads the legacy copy and maps every table. Writes nothing to the platform.
- *   write  Also imports, in order: catalogues, companies, brand links, stores, contacts.
- *          Each step is idempotent, so a re-run writes only what is new and reports changed rows
- *          as conflicts. Never overwrites.
+ * The CLI takes the refresh's lock itself, shared and without waiting, and holds it until it
+ * exits: the refresh identity and every legacy table are read under it, so the copy cannot
+ * change mid-run. A refresh holding the lock makes the run refuse (exit 2).
  *
- * Both write the private-safe report (table names, legacy ids, rule codes, counts) to
- * M4_REPORT_PATH, mode 600, and print a one-line receipt per step. Exit 0 when the run is ok,
- * 3 when a write step refused rows or found conflicts, 2 when refused before reading.
+ *   plan   Reads the legacy copy and maps every table. Writes nothing to the platform. Publishes
+ *          the plan receipt with the plan identity: a sha256 over the importer revision, the
+ *          refresh read, and every mapped row's legacy id and digest.
+ *   write  Refuses unless M4_EXPECTED_PLAN equals the plan identity it finds now (so it imports
+ *          exactly what the reviewed plan showed) and the target database's
+ *          legacy_import_target row says staging (migration 0652). Then it replaces the write
+ *          receipt with `started` before the first write, imports in order (catalogues,
+ *          companies, brand links, stores, contacts) and replaces it with the outcome. A run
+ *          that fails after some steps committed ends `failed`, naming the steps that did, so
+ *          it can never read as an earlier pass.
+ *
+ * Receipts (M4_PLAN_RECEIPT, M4_WRITE_RECEIPT) carry the revision, refresh identity, plan
+ * identity, status and per-step counts and rule codes; no legacy id or value. The private report
+ * (M4_REPORT_PATH) also lists legacy ids by rule and stays on the host. All files are written
+ * whole (temporary file, then rename), mode 600. Errors print fixed codes only.
+ * Exit 0 ok, 3 when a write step refused rows or found conflicts, 2 refused before any write,
+ * 1 failed.
  *
  * Environment:
  *   M4_LEGACY_MIRROR_URL   mysql://user:pass@host:port/legacy_mirror (read-only account)
+ *   M4_REVISION            the 40-character platform commit this importer was built from
  *   LEGACY_REFRESH_REPORT  the refresh's last-run.json; the run refuses unless it says ok
- *   M4_REPORT_PATH         default /var/lib/legacy-import/m4-last-run.json
+ *   LEGACY_REFRESH_LOCK    the refresh's lock file
+ *   M4_REPORT_PATH, M4_PLAN_RECEIPT, M4_WRITE_RECEIPT   defaults under /var/lib/legacy-import
  * For write only:
+ *   M4_EXPECTED_PLAN       the plan identity from the reviewed plan receipt
  *   M4_DATABASE_URL        staging PostgreSQL
  *   M4_IMPORT_ACTOR        sha256 hex recorded as the creator of imported rows
  *   M4_OPERATOR_ORG_ID     the operator organization top-level companies hang under
  */
 
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { PostgresCatalogueImportStore, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresStoreImportStore } from "@studenthub/db/import";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
-import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, parseDatabaseUrl } from "./refresh.js";
+import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, lockPathFrom, parseDatabaseUrl } from "./refresh.js";
 import { refreshIdentity } from "./twin/cli.js";
+import type { RefreshIdentity } from "./twin/report.js";
+import type { LegacyReader } from "./twin/journey.js";
 import { mirrorReader } from "./twin/staging.js";
-import { readM4Sources, receiptSafe, runM4, type M4Report, type M4Writers } from "./m4-run.js";
+import { planIdentity, planM4, readM4Sources, receiptSafe, receiptStep, runM4, type M4Report, type M4Step, type M4Writers, type ReceiptStep } from "./m4-run.js";
 
 export const DEFAULT_M4_REPORT_PATH = "/var/lib/legacy-import/m4-last-run.json";
+export const DEFAULT_M4_PLAN_RECEIPT = "/var/lib/legacy-import/m4-plan-receipt.json";
+export const DEFAULT_M4_WRITE_RECEIPT = "/var/lib/legacy-import/m4-write-receipt.json";
 
 export function m4Writers(pool: pg.Pool, actorRef: string, operatorOrgId: string): M4Writers {
   const catalogue = new PostgresCatalogueImportStore(pool, actorRef);
@@ -66,41 +87,159 @@ export function receipt(report: M4Report): string[] {
   });
 }
 
-export async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<number> {
-  const mode = argv[0];
-  if (mode !== "plan" && mode !== "write") { console.error("m4: usage: m4-cli.js plan|write"); return 2; }
-  let refresh: unknown;
-  try { refresh = JSON.parse(readFileSync(env.LEGACY_REFRESH_REPORT || REFRESH_REPORT_PATH, "utf8")); } catch { refresh = undefined; }
-  if (!refreshIdentity(refresh)) { console.error("m4: refused.refreshNotOk"); return 2; }
-  let writers: M4Writers | null = null;
-  let pool: pg.Pool | undefined;
-  if (mode === "write") {
-    const actor = env.M4_IMPORT_ACTOR ?? "";
-    const operator = env.M4_OPERATOR_ORG_ID ?? "";
-    if (!/^[0-9a-f]{64}$/.test(actor) || operator === "" || !env.M4_DATABASE_URL) { console.error("m4: refused.writeConfig"); return 2; }
-    pool = new pg.Pool({ connectionString: env.M4_DATABASE_URL, max: 2 });
-    writers = m4Writers(pool, actor, operator);
-  }
+export interface M4Receipt {
+  readonly schemaVersion: 1;
+  readonly kind: "plan" | "write";
+  readonly status: "ok" | "started" | "refused_rows" | "failed";
+  readonly revision: string;
+  readonly refresh: RefreshIdentity;
+  readonly plan: string;
+  readonly at: string;
+  readonly steps: readonly ReceiptStep[];
+  /** For a failed run: the fixed code. */
+  readonly code?: string;
+}
+
+/** Writes the whole file or nothing: a temporary file beside it, mode 600, then a rename. */
+export function writeWhole(file: string, value: unknown): void {
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temp = `${file}.${process.pid}.tmp`;
   try {
-    const sources = await readM4Sources(mirrorReader(parseDatabaseUrl(env.M4_LEGACY_MIRROR_URL, "mirror")));
-    const report = await runM4(sources, writers, new Date().toISOString());
-    if (!receiptSafe(report)) throw new Error("m4.report.unsafe");
-    const out = env.M4_REPORT_PATH || DEFAULT_M4_REPORT_PATH;
-    mkdirSync(path.dirname(out), { recursive: true, mode: 0o700 });
-    writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
-    chmodSync(out, 0o600);
-    for (const line of receipt(report)) console.log(line);
-    console.log(`m4 ${report.mode} ok=${report.ok}`);
-    return report.ok ? 0 : 3;
+    writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    chmodSync(temp, 0o600);
+    renameSync(temp, file);
+  } finally {
+    rmSync(temp, { force: true });
+  }
+}
+
+export type SharedLock = { readonly held: true; readonly release: () => void } | { readonly held: false };
+
+/** The refresh's lock, shared and without waiting: the refresh takes it exclusively. Kept until release. */
+export function acquireSharedLock(lockPath: string): Promise<SharedLock> {
+  return new Promise((resolve) => {
+    let fd: number;
+    try { fd = openSync(lockPath, "r"); } catch { return resolve({ held: false }); }
+    let settled = false;
+    const settle = (held: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (!held) { closeSync(fd); return resolve({ held: false }); }
+      resolve({ held: true, release: () => closeSync(fd) });
+    };
+    const helper = spawn("flock", ["--shared", "--nonblock", "3"], { env: { PATH: process.env.PATH, LANG: "C" }, stdio: ["ignore", "ignore", "ignore", fd] });
+    helper.on("error", () => settle(false));
+    helper.on("close", (code) => settle(code === 0));
+  });
+}
+
+export interface WriteTarget {
+  /** The legacy_import_target row's environment, or null when the database has none. */
+  environment(): Promise<string | null>;
+  writers(): M4Writers;
+  close(): Promise<void>;
+}
+
+export function postgresTarget(url: string, actorRef: string, operatorOrgId: string): WriteTarget {
+  const pool = new pg.Pool({ connectionString: url, max: 2 });
+  return {
+    environment: async () => {
+      try {
+        const { rows } = await pool.query<{ environment: string }>("SELECT environment FROM legacy_import_target");
+        return rows.length === 1 ? rows[0]!.environment : null;
+      } catch { return null; }
+    },
+    writers: () => m4Writers(pool, actorRef, operatorOrgId),
+    close: () => pool.end(),
+  };
+}
+
+export interface CliDeps {
+  readonly env: NodeJS.ProcessEnv;
+  readonly lock: (lockPath: string) => Promise<SharedLock>;
+  readonly reader: (env: NodeJS.ProcessEnv) => LegacyReader;
+  readonly target: (env: NodeJS.ProcessEnv) => WriteTarget;
+  readonly now: () => Date;
+  readonly log: (line: string) => void;
+  readonly error: (line: string) => void;
+}
+
+export const defaultDeps = (env: NodeJS.ProcessEnv): CliDeps => ({
+  env,
+  lock: acquireSharedLock,
+  reader: (e) => mirrorReader(parseDatabaseUrl(e.M4_LEGACY_MIRROR_URL, "mirror")),
+  target: (e) => postgresTarget(e.M4_DATABASE_URL ?? "", e.M4_IMPORT_ACTOR ?? "", e.M4_OPERATOR_ORG_ID ?? ""),
+  now: () => new Date(),
+  log: (line) => console.log(line),
+  error: (line) => console.error(line),
+});
+
+export async function main(argv: readonly string[], deps: CliDeps): Promise<number> {
+  const { env } = deps;
+  const mode = argv[0];
+  const refuse = (code: string) => { deps.error(`m4: refused.${code}`); return 2; };
+  if (mode !== "plan" && mode !== "write") return refuse("usage");
+  const revision = env.M4_REVISION ?? "";
+  if (!/^[0-9a-f]{40}$/.test(revision)) return refuse("revision");
+  const expected = env.M4_EXPECTED_PLAN ?? "";
+  if (mode === "write" && (!/^[0-9a-f]{64}$/.test(expected) || !/^[0-9a-f]{64}$/.test(env.M4_IMPORT_ACTOR ?? "")
+    || !env.M4_OPERATOR_ORG_ID || !env.M4_DATABASE_URL)) return refuse("writeConfig");
+
+  const lock = await deps.lock(lockPathFrom(env));
+  if (!lock.held) return refuse("locked");
+  let target: WriteTarget | undefined;
+  try {
+    // Under the lock: the refresh identity and the copy it describes are read together.
+    let last: unknown;
+    try { last = JSON.parse(readFileSync(env.LEGACY_REFRESH_REPORT || REFRESH_REPORT_PATH, "utf8")); } catch { last = undefined; }
+    const refresh = refreshIdentity(last);
+    if (!refresh) return refuse("refreshNotOk");
+    const sources = await readM4Sources(deps.reader(env));
+    const plan = planM4(sources);
+    const identity = planIdentity(plan, revision, refresh);
+    const base = { schemaVersion: 1 as const, revision, refresh, plan: identity };
+    const reportPath = env.M4_REPORT_PATH || DEFAULT_M4_REPORT_PATH;
+
+    if (mode === "plan") {
+      const report = await runM4(sources, null, deps.now().toISOString(), undefined, plan);
+      if (!receiptSafe(report)) throw new Error("m4.report.unsafe");
+      writeWhole(reportPath, { ...base, ...report });
+      writeWhole(env.M4_PLAN_RECEIPT || DEFAULT_M4_PLAN_RECEIPT, { ...base, kind: "plan", status: "ok", at: deps.now().toISOString(), steps: report.steps.map(receiptStep) } satisfies M4Receipt);
+      for (const line of receipt(report)) deps.log(line);
+      deps.log(`m4 plan ok plan=${identity}`);
+      return 0;
+    }
+
+    if (identity !== expected) return refuse("planMismatch");
+    target = deps.target(env);
+    if (await target.environment() !== "staging") return refuse("target");
+    const receiptPath = env.M4_WRITE_RECEIPT || DEFAULT_M4_WRITE_RECEIPT;
+    const done: M4Step[] = [];
+    const write = (status: M4Receipt["status"], code?: string) => writeWhole(receiptPath,
+      { ...base, kind: "write", status, at: deps.now().toISOString(), steps: done.map(receiptStep), ...(code ? { code } : {}) } satisfies M4Receipt);
+    // Before the first write: any earlier receipt is gone, so nothing can read it as this run's.
+    write("started");
+    try {
+      const report = await runM4(sources, target.writers(), deps.now().toISOString(), (s) => done.push(s), plan);
+      if (!receiptSafe(report)) throw new Error("m4.report.unsafe");
+      writeWhole(reportPath, { ...base, ...report });
+      write(report.ok ? "ok" : "refused_rows");
+      for (const line of receipt(report)) deps.log(line);
+      deps.log(`m4 write ok=${report.ok} plan=${identity}`);
+      return report.ok ? 0 : 3;
+    } catch (error) {
+      write("failed", errorCode(error));
+      throw error;
+    }
   } catch (error) {
-    // Only fixed codes: an error from a driver or the mysql client may quote legacy values.
-    console.error(`m4: ${errorCode(error)}`);
+    deps.error(`m4: ${errorCode(error)}`);
     return 1;
   } finally {
-    await pool?.end();
+    await target?.close();
+    lock.release();
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main(process.argv.slice(2), process.env).then((code) => { process.exitCode = code; });
+  main(process.argv.slice(2), defaultDeps(process.env)).then((code) => { process.exitCode = code; });
 }

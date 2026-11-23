@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
-import { m4Writers } from "../../../tools/legacy-import/src/m4-cli.js";
+import { m4Writers, postgresTarget } from "../../../tools/legacy-import/src/m4-cli.js";
 import { M4_SOURCES, runM4, type M4Sources, type M4Table } from "../../../tools/legacy-import/src/m4-run.js";
 import { fixtureIds } from "./legacy-fixture-ids.js";
 
@@ -53,4 +53,26 @@ test("a write run imports every step in order through the real stores; a second 
       WHERE s.id::text IN (SELECT platform_id FROM legacy_id_maps WHERE legacy_table = 'store' AND legacy_id = ANY($1::text[])) ORDER BY s.name`,
     [[String(c), String(c + 1)]]);
   assert.deepEqual(rows, [{ store: "Store A", org: `Sub ${c}`, branded: false, in_mall: true }, { store: "Store B", org: `Company ${c}`, branded: true, in_mall: false }]);
+});
+
+test("the write target is staging only when the database's own marker row says so", async () => {
+  // The one test that touches the singleton marker; it leaves the table empty as it found it.
+  const target = postgresTarget(URL, ACTOR, operator);
+  try {
+    await pool.query("DELETE FROM legacy_import_target");
+    assert.equal(await target.environment(), null);
+    for (const bad of ["production", "Staging", ""]) {
+      await assert.rejects(pool.query("INSERT INTO legacy_import_target (environment) VALUES ($1)", [bad]), (e: { code?: string }) => e.code === "23514");
+    }
+    await pool.query("INSERT INTO legacy_import_target (environment) VALUES ('staging')");
+    assert.equal(await target.environment(), "staging");
+    await assert.rejects(pool.query("INSERT INTO legacy_import_target (environment) VALUES ('staging')"), (e: { code?: string }) => e.code === "23505");
+    await assert.rejects(pool.query("INSERT INTO legacy_import_target (singleton, environment) VALUES (false, 'staging')"), (e: { code?: string }) => e.code === "23514");
+  } finally {
+    await pool.query("DELETE FROM legacy_import_target");
+    await target.close();
+  }
+  // A database the importer cannot read the marker from is no target either.
+  const elsewhere = postgresTarget(URL.replace(/\/[^/?]+(\?|$)/, "/no_such_database$1"), ACTOR, operator);
+  try { assert.equal(await elsewhere.environment(), null); } finally { await elsewhere.close(); }
 });
