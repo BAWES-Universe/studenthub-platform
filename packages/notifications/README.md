@@ -66,12 +66,19 @@ maximum is five attempts. The processing order in
    `delivery_not_configured` when configuration is disabled.
 4. Fail an unavailable address; otherwise validate and render the template and
    invoke the port. A successful port result records `sent`.
-5. Retry only a failure marked `safeToRetry`, while below the attempt maximum,
-   using exponential delays starting at one second, capped at one hour.
+5. For an explicit failure result, schedule a retry only when marked
+   `safeToRetry` and below the attempt maximum, using exponential delays starting
+   at one second, capped at one hour. `delivery_not_configured` is instead
+   recorded as `not_sent` without retry.
 
 A malformed row before sending is closed as failed without retry. An unexpected
-exception after sending starts leaves the row for claim-lease recovery; it cannot
-prove whether delivery occurred. Typed `EmailSendError` values become closed
+exception after sending starts (including a failed completion write) leaves the
+row in `sending` for claim-lease recovery; it cannot prove whether delivery
+occurred. The [PostgreSQL store](../db/src/postgres-email-outbox-store.ts) can
+reclaim it after its 900-second lease expires, incrementing the attempt. This
+path can deliver again without any `safeToRetry` result, subject to the same
+processing checks above; attempts beyond the maximum fail without another send.
+Typed `EmailSendError` values become closed
 failure codes and safe-retry decisions. Processing continues through other rows;
 internal delivery errors produce the generic batch error `email delivery failed`.
 See [email-outbox.ts](src/email-outbox.ts) and its
@@ -132,8 +139,9 @@ to record crossings and return alerts still due.
 
 `deliverAndCheckVolume` checks volume even after delivery fails, and checks both
 start and end days when a run crosses Kuwait midnight. It raises each alert
-before marking it alerted, leaving failed alerts due for the next run. These
-rules are in [email-volume.ts](src/email-volume.ts). The
+before marking it alerted, leaving failed alerts due until a later check of
+their own Kuwait day. A later run checking only a newer day does not retry
+those older alerts. These rules are in [email-volume.ts](src/email-volume.ts). The
 [PostgreSQL store](../db/src/postgres-email-outbox-store.ts) counts `sent` attempts,
 records every crossed level once per day and returns unalerted levels in order.
 The [worker](../../apps/worker/src/index.ts) emits the closed `email_volume` job
