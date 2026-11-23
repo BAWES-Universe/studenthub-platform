@@ -11,6 +11,7 @@ import { openPersonalPhotoSourceFromEnv } from "../../../../packages/private-doc
 import { StaffMessagesService } from "../../../../packages/comms/src/staff-messages.js";
 import { blockListOf, parseTrustedProxies } from "../../../../packages/access/src/index.js";
 import { hasOperatorStaffGrant } from "../wiring/profile.js";
+import { isOperatorAdmin } from "../../../../packages/work/src/staff-time.js";
 import { publicCheckLimit } from "../reports/id-cards-http.js";
 import type { StaffMessagesHttpService } from "./staff-messages-http.js";
 
@@ -82,7 +83,8 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
   const staffTime = new PostgresWorkStaffTimeStore(pool);
   const statistics = new StatisticsService(statisticsStore, authority, undefined, { companies, staffTime });
   const recruiters = new RecruiterActivityService(statisticsStore, authority, staffTime);
-  const operations = new OperationsService({ summary: viewer => summary.today(viewer), team: (viewer, day) => recruiters.page(viewer, { from: day, to: day }) }, authority);
+  const operations = new OperationsService({ summary: viewer => summary.today(viewer),
+    isOperatorAdmin: async viewer => isOperatorAdmin(await options.authzStore.listGrantsForPrincipal(viewer)), team: (viewer, day) => recruiters.page(viewer, { from: day, to: day }) }, authority);
   const firings = new FiringHitMapService(statisticsStore, authority, undefined, new PostgresFiringSpikeStore({ pool, operatorOrgIds: DEFAULT_OPERATOR_ORG_IDS }));
   return { http: { isStaff: authority.isStaff, send: (sender, input) => service.send(sender, input),
     deliveryLog: (person, offset, limit) => emails.deliveryLog(person, offset, limit),

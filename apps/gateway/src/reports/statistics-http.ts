@@ -112,11 +112,15 @@ function rangeOf(req: IncomingMessage): RecruiterActivityRange | null {
 function operationsHtml(page: OperationsPage): string {
   const attention = page.attention.map(r => `<tr><td>${esc(r.label)}</td><td>${r.value === null ? `Not available <small>(waits on ${esc(r.waitsOn ?? "")})</small>` : esc(String(r.value))}</td></tr>`).join("");
   const team = RECRUITER_ACTIVITY_COLUMNS.map(c => `<tr><td>${esc(c.label)}</td><td>${page.team.totals[c.key]}</td></tr>`).join("");
+  // Standup and staff time admit operator admins only, so only they get those links.
+  const admin: [string, string, string][] = page.operatorAdmin ? [
+    [STANDUP_PATH, "Standup", "today's answers, and the questions"],
+    [STAFF_TIME_PATH, "Staff time", "every staff member's work sessions and hours, and who has not started"],
+  ] : [];
   const links: [string, string, string][] = [
     [MORNING_SUMMARY_PATH, "Morning summary", "the counters above, and the 8:00 email"],
     [RECRUITERS_PATH, "What each staff member did", "productivity per person, today or any range"],
-    [STANDUP_PATH, "Standup", "today's answers (operator admins keep the questions)"],
-    [STAFF_TIME_PATH, "Staff time", "who started a work session, and hours"],
+    ...admin,
     [`${ID_CARDS_PATH}?view=needs`, "Assigned without an ID card", "people placed at a store who have no card"],
     [`${ID_CARDS_PATH}?view=expired`, "Assigned with an expired ID card", "cards to renew"],
     [STATISTICS_PATH, "Statistics", "dashboard counters, hiring, invitations and emails"],

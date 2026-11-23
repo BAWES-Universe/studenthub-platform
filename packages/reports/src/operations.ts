@@ -12,6 +12,8 @@ export interface OperationsSources {
   /** Today's morning summary for a staff member; undefined for anyone else. */
   summary(viewer: string): Promise<{ readonly day: string; readonly rows: readonly MorningSummaryRow[] } | undefined>;
   /** What the team recorded on one Kuwait day; undefined for anyone else. */
+  /** Whether the viewer is an operator admin (the work lane's check), who also sees the standup and staff time pages. */
+  isOperatorAdmin(viewer: string): Promise<boolean>;
   team(viewer: string, day: string): Promise<{ readonly totals: RecruiterActivityCounts; readonly staff: readonly unknown[] } | { readonly refused: unknown } | undefined>;
 }
 export interface OperationsPage {
@@ -19,6 +21,8 @@ export interface OperationsPage {
   /** The morning summary's counters, in its order; a counter whose source has not landed is null with what it waits on. */
   readonly attention: readonly MorningSummaryRow[];
   readonly team: { readonly staff: number; readonly totals: RecruiterActivityCounts };
+  /** True for an operator admin: the standup and staff time pages admit only them, so only they get those links. */
+  readonly operatorAdmin: boolean;
 }
 
 export class OperationsService {
@@ -30,9 +34,9 @@ export class OperationsService {
     const summary = await this.#sources.summary(viewer);
     if (!summary) return undefined;
     // The team's day is the summary's, so both halves of the page are for the same Kuwait day.
-    const team = await this.#sources.team(viewer, summary.day);
+    const [team, operatorAdmin] = await Promise.all([this.#sources.team(viewer, summary.day), this.#sources.isOperatorAdmin(viewer)]);
     if (!team) return undefined;
     if ("refused" in team) throw new Error(`team totals refused for ${summary.day}`);
-    return { day: summary.day, attention: summary.rows, team: { staff: team.staff.length, totals: team.totals } };
+    return { day: summary.day, attention: summary.rows, team: { staff: team.staff.length, totals: team.totals }, operatorAdmin };
   }
 }

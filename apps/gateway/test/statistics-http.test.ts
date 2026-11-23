@@ -166,13 +166,14 @@ test("REPORTS_RECRUITERS_HTTP without the source the page is not found, and the 
 });
 
 test("REPORTS_OPERATIONS_HTTP staff see today's operations and the links to every operational report; everyone else gets not found", async (t) => {
-  const isStaff = async (id: string) => id === "staff";
+  const isStaff = async (id: string) => id === "staff" || id === "boss";
   const totals = { placements: 1, requests: 2, suggestions: 3, notes: 4, invitations: 5, invitationsAccepted: 1, invitationsDeclined: 0 };
   const operations = new OperationsService({ async summary() { return { day: "2026-11-23", rows: [{ key: "activeRequests", label: "Active requests", value: 4, waitsOn: null },
-    { key: "transfers", label: "Transfers <due>", value: null, waitsOn: "the pay lane" }] }; }, async team() { return { totals, staff: ["staff", "omar"] }; } }, { isStaff });
+    { key: "transfers", label: "Transfers <due>", value: null, waitsOn: "the pay lane" }] }; }, async team() { return { totals, staff: ["staff", "omar"] }; },
+    async isOperatorAdmin(id: string) { return id === "boss"; } }, { isStaff });
   const service = { isStaff, statistics: { page: async () => undefined, operations: (v: string) => operations.page(v) } } as unknown as IdCardsHttpService;
   const server = createServer(async (req, res) => {
-    if (!await handleIdCards(req, res, service, "https://studenthub.example", async s => ({ "s-alia": "alia", "s-staff": "staff" } as Record<string, string>)[s])) { res.writeHead(418); res.end(); }
+    if (!await handleIdCards(req, res, service, "https://studenthub.example", async s => ({ "s-alia": "alia", "s-staff": "staff", "s-boss": "boss" } as Record<string, string>)[s])) { res.writeHead(418); res.end(); }
   });
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
   t.after(() => new Promise<void>(r => server.close(() => r())));
@@ -188,8 +189,12 @@ test("REPORTS_OPERATIONS_HTTP staff see today's operations and the links to ever
   assert.match(html, /<td>Active requests<\/td><td>4<\/td>/);
   assert.match(html, /<td>Transfers &lt;due&gt;<\/td><td>Not available <small>\(waits on the pay lane\)<\/small><\/td>/);
   assert.match(html, /<td>Notes<\/td><td>4<\/td>/);
-  for (const href of ["/workspace/morning-summary", "/workspace/statistics/recruiters", "/work/standup", "/work/staff-time", "/workspace/id-cards?view=needs", "/workspace/id-cards?view=expired", "/workspace/statistics", "/workspace/statistics/firings"])
+  for (const href of ["/workspace/morning-summary", "/workspace/statistics/recruiters", "/workspace/id-cards?view=needs", "/workspace/id-cards?view=expired", "/workspace/statistics", "/workspace/statistics/firings"])
     assert.ok(html.includes(`<a href="${href}">`), href);
+  for (const href of ["/work/standup", "/work/staff-time"]) assert.ok(!html.includes(href), `ordinary staff do not get ${href}, which admits operator admins only`);
+  const admin = await (await call("s-boss", "text/html")).text();
+  for (const href of ["/work/standup", "/work/staff-time", "/workspace/statistics/recruiters"]) assert.ok(admin.includes(`<a href="${href}">`), `operator admin gets ${href}`);
+  assert.equal((await (await call("s-boss")).json() as { operatorAdmin: boolean }).operatorAdmin, true);
   assert.equal((await call("s-staff", "application/json", "POST")).status, 405);
   for (const session of ["", "s-alia"]) assert.equal((await call(session)).status, 404, session);
 });
