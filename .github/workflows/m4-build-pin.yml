@@ -1,9 +1,11 @@
 name: M-4 importer build pin
 
 # A fresh install and build of this exact commit, with exactly the operator's steps and nothing
-# else run first, prints the digest of the installed runtime the M-4 importer would load. A staging
-# run is given this digest for the same commit (M4_ARTIFACT_DIGEST); its launcher
-# (tools/legacy-import/m4-launch.mjs) refuses to load the importer unless its own runtime matches.
+# else run first, prints the digest of the whole checkout the M-4 importer would load, with the
+# platform and Node version. The pin line is issued (exit 0) only for a clean, complete build whose
+# HEAD is the declared commit, and says where it came from (source=push or source=pull_request).
+# A staging run uses only a source=push pin for the deployed main commit (M4_ARTIFACT_DIGEST); its
+# launcher (tools/legacy-import/m4-launch.mjs) refuses to load the importer unless its own matches.
 on:
   pull_request:
   push:
@@ -19,6 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -26,4 +29,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - name: Pin the M-4 importer build
-        run: node tools/legacy-import/m4-launch.mjs provenance
+        env:
+          PIN_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          PIN_SOURCE: ${{ github.event_name }}
+        run: node tools/legacy-import/m4-launch.mjs provenance --expect "$PIN_COMMIT" --source "$PIN_SOURCE"

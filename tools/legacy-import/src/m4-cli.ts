@@ -5,11 +5,12 @@
  * through the launcher, which verifies the runtime before this module is loaded:
  *   node tools/legacy-import/m4-launch.mjs plan
  *   node tools/legacy-import/m4-launch.mjs write
- * Run directly, this module refuses (`refused.launcher`).
+ * This module is not an entry point: it only exports `main`, which the launcher calls.
  *
  * Build provenance. The launcher loads this module only from a clean git checkout whose HEAD is
- * M4_REVISION and whose installed runtime (built dist trees, workspace manifests, node_modules as
- * installed, lockfile) hashes to M4_ARTIFACT_DIGEST, the digest CI printed for that same commit.
+ * M4_REVISION, with nothing untracked outside .gitignore, after a clean Node start, from a
+ * read-only tree whose every file and symlink outside .git, together with the platform and Node
+ * major version, hashes to M4_ARTIFACT_DIGEST, the digest CI printed for that same commit.
  * It hands the verified provenance in, and plan and write check it again against the pins.
  *
  * Every invocation is named by M4_INVOCATION (a fresh UUID) and owns its own files in
@@ -34,7 +35,7 @@
  * lock is not held across the filesystem write.
  *
  *   plan   Reads the legacy copy and maps every table. Writes nothing to the platform. Publishes
- *          the plan identity: a sha256 over the stated revision, the built artifact's digest,
+ *          the plan identity: a sha256 over the stated revision, the runtime digest,
  *          the refresh read, the destination (M4_TARGET_ID, M4_OPERATOR_ORG_ID) and every
  *          mapped row's legacy id and digest.
  *   write  Refuses unless M4_EXPECTED_PLAN equals the identity it computes now, the target
@@ -71,7 +72,6 @@
 import { spawn } from "node:child_process";
 import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { PostgresCatalogueImportStore, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresStoreImportStore } from "@studenthub/db/import";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
@@ -458,10 +458,4 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     await target?.close();
     if (lock.held) lock.release();
   }
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  // Run directly, nothing verified the runtime before it loaded: only the launcher may run this.
-  console.error("m4: refused.launcher");
-  process.exitCode = 2;
 }
