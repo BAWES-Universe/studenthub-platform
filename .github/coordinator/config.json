@@ -54,8 +54,8 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-675",
-      "SHU-676"
+      "SHU-685",
+      "SHU-686"
     ]
   },
   "adapter_pause_map": {},
@@ -10181,6 +10181,48 @@
         "apps/gateway/src/organizations/stores-page.ts",
         "apps/gateway/test/organization-stores-page.test.ts",
         "apps/gateway/test/organization-stores-page-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-685",
+      "authorization_ref": "SHU-685",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-06: the company notes page at /organization/:orgId/notes with list and a typed note added through preview and confirm, over the existing organizationNotes service; adds one call to the organization pages dispatcher, a new notes page and its own tests. It waits on nothing and shares no path with SHU-686.",
+      "initial_build_paths": [
+        "apps/gateway/src/organizations/pages.ts",
+        "apps/gateway/src/organizations/notes-page.ts",
+        "apps/gateway/test/organization-notes-page.test.ts",
+        "apps/gateway/test/organization-notes-page-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/organizations/pages.ts",
+        "apps/gateway/src/organizations/notes-page.ts",
+        "apps/gateway/test/organization-notes-page.test.ts",
+        "apps/gateway/test/organization-notes-page-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-686",
+      "authorization_ref": "SHU-686",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix A-07 read half: the staff reference data pages at /reference-data and /reference-data/:catalogue over the existing ReferenceCatalogue.list; adds the reference-data-page route after the catalogue route, a new page and its own tests. It waits on nothing and shares no path with SHU-685.",
+      "initial_build_paths": [
+        "apps/gateway/src/reference-data-page.ts",
+        "apps/gateway/src/routes/catalogue.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/reference-data-page.test.ts",
+        "apps/gateway/test/reference-data-page-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/reference-data-page.ts",
+        "apps/gateway/src/routes/catalogue.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/reference-data-page.test.ts",
+        "apps/gateway/test/reference-data-page-mutations.mjs"
       ]
     }
   ],
