@@ -58,10 +58,14 @@ function listHtml(page: PayHistoryPage): string {
     + `<td>${esc(e.currencyCode)} ${esc(e.total)}</td><td>Paid</td><td><a href="${esc(`${PAY_HISTORY_PATH}/${encodeURIComponent(e.lineId)}`)}">Details</a></td></tr>`).join("");
   const nav = [page.page > 1 ? `<a href="${PAY_HISTORY_PATH}?page=${page.page - 1}">Newer</a>` : "", page.page < page.pageCount ? `<a href="${PAY_HISTORY_PATH}?page=${page.page + 1}">Older</a>` : ""]
     .filter(Boolean).join(" ");
-  return `<main><h1>My pay</h1><p>Pay you have received, newest first.</p>${page.entries.length
+  // A page past the end keeps its way back: only an empty history says there is nothing at all.
+  const body = page.entries.length
     ? `<table><thead><tr><th>Period</th><th>Company</th><th>Store</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
       + `<p>Page ${page.page} of ${page.pageCount}</p>${nav ? `<nav>${nav}</nav>` : ""}`
-    : "<p>No pay has been received yet.</p>"}</main>`;
+    : page.total === 0
+      ? "<p>No pay has been received yet.</p>"
+      : `<p>There is no pay on page ${page.page}.</p><nav><a href="${PAY_HISTORY_PATH}">Back to my pay</a></nav>`;
+  return `<main><h1>My pay</h1><p>Pay you have received, newest first.</p>${body}</main>`;
 }
 function detailHtml(d: PayHistoryDetail): string {
   const worked = d.worked ? `<dt>Hours worked</dt><dd>${esc(d.worked.hours)} h ${d.worked.minutes} min</dd><dt>Hourly rate</dt><dd>${esc(d.currencyCode)} ${esc(d.worked.hourlyRate)}</dd>` : "";

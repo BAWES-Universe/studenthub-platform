@@ -40,6 +40,9 @@ test("PAY_HISTORY_HTTP a person lists their own pay as JSON or a page, newest fi
   await x.call("/pay?page=2", ME);
   assert.deepEqual(x.calls.filter(c => c.startsWith("list:")), ["list:me:1", "list:me:1", "list:me:2"]);
   assert.match(await (await x.call("/pay", OTHER, "text/html")).text(), /No pay has been received yet/);
+  const past = await (await x.call("/pay?page=2", ME, "text/html")).text();
+  assert.match(past, /There is no pay on page 2/); assert.match(past, /href="\/pay">Back to my pay/);
+  assert.doesNotMatch(past, /No pay has been received yet/, "a page past the end is not an empty history");
 });
 
 test("PAY_HISTORY_HTTP one line shows its worked time and the candidate's rate", async (t) => {
