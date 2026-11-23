@@ -54,8 +54,8 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-685",
-      "SHU-686"
+      "SHU-698",
+      "SHU-699"
     ]
   },
   "adapter_pause_map": {},
@@ -10223,6 +10223,40 @@
         "apps/gateway/test/routes-order.test.ts",
         "apps/gateway/test/reference-data-page.test.ts",
         "apps/gateway/test/reference-data-page-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-698",
+      "authorization_ref": "SHU-698",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 2 (recruit), release matrix C-08: the invitation detail page at /recruit/invitations/:id with the same accept, decline and seen actions as the list, over the existing recruitInvitations mine(); edits only invitations-http.ts and its own tests, adds no route. It waits on nothing and shares no path with SHU-699.",
+      "initial_build_paths": [
+        "apps/gateway/src/recruit/invitations-http.ts",
+        "apps/gateway/test/recruit-invitation-detail.test.ts",
+        "apps/gateway/test/recruit-invitation-detail-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/recruit/invitations-http.ts",
+        "apps/gateway/test/recruit-invitation-detail.test.ts",
+        "apps/gateway/test/recruit-invitation-detail-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-699",
+      "authorization_ref": "SHU-699",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 2 (recruit), release matrix C-09: the read-only interview detail page at /recruit/interviews/:id over the existing recruitInterviews mine(); edits only interviews-http.ts and its own tests, adds no route. It waits on nothing and shares no path with SHU-698.",
+      "initial_build_paths": [
+        "apps/gateway/src/recruit/interviews-http.ts",
+        "apps/gateway/test/recruit-interview-detail.test.ts",
+        "apps/gateway/test/recruit-interview-detail-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/recruit/interviews-http.ts",
+        "apps/gateway/test/recruit-interview-detail.test.ts",
+        "apps/gateway/test/recruit-interview-detail-mutations.mjs"
       ]
     }
   ],
