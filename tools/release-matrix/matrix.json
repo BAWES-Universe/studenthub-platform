@@ -1165,10 +1165,17 @@
     "A-22": {
       "lane": "comms",
       "subject": "`/communications/campaigns`",
+      "served": [
+        {
+          "route": "/communications/campaigns",
+          "test": "apps/gateway/test/campaigns-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",
-          "note": "partly built (audit 2026-11-20): one-to-one staff messages and emails; no campaigns page"
+          "note": "UTM campaigns page built on branch; email-campaign half dropped 2026-10-04. Evidence set once the PR head is known. Signups and revenue show as not available (access and pay lanes)."
         },
         "verified": {
           "state": "open"

@@ -321,3 +321,17 @@ emails: people, Q16-2 and Q16-3) send through this lane's outbox when those lane
 their class.
 
 The person reminder emails, the largest open non-pay gap after slice 9, are slice 10.
+
+## A-22 marketing campaigns (UTM) build notes
+
+Legacy evidence (`BAWES-Universe/studenthub` @ 55119d3): `common/models/Campaign.php` and admin's campaign screens (ADM-B081..084). Legacy keyed a campaign by a `utm_` UUID that also went into links, kept one running `no_of_clicks` counter, and wrote `no_of_signups` and `total_revenue` from elsewhere.
+
+Page `/communications/campaigns` (staff only; everyone else gets the same not found, every method). It serves the UTM half of A-22 only: "email campaigns" were dropped on 2026-10-04, so none are built.
+
+Changes from legacy, by the rule that legacy prod is the benchmark and best practice wins:
+- The campaign has its own id; the five UTM values are unique together among live campaigns (`marketing_campaigns_utm_live_idx`, `NULLS NOT DISTINCT` so an empty content or term still counts as the same tag), so the same link is never two campaigns. A retired campaign frees its UTM values for a new live one.
+- Clicks are counted per campaign and per Kuwait day (`marketing_campaign_clicks`), so a campaign's history can be read and a day checked against its source rows, where legacy kept one counter and lost the history. The page shows recent clicks (last `CAMPAIGN_CLICK_DAYS` = 30 days) and all-time. The public click endpoint is a later follow-up; it is the only write that would come from outside staff.
+- A campaign is retired (`retired_at`), never deleted, and append-only/retire-only triggers enforce it, so the clicks already counted keep their campaign. Retired campaigns sort last.
+- Signups and revenue are not stored here: attribution at signup is the access lane's and revenue the pay lane's, so both show as "not available" with what they wait on, never 0.
+
+Files: `packages/reports/src/campaigns.ts` (`CampaignsService`/`CampaignsStore`, `campaignValues` validation mirroring legacy's limits — the three required UTM fields, 100 characters, investment at most 9 digits and 3 decimals, never negative), `packages/db/src/reports/postgres-campaigns-store.ts` (`PostgresCampaignsStore`, migration 0357_marketing_campaigns), `apps/gateway/src/reports/campaigns-http.ts` (same staff check and same-origin POST as the statistics pages; create/update/retire by the form's `action`, PRG redirect on success, the page re-rendered with the reason on a refusal).

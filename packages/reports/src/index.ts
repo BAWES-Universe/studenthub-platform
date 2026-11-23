@@ -13,3 +13,4 @@ export * from "./firing-hit-map.js";
 export * from "./firing-spike.js";
 export * from "./recruiter-activity.js";
 export * from "./operations.js";
+export * from "./campaigns.js";
