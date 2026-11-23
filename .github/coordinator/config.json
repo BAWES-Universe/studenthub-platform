@@ -54,9 +54,8 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-665",
-      "SHU-667",
-      "SHU-668"
+      "SHU-675",
+      "SHU-676"
     ]
   },
   "adapter_pause_map": {},
@@ -10148,6 +10147,40 @@
       ],
       "after": [
         "SHU-665"
+      ]
+    },
+    {
+      "id": "SHU-675",
+      "authorization_ref": "SHU-675",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-03 company pages part 2 of 3: the owner's edit page with preview and confirm over the existing organizationProfile safe write; edits only edit-page.ts and its own tests. Re-queues SHU-667, which never lands; SHU-665 is already on main, so it waits on nothing.",
+      "initial_build_paths": [
+        "apps/gateway/src/organizations/edit-page.ts",
+        "apps/gateway/test/organization-edit-page.test.ts",
+        "apps/gateway/test/organization-edit-page-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/organizations/edit-page.ts",
+        "apps/gateway/test/organization-edit-page.test.ts",
+        "apps/gateway/test/organization-edit-page-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-676",
+      "authorization_ref": "SHU-676",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-05 read half, company pages part 3 of 3: the company's store list page over the existing organizationStores.list; edits only stores-page.ts and its own tests. Re-queues SHU-668, which never lands; SHU-665 is already on main, so it waits on nothing.",
+      "initial_build_paths": [
+        "apps/gateway/src/organizations/stores-page.ts",
+        "apps/gateway/test/organization-stores-page.test.ts",
+        "apps/gateway/test/organization-stores-page-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/organizations/stores-page.ts",
+        "apps/gateway/test/organization-stores-page.test.ts",
+        "apps/gateway/test/organization-stores-page-mutations.mjs"
       ]
     }
   ],
