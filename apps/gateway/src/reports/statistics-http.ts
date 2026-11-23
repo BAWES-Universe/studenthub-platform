@@ -43,6 +43,7 @@ function html(page: StatisticsPage): string {
     + `<p>An assignment counts as retained once it has lasted more than 365 days, including one that is still running.</p>`
     + `<h2>Overview</h2>${table(page.overview, "Total")}`
     + invitationsHtml(page.invitationsByMonth)
+    + emailsHtml(page.emailsByDay, page.emailThreshold)
     + `<p><a href="${FIRING_HIT_MAP_PATH}">Placements ended per company, last 12 months</a></p>`
     + `<p><a href="${RECRUITERS_PATH}">What each staff member did today</a></p></main>`;
 }
@@ -57,6 +58,13 @@ function invitationsHtml(months: StatisticsPage["invitationsByMonth"]): string {
   return `<h2>Invitations by month</h2><p>Invitations sent in each of the last 12 whole months (Kuwait time), oldest first, and how each one stands now.</p>`
     + `<table><thead><tr><th scope="col">Month</th><th scope="col">Sent</th><th scope="col">No answer yet</th><th scope="col">Accepted</th><th scope="col">Declined</th>`
     + `<th scope="col">Withdrawn</th><th scope="col">Acceptance rate</th><th scope="col">Decline rate</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function emailsHtml(days: StatisticsPage["emailsByDay"], threshold: number): string {
+  const most = Math.max(1, ...days.map(d => d.sent));
+  const rows = days.map(d => `<tr><th scope="row">${esc(d.day)}</th><td><meter min="0" max="${most}" high="${threshold}" value="${d.sent}"></meter> ${d.sent}${d.overThreshold ? ` <strong>(over ${threshold})</strong>` : ""}</td><td>${d.failed}</td></tr>`).join("");
+  return `<h2>Emails sent per day</h2><p>Emails sent in each of the last ${days.length} days (Kuwait time), oldest first. Past ${threshold} in a day, the daily volume alert goes out.</p>`
+    + `<table><thead><tr><th scope="col">Day</th><th scope="col">Sent</th><th scope="col">Failed attempts</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 const LEVEL = { danger: "more than twice the average", warning: "more than the average" } as const;
