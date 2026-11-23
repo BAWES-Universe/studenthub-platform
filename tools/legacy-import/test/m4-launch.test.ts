@@ -207,6 +207,26 @@ test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a 
       chownSync(path.join(c.root, ".git/config"), RUNNER, RUNNER);
       return same(c, d);
     }, writable: true, after: (c) => { assert.equal(existsSync(path.join(c.outDir, "git-ran.txt")), false, "git read the runner's config"); } },
+    // A protected link inside .git to a file the runner can write: git must never follow it.
+    { name: "git config linked to a runner file", change: (c, d) => {
+      const mark = path.join(c.outDir, "git-ran.txt");
+      writeFileSync(path.join(c.outDir, "fsmonitor.sh"), `#!/bin/sh\necho ran > ${JSON.stringify(mark)}\n`, { mode: 0o755 });
+      const config = path.join(c.outDir, "config");
+      writeFileSync(config, readFileSync(path.join(c.root, ".git/config"), "utf8") + `\n[core]\n\tfsmonitor = ${path.join(c.outDir, "fsmonitor.sh")}\n`);
+      chownSync(config, RUNNER, RUNNER);
+      rmSync(path.join(c.root, ".git/config"));
+      symlinkSync(config, path.join(c.root, ".git/config"));
+      return same(c, d);
+    }, after: (c) => { assert.equal(existsSync(path.join(c.outDir, "git-ran.txt")), false, "git followed the link"); } },
+    { name: "git config including a runner file", change: (c, d) => {
+      const mark = path.join(c.outDir, "git-ran.txt");
+      writeFileSync(path.join(c.outDir, "fsmonitor.sh"), `#!/bin/sh\necho ran > ${JSON.stringify(mark)}\n`, { mode: 0o755 });
+      const extra = path.join(c.outDir, "extra.gitconfig");
+      writeFileSync(extra, `[core]\n\tfsmonitor = ${path.join(c.outDir, "fsmonitor.sh")}\n`);
+      chownSync(extra, RUNNER, RUNNER);
+      writeFileSync(path.join(c.root, ".git/config"), `\n[include]\n\tpath = ${extra}\n`, { flag: "a" });
+      return same(c, d);
+    }, after: (c) => { assert.equal(existsSync(path.join(c.outDir, "git-ran.txt")), false, "git read the included file"); } },
     { name: "writable git store", change: (c, d) => { chmodTree(c.root, false); chmodSync(path.join(c.root, ".git/config"), 0o644); return same(c, d); }, writable: true },
     { name: "git store elsewhere", change: (c, d) => {
       const store = path.join(c.scratch, "store.git");
