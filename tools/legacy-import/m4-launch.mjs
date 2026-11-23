@@ -29,7 +29,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -134,6 +134,11 @@ export function gitStoreProblems(root, euid) {
   // A `.git` file (`gitdir: ...`) would send git to a store outside the checkout.
   if (!lstatSync(store).isDirectory()) return [store];
   visit(store);
+  // Files that make git read another store: a shared common directory (with its own config) or
+  // alternate object stores. Neither is part of a plain clone.
+  for (const rel of ["commondir", "gitdir", "objects/info/alternates", "objects/info/http-alternates"]) {
+    if (existsSync(path.join(store, rel))) problems.push(path.join(store, rel));
+  }
   // Config includes would make git read files outside the store; refuse any include section.
   const config = path.join(store, "config");
   if (problems.length === 0 && /^\s*\[\s*include(if)?\b/im.test(readFileSync(config, "utf8"))) problems.push(config);

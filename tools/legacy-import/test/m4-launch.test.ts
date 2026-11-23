@@ -244,6 +244,18 @@ test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a 
       writeFileSync(path.join(c.root, ".git/config"), `\n[include]\n\tpath = ${extra}\n`, { flag: "a" });
       return same(c, d);
     }, after: (c) => { assert.equal(existsSync(path.join(c.outDir, "git-ran.txt")), false, "git read the included file"); } },
+    // A shared common directory carries its own config, which git would read instead.
+    { name: "git store sharing another common directory", change: (c, d) => {
+      const mark = path.join(c.outDir, "git-ran.txt");
+      writeFileSync(path.join(c.outDir, "fsmonitor.sh"), `#!/bin/sh\necho ran > ${JSON.stringify(mark)}\n`, { mode: 0o755 });
+      const common = path.join(c.outDir, "common.git");
+      spawnSync("cp", ["-a", path.join(c.root, ".git"), common]);
+      writeFileSync(path.join(common, "config"), `\n[core]\n\tfsmonitor = ${path.join(c.outDir, "fsmonitor.sh")}\n`, { flag: "a" });
+      spawnSync("chown", ["-R", `${RUNNER}:${RUNNER}`, common]);
+      writeFileSync(path.join(c.root, ".git/commondir"), `${common}\n`);
+      return same(c, d);
+    }, after: (c) => { assert.equal(existsSync(path.join(c.outDir, "git-ran.txt")), false, "git read the shared store"); } },
+    { name: "alternate object store", change: (c, d) => { mkdirSync(path.join(c.root, ".git/objects/info"), { recursive: true }); writeFileSync(path.join(c.root, ".git/objects/info/alternates"), `${path.join(c.outDir, "objects")}\n`); return same(c, d); } },
     { name: "writable git store", change: (c, d) => { chmodTree(c.root, false); chmodSync(path.join(c.root, ".git/config"), 0o644); return same(c, d); }, writable: true },
     { name: "git store elsewhere", change: (c, d) => {
       const store = path.join(c.scratch, "store.git");
