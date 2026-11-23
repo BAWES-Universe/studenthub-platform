@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { acquireRun, claimKey, releaseRun } from "../src/lane.js";
-import { BOOTSTRAP, cleanupRun, main, readAtRemoteMain, redact, runDir, setupRun, TickError } from "../src/tick.js";
+import { BOOTSTRAP, cleanupRun, TEARDOWN, main, readAtRemoteMain, redact, runDir, setupRun, TickError } from "../src/tick.js";
 
 const BOT = "studenthub-universe";
 const NOW = new Date("2026-11-23T21:00:00Z");
@@ -123,23 +123,79 @@ test("cleanup removes a tree only for the holder of its owner nonce, and never a
   assert.equal(git(b.dir, "rev-parse", "HEAD"), w.first);
 });
 
-test("the Part C bootstrap, run verbatim, pins by SHA and writes no shared ref or FETCH_HEAD", () => {
+/** Fills the Part C placeholders for one wake. */
+function filler(values: { sha?: string; ticks: string; run: string; clone: string; launch?: string; owner?: string }) {
+  return (step: string): string => step
+    .replaceAll("<sha>", values.sha ?? "<sha>").replaceAll("<ticks-dir>", values.ticks).replaceAll("<run-id>", values.run)
+    .replaceAll("<clone>", values.clone).replaceAll("<launch>", values.launch ?? "<launch>").replaceAll("<owner>", values.owner ?? "<owner>");
+}
+
+const sh = (cwd: string, line: string) => run("sh", ["-c", line], { cwd, encoding: "utf8" }).then((r) => ({ code: 0, out: r.stdout }), (e: { code: number; stdout: string }) => ({ code: e.code, out: e.stdout }));
+
+/** One wake through the Part C shell lines, verbatim, up to its setup JSON. */
+async function wake(w: ReturnType<typeof world>, runId: string, sha: string) {
+  let fill = filler({ sha, ticks: w.ticks, run: runId, clone: w.clone });
+  assert.equal((await sh(w.clone, fill(BOOTSTRAP[1]))).code, 0);
+  const launch = (await sh(w.clone, fill(BOOTSTRAP[2]))).out.trim();
+  fill = filler({ sha, ticks: w.ticks, run: runId, clone: w.clone, launch });
+  assert.equal((await sh(w.clone, fill(BOOTSTRAP[3]))).code, 0);
+  return { launch, fill };
+}
+
+test("the Part C bootstrap and teardown, run verbatim, pin by SHA and write no shared ref or FETCH_HEAD", async () => {
   const w = world();
   const handover = readFileSync(path.join(ROOT, "docs/lanes/orca/HANDOVER.md"), "utf8");
-  for (const step of BOOTSTRAP) assert.ok(handover.includes(`\`${step}\``), `HANDOVER Part C must carry: ${step}`);
+  for (const step of [...BOOTSTRAP, ...TEARDOWN]) assert.ok(handover.includes(`\`${step}\``), `HANDOVER Part C must carry: ${step}`);
   const before = shared(w.clone);
-  mkdirSync(w.ticks, { recursive: true });
-  const ls = execFileSync("sh", ["-c", BOOTSTRAP[0]], { cwd: w.clone, encoding: "utf8" });
-  const sha = ls.split(/\s+/)[0]!;
+  const sha = (await sh(w.clone, BOOTSTRAP[0])).out.split(/\s+/)[0]!;
   w.commit("c2-after-resolve");
-  const fill = (step: string) => step.replaceAll("<sha>", sha).replaceAll("<ticks-dir>", w.ticks).replaceAll("<run-id>", "boot").replaceAll("<clone>", w.clone);
-  execFileSync("sh", ["-c", fill(BOOTSTRAP[1])], { cwd: w.clone });
-  execFileSync("sh", ["-c", fill(BOOTSTRAP[2])], { cwd: w.clone });
-  const out = JSON.parse(execFileSync("sh", ["-c", fill(BOOTSTRAP[3])], { cwd: w.clone, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+  const { launch, fill } = await wake(w, "20261124T061512Z-3fa9", sha);
+  const out = JSON.parse((await sh(w.clone, fill(BOOTSTRAP[4]))).out);
   assert.equal(out.status, "ready");
-  assert.equal(out.sha, sha);
-  assert.equal(sha, w.first);
+  assert.equal(out.sha, w.first);
   assert.equal(git(out.dir, "rev-parse", "HEAD"), w.first);
+  assert.deepEqual(shared(w.clone), before);
+  const end = filler({ ticks: w.ticks, run: out.run, clone: w.clone, launch, owner: out.owner });
+  assert.equal(JSON.parse((await sh(w.clone, end(TEARDOWN[0]))).out).status, "removed");
+  assert.equal((await sh(w.clone, end(TEARDOWN[1]))).code, 0);
+  assert.equal(existsSync(out.dir), false);
+  assert.deepEqual(readdirSync(path.join(w.ticks, ".launch")), []);
+  assert.deepEqual(shared(w.clone), before);
+});
+
+test("simultaneous same-id wakes through the shell bootstrap and teardown: each has its own launcher, and only the winner's cleanup removes the tree", async () => {
+  const w = world();
+  const before = shared(w.clone);
+  const runId = "20261124T061512Z-3fa9";
+  const sha = (await sh(w.clone, BOOTSTRAP[0])).out.split(/\s+/)[0]!;
+  // All three wakes create and write their launchers before any setup runs, then set up at once.
+  const wakes = await Promise.all([wake(w, runId, sha), wake(w, runId, sha), wake(w, runId, sha)]);
+  assert.equal(new Set(wakes.map((k) => k.launch)).size, 3);
+  const tick = readFileSync(TICK_SOURCE, "utf8");
+  for (const k of wakes) assert.equal(readFileSync(path.join(k.launch, "tick.ts"), "utf8"), tick);
+  const setups = await Promise.all(wakes.map(async (k) => ({ ...k, result: JSON.parse((await sh(w.clone, k.fill(BOOTSTRAP[4]))).out) })));
+  const winners = setups.filter((k) => k.result.status === "ready");
+  const losers = setups.filter((k) => k.result.status !== "ready");
+  assert.equal(winners.length, 1);
+  assert.equal(losers.length, 2);
+  const winner = winners[0]!;
+  // Losers end first: they run only the launcher removal, which must leave the winner's launcher and tree alone.
+  for (const k of losers) {
+    assert.equal(k.result.step, "reserve");
+    assert.equal((await sh(w.clone, filler({ ticks: w.ticks, run: runId, clone: w.clone, launch: k.launch })(TEARDOWN[1]))).code, 0);
+    assert.equal(existsSync(k.launch), false);
+  }
+  assert.equal(readFileSync(path.join(winner.launch, "tick.ts"), "utf8"), tick);
+  assert.equal(git(winner.result.dir, "rev-parse", "HEAD"), sha);
+  // A loser that tried cleanup anyway (it has no owner value) would remove nothing.
+  const stray = await sh(w.clone, filler({ ticks: w.ticks, run: runId, clone: w.clone, launch: winner.launch, owner: "0".repeat(32) })(TEARDOWN[0]));
+  assert.equal(stray.code, 2);
+  assert.equal(existsSync(winner.result.dir), true);
+  const end = filler({ ticks: w.ticks, run: runId, clone: w.clone, launch: winner.launch, owner: winner.result.owner });
+  assert.equal(JSON.parse((await sh(w.clone, end(TEARDOWN[0]))).out).status, "removed");
+  assert.equal((await sh(w.clone, end(TEARDOWN[1]))).code, 0);
+  assert.equal(existsSync(winner.result.dir), false);
+  assert.deepEqual(readdirSync(path.join(w.ticks, ".launch")), []);
   assert.deepEqual(shared(w.clone), before);
 });
 

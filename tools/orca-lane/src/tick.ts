@@ -183,13 +183,25 @@ export function main(argv: readonly string[]): number {
 
 /**
  * The bootstrap a tick runs in the shared clone before anything is built, exactly as HANDOVER Part C
- * gives it. Every step reads by the resolved SHA; none writes a ref or FETCH_HEAD.
+ * gives it. Every step reads by the resolved SHA; none writes a ref or FETCH_HEAD. The launcher lives in
+ * a directory `mktemp -d` creates atomically for this one invocation, so two wakes that pick the same run
+ * id never share, overwrite or remove each other's launcher. `<launch>` is the directory step 3 prints.
  */
 export const BOOTSTRAP = [
   "git ls-remote origin refs/heads/main",
   "git fetch --quiet --no-tags --refmap= --no-write-fetch-head origin refs/heads/main",
-  "git show <sha>:tools/orca-lane/src/tick.ts > <ticks-dir>/launch-<run-id>.ts",
-  "node <ticks-dir>/launch-<run-id>.ts setup --clone <clone> --ticks <ticks-dir> --run <run-id> --sha <sha>",
+  "mkdir -p <ticks-dir>/.launch && mktemp -d <ticks-dir>/.launch/<run-id>.XXXXXX",
+  "git show <sha>:tools/orca-lane/src/tick.ts > <launch>/tick.ts",
+  "node <launch>/tick.ts setup --clone <clone> --ticks <ticks-dir> --run <run-id> --sha <sha>",
+] as const;
+
+/**
+ * How a tick ends. Cleanup runs only after a `ready` setup, with that setup's owner value, through this
+ * invocation's own launcher; removing the launcher directory always runs last, ready or not.
+ */
+export const TEARDOWN = [
+  "node <launch>/tick.ts cleanup --clone <clone> --ticks <ticks-dir> --run <run-id> --owner <owner>",
+  "rm -rf <launch>",
 ] as const;
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main(process.argv.slice(2));
