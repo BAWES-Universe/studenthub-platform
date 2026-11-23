@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StatisticsPage } from "../../../../packages/reports/src/statistics.js";
 import type { FiringHitMap } from "../../../../packages/reports/src/firing-hit-map.js";
 import { RECRUITER_ACTIVITY_COLUMNS, RECRUITER_ACTIVITY_MAX_DAYS, type RecruiterActivityPage, type RecruiterActivityRange, type rangeProblem } from "../../../../packages/reports/src/recruiter-activity.js";
+import type { OperationsPage } from "../../../../packages/reports/src/operations.js";
 import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 
 /**
@@ -17,12 +18,17 @@ export interface StatisticsHttpService {
   /** False when the viewer may not, or the email is not wired. */
   firingSpikeEmail?(viewer: string, on: boolean): Promise<boolean>;
   /** Slice 6: what each staff member recorded over a range of Kuwait days. */
+  /** A-24: today's operations, the entry to every operational report. */
+  operations?(viewer: string): Promise<OperationsPage | undefined>;
   recruiters?(viewer: string, range: RecruiterActivityRange): Promise<RecruiterActivityPage | { readonly refused: ReturnType<typeof rangeProblem> } | undefined>;
 }
 
 export const STATISTICS_PATH = "/workspace/statistics";
 export const FIRING_HIT_MAP_PATH = "/workspace/statistics/firings";
 export const RECRUITERS_PATH = "/workspace/statistics/recruiters";
+export const OPERATIONS_PATH = "/reports/operations";
+// Pages this one links to, served by their own handlers.
+const MORNING_SUMMARY_PATH = "/workspace/morning-summary", ID_CARDS_PATH = "/workspace/id-cards", STANDUP_PATH = "/work/standup", STAFF_TIME_PATH = "/work/staff-time";
 const esc = (v: string) => v.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 function notFound(req: IncomingMessage, res: ServerResponse): true {
@@ -103,6 +109,29 @@ function rangeOf(req: IncomingMessage): RecruiterActivityRange | null {
   return { from: params.get("from"), to: params.get("to") };
 }
 
+function operationsHtml(page: OperationsPage): string {
+  const attention = page.attention.map(r => `<tr><td>${esc(r.label)}</td><td>${r.value === null ? `Not available <small>(waits on ${esc(r.waitsOn ?? "")})</small>` : esc(String(r.value))}</td></tr>`).join("");
+  const team = RECRUITER_ACTIVITY_COLUMNS.map(c => `<tr><td>${esc(c.label)}</td><td>${page.team.totals[c.key]}</td></tr>`).join("");
+  // Standup and staff time admit operator admins only, so only they get those links.
+  const admin: [string, string, string][] = page.operatorAdmin ? [
+    [STANDUP_PATH, "Standup", "today's answers, and the questions"],
+    [STAFF_TIME_PATH, "Staff time", "every staff member's work sessions and hours, and who has not started"],
+  ] : [];
+  const links: [string, string, string][] = [
+    [MORNING_SUMMARY_PATH, "Morning summary", "the counters above, and the 8:00 email"],
+    [RECRUITERS_PATH, "What each staff member did", "productivity per person, today or any range"],
+    ...admin,
+    [`${ID_CARDS_PATH}?view=needs`, "Assigned without an ID card", "people placed at a store who have no card"],
+    [`${ID_CARDS_PATH}?view=expired`, "Assigned with an expired ID card", "cards to renew"],
+    [STATISTICS_PATH, "Statistics", "dashboard counters, hiring, invitations and emails"],
+    [FIRING_HIT_MAP_PATH, "Placements ended per company", "the firing hit map"],
+  ];
+  return `<main><h1>Operations</h1><p>Today, ${esc(page.day)} (Kuwait time).</p>`
+    + `<h2>Needs attention</h2><table><thead><tr><th>What</th><th>Count</th></tr></thead><tbody>${attention}</tbody></table>`
+    + `<h2>The team today</h2><p>${page.team.staff} staff.</p><table><thead><tr><th>What</th><th>Today</th></tr></thead><tbody>${team}</tbody></table>`
+    + `<h2>Reports</h2><ul>${links.map(([href, label, what]) => `<li><a href="${esc(href)}">${esc(label)}</a>: ${esc(what)}</li>`).join("")}</ul></main>`;
+}
+
 const LIMIT = 1024;
 async function emailChoice(req: IncomingMessage): Promise<"on" | "off" | null> {
   if (!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/i.test(req.headers["content-type"] ?? "") || Number(req.headers["content-length"]) > LIMIT) { req.resume(); return null; }
@@ -121,13 +150,13 @@ function json(res: ServerResponse, status: number, body: unknown): true {
 /** Handles the statistics paths; false for any other path. `viewer` is the signed-in person, if any; `origin` is this gateway's, for the email form. */
 export async function handleStatistics(req: IncomingMessage, res: ServerResponse, service: StatisticsHttpService | undefined, path: string, viewer: () => Promise<string | undefined>,
   isStaff: (viewer: string) => Promise<boolean>, origin?: string): Promise<boolean> {
-  if (path !== STATISTICS_PATH && path !== FIRING_HIT_MAP_PATH && path !== RECRUITERS_PATH) return false;
+  if (path !== STATISTICS_PATH && path !== FIRING_HIT_MAP_PATH && path !== RECRUITERS_PATH && path !== OPERATIONS_PATH) return false;
   const posting = req.method === "POST" && path === FIRING_HIT_MAP_PATH;
   if (!posting) req.resume();
   const person = service ? await viewer() : undefined;
   // Authorization first: everyone who is not staff gets the same not found, whatever the method.
   let allowed = false; if (person) try { allowed = await isStaff(person); } catch { /* treated as not staff */ }
-  if (!service || !person || !allowed || (path === FIRING_HIT_MAP_PATH && !service.firingHitMap) || (path === RECRUITERS_PATH && !service.recruiters)) { if (posting) req.resume(); return notFound(req, res); }
+  if (!service || !person || !allowed || (path === FIRING_HIT_MAP_PATH && !service.firingHitMap) || (path === RECRUITERS_PATH && !service.recruiters) || (path === OPERATIONS_PATH && !service.operations)) { if (posting) req.resume(); return notFound(req, res); }
   if (posting) {
     if (!service.firingSpikeEmail) { req.resume(); res.writeHead(405, { allow: "GET" }); res.end(); return true; }
     if (!req.headers.origin || !origin || req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") { req.resume(); return json(res, 403, { status: "forbidden" }); }
@@ -138,6 +167,13 @@ export async function handleStatistics(req: IncomingMessage, res: ServerResponse
     return json(res, 200, { status: "ok", spikeEmail: email === "on" });
   }
   if (req.method !== "GET") { res.writeHead(405, { allow: path === FIRING_HIT_MAP_PATH && service.firingSpikeEmail ? "GET, POST" : "GET" }); res.end(); return true; }
+  if (path === OPERATIONS_PATH) {
+    const page = await service.operations!(person);
+    if (!page) return notFound(req, res);
+    if (!wantsHtml(req.headers.accept)) return json(res, 200, { status: "ok", ...page });
+    writeHtml(res, 200, pageDocument("Operations", operationsHtml(page)), { "cache-control": "no-store" });
+    return true;
+  }
   if (path === RECRUITERS_PATH) {
     const range = rangeOf(req);
     const page = range && await service.recruiters!(person, range);
