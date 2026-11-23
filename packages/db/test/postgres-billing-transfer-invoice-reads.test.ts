@@ -178,3 +178,73 @@ test("TRANSFER_INVOICE_READS_PAYABLE an unpaid invoice is listed and served only
   assert.equal(await reads.document("fin-p", "P", dropped), null);
   assert.equal((await reads.document("fin-p", "P", receipt))?.status, "paid", "the unrelated receipt is preserved throughout");
 });
+
+/*
+ * Invoices are dated and paid by the database clock, so history is built by locking (and paying)
+ * now and then moving the dates back. Only this fixture lifts the forward-only guard, and only for
+ * the dates; the reads under test never write.
+ */
+async function backdate(transferId: string, issued: string, paid?: string): Promise<void> {
+  await pool.query("ALTER TABLE transfer_invoice DISABLE TRIGGER transfer_invoice_forward_only");
+  try {
+    await pool.query("UPDATE transfer_invoice SET invoice_date = $2::date WHERE transfer_id = $1", [transferId, issued]);
+    if (paid) await pool.query("UPDATE transfer_invoice SET paid_at = ($2::date + time '12:00') AT TIME ZONE 'Asia/Kuwait' WHERE transfer_id = $1 AND status = 'paid'", [transferId, paid]);
+  } finally { await pool.query("ALTER TABLE transfer_invoice ENABLE TRIGGER transfer_invoice_forward_only"); }
+}
+const lockOn = async (id: string, day: string) => { await move(id, "lock"); await backdate(id, day); };
+const kuwaitToday = async () => (await pool.query("SELECT (now() AT TIME ZONE 'Asia/Kuwait')::date::text AS d")).rows[0].d as string;
+const figures = (s: Awaited<ReturnType<PostgresTransferInvoiceReads["statement"]>>) => s?.currencies.map(c => [c.currencyCode, c.opening, c.invoiced, c.paid, c.closing,
+  c.members.map(m => [m.orgId, m.opening, m.invoiced, m.paid, m.closing])]);
+
+test("TRANSFER_STATEMENT_FIGURES opening, invoiced, paid and closing per currency and company reconcile to the movements listed", async () => {
+  await grant("fin-p", "P", "finance", "subtree");
+  const september = await transfer([["P", "4.000"], ["C1", "2.500"]], "P");
+  await lockOn(september, "2026-09-10"); await move(september, "payment_received"); await backdate(september, "2026-09-10", "2026-11-15");
+  const october = await transfer([["P", "1.250"]], "P");
+  await lockOn(october, "2026-10-10");
+  const other = await transfer([["X", "9.000"]], "X");
+  await lockOn(other, "2026-10-12");
+  const oct = await reads.statement("fin-p", "P", "2026-10-01", "2026-10-31");
+  assert.deepEqual(figures(oct), [["KWD", "6.500", "1.250", "0.000", "7.750", [["C1", "2.500", "0.000", "0.000", "2.500"], ["P", "4.000", "1.250", "0.000", "5.250"]]]],
+    "September's invoices are owed until paid in November; another company's never appear");
+  assert.deepEqual(oct?.entries.map(e => [e.date, e.kind, e.orgId, e.amount]), [["2026-10-10", "invoice", "P", "1.250"]]);
+  assert.deepEqual([oct?.name, oct?.from, oct?.to], ["Parent Trading Co", "2026-10-01", "2026-10-31"]);
+  const now = await reads.statement("fin-p", "P", "2026-11-01", "2026-11-30");
+  assert.deepEqual(figures(now), [["KWD", "7.750", "0.000", "6.500", "1.250", [["C1", "2.500", "0.000", "2.500", "0.000"], ["P", "5.250", "0.000", "4.000", "1.250"]]]],
+    "the payment day takes September's invoices off the balance");
+  assert.deepEqual(now?.entries.map(e => [e.kind, e.orgId, e.amount]).sort(), [["payment", "C1", "2.500"], ["payment", "P", "4.000"]]);
+  for (const s of [oct!, now!]) for (const c of s.currencies) {
+    const sum = (kind: string) => s.entries.filter(e => e.kind === kind && e.currencyCode === c.currencyCode).reduce((n, e) => n + Math.round(Number(e.amount) * 1000), 0);
+    assert.equal(sum("invoice"), Math.round(Number(c.invoiced) * 1000)); assert.equal(sum("payment"), Math.round(Number(c.paid) * 1000));
+    assert.equal(Math.round(Number(c.opening) * 1000) + sum("invoice") - sum("payment"), Math.round(Number(c.closing) * 1000));
+  }
+  assert.deepEqual(await reads.statement("fin-p", "P", "2026-01-01", "2026-01-31"), { orgId: "P", name: "Parent Trading Co", from: "2026-01-01", to: "2026-01-31", currencies: [], entries: [] },
+    "a period with nothing owed is an empty statement, not an error");
+  await assert.rejects(reads.statement("fin-p", "P", "2026-10-31", "2026-10-01"), /invalid_window/);
+});
+
+test("TRANSFER_STATEMENT_STABLE a past period's statement is unchanged by later invoices and payments", async () => {
+  await grant("fin-p", "P", "finance", "subtree");
+  const october = await transfer([["P", "1.250"], ["C1", "3.000"]], "P");
+  await lockOn(october, "2026-10-10");
+  const before = await reads.statement("fin-p", "P", "2026-10-01", "2026-10-31");
+  const november = await transfer([["C1", "8.000"]], "P");
+  await lockOn(november, "2026-11-05");
+  await move(october, "payment_received"); await move(november, "payment_received");
+  await backdate(october, "2026-10-10", "2026-11-20"); await backdate(november, "2026-11-05", await kuwaitToday());
+  assert.deepEqual(await reads.statement("fin-p", "P", "2026-10-01", "2026-10-31"), before);
+  assert.equal(before?.currencies[0]?.closing, "4.250");
+});
+
+test("TRANSFER_STATEMENT_SCOPE a statement never widens access: a self grant shows only its company; others read nothing", async () => {
+  const group = await transfer([["P", "4.000"], ["C1", "2.500"]], "P");
+  await lockOn(group, "2026-10-10");
+  await grant("self-p", "P", "org-owner"); await grant("fin-c1", "C1", "finance"); await grant("recruiter", "P", "recruiter", "subtree");
+  await grant("op-fin", "root", "finance", "subtree");
+  const own = await reads.statement("self-p", "P", "2026-10-01", "2026-10-31");
+  assert.deepEqual(figures(own), [["KWD", "0.000", "4.000", "0.000", "4.000", [["P", "0.000", "4.000", "0.000", "4.000"]]]], "the sub-company's subtotal is not shown");
+  assert.deepEqual(own?.entries.map(e => e.orgId), ["P"]);
+  assert.deepEqual(figures(await reads.statement("fin-c1", "C1", "2026-10-01", "2026-10-31")), [["KWD", "0.000", "2.500", "0.000", "2.500", [["C1", "0.000", "2.500", "0.000", "2.500"]]]]);
+  for (const who of ["fin-c1", "recruiter", "op-fin", "nobody"]) assert.equal(await reads.statement(who, "P", "2026-10-01", "2026-10-31"), null, who);
+  assert.equal(await reads.statement("self-p", "root", "2026-10-01", "2026-10-31"), null, "an operator organization has no statement");
+});

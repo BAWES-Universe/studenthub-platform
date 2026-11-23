@@ -33,6 +33,33 @@ export interface TransferInvoiceDocument extends TransferInvoiceListEntry {
 }
 export interface TransferInvoicePage { readonly orgId: string; readonly name: string; readonly invoices: readonly TransferInvoiceListEntry[] }
 
+/** One movement on a statement: an invoice issued (adds to the balance) or a payment received for one (takes it off). */
+export interface TransferStatementEntry {
+  readonly date: string;
+  readonly kind: "invoice" | "payment";
+  readonly invoiceNumber: string;
+  readonly orgId: string;
+  readonly companyName: string;
+  readonly currencyCode: string;
+  readonly amount: string;
+}
+export interface TransferStatementTotals { readonly opening: string; readonly invoiced: string; readonly paid: string; readonly closing: string }
+export interface TransferStatementMember extends TransferStatementTotals { readonly orgId: string; readonly companyName: string }
+export interface TransferStatementCurrency extends TransferStatementTotals { readonly currencyCode: string; readonly members: readonly TransferStatementMember[] }
+/**
+ * F4.8: the account statement of a company and the sub-companies the reader may see, for the
+ * Kuwait dates `from` to `to` inclusive. Opening is what was owed before `from`; closing is what
+ * was owed at the end of `to`, so a statement ending today closes on the current balance.
+ */
+export interface TransferStatement {
+  readonly orgId: string;
+  readonly name: string;
+  readonly from: string;
+  readonly to: string;
+  readonly currencies: readonly TransferStatementCurrency[];
+  readonly entries: readonly TransferStatementEntry[];
+}
+
 const NAME = (alias: string, profile: string) => `COALESCE(NULLIF(btrim(${profile}.name_en), ''), ${alias}.name)`;
 const ENTRY = `i.invoice_number AS "invoiceNumber", i.transfer_id AS "transferId", i.org_id AS "orgId", ${NAME("o", "p")} AS "companyName",
   i.currency_code AS "currencyCode", i.invoice_date::text AS "invoiceDate", i.total::text AS total, i.line_count AS "lineCount", i.status,
@@ -46,6 +73,16 @@ const ENTRY = `i.invoice_number AS "invoiceNumber", i.transfer_id AS "transferId
 const FROM = `FROM transfer_invoice i JOIN organizations o ON o.id = i.org_id LEFT JOIN organization_profiles p ON p.org_id = i.org_id
   JOIN pay_transfers t ON t.id = i.transfer_id
   WHERE NOT i.deleted AND i.org_id = ANY($1::text[]) AND (i.status = 'paid' OR t.status IN ('locked', 'payment_sent'))`;
+
+/*
+ * Statement movements come from the same documents the invoices page shows (FROM above): an invoice
+ * counts on its issue date, its payment on the Kuwait date it was received. Nothing is read from
+ * live pay lines, so a past window keeps its figures when later invoices are issued or paid.
+ */
+const MOVEMENTS = `WITH docs AS (SELECT i.invoice_number, i.org_id, ${NAME("o", "p")} AS company, i.currency_code, i.total, i.invoice_date,
+    CASE WHEN i.status = 'paid' THEN (i.paid_at AT TIME ZONE 'Asia/Kuwait')::date END AS paid_on ${FROM}),
+  moves AS (SELECT invoice_date AS on_date, 'invoice' AS kind, invoice_number, org_id, company, currency_code, total AS amount FROM docs
+    UNION ALL SELECT paid_on, 'payment', invoice_number, org_id, company, currency_code, -total FROM docs WHERE paid_on IS NOT NULL)`;
 
 export class PostgresTransferInvoiceReads {
   readonly #pool: pg.Pool;
@@ -91,6 +128,32 @@ export class PostgresTransferInvoiceReads {
     return { orgId, name: organization.rows[0]?.name ?? orgId, invoices: invoices.rows };
   }
 
+  /** The statement for `from`..`to` (ISO dates, `from` <= `to`); null when the reader may not see the organization. */
+  async statement(principalId: string, orgId: string, from: string, to: string): Promise<TransferStatement | null> {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) throw new RangeError("invalid_window");
+    const visible = await this.#visible(principalId, orgId);
+    if (!visible) return null;
+    const [organization, members, entries] = await Promise.all([
+      this.#pool.query<{ name: string }>(`SELECT ${NAME("o", "p")} AS name FROM organizations o LEFT JOIN organization_profiles p ON p.org_id = o.id WHERE o.id = $1`, [orgId]),
+      this.#pool.query<TransferStatementMember & { currencyCode: string }>(`${MOVEMENTS}
+        SELECT currency_code AS "currencyCode", org_id AS "orgId", min(company) AS "companyName",
+          COALESCE(sum(amount) FILTER (WHERE on_date < $2::date), 0)::numeric(14,3)::text AS opening,
+          COALESCE(sum(amount) FILTER (WHERE kind = 'invoice' AND on_date BETWEEN $2::date AND $3::date), 0)::numeric(14,3)::text AS invoiced,
+          COALESCE(-sum(amount) FILTER (WHERE kind = 'payment' AND on_date BETWEEN $2::date AND $3::date), 0)::numeric(14,3)::text AS paid,
+          COALESCE(sum(amount), 0)::numeric(14,3)::text AS closing
+        FROM moves WHERE on_date <= $3::date GROUP BY currency_code, org_id ORDER BY currency_code, org_id`, [visible, from, to]),
+      this.#pool.query<TransferStatementEntry>(`${MOVEMENTS}
+        SELECT on_date::text AS date, kind, invoice_number AS "invoiceNumber", org_id AS "orgId", company AS "companyName", currency_code AS "currencyCode",
+          abs(amount)::numeric(14,3)::text AS amount
+        FROM moves WHERE on_date BETWEEN $2::date AND $3::date ORDER BY on_date, kind, invoice_number`, [visible, from, to]),
+    ]);
+    const currencies = new Map<string, TransferStatementMember[]>();
+    for (const { currencyCode, ...member } of members.rows) currencies.set(currencyCode, [...(currencies.get(currencyCode) ?? []), member]);
+    return { orgId, name: organization.rows[0]?.name ?? orgId, from, to, entries: entries.rows,
+      currencies: [...currencies].map(([currencyCode, list]) => ({ currencyCode, members: list,
+        opening: fils(list.map(m => m.opening)), invoiced: fils(list.map(m => m.invoiced)), paid: fils(list.map(m => m.paid)), closing: fils(list.map(m => m.closing)) })) };
+  }
+
   /** One live, paid or payable invoice billed inside what the reader may see, with its transfer's period; null otherwise. */
   async document(principalId: string, orgId: string, invoiceNumber: string): Promise<TransferInvoiceDocument | null> {
     const visible = await this.#visible(principalId, orgId);
@@ -100,4 +163,15 @@ export class PostgresTransferInvoiceReads {
          ${FROM} AND i.invoice_number = $2`,
       [visible, invoiceNumber])).rows[0] ?? null;
   }
+}
+
+/** Exact sum of three-decimal amounts, in fils. */
+function fils(amounts: readonly string[]): string {
+  const total = amounts.reduce((n, a) => {
+    const m = /^(-?)(\d+)\.(\d{3})$/.exec(a);
+    if (!m) throw new RangeError("invalid_amount");
+    return n + (m[1] ? -1n : 1n) * (BigInt(m[2]!) * 1000n + BigInt(m[3]!));
+  }, 0n);
+  const abs = total < 0n ? -total : total;
+  return `${total < 0n ? "-" : ""}${abs / 1000n}.${String(abs % 1000n).padStart(3, "0")}`;
 }

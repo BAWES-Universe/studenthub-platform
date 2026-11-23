@@ -5,6 +5,7 @@ export { PostgresLegacyInvoiceStore } from "./postgres-legacy-invoice-store.js";
 export { PostgresTransferInvoiceEffects, TRANSFER_INVOICE_SERIES, listTransferInvoices, transferInvoiceForLine,
   type TransferInvoice } from "./postgres-transfer-invoice-effects.js";
 export { PostgresTransferInvoiceReads, type TransferInvoiceDocument, type TransferInvoiceListEntry, type TransferInvoicePage,
-  type TransferInvoiceReadDecision } from "./postgres-transfer-invoice-reads.js";
+  type TransferInvoiceReadDecision, type TransferStatement, type TransferStatementCurrency, type TransferStatementEntry,
+  type TransferStatementMember, type TransferStatementTotals } from "./postgres-transfer-invoice-reads.js";
 export { PAY_HISTORY_CALCULATION_VERSION, PAY_HISTORY_PAGE_SIZE, PostgresPayHistoryReads, candidateWorked, type PayHistoryDetail, type PayHistoryEntry,
   type PayHistoryPage } from "./postgres-pay-history-reads.js";

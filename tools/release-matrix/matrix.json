@@ -735,6 +735,13 @@
     "O-14": {
       "lane": "pay",
       "subject": "`/organization/:orgId/statements`",
+      "served": [
+        {
+          "route": "/organization/:orgId/statements",
+          "test": "apps/gateway/test/billing-invoices-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",
