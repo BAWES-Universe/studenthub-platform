@@ -6,7 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
-import { main, m4Writers, postgresTarget, WRITER_LOCK_SQL, WriterSessionPool, type CliDeps, type M4Receipt } from "../../../tools/legacy-import/src/m4-cli.js";
+import { main, m4Writers, postgresTarget, WRITER_LOCK_SQL, WRITER_SESSION_LIMITS_SQL, WriterSessionPool, type CliDeps, type M4Receipt } from "../../../tools/legacy-import/src/m4-cli.js";
 import { M4_SOURCES, runM4, type M4Sources, type M4Table } from "../../../tools/legacy-import/src/m4-run.js";
 import { fixtureIds } from "./legacy-fixture-ids.js";
 
@@ -93,7 +93,9 @@ test("the operator parent must exist in the target database", async () => {
   } finally { await target.close(); }
 });
 
+// Advisory locks are per database while pg_locks spans the cluster: only this database's holder.
 const WRITER_PID_SQL = `SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted AND objsubid = 1
+  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
   AND ((classid::bigint << 32) | objid::bigint) = hashtextextended('legacy-import:m4-writer', 0)`;
 
 test("every checkout of the writer session pool is the lock-holding session, fenced, and a broken release ends it", async () => {
@@ -237,6 +239,32 @@ test("one writer per target database: a second writer is refused until the first
     await first.close();
     assert.equal(await second.claimWriter(), true);
   } finally {
-    await second.close();
+    // Both, whatever failed: an unclosed first target would keep the lock and the process alive.
+    await Promise.allSettled([first.close(), second.close()]);
+  }
+});
+
+test("waits on the writer session are bounded: a batch blocked by another transaction fails instead of waiting", async () => {
+  assert.match(WRITER_SESSION_LIMITS_SQL, /lock_timeout = '60s'.*statement_timeout = '15min'.*idle_in_transaction_session_timeout = '15min'/);
+  const c = await fixtureIds(pool), r = randomUUID().slice(0, 8);
+  // The same limits statement, with a lock wait short enough for a test.
+  const target = postgresTarget(URL, ACTOR, operator, WRITER_SESSION_LIMITS_SQL.replace("'60s'", "'300ms'"));
+  const blocker = await pool.connect();
+  try {
+    assert.equal(await target.claimWriter(), true);
+    // Another transaction holds the id-map key the companies batch must insert.
+    await blocker.query("BEGIN");
+    await blocker.query("INSERT INTO legacy_id_maps (legacy_table, legacy_id, entity, platform_id, outcome, digest) VALUES ('company', $1, 'organization', $2, 'imported', $3)",
+      [String(c), randomUUID(), "0".repeat(64)]);
+    const started = Date.now();
+    await assert.rejects(runM4(legacy(c, r), target.writers(), NOW), (e: { code?: string }) => e.code === "55P03");
+    assert.ok(Date.now() - started < 20_000);
+    // The batch rolled back; the session and its lock are still good for the terminal receipt.
+    assert.equal(await target.stillHeld(), true);
+    assert.equal((await pool.query("SELECT 1 FROM legacy_id_maps WHERE legacy_table = 'company' AND legacy_id = $1", [String(c + 1)])).rowCount, 0);
+  } finally {
+    await blocker.query("ROLLBACK").catch(() => undefined);
+    blocker.release();
+    await target.close();
   }
 });

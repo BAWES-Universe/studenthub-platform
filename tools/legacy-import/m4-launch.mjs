@@ -76,10 +76,13 @@ export function verified(built, env) {
 }
 
 async function launch(argv, env) {
-  const built = provenance(ROOT);
+  // A runtime that cannot even be read is a refusal, not a crash.
+  let built;
+  try { built = provenance(ROOT); } catch { built = { head: null, clean: false, artifact: null }; }
   if (argv[0] === "provenance") {
     console.log(`m4 provenance head=${built.head ?? "none"} clean=${built.clean} artifact=${built.artifact ?? "incomplete"}`);
-    return built.head && built.artifact ? 0 : 1;
+    // Only a clean, complete build is a pin; the line is printed either way for diagnosis.
+    return built.head && built.clean && built.artifact ? 0 : 1;
   }
   if (!verified(built, env)) {
     console.error("m4: refused.provenance");

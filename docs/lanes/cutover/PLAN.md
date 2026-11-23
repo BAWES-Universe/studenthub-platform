@@ -79,9 +79,11 @@ Two active rows of one kind whose names normalize the same become one item: the 
 
 - **Invocation.** Every run is named by `M4_INVOCATION`, a fresh UUID, and owns its own files in `M4_OUTPUT_DIR` (default `/var/lib/legacy-import/m4`): `<invocation>.<mode>.receipt.json` and `<invocation>.<mode>.report.json`. It first claims the name by creating `<invocation>.claim` exclusively. A reused name is refused (`refused.invocationUsed`) and touches nothing. After the claim, every outcome, refusals included, ends in a terminal receipt for that invocation.
 - **Pass rule.** A write passed only when `acceptWrite` holds: that invocation's own terminal receipt says `ok` for the expected plan, and that same invocation exited 0. An older receipt, even for the same plan, never counts.
+- **No terminal receipt.** If an invocation's receipt still says `started`, or the invocation exited non-zero for any other reason (for example the output directory became unwritable after some batches committed), it is not a pass. It also does not prove that nothing was written. The operator treats the target as partly written and retries the same reviewed plan with a fresh `M4_INVOCATION`. Every step is idempotent: rows already written report `unchanged` and only missing rows are written. Only that retry's own `ok` receipt with exit 0 is a pass.
 - **Refresh lock.** The CLI takes a shared, non-waiting `flock` on `LEGACY_REFRESH_LOCK` and holds it until it exits. It reads `last-run.json` and every legacy table under it. A refresh holding the lock makes the run refuse (`refused.locked`).
 - **Writer lock.** A write also takes the target database's one-writer lock: a session advisory lock on its own connection, independent of the refresh lock. It is taken before the first write and held until the terminal receipt is published, across every batch. A second writer on the same database is refused (`refused.writerBusy`).
   - Every import transaction runs on that same session (`WriterSessionPool`), and each checkout first re-checks there that the lock is still held. The lock is checked once more immediately before the outcome is published. That check and the receipt file write are not one atomic step.
+  - Waits on that session are bounded (`lock_timeout` 60s, `statement_timeout` and `idle_in_transaction_session_timeout` 15 min). A batch blocked by another transaction rolls back and the run ends `failed`, rather than holding both run-wide locks indefinitely.
   - If the session is lost, the transaction in flight dies with it and no later batch starts. The run ends `failed` with `m4.writerLost`, and the receipt separates confirmed from unconfirmed steps.
 - **Build provenance (launcher, before the importer loads).** The launcher uses node builtins only. It loads the importer only from a clean git checkout whose HEAD is `M4_REVISION`, so the launcher itself is the reviewed one.
   - The installed runtime must also hash to `M4_ARTIFACT_DIGEST`. The runtime is the root `dist/`, each workspace package's `package.json` and `dist/`, all of `node_modules` as installed (file bytes and symlink targets), `package.json`, `package-lock.json`, the entrypoint, and the Node major version.
@@ -96,7 +98,7 @@ Two active rows of one kind whose names normalize the same become one item: the 
   - the destination: `M4_TARGET_ID`, the staging database's `legacy_import_target.target_id`, and `M4_OPERATOR_ORG_ID`, the operator parent that top-level organizations are written under;
   - every mapped row's legacy id and digest.
 
-  Any change to the code, the copy, the destination or a row gives a new identity.
+  A change to any bound field (revision, runtime digest, refresh identity, target, operator) or to the ordered list of mapped rows' legacy ids and digests gives a new identity. Rows a mapper excludes, and issue counts, are not hashed: they are in the plan receipt and the private report, which the reviewer reads before approving the plan.
 - **`plan`.** Maps every table and writes nothing to the platform. Its receipt shows the plan identity and everything it binds.
 - **`write`.** Refuses before any write unless:
   - `M4_EXPECTED_PLAN` equals the identity it computes now (`planMismatch`);
@@ -121,13 +123,13 @@ Two active rows of one kind whose names normalize the same become one item: the 
   - 2: refused before any write.
   - 1: failed.
 - **Operator steps (Hermes card, staging only).**
-  - **Once, after migration 0652 is applied:** `INSERT INTO legacy_import_target (environment) VALUES ('staging') RETURNING target_id` on the staging database, and record that `target_id` (not a secret). No other database gets the row. Production refuses until a separate value is added with the owner's explicit go at cutover.
+  - **Once, after migration 0652 is applied:** `INSERT INTO legacy_import_target (environment) VALUES ('staging') RETURNING target_id` on the staging database, and record that `target_id` (not a secret). No other database gets the row. This revision cannot write to production at all: migration 0652 accepts only `staging`, and the CLI requires `environment = 'staging'`. Enabling the production cutover needs a later code and schema change, reviewed, plus the owner's explicit go.
   - **Each rehearsal:**
     1. Check out the deployed `main` commit cleanly. Install and build exactly as the pin does: `npm ci --ignore-scripts`, then `npm run build`, on Node 22.
     2. Take the `artifact=` digest that the "M-4 importer build pin" workflow printed for that same commit on `main`.
-    3. Run `node tools/legacy-import/m4-launch.mjs plan` with a fresh `M4_INVOCATION`, `M4_REVISION`, `M4_ARTIFACT_DIGEST`, `M4_TARGET_ID` and `M4_OPERATOR_ORG_ID`.
+    3. Run `node tools/legacy-import/m4-launch.mjs plan` with a fresh `M4_INVOCATION`, `M4_REVISION`, `M4_ARTIFACT_DIGEST`, `M4_TARGET_ID` and `M4_OPERATOR_ORG_ID`. Also set `M4_LEGACY_MIRROR_URL` (the read-only mirror account), and `LEGACY_REFRESH_REPORT` and `LEGACY_REFRESH_LOCK` unless the defaults apply. These come from the staging host's existing configuration, never from the card text, and no receipt records them.
     4. Review its receipt.
-    5. Run `node tools/legacy-import/m4-launch.mjs write` with a new `M4_INVOCATION`, the same settings, and `M4_EXPECTED_PLAN` set to the reviewed `plan`.
+    5. Run `node tools/legacy-import/m4-launch.mjs write` with a new `M4_INVOCATION`, the same settings, and `M4_EXPECTED_PLAN` set to the reviewed `plan`. Also set `M4_DATABASE_URL` (staging PostgreSQL) and `M4_IMPORT_ACTOR` (sha256 hex of the operator identity), both from the staging host's configuration.
     6. Report a pass only by `acceptWrite` on that write invocation's receipt and exit code.
 
 ## M-5 table map (work)

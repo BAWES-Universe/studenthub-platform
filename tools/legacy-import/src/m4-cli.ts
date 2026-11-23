@@ -213,6 +213,8 @@ export interface WriteTarget {
 /** One writer per target database, across every batch and the terminal receipt. */
 export const WRITER_LOCK_KEY = "hashtextextended('legacy-import:m4-writer', 0)";
 export const WRITER_LOCK_SQL = `SELECT pg_try_advisory_lock(${WRITER_LOCK_KEY}) AS held`;
+/** Waits on the writer session are bounded: a lock wait, a statement or an idle transaction. */
+export const WRITER_SESSION_LIMITS_SQL = "SET lock_timeout = '60s'; SET statement_timeout = '15min'; SET idle_in_transaction_session_timeout = '15min'";
 /** True only on the session that holds the writer lock. */
 export const WRITER_FENCE_SQL = `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted
   AND objsubid = 1 AND ((classid::bigint << 32) | objid::bigint) = ${WRITER_LOCK_KEY}) AS held`;
@@ -280,10 +282,12 @@ export class WriterSessionPool extends pg.Pool {
   }
 }
 
-export function postgresTarget(url: string, actorRef: string, operatorOrgId: string): WriteTarget {
+/** `sessionLimits` exists for tests that need a shorter wait; production uses the default. */
+export function postgresTarget(url: string, actorRef: string, operatorOrgId: string, sessionLimits = WRITER_SESSION_LIMITS_SQL): WriteTarget {
   const pool = new pg.Pool({ connectionString: url, max: 3 });
   let writer: WriterSessionPool | undefined;
   let wasLost = false;
+  let closed = false;
   return {
     marker: async () => {
       try {
@@ -301,7 +305,13 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
       client.on("error", () => { wasLost = true; });
       try {
         const { rows: [row] } = await client.query<{ held: boolean }>(WRITER_LOCK_SQL);
-        if (row?.held) { writer = new WriterSessionPool(client); return true; }
+        if (row?.held) {
+          // Bounded waits on the writer session: a batch blocked by another transaction fails,
+          // rolls back and ends the run `failed` instead of holding both run-wide locks forever.
+          await client.query(sessionLimits);
+          writer = new WriterSessionPool(client);
+          return true;
+        }
       } catch { /* refused below */ }
       client.release(true);
       return false;
@@ -314,6 +324,8 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
     lost: () => wasLost || (writer?.lost ?? false),
     close: async () => {
       if (writer) { wasLost ||= writer.lost; writer.close(); writer = undefined; }
+      if (closed) return;
+      closed = true;
       await pool.end();
     },
   };

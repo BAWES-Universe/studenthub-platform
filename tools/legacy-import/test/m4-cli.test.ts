@@ -60,7 +60,7 @@ interface Harness {
   readonly calls: string[];
   readonly out: string[];
   readonly err: string[];
-  readonly state: { locked: boolean; released: number; closed: number; reads: number; writerHeldAtPublish: boolean[] };
+  readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined };
   readonly file: (name: string) => string;
   readonly receipt: (mode: "plan" | "write") => M4Receipt;
 }
@@ -71,7 +71,7 @@ function harness(opts: HarnessOptions = {}): Harness {
   if (!existsSync(file("refresh.json"))) writeFileSync(file("refresh.json"), JSON.stringify(REFRESH));
   const invocation = opts.env && "M4_INVOCATION" in opts.env ? opts.env.M4_INVOCATION ?? "" : randomUUID();
   const calls: string[] = [], out: string[] = [], err: string[] = [];
-  const state = { locked: false, released: 0, closed: 0, reads: 0, writerHeldAtPublish: [] as boolean[] };
+  const state = { locked: false, released: 0, closed: 0, reads: 0, receiptAtRelease: undefined as string | undefined };
   const rows = opts.rows ?? sources();
   const db = opts.db ?? fakeDb();
   const me = {};
@@ -98,7 +98,15 @@ function harness(opts: HarnessOptions = {}): Harness {
     },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
-    close: async () => { state.closed++; if (db.writer === me) db.writer = null; },
+    close: async () => {
+      state.closed++;
+      // What the receipt said at the moment this invocation gave up the writer lock.
+      if (db.writer === me) {
+        const file = path.join(deps.env.M4_OUTPUT_DIR!, `${invocation}.write.receipt.json`);
+        state.receiptAtRelease = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).status : "none";
+        db.writer = null;
+      }
+    },
   };
   const deps: CliDeps = {
     env: {
@@ -207,6 +215,7 @@ test("write imports in order under the writer lock and its own receipt passes ac
     assert.ok(!acceptWrite({ ...r, status: "started" }, h.invocation, expected, 0));
     assert.ok(!acceptWrite(undefined, h.invocation, expected, 0));
     assert.equal(db.writer, null, "the writer lock is released");
+    assert.equal(h.state.receiptAtRelease, "ok", "the lock is held until the terminal receipt is published");
     assert.deepEqual([h.state.released, h.state.closed], [1, 1]);
   } finally { cleanup(h); }
 });

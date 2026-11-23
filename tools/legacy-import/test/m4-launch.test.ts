@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -30,7 +30,7 @@ function checkout(): Checkout {
   };
   git("init", "-q");
   git("add", "-A");
-  git("commit", "-qm", "synthetic");
+  git("commit", "--no-gpg-sign", "-qm", "synthetic");
   // The built and installed runtime: untracked, as after `npm ci --ignore-scripts && npm run build`.
   write("dist/tools/legacy-import/src/m4-cli.js", `import { appendFileSync, writeFileSync } from "node:fs";
 appendFileSync(${JSON.stringify(loaded)}, "loaded\\n");
@@ -125,6 +125,29 @@ test("a missing or mismatched runtime, a wrong commit or a changed tracked file 
       }
     } finally { rmSync(c.root, { recursive: true, force: true }); }
   }
+});
+
+test("a dirty build is printed but is not a pin", () => {
+  const c = checkout();
+  try {
+    writeFileSync(path.join(c.root, "package.json"), '{"changed":true}');
+    const r = run(c, ["provenance"]);
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /^m4 provenance head=[0-9a-f]{40} clean=false artifact=[0-9a-f]{64}$/);
+  } finally { rmSync(c.root, { recursive: true, force: true }); }
+});
+
+test("a runtime file that cannot be read refuses as provenance, before the importer loads", (t) => {
+  if (process.getuid?.() === 0) { t.skip("root reads any file"); return; }
+  const c = checkout();
+  const file = path.join(c.root, "dist/tools/legacy-import/src/m4-run.js");
+  try {
+    const digest = pin(c);
+    chmodSync(file, 0o000);
+    const r = run(c, ["write"], { M4_REVISION: c.head, M4_ARTIFACT_DIGEST: digest });
+    assert.deepEqual([r.status, r.stderr], [2, "m4: refused.provenance"]);
+    assert.equal(existsSync(c.loaded), false);
+  } finally { chmodSync(file, 0o644); rmSync(c.root, { recursive: true, force: true }); }
 });
 
 test("the importer refuses to run without the launcher", () => {
