@@ -170,9 +170,10 @@ them. Cross-package tests also import these APIs, including
 [reports tests](../reports/test/morning-summary.test.ts) and
 [PostgreSQL email tests](../db/test/postgres-email-outbox.test.ts).
 
-## Verification for this documentation change
+## Verification for the original README addition
 
-Commands run from the repository root; scripts are defined in
+The results below record the original README addition. Commands were run from
+the repository root; scripts are defined in
 [package.json](../../package.json). The code checks use the clean base checkout
 at the same commit as this documentation branch's base; the sole branch change
 is this Markdown file.
