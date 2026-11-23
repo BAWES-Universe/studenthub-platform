@@ -2425,6 +2425,8 @@
     "SHU-225 I1/I2: without an armed activation the parking rule is byte-for-byte unchanged",
     "SHU-225 I1/I2: the SAME receipts DO continue once the episode's successor is supplied",
     "SHU71_ONE_REVIEW_AT_A_TIME: a review successor waits while another card's review runs",
+    "SHU71_ENDED_EPISODE_REVIEW: a review from a card-run episode that has ended does not hold the sandbox",
+    "SHU71_ENDED_EPISODE_BOUND: the bound covers a card run's window, its grace and the unit's own limit",
     "SHU-225 I2 (M1): a terminal receipt on ANOTHER card never becomes selectable",
     "SHU-225 I3: a successor never takes a second slot \u2014 capacity stays global",
     "SHU-225 I3: a successor is only selectable once its predecessor's receipt is terminal",
@@ -20463,6 +20465,22 @@
     },
     {
       "name": "SHU71_ONE_REVIEW_AT_A_TIME: a review successor waits while another card's review runs",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_ENDED_EPISODE_REVIEW: a review from a card-run episode that has ended does not hold the sandbox",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_ENDED_EPISODE_BOUND: the bound covers a card run's window, its grace and the unit's own limit",
       "capabilities": [
         {
           "name": "shell_toolchain"
