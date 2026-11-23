@@ -78,7 +78,7 @@ export function runtimeManifest(root, euid = process.geteuid()) {
       lines.push(`${rel}\0link\0${target}`);
       return;
     }
-    if ((stat.mode & 0o222) !== 0 && !unprotected.includes(rel || ".")) unprotected.push(rel || ".");
+    if ((stat.mode & 0o222) !== 0 && stat.uid !== euid) unprotected.push(rel || ".");
     if (stat.isDirectory()) {
       for (const name of readdirSync(full).sort()) visit(rel === "" ? name : `${rel}/${name}`);
     } else if (stat.isFile()) {
@@ -118,21 +118,50 @@ export function runtimeDigest(root, euid = process.geteuid()) {
   return { digest, files: lines.length, missing, unprotected, outside };
 }
 
-export function provenance(root, euid = process.geteuid()) {
+/**
+ * What the user `euid` could change inside git's own store. It is not hashed, but git reads it
+ * (config, hooks, fsmonitor), so it must be as protected as the hashed tree before git runs.
+ */
+export function gitStoreProblems(root, euid) {
+  const problems = [];
+  const visit = (full) => {
+    const stat = lstatSync(full);
+    if (stat.uid === euid || (!stat.isSymbolicLink() && (stat.mode & 0o222) !== 0)) problems.push(full);
+    if (stat.isDirectory()) for (const name of readdirSync(full)) visit(path.join(full, name));
+  };
+  const store = path.join(realpathSync(root), ".git");
+  // A `.git` file (`gitdir: ...`) would send git to a store outside the checkout.
+  if (!lstatSync(store).isDirectory()) return [store];
+  visit(store);
+  return problems;
+}
+
+/**
+ * The provenance of the checkout. For a launch (`pin` false) git runs only once the checkout,
+ * git's store and the path to them are protected from the running user, so nothing that user
+ * could write is ever read by git. A pin is made by the checkout's owner in CI and reports only.
+ */
+export function provenance(root, euid = process.geteuid(), pin = false) {
+  const runtime = runtimeDigest(root, euid);
+  const protectedRuntime = runtime.unprotected.length === 0 && ancestorProblems(root, euid).length === 0
+    && gitStoreProblems(root, euid).length === 0;
+  const base = {
+    artifact: runtime.digest,
+    protectedRuntime,
+    linksInside: runtime.outside.length === 0,
+    // This process is the checkout's own pinned runtime, not whatever `node` a PATH found.
+    runtimeNode: runningNode() === path.join(realpathSync(root), RUNTIME_NODE),
+  };
+  if (!pin && !protectedRuntime) return { head: null, clean: false, ...base };
   // The checkout belongs to another user, so git is told this one directory is safe to read.
   const git = (args) => spawnSync("/usr/bin/git", ["-c", `safe.directory=${realpathSync(root)}`, ...args], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { PATH: process.env.PATH, LANG: "C" } });
   const head = git(["rev-parse", "HEAD"]);
   // Untracked files count: only ignored build and install output may sit beside the tracked tree.
   const status = git(["status", "--porcelain", "--untracked-files=normal"]);
-  const runtime = runtimeDigest(root, euid);
   return {
     head: head.status === 0 && /^[0-9a-f]{40}\n?$/.test(head.stdout) ? head.stdout.trim() : null,
     clean: status.status === 0 && status.stdout.trim() === "",
-    artifact: runtime.digest,
-    protectedRuntime: runtime.unprotected.length === 0 && ancestorProblems(root, euid).length === 0,
-    linksInside: runtime.outside.length === 0,
-    // This process is the checkout's own pinned runtime, not whatever `node` a PATH found.
-    runtimeNode: runningNode() === path.join(realpathSync(root), RUNTIME_NODE),
+    ...base,
   };
 }
 
@@ -159,7 +188,7 @@ async function launch(argv, env, execArgv) {
   }
   // A runtime that cannot even be read is a refusal, not a crash.
   let built;
-  try { built = provenance(ROOT); } catch { built = { head: null, clean: false, artifact: null, protectedRuntime: false, linksInside: false, runtimeNode: false }; }
+  try { built = provenance(ROOT, process.geteuid(), argv[0] === "provenance"); } catch { built = { head: null, clean: false, artifact: null, protectedRuntime: false, linksInside: false, runtimeNode: false }; }
   if (argv[0] === "provenance") {
     const expect = option(argv, "--expect");
     const source = option(argv, "--source") ?? "local";

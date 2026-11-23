@@ -3,7 +3,7 @@
 # sha256 of the official release archive) into this checkout's .runtime/node. The M-4 build pin and
 # the staging install both run this, then build with that runtime, so its bytes are in the digest.
 set -eu
-root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
+root=$(CDPATH= cd -- "$(/usr/bin/dirname -- "$0")/../.." && pwd -P)
 read -r version platform sum < "$root/tools/legacy-import/node-runtime.txt"
 name="node-$version-$platform"
 work=$(mktemp -d)

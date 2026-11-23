@@ -36,6 +36,8 @@ jobs:
         env:
           PIN_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
           PIN_SOURCE: ${{ github.event_name }}
+        # bash with pipefail: a refused pin fails the step even though tee succeeds.
+        shell: bash
         run: .runtime/node/bin/node tools/legacy-import/m4-launch.mjs provenance --expect "$PIN_COMMIT" --source "$PIN_SOURCE" | tee "$RUNNER_TEMP/m4-pin.txt"
       - name: Package the exact verified build
         if: github.event_name == 'push'

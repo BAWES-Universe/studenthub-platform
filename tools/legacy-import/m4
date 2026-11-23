@@ -6,7 +6,7 @@
 # M-4 settings below. Values stay in the environment and are never passed as process arguments.
 # Node gets no flags, so no NODE_OPTIONS, NODE_PATH, preload or loader setting reaches it.
 set -euf
-root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
+root=$(CDPATH= cd -- "$(/usr/bin/dirname -- "$0")/../.." && pwd -P)
 node="$root/.runtime/node/bin/node"
 [ -x "$node" ] && [ -x /usr/bin/awk ] || { echo "m4: refused.startup" >&2; exit 2; }
 keep=" M4_INVOCATION M4_REVISION M4_ARTIFACT_DIGEST M4_TARGET_ID M4_OPERATOR_ORG_ID M4_EXPECTED_PLAN M4_OUTPUT_DIR M4_LEGACY_MIRROR_URL M4_DATABASE_URL M4_IMPORT_ACTOR LEGACY_REFRESH_REPORT LEGACY_REFRESH_LOCK "

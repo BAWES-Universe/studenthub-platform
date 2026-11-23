@@ -160,7 +160,7 @@ test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a 
   type Change = (c: Checkout, digest: string) => Record<string, string>;
   const same: Change = (c, d) => approved(c, d);
   // `before` runs before the pin, so the digest matches and only the protection check can refuse.
-  const cases: { name: string; change: Change; writable?: boolean; before?: (c: Checkout) => void; asUser?: number; node?: string }[] = [
+  const cases: { name: string; change: Change; writable?: boolean; before?: (c: Checkout) => void; after?: (c: Checkout) => void; asUser?: number; node?: string }[] = [
     { name: "no pin", change: (c) => ({ M4_REVISION: c.head }) },
     { name: "malformed pin", change: (c) => ({ M4_REVISION: c.head, M4_ARTIFACT_DIGEST: "nope" }) },
     { name: "other pin", change: (c) => approved(c, "f".repeat(64)) },
@@ -198,6 +198,23 @@ test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a 
     { name: "link into git's store", before: (c) => { symlinkSync("../../.git/HEAD", path.join(c.root, "node_modules/@studenthub/head")); }, change: same },
     { name: "link to npm's install record", before: (c) => { writeFileSync(path.join(c.root, "node_modules/.package-lock.json"), "{}\n"); symlinkSync("../.package-lock.json", path.join(c.root, "node_modules/@studenthub/record")); }, change: same },
     { name: "another Node binary", change: same, node: process.execPath },
+    // git would run a configured fsmonitor during `git status`: it must never get to read it.
+    { name: "git config the runner can write", change: (c, d) => {
+      const mark = path.join(c.outDir, "git-ran.txt");
+      writeFileSync(path.join(c.outDir, "fsmonitor.sh"), `#!/bin/sh\necho ran > ${JSON.stringify(mark)}\n`, { mode: 0o755 });
+      writeFileSync(path.join(c.root, ".git/config"), `\n[core]\n\tfsmonitor = ${path.join(c.outDir, "fsmonitor.sh")}\n`, { flag: "a" });
+      chmodTree(c.root, false);
+      chownSync(path.join(c.root, ".git/config"), RUNNER, RUNNER);
+      return same(c, d);
+    }, writable: true, after: (c) => { assert.equal(existsSync(path.join(c.outDir, "git-ran.txt")), false, "git read the runner's config"); } },
+    { name: "writable git store", change: (c, d) => { chmodTree(c.root, false); chmodSync(path.join(c.root, ".git/config"), 0o644); return same(c, d); }, writable: true },
+    { name: "git store elsewhere", change: (c, d) => {
+      const store = path.join(c.scratch, "store.git");
+      spawnSync("cp", ["-a", path.join(c.root, ".git"), store]);
+      rmSync(path.join(c.root, ".git"), { recursive: true });
+      writeFileSync(path.join(c.root, ".git"), `gitdir: ${store}\n`);
+      return same(c, d);
+    } },
     { name: "pinned runtime replaced", change: (c, d) => { rmSync(path.join(c.root, RUNTIME_NODE)); copyFileSync(NODE_COPY, path.join(c.root, RUNTIME_NODE)); writeFileSync(path.join(c.root, RUNTIME_NODE), "#!/bin/sh\n", { flag: "a" }); chmodSync(path.join(c.root, RUNTIME_NODE), 0o755); return same(c, d); } },
     { name: "dangling link", before: (c) => { symlinkSync("../../packages/none", path.join(c.root, "node_modules/@studenthub/none")); }, change: same },
   ];
@@ -213,6 +230,7 @@ test("a missing or mismatched runtime, a wrong commit, an unprotected tree or a 
         assert.equal(r.stderr, "m4: refused.provenance", k.name);
         assert.equal(existsSync(c.loaded), false, `${k.name}: the importer was loaded`);
       }
+      k.after?.(c);
     } finally { remove(c); }
   }
 });
