@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { M4_SOURCES, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
-import { acceptWrite, acquireSharedLock, artifactDigest, main, type CliDeps, type M4Receipt, type WriteTarget } from "../src/m4-cli.js";
+import { acceptWrite, acquireSharedLock, artifactDigest, main, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
 
 // Synthetic legacy rows only. SECRET marks every value that must never reach a receipt or a log.
 const SECRET = "Secret";
@@ -38,8 +38,10 @@ interface FakeDb {
   marker: { environment: string; targetId: string } | null;
   operators: Set<string>;
   writer: object | null;
+  /** Set when the lock-holding session is lost: the lock is gone and that session is dead. */
+  sessionLost: boolean;
 }
-const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), writer: null });
+const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), writer: null, sessionLost: false });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -48,7 +50,7 @@ interface HarnessOptions {
   writers?: Partial<M4Writers>;
   rows?: M4Sources;
   dir?: string;
-  artifact?: string;
+  provenance?: Partial<Provenance>;
 }
 
 interface Harness {
@@ -87,14 +89,21 @@ function harness(opts: HarnessOptions = {}): Harness {
     claimWriter: async () => { if (db.writer && db.writer !== me) return false; db.writer = me; return true; },
     writers: () => {
       assert.equal(db.writer, me, "writers are used only by the lock holder");
-      return writers;
+      // Like the session-bound pool: every batch first checks the session still holds the lock.
+      const fenced = <A extends unknown[], R>(f: (...a: A) => Promise<R>) => async (...a: A): Promise<R> => {
+        if (db.sessionLost || db.writer !== me) throw new Error("m4.writerLost");
+        return f(...a);
+      };
+      return { catalogue: fenced(writers.catalogue), companies: fenced(writers.companies), brandLinks: fenced(writers.brandLinks), stores: fenced(writers.stores), contacts: fenced(writers.contacts) };
     },
+    stillHeld: async () => db.writer === me && !db.sessionLost,
+    lost: () => db.writer === me && db.sessionLost,
     close: async () => { state.closed++; if (db.writer === me) db.writer = null; },
   };
   const deps: CliDeps = {
     env: {
       M4_INVOCATION: invocation, M4_OUTPUT_DIR: file("out"),
-      M4_REVISION: REVISION, M4_TARGET_ID: TARGET, M4_OPERATOR_ORG_ID: OPERATOR,
+      M4_REVISION: REVISION, M4_ARTIFACT_DIGEST: ARTIFACT, M4_TARGET_ID: TARGET, M4_OPERATOR_ORG_ID: OPERATOR,
       LEGACY_REFRESH_REPORT: file("refresh.json"), LEGACY_REFRESH_LOCK: file("lock"),
       M4_IMPORT_ACTOR: ACTOR, M4_DATABASE_URL: "postgres://unused/x",
       ...opts.env,
@@ -114,7 +123,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       },
     }),
     target: () => target,
-    artifact: () => opts.artifact ?? ARTIFACT,
+    provenance: () => ({ head: REVISION, clean: true, artifact: ARTIFACT, ...opts.provenance }),
     now: () => new Date("2026-11-23T02:00:00.000Z"),
     log: (line) => out.push(line),
     error: (line) => {
@@ -164,13 +173,13 @@ test("the plan identity follows the revision, the artifact, the refresh, the des
   const base = await planId();
   assert.equal(await planId(), base);
   const variants: HarnessOptions[] = [
-    { env: { M4_REVISION: "b".repeat(40) } },
-    { artifact: "f".repeat(64) },
+    { env: { M4_REVISION: "b".repeat(40) }, provenance: { head: "b".repeat(40) } },
+    { env: { M4_ARTIFACT_DIGEST: "f".repeat(64) }, provenance: { artifact: "f".repeat(64) } },
     { env: { M4_TARGET_ID: "22222222-2222-4222-8222-222222222222" } },
     { env: { M4_OPERATOR_ORG_ID: "another-operator" } },
     { rows: { ...sources(), company: [{ company_id: 7, parent_company_id: null, company_name: `${SECRET} Co renamed`, deleted: 0 }] } },
   ];
-  for (const v of variants) assert.notEqual(await planId(v), base, JSON.stringify(v.env ?? v.artifact ?? "rows"));
+  for (const v of variants) assert.notEqual(await planId(v), base, JSON.stringify(v.env ?? "rows"));
   const h = harness();
   try {
     writeFileSync(h.file("refresh.json"), JSON.stringify({ ...REFRESH, totalRows: 43 }));
@@ -357,8 +366,15 @@ test("every refusal exits 2 before any write; after the name is claimed it publi
     { name: "refreshNotOk", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected } }, refresh: { ...REFRESH, ok: false }, receipt: true, reads: false },
     { name: "refreshNotOk", argv: ["plan"], opts: {}, refresh: "not json", receipt: true, reads: false },
     { name: "planMismatch", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: "d".repeat(64) } }, receipt: true, reads: true },
-    { name: "planMismatch", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected, M4_REVISION: "b".repeat(40) } }, receipt: true, reads: true },
-    { name: "planMismatch", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, artifact: "f".repeat(64) }, receipt: true, reads: true },
+    { name: "planMismatch", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected, M4_REVISION: "b".repeat(40) }, provenance: { head: "b".repeat(40) } }, receipt: true, reads: true },
+    { name: "planMismatch", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected, M4_ARTIFACT_DIGEST: "f".repeat(64) }, provenance: { artifact: "f".repeat(64) } }, receipt: true, reads: true },
+    { name: "provenance", argv: ["plan"], opts: { env: { M4_ARTIFACT_DIGEST: undefined } }, receipt: true, reads: false },
+    { name: "provenance", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected, M4_ARTIFACT_DIGEST: "nope" } }, receipt: true, reads: false },
+    { name: "provenance", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, provenance: { artifact: "f".repeat(64) } }, receipt: true, reads: false },
+    { name: "provenance", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, provenance: { artifact: null } }, receipt: true, reads: false },
+    { name: "provenance", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, provenance: { head: "b".repeat(40) } }, receipt: true, reads: false },
+    { name: "provenance", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, provenance: { head: null } }, receipt: true, reads: false },
+    { name: "provenance", argv: ["plan"], opts: { provenance: { clean: false } }, receipt: true, reads: false },
     { name: "target", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, db: { ...fakeDb(), marker: null } }, receipt: true, reads: true },
     { name: "target", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, db: { ...fakeDb(), marker: { environment: "production", targetId: TARGET } } }, receipt: true, reads: true },
     { name: "target", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, db: { ...fakeDb(), marker: { environment: "staging", targetId: "33333333-3333-4333-8333-333333333333" } } }, receipt: true, reads: true },
@@ -387,28 +403,101 @@ test("every refusal exits 2 before any write; after the name is claimed it publi
   }
 });
 
-test("the artifact digest covers every built file by path and content", () => {
+test("the artifact digest covers the entrypoint's closure and the lockfile, and refuses an incomplete build", () => {
   const root = mkdtempSync(path.join(tmpdir(), "m4-artifact-"));
+  const write = (rel: string, text: string) => { mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); writeFileSync(path.join(root, rel), text); };
   try {
-    mkdirSync(path.join(root, "dist/tools"), { recursive: true });
-    mkdirSync(path.join(root, "packages/db/dist/import"), { recursive: true });
-    writeFileSync(path.join(root, "dist/tools/a.js"), "a");
-    writeFileSync(path.join(root, "packages/db/dist/import/b.js"), "b");
+    write("package-lock.json", "{}");
+    write("dist/tools/legacy-import/src/m4-cli.js", 'import pg from "pg";\nimport { a } from "./m4-run.js";\nimport { b } from "@studenthub/db/import";\n');
+    write("dist/tools/legacy-import/src/m4-run.js", 'export const a = 1; const later = () => import("./twin/x.js");\n');
+    write("dist/tools/legacy-import/src/twin/x.js", "export {};\n");
+    write("dist/tools/legacy-import/src/unused.js", "export {};\n");
+    write("packages/db/package.json", JSON.stringify({ exports: { "./import": { import: "./dist/import/index.js" } } }));
+    write("packages/db/dist/import/index.js", 'export * from "./store.js";\n');
+    write("packages/db/dist/import/store.js", "export const b = 2;\n");
+    mkdirSync(path.join(root, "node_modules/@studenthub"), { recursive: true });
+    symlinkSync("../../packages/db", path.join(root, "node_modules/@studenthub/db"));
     const base = artifactDigest(root);
-    assert.match(base, /^[0-9a-f]{64}$/);
-    assert.equal(artifactDigest(root), base);
-    writeFileSync(path.join(root, "dist/tools/a.js"), "a2");
-    assert.notEqual(artifactDigest(root), base);
-    writeFileSync(path.join(root, "dist/tools/a.js"), "a");
-    writeFileSync(path.join(root, "packages/db/dist/import/b.js"), "b2");
-    assert.notEqual(artifactDigest(root), base);
-    writeFileSync(path.join(root, "packages/db/dist/import/b.js"), "b");
-    writeFileSync(path.join(root, "packages/db/dist/import/c.js"), "");
-    assert.notEqual(artifactDigest(root), base);
-    rmSync(path.join(root, "packages/db/dist/import/c.js"));
-    writeFileSync(path.join(root, "dist/tools/notes.txt"), "not code");
-    assert.equal(artifactDigest(root), base);
+    assert.match(base.digest!, /^[0-9a-f]{64}$/);
+    assert.equal(base.files, 6);
+    assert.equal(artifactDigest(root).digest, base.digest);
+    // Anything in the closure or the lockfile changes it; a file outside the closure does not.
+    for (const [rel, text] of [["dist/tools/legacy-import/src/twin/x.js", "export const x = 1;\n"], ["packages/db/dist/import/store.js", "export const b = 3;\n"], ["package-lock.json", '{"v":2}']] as const) {
+      const before = readFileSync(path.join(root, rel), "utf8");
+      write(rel, text);
+      assert.notEqual(artifactDigest(root).digest, base.digest, rel);
+      write(rel, before);
+    }
+    write("dist/tools/legacy-import/src/unused.js", "export const changed = 1;\n");
+    assert.equal(artifactDigest(root).digest, base.digest);
+    // A missing file anywhere in the closure, or a missing entrypoint, gives no digest.
+    rmSync(path.join(root, "packages/db/dist/import/store.js"));
+    assert.deepEqual([artifactDigest(root).digest, artifactDigest(root).missing], [null, ["packages/db/dist/import/index.js -> ./store.js"]]);
+    write("packages/db/dist/import/store.js", "export const b = 2;\n");
+    rmSync(path.join(root, "node_modules/@studenthub/db"));
+    assert.deepEqual(artifactDigest(root).missing, ["@studenthub/db/import"]);
+    symlinkSync("../../packages/db", path.join(root, "node_modules/@studenthub/db"));
+    assert.equal(artifactDigest(root).digest, base.digest);
+    assert.deepEqual(artifactDigest(root, "dist/absent.js").missing, ["dist/absent.js"]);
+    rmSync(path.join(root, "package-lock.json"));
+    assert.deepEqual(artifactDigest(root).missing, ["package-lock.json"]);
+    // A closure that reaches outside the repository is refused.
+    write("package-lock.json", "{}");
+    const outside = mkdtempSync(path.join(tmpdir(), "m4-outside-"));
+    writeFileSync(path.join(outside, "evil.js"), "export {};\n");
+    write("dist/tools/legacy-import/src/twin/x.js", `import "${path.relative(path.join(root, "dist/tools/legacy-import/src/twin"), path.join(outside, "evil.js"))}";\n`);
+    assert.equal(artifactDigest(root).digest, null);
+    rmSync(outside, { recursive: true, force: true });
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("the real build's closure is complete and the provenance command prints it", async () => {
+  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../..");
+  const real = artifactDigest(root);
+  assert.deepEqual(real.missing, []);
+  assert.ok(real.files > 10);
+  const out: string[] = [];
+  const h = harness();
+  try {
+    const code = await main(["provenance"], { ...h.deps, provenance: () => ({ head: REVISION, clean: true, artifact: real.digest }), log: (l) => out.push(l) });
+    assert.equal(code, 0);
+    assert.deepEqual(out, [`m4 provenance head=${REVISION} clean=true artifact=${real.digest}`]);
+    assert.equal(existsSync(h.file("out")), false, "provenance claims nothing and writes nothing");
+    assert.equal(await main(["provenance"], { ...h.deps, provenance: () => ({ head: REVISION, clean: true, artifact: null }), log: () => undefined }), 1);
+  } finally { cleanup(h); }
+});
+
+test("losing the lock session mid-write stops further writes, fails the attempt and keeps confirmed and unconfirmed apart", async () => {
+  const expected = await planId();
+  const db = fakeDb();
+  const h = harness({ env: { M4_EXPECTED_PLAN: expected }, db, writers: {
+    brandLinks: async (rows) => { h.calls.push("brand_company"); db.sessionLost = true; throw new Error("Connection terminated unexpectedly"); },
+  } });
+  try {
+    const code = await main(["write"], h.deps);
+    assert.equal(code, 1);
+    const r = h.receipt("write");
+    assert.deepEqual([r.status, r.code], ["failed", "m4.writerLost"]);
+    assert.equal(r.steps.at(-1)!.step, "company");
+    assert.deepEqual(r.unconfirmed, ["brand_company", "store", "company_contact"]);
+    assert.ok(!h.calls.includes("store") && !h.calls.includes("company_contact"));
+    assert.ok(!acceptWrite(r, h.invocation, expected, code));
+  } finally { cleanup(h); }
+});
+
+test("a lock lost after the last batch still fails the attempt: exclusivity is re-checked before the outcome is published", async () => {
+  const expected = await planId();
+  const db = fakeDb();
+  const h = harness({ env: { M4_EXPECTED_PLAN: expected }, db, writers: {
+    contacts: async (rows) => { h.calls.push("company_contact"); db.sessionLost = true; return ok(rows.length); },
+  } });
+  try {
+    const code = await main(["write"], h.deps);
+    assert.equal(code, 1);
+    const r = h.receipt("write");
+    assert.deepEqual([r.status, r.code, r.steps.length, r.unconfirmed], ["failed", "m4.writerLost", 12, []]);
+    assert.ok(!acceptWrite(r, h.invocation, expected, code));
+  } finally { cleanup(h); }
 });
 
 test("the shared lock is refused while another process holds the refresh lock exclusively", async (t) => {

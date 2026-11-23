@@ -81,6 +81,11 @@ Two active rows of one kind whose names normalize the same become one item: the 
 - **Pass rule.** A write passed only when `acceptWrite` holds: that invocation's own terminal receipt says `ok` for the expected plan, and that same invocation exited 0. An older receipt, even for the same plan, never counts.
 - **Refresh lock.** The CLI takes a shared, non-waiting `flock` on `LEGACY_REFRESH_LOCK` and holds it until it exits. It reads `last-run.json` and every legacy table under it. A refresh holding the lock makes the run refuse (`refused.locked`).
 - **Writer lock.** A write also takes the target database's one-writer lock: a session advisory lock on its own connection, independent of the refresh lock. It is taken before the first write and held until the terminal receipt is published, across every batch. A second writer on the same database is refused (`refused.writerBusy`).
+  - Every import transaction runs on that same session (`WriterSessionPool`), and each checkout first re-checks there that the lock is still held. Exclusivity is checked again before the outcome is published.
+  - If the session is lost, the transaction in flight dies with it and no later batch starts. The run ends `failed` with `m4.writerLost`, and the receipt separates confirmed from unconfirmed steps.
+- **Build provenance.** Plan and write run only from a clean git checkout whose HEAD is `M4_REVISION`. The built closure must hash to `M4_ARTIFACT_DIGEST`. The closure is the entrypoint, every relative and workspace module it imports, and `package-lock.json`.
+  - The pinned digest comes from an independent build: CI's "Pin the M-4 importer build" step prints `m4 provenance head=<commit> clean=<…> artifact=<digest>` for every commit it builds, including each commit on `main`.
+  - A missing closure file, a dirty tree, another HEAD or a different digest refuses with `refused.provenance`, before any read.
 - **Reading.** It reads only the tables and columns listed in `M4_SOURCES`, one `SELECT JSON_OBJECT(...)` per table, through the walker's read-only mirror reader. It refuses unless the last refresh says ok.
 - **Plan identity.** A sha256 over:
   - the stated revision (`M4_REVISION`);
@@ -107,6 +112,7 @@ Two active rows of one kind whose names normalize the same become one item: the 
 
   A `failed` receipt lists the confirmed steps (written, and their results checked) and the unconfirmed ones. The first unconfirmed step may have committed in part.
 - **Report.** Private, mode 600, never attached to a pull request. Per step it holds legacy and mapped counts, issue counts and legacy ids by rule, and the write results. `receiptSafe` re-checks every field before the file is written. Errors print fixed codes only.
+- **Refusal codes.** `usage`, `invocation`, `invocationUsed`, `revision`, `destination`, `writeConfig`, `provenance`, `locked`, `refreshNotOk`, `planMismatch`, `target`, `operator`, `writerBusy`.
 - **Exit codes.**
   - 0: ok.
   - 3: a write step refused rows or found conflicts.
@@ -115,11 +121,12 @@ Two active rows of one kind whose names normalize the same become one item: the 
 - **Operator steps (Hermes card, staging only).**
   - **Once, after migration 0652 is applied:** `INSERT INTO legacy_import_target (environment) VALUES ('staging') RETURNING target_id` on the staging database, and record that `target_id` (not a secret). No other database gets the row. Production refuses until a separate value is added with the owner's explicit go at cutover.
   - **Each rehearsal:**
-    1. Build the deployed commit.
-    2. Run `plan` with a fresh `M4_INVOCATION`, `M4_REVISION`, `M4_TARGET_ID` and `M4_OPERATOR_ORG_ID`.
-    3. Review its receipt.
-    4. Run `write` with a new `M4_INVOCATION`, the same settings, and `M4_EXPECTED_PLAN` set to the reviewed `plan`.
-    5. Report a pass only by `acceptWrite` on that write invocation's receipt and exit code.
+    1. Check out the deployed `main` commit cleanly and build it (`npm ci`, `npm run build`).
+    2. Take the `artifact=` digest that Platform CI's "Pin the M-4 importer build" step printed for that same commit on `main`.
+    3. Run `plan` with a fresh `M4_INVOCATION`, `M4_REVISION`, `M4_ARTIFACT_DIGEST`, `M4_TARGET_ID` and `M4_OPERATOR_ORG_ID`.
+    4. Review its receipt.
+    5. Run `write` with a new `M4_INVOCATION`, the same settings, and `M4_EXPECTED_PLAN` set to the reviewed `plan`.
+    6. Report a pass only by `acceptWrite` on that write invocation's receipt and exit code.
 
 ## M-5 table map (work)
 
