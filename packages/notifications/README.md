@@ -72,10 +72,12 @@ maximum is five attempts. The processing order in
    recorded as `not_sent` without retry.
 
 A malformed row before sending is closed as failed without retry. An unexpected
-exception after sending starts (including a failed completion write) leaves the
-row in `sending` for claim-lease recovery; it cannot prove whether delivery
-occurred. The [PostgreSQL store](../db/src/postgres-email-outbox-store.ts) can
-reclaim it after its 900-second lease expires, incrementing the attempt. This
+exception after sending starts (including a failed completion write) can leave
+the row in `sending` for claim-lease recovery; it cannot prove whether delivery
+occurred. Concurrent recovery may already have completed the row when the
+original worker's completion fails. The
+[PostgreSQL store](../db/src/postgres-email-outbox-store.ts) can reclaim a row
+still in `sending` after its 900-second lease expires, incrementing the attempt. This
 path can deliver again without any `safeToRetry` result, subject to the same
 processing checks above; attempts beyond the maximum fail without another send.
 Typed `EmailSendError` values become closed
