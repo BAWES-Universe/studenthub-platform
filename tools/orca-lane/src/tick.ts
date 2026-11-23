@@ -9,10 +9,12 @@
  *
  * Builtins only and erasable TypeScript only, so the bootstrap can run this file straight from
  * `git show <sha>:tools/orca-lane/src/tick.ts` with Node's type stripping, before anything is built.
+ * The bootstrap passes `--experimental-strip-types`, so this works from Node 22.6, not only from 22.18
+ * where stripping became the default.
  */
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -135,19 +137,44 @@ export function setupRun(options: SetupOptions): SetupResult {
   return { status: "ready", run, dir, sha, owner };
 }
 
-/** Removes exactly this run's tree, and only for the holder of its owner nonce. Never prunes. */
-export function cleanupRun(options: { readonly clone: string; readonly ticks: string; readonly run: string; readonly owner: string }): CleanupResult {
+export interface CleanupOptions {
+  readonly clone: string;
+  readonly ticks: string;
+  readonly run: string;
+  readonly owner: string;
+  /** Test seam: runs while cleanup holds the run id, before the tree is removed; a throw counts as a failed removal. */
+  readonly afterClaim?: () => void;
+}
+
+/**
+ * Removes exactly this run's tree, and only for the holder of its owner nonce. Never prunes.
+ * Cleanup first claims the reservation by renaming it to a dot-named tombstone (one rename wins), so
+ * from the owner check to the end no second cleanup can act, and a new setup with this run id finds the
+ * old tree still present and refuses, leaving it alone. If removal fails, the reservation is put back,
+ * so the same owner can retry.
+ */
+export function cleanupRun(options: CleanupOptions): CleanupResult {
   const dir = runDir(options.ticks, options.run);
   const reserved = reservation(options.ticks, options.run);
-  let recorded = "";
-  try { recorded = readFileSync(path.join(reserved, "owner"), "utf8"); } catch { /* no reservation */ }
-  if (!OWNER.test(options.owner) || recorded !== options.owner) {
-    throw new TickError("cleanup", `not the owner of run ${options.run}; nothing removed`);
+  const refuse = (): never => { throw new TickError("cleanup", `not the owner of run ${options.run}; nothing removed`); };
+  const ownerIn = (where: string): string => { try { return readFileSync(path.join(where, "owner"), "utf8"); } catch { return ""; } };
+  if (!OWNER.test(options.owner) || ownerIn(reserved) !== options.owner) refuse();
+  const held = path.join(path.dirname(reserved), `.removing-${options.run}-${randomBytes(4).toString("hex")}`);
+  try { renameSync(reserved, held); } catch { refuse(); }
+  if (ownerIn(held) !== options.owner) {
+    try { renameSync(held, reserved); } catch { /* left as a tombstone; nothing of another run was touched */ }
+    refuse();
   }
-  try { if (registered(options.clone, dir)) git(options.clone, ["worktree", "remove", "--force", dir]); }
-  catch (error) { throw new TickError("cleanup", failure(error)); }
-  if (existsSync(dir)) throw new TickError("cleanup", `${dir} is still present after removal`);
-  rmSync(reserved, { recursive: true, force: true });
+  try {
+    options.afterClaim?.();
+    if (registered(options.clone, dir)) git(options.clone, ["worktree", "remove", "--force", dir]);
+    if (existsSync(dir)) throw new Error(`${dir} is still present after removal`);
+  } catch (error) {
+    let note = "the reservation is restored; retry this cleanup with the same owner value";
+    try { renameSync(held, reserved); } catch { note = `the reservation is held at ${held}`; }
+    throw new TickError("cleanup", `${failure(error)}; ${note}`);
+  }
+  rmSync(held, { recursive: true, force: true });
   return { status: "removed", run: options.run, dir };
 }
 
@@ -192,7 +219,7 @@ export const BOOTSTRAP = [
   "git fetch --quiet --no-tags --refmap= --no-write-fetch-head origin refs/heads/main",
   "mkdir -p <ticks-dir>/.launch && mktemp -d <ticks-dir>/.launch/<run-id>.XXXXXX",
   "git show <sha>:tools/orca-lane/src/tick.ts > <launch>/tick.ts",
-  "node <launch>/tick.ts setup --clone <clone> --ticks <ticks-dir> --run <run-id> --sha <sha>",
+  "node --experimental-strip-types <launch>/tick.ts setup --clone <clone> --ticks <ticks-dir> --run <run-id> --sha <sha>",
 ] as const;
 
 /**
@@ -200,7 +227,7 @@ export const BOOTSTRAP = [
  * invocation's own launcher; removing the launcher directory always runs last, ready or not.
  */
 export const TEARDOWN = [
-  "node <launch>/tick.ts cleanup --clone <clone> --ticks <ticks-dir> --run <run-id> --owner <owner>",
+  "node --experimental-strip-types <launch>/tick.ts cleanup --clone <clone> --ticks <ticks-dir> --run <run-id> --owner <owner>",
   "rm -rf <launch>",
 ] as const;
 
