@@ -2360,6 +2360,8 @@
     "SHU-222: authoritative recheck catches a claim race before reservation",
     "SHU-222: authoritative recheck catches a new active receipt before reservation",
     "a rate-limited tick dispatches NOTHING and exits cleanly instead of failing the service",
+    "a quota-exceeded Linear write after launch HOLDs the tick and keeps the launch intent",
+    "isLinearRateLimited: quota and usage-limit answers are rate limits; other errors are not",
     "landing-verdict-consumed-exactly-once",
     "BLOCK-routes-to-writer",
     "duplicate-consumption",
@@ -2766,6 +2768,9 @@
     "M18 G1: a verdict already on the pull request is never posted again, and an unreadable comment list posts nothing",
     "M18 G5: every review writes one metrics line, and the report line gives the last day's count, PASS share, median, p90 and drops",
     "M18 G2: max_parallel is 1 to 8 and absent is one slot, and slot_lanes names that many committed review-only lanes, the policy's lane first",
+    "foreign review receipt: another PR's review the supervisor finished or holds no record of is released, never read as STALE_HEAD",
+    "foreign review receipt: a run the supervisor reports live, an inconclusive answer, or a supervisor that cannot be asked keeps the slot and writes nothing",
+    "foreign review receipt: the armed episode's own receipt, or one at the approved head, keeps the pull-request check",
     "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
     "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
     "SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick",
@@ -2936,6 +2941,7 @@
     "SHU-224: committed scope is pinned to the current card lanes while dispatch stays disabled",
     "SHU-224: every step of the committed queue narrows to one armed card that resolveDispatchScope accepts",
     "SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed",
+    "card queue with no armed card: the report names the queue, not INVALID; a malformed queue still reads INVALID",
     "SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted incident card",
     "SHU-226 A1: a synchronous breaker is reported in the tick that persists it",
     "SHU-226 A2/A3: revision and retryable-failure exhaustion each file all bounded attempts",
@@ -20192,6 +20198,14 @@
       "capabilities": []
     },
     {
+      "name": "a quota-exceeded Linear write after launch HOLDs the tick and keeps the launch intent",
+      "capabilities": []
+    },
+    {
+      "name": "isLinearRateLimited: quota and usage-limit answers are rate limits; other errors are not",
+      "capabilities": []
+    },
+    {
       "name": "landing-verdict-consumed-exactly-once",
       "capabilities": []
     },
@@ -22353,6 +22367,18 @@
       "capabilities": []
     },
     {
+      "name": "foreign review receipt: another PR's review the supervisor finished or holds no record of is released, never read as STALE_HEAD",
+      "capabilities": []
+    },
+    {
+      "name": "foreign review receipt: a run the supervisor reports live, an inconclusive answer, or a supervisor that cannot be asked keeps the slot and writes nothing",
+      "capabilities": []
+    },
+    {
+      "name": "foreign review receipt: the armed episode's own receipt, or one at the approved head, keeps the pull-request check",
+      "capabilities": []
+    },
+    {
       "name": "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
       "capabilities": []
     },
@@ -23121,6 +23147,10 @@
     },
     {
       "name": "SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed",
+      "capabilities": []
+    },
+    {
+      "name": "card queue with no armed card: the report names the queue, not INVALID; a malformed queue still reads INVALID",
       "capabilities": []
     },
     {

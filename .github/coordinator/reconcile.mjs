@@ -31,7 +31,7 @@ export { consumeMergeReadiness, routineMergeEnabledFor };
 import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane, ROLE_REVIEW } from "./launch-vocabulary.mjs";
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid, ciBeforeReviewSettings, ciBeforeReviewApplies, ciBeforeReviewDecision, ciReviseCount, ciReviseOrder } from "./review-routing.mjs";
-import { parseActivationArgs, narrowQueueScope, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal, repairFromActivation } from "./single-run-activation.mjs";
+import { parseActivationArgs, narrowQueueScope, cardQueue, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal, repairFromActivation } from "./single-run-activation.mjs";
 import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext, finishedSupervisorStage } from "./supervisor-dispatch.mjs";
@@ -93,6 +93,29 @@ export function otherEpisodeUnacknowledgedLaunch(receipt, armedEpisodeId) {
   if (receipt.review_base_sha) return false;
   if (typeof armedEpisodeId !== "string" || !armedEpisodeId.length) return false;
   return typeof receipt.episode_id === "string" && receipt.episode_id.length > 0 && receipt.episode_id !== armedEpisodeId;
+}
+
+// A review receipt left by ANOTHER review-only activation: an armed review-only
+// activation is in force, the receipt was written in another episode, and it
+// reviews another head than the one this activation approved. It can never be
+// this activation's review, so it is never checked against this activation's
+// pull request (that check could only ever answer STALE_HEAD).
+export const FOREIGN_REVIEW_RECEIPT = "FOREIGN_REVIEW_RECEIPT";
+
+export function foreignReviewReceipt(receipt, activation, armedEpisodeId) {
+  if (!receipt || receipt.stage !== "LAUNCH_UNKNOWN" || !receipt.review_base_sha) return false;
+  if (activation?.review_only !== true || typeof armedEpisodeId !== "string" || !armedEpisodeId.length) return false;
+  if (!TARGET_SHA_RE.test(activation.initial_target_sha ?? "")) return false;
+  return receipt.episode_id !== armedEpisodeId && receipt.target_sha !== activation.initial_target_sha;
+}
+
+// "release" only on a conclusive answer: a durable COMPLETED/FAILED bound to
+// this attempt and head (finished), or the supervisor's affirmative absence
+// (MISSING_CLAIM with NO_RECORDS, supervisorDisownsLaunch). A bare
+// MISSING_CLAIM is also the supervisor's answer for attempt state it cannot
+// read, so it, a malformed answer, a live run and a transport fault all "hold".
+export function foreignReviewDisposition(answer, finished) {
+  return finished || supervisorDisownsLaunch(answer) ? "release" : "hold";
 }
 
 // The supervisor's status answer for an attempt it provably holds no record of:
@@ -1486,11 +1509,17 @@ function headerNumber(res, name) {
 
 // isLinearRateLimited — Linear reports an exhausted budget either as HTTP 429 or
 // as a 200/400 GraphQL error carrying RATELIMITED. Both are the same condition.
+// A spent quota is the same condition under another name: on 23 Nov 11:01Z a
+// write answered "quota exceeded", fell through to the generic Linear error,
+// and failed the whole tick (exit 1) right after the worker had launched,
+// although the next tick ran fine. It now HOLDs the tick like any rate limit.
+const LINEAR_BUDGET_CODES = new Set(["RATELIMITED", "RATE_LIMITED", "QUOTA_EXCEEDED", "USAGE_LIMIT_EXCEEDED"]);
+const LINEAR_BUDGET_MESSAGE_RE = /rate[ -]?limit|quota exceeded|too many requests/i;
 export function isLinearRateLimited(res, body) {
   if (res?.status === 429) return true;
   return (body?.errors ?? []).some((error) =>
-    String(error?.extensions?.code ?? "").toUpperCase() === "RATELIMITED" ||
-    /rate limit/i.test(String(error?.message ?? "")));
+    LINEAR_BUDGET_CODES.has(String(error?.extensions?.code ?? "").toUpperCase()) ||
+    LINEAR_BUDGET_MESSAGE_RE.test(String(error?.message ?? "")));
 }
 
 // linearRateLimitSeconds — the wait Linear ITSELF stated, in seconds: the
@@ -2218,13 +2247,24 @@ export function loadSnapshot(file = path.join(__dirname, "test", "fixtures", "sn
   return { issues: raw.issues ?? [], openPRs: raw.openPRs ?? [], meta: raw.meta ?? {} };
 }
 
+// A committed card queue with no armed card is not narrowed, so its scope
+// resolves invalid and denies every dispatch (narrowQueueScope). That denial is
+// intended; the report used to print it as "INVALID", which reads as a broken
+// config on every idle tick between cards. A valid queue now says what it is.
+// A malformed queue, or any other invalid scope, still reads INVALID.
+function renderUnnarrowedScope(config, scope) {
+  const queue = cardQueue(config);
+  if (queue.queue && queue.ok) return `queue(${queue.ids.join(",")}) — no card armed, nothing dispatches`;
+  return `INVALID (${scope.reason})`;
+}
+
 function printReport({ config, source, eligibility, selection, dispatchEnabled, activation = null, watch = null }) {
   const lines = [];
   lines.push(`coordinator reconcile — ${dispatchEnabled ? "DISPATCH ENABLED" : "DRY-RUN (dispatch disabled, no writes)"}`);
   lines.push(`pilot_repo=${config.pilot_repo}  max_dispatch=${config.max_dispatch}  source=${source}`);
   const scope = resolveDispatchScope(config);
   lines.push(scope.configured
-    ? `dispatch_scope=${scope.valid ? [...scope.issueIds].join(",") : `INVALID (${scope.reason})`}`
+    ? `dispatch_scope=${scope.valid ? [...scope.issueIds].join(",") : renderUnnarrowedScope(config, scope)}`
     : "dispatch_scope=board-wide");
   lines.push(renderActivationLine(activation));
   if (watch) lines.push(watch);
@@ -2865,6 +2905,39 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       // can no longer be resumed must not pause its adapter, which a build
       // card's run shares, over a contract it would never use.
       if (receipt.review_base_sha) {
+        // 23 Nov: a review launched for ANOTHER pull request (#666, whose tick
+        // died on a Linear quota error before folding the launch) was read
+        // against the armed activation's pull request (#665) at #666's head. That
+        // is STALE_HEAD on every tick, so the slot was held until the activation
+        // expired and nothing was reviewed. A receipt from another episode at
+        // another head is not this activation's review: it is never verified
+        // against this activation's pull request. Its slot is released unless
+        // the supervisor reports the run as still live or finished.
+        if (foreignReviewReceipt(receipt, singleRunActivation, armedEpisodeId)) {
+          let answer = null;
+          if (typeof adapterModule.status === "function") {
+            try { answer = await adapterModule.status(); } catch { answer = null; }
+          }
+          const finished = finishedSupervisorStage(answer, receipt);
+          const verdict = foreignReviewDisposition(answer, finished);
+          if (verdict === "release") {
+            const reason = finished
+              ? `${FOREIGN_REVIEW_RECEIPT}: review finished on the supervisor (${finished}) for head ${receipt.target_sha}, not the armed review of pull request #${singleRunActivation.review_pr}; verdict not applied`
+              : `${FOREIGN_REVIEW_RECEIPT}: launched for head ${receipt.target_sha} in episode ${receipt.episode_id ?? "<none>"}, not the armed review of pull request #${singleRunActivation.review_pr}; the supervisor reports no live run (${answer?.hold_code ?? answer?.stage ?? "no answer"})`;
+            const released = nextReceiptState(receipt, { type: "hold", reason }, { now: io.now });
+            if (released.accepted) {
+              await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
+              lifecyclePersisted = true;
+              lifecycleSlotReleased = true;
+              const idx = receipts.indexOf(receipt);
+              if (idx >= 0) receipts[idx] = released.receipt;
+              if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} LAUNCH_UNKNOWN -> HOLD (${FOREIGN_REVIEW_RECEIPT}, attempt ${receipt.attempt_id}) — review of head ${receipt.target_sha} is not the armed review of pull request #${singleRunActivation.review_pr}; slot released`);
+              continue;
+            }
+          }
+          if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — review of head ${receipt.target_sha} is not the armed review of pull request #${singleRunActivation.review_pr}, and the supervisor ${answer?.ok === true ? `reports it ${answer.stage ?? "admitted"}` : answer ? `gave no conclusive answer (${answer.hold_code ?? answer.reason ?? "unrecognised"})` : "could not be asked"}; slot held`);
+          continue;
+        }
         const pull = singleRunActivation.review_only === true
           ? await verifyReviewOnlyPull({ repo: receipt.repo, pr: singleRunActivation.review_pr, head_sha: receipt.target_sha,
             base_sha: receipt.review_base_sha, githubToken, fetchImpl })

@@ -482,10 +482,22 @@
     "C-14": {
       "lane": "pay",
       "subject": "`/pay`, `/pay/:id`",
+      "served": [
+        {
+          "route": "/pay",
+          "test": "apps/gateway/test/billing-pay-history-http.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/pay/:lineId",
+          "test": "apps/gateway/test/billing-pay-history-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "not started (audit 2026-11-20): pay lane (GPT): no payslip page"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #661 at 7bcf0f52"
         },
         "verified": {
           "state": "open"

@@ -1211,3 +1211,51 @@ test("SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed
     }
   }
 });
+
+// 23 Nov 11:01:26Z journal: an idle tick between queued cards printed
+// dispatch_scope=INVALID. A committed card queue with no armed card denies all
+// dispatch by design (narrowQueueScope); the report now names the queue instead
+// of calling a valid config broken. A malformed queue still reads INVALID.
+async function dryRunScopeLine(dispatchScope) {
+  const committed = JSON.parse(fs.readFileSync(join(COORDINATOR_DIR, "config.json"), "utf8"));
+  const dir = fs.mkdtempSync(join(tmpdir(), "shu224-queue-line-"));
+  try {
+    const configPath = join(dir, "config.json");
+    fs.writeFileSync(configPath, JSON.stringify({ ...committed, dispatch_scope: dispatchScope }));
+    const out = [];
+    const fetchImpl = async (_url, options) => {
+      const { query } = JSON.parse(options.body);
+      if (query.includes("CoordinatorIssues")) {
+        return { ok: true, status: 200, json: async () => ({ data: { issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ data: {} }) };
+    };
+    const exit = await main([], { LINEAR_API_TOKEN: "synthetic-token" }, {
+      configPath, fetchImpl, fetchDurable: false, openPRsOverride: [], skipActivationPreflight: true, receipts: [],
+      stdout: (line) => out.push(line),
+    });
+    return { exit, line: out.join("\n").split("\n").find((l) => l.startsWith("dispatch_scope=")) ?? "" };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("card queue with no armed card: the report names the queue, not INVALID; a malformed queue still reads INVALID", async () => {
+  const committed = JSON.parse(fs.readFileSync(join(COORDINATOR_DIR, "config.json"), "utf8"));
+  const { cardQueue } = await import("../single-run-activation.mjs");
+  const ids = (committed.card_lanes ?? []).map((lane) => lane.id);
+  let pair = null;
+  for (let i = 0; i + 1 < ids.length && !pair; i += 1) {
+    const candidate = [ids[i], ids[i + 1]];
+    const q = cardQueue({ ...committed, dispatch_scope: { issue_ids: candidate } });
+    if (q.queue && q.ok) pair = candidate;
+  }
+  assert.ok(pair, "the committed config holds two queueable card lanes");
+  const queued = await dryRunScopeLine({ issue_ids: pair });
+  assert.equal(queued.exit, 0);
+  assert.equal(queued.line, `dispatch_scope=queue(${pair.join(",")}) — no card armed, nothing dispatches`);
+  // Behaviour unchanged: the unnarrowed queue still resolves invalid and selects nothing.
+  assert.equal(resolveDispatchScope({ dispatch_scope: { issue_ids: pair } }).valid, false);
+  const malformed = await dryRunScopeLine({ issue_ids: [pair[0], pair[0]] });
+  assert.match(malformed.line, /^dispatch_scope=INVALID \(/);
+});

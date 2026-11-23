@@ -18,6 +18,8 @@ import {
   nextReceiptState,
   receiptCommentBody,
   createReceipt,
+  isLinearRateLimited,
+  LINEAR_RATE_LIMIT_FALLBACK_SECONDS,
 } from "../reconcile.mjs";
 
 const SHA = "b".repeat(40);
@@ -536,4 +538,45 @@ test("a rate-limited tick dispatches NOTHING and exits cleanly instead of failin
   assert.deepEqual(result.out, ["HOLD=LINEAR_RATE_LIMITED retry_after=42"]);
   assert.equal(wa.calls(), 0, "a rate-limited tick must never reach an adapter");
   assert.equal(comments.length, 0, "and must never write to Linear");
+});
+
+// 23 Nov 11:01Z: the receipt write AFTER a worker launched was answered
+// "quota exceeded". That message fell through to the generic Linear error, so
+// the tick threw, logged ACT_COORDINATOR_TICK_FAILED and exited 1, and the card
+// run counted a failed command. A spent quota is a rate limit: the tick HOLDs,
+// exits 0, and the launch intent written before the adapter stays durable, so
+// the next tick reconciles the run from LAUNCH_UNKNOWN.
+test("a quota-exceeded Linear write after launch HOLDs the tick and keeps the launch intent", async () => {
+  const comments = [];
+  const backing = fakeLinearStore(makeIssueNodes(), comments);
+  const wa = fakeWorkspaceAgents({ mode: "accept" });
+  let creates = 0;
+  const quotaAfterLaunch = async (url, opts) => {
+    if (JSON.parse(opts.body).query.includes("commentCreate")) {
+      creates += 1;
+      // 1 = RESERVED, 2 = LAUNCH_UNKNOWN (write-ahead intent), 3 = post-launch receipt.
+      if (creates === 3) {
+        return { ok: false, status: 400, headers: new Headers(), json: async () => ({ errors: [{ message: "quota exceeded" }] }) };
+      }
+    }
+    return backing(url, opts);
+  };
+
+  const result = await runMain({ configPath: tempConfig(), wa, linear: quotaAfterLaunch });
+
+  assert.equal(result.code, 0, `a spent quota is a HOLD, not a failed tick\n${result.out.join("\n")}`);
+  assert.equal(result.out.at(-1), `HOLD=LINEAR_RATE_LIMITED retry_after=${LINEAR_RATE_LIMIT_FALLBACK_SECONDS}`);
+  assert.equal(wa.calls(), 1, "the worker was launched once");
+  const durable = parseReceiptsFromComments(comments);
+  assert.equal(creates, 3, "the post-launch receipt write was attempted once and not repeated");
+  assert.deepEqual(durable.map((r) => r.stage), ["LAUNCH_UNKNOWN"], "the launch intent stays durable for the next tick");
+});
+
+test("isLinearRateLimited: quota and usage-limit answers are rate limits; other errors are not", () => {
+  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "quota exceeded" }] }), true);
+  assert.equal(isLinearRateLimited({ status: 200 }, { errors: [{ message: "Quota exceeded for this API key" }] }), true);
+  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "x", extensions: { code: "USAGE_LIMIT_EXCEEDED" } }] }), true);
+  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "Too many requests" }] }), true);
+  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "Entity not found" }] }), false);
+  assert.equal(isLinearRateLimited({ status: 500 }, null), false);
 });
