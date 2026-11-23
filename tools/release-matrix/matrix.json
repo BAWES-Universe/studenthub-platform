@@ -1323,10 +1323,17 @@
     "A-31": {
       "lane": "reports",
       "subject": "`/reports/revenue`",
+      "served": [
+        {
+          "route": "/reports/revenue",
+          "test": "apps/gateway/test/revenue-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",
-          "note": "not started (audit 2026-11-20): revenue roll-ups (P-4)"
+          "note": "revenue page built on branch (P-4, live from pay transfer lines, operator admins only); evidence set once the PR head is known. Staff salaries and expenses show as not available."
         },
         "verified": {
           "state": "open"
