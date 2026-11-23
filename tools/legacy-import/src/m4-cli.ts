@@ -16,7 +16,8 @@
  * M4_OUTPUT_DIR: `<invocation>.<mode>.receipt.json` and `<invocation>.<mode>.report.json`. It
  * claims the name first (`<invocation>.claim`, created exclusively), so a reused name is refused
  * and nothing it writes can be mistaken for another run's. After the claim every outcome,
- * refusals included, ends in a terminal receipt for that invocation.
+ * refusals included, tries to publish a terminal receipt for that invocation; if that write fails,
+ * the exit code still says so and the receipt may stay `started` (never a pass).
  *
  * A write counts as passed only when `acceptWrite` holds: the invocation's own terminal receipt
  * says ok for the expected plan, and that same invocation exited 0. An older receipt never counts.
