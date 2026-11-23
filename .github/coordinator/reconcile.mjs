@@ -1394,21 +1394,32 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
 // before anything reaches an adapter. With no armed activation the map is empty
 // and parking behaviour is byte-for-byte unchanged.
 // The host's reviewer sandbox runs one review at a time, so a review waits
-// while another review receipt is active (SHU-71 run 6). A review receipt from
-// a card-run episode that has certainly ended cannot hold the sandbox, though:
-// card-run names each episode `<card>-run-<UTC start stamp>` (card-run.mjs
-// buildRecord), its window is at most CARD_RUN_LIMITS.runMs, its revert stops
-// every worker process by the end of workerGraceMs, and systemd ends the whole
-// unit at AUTO_TIMEOUT_START_MS. Past that last bound nothing from the episode
-// runs. With more than one card worker such a receipt is only ever reconciled
-// by a worker armed on its own card (receiptsForLifecycle), so until then it
-// stayed active and held every other card's review: SHU-304's LAUNCH_UNKNOWN
-// review from 11:00Z on 23 Nov (a Linear quota error mid-launch) held the
-// SHU-698 and SHU-699 reviews from 18:18Z. Capacity and lifecycle still count
-// it; only the one-review-at-a-time gate looks past it. A receipt without a
-// card-run episode id, or with no clock supplied, still counts (fail closed).
+// while another review receipt is active (SHU-71 run 6). That holds for every
+// non-terminal review receipt, however old: only positive evidence ends one
+// (endedEpisodeReviewDisposition below), never its age.
+export function reviewHoldsSandbox(receipt) {
+  return Boolean(receipt) && !TERMINAL_STAGES.includes(receipt.stage) && roleForReceipt(receipt) === ROLE_REVIEW;
+}
+
+// Names the receipt that holds the gate, so a tick's own line says which one
+// (on 23 Nov the operator had to replay receipts by hand to find it).
+export function describeReviewHolder(receipt) {
+  return `${receipt?.issue_id ?? "?"} attempt ${receipt?.attempt_id ?? "?"} ${receipt?.stage ?? "?"} in episode ${receipt?.episode_id ?? "none"}`;
+}
+
+// A review receipt whose card-run episode has certainly ended. card-run names
+// each episode `<card>-run-<UTC start stamp>` (card-run.mjs buildRecord), its
+// window is at most CARD_RUN_LIMITS.runMs plus workerGraceMs, and systemd ends
+// the unit at AUTO_TIMEOUT_START_MS. Age only makes such a receipt due for
+// reconciliation; it never frees the review gate by itself. With more than one
+// card worker a receipt is reconciled only by a worker armed on its own card
+// (receiptsForLifecycle), so an ended episode's review on another card was
+// never asked about again and held every later review: SHU-304's LAUNCH_UNKNOWN
+// review from 11:01Z on 23 Nov (a Linear quota error mid-launch) held the
+// SHU-698 and SHU-699 reviews from 18:18Z.
 export const CARD_RUN_EPISODE_MAX_MS = 8 * 60 * 60 * 1000;
 const CARD_RUN_EPISODE_RE = /-run-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
+export const ENDED_EPISODE_REVIEW = "ENDED_EPISODE_REVIEW";
 
 export function cardRunEpisodeOver(receipt, now) {
   const at = now instanceof Date ? now.getTime() : now;
@@ -1419,18 +1430,34 @@ export function cardRunEpisodeOver(receipt, now) {
   return Number.isFinite(start) && at - start > CARD_RUN_EPISODE_MAX_MS;
 }
 
-// Names the receipt that holds the gate, so a tick's own line says which one
-// (on 23 Nov the operator had to replay receipts by hand to find it).
-export function describeReviewHolder(receipt) {
-  return `${receipt?.issue_id ?? "?"} attempt ${receipt?.attempt_id ?? "?"} ${receipt?.stage ?? "?"} in episode ${receipt?.episode_id ?? "none"}`;
+// Due for a status-only settlement by this worker: a non-terminal review
+// receipt this worker's lifecycle does not otherwise reconcile, from a card-run
+// episode that has ended. It is asked about over status only, never launched,
+// resumed or polled as a run.
+export function endedEpisodeReviewDue(receipt, lifecycleReceipts, now) {
+  return reviewHoldsSandbox(receipt) && !lifecycleReceipts.includes(receipt) && cardRunEpisodeOver(receipt, now);
 }
 
-export function reviewHoldsSandbox(receipt, now = null) {
-  return Boolean(receipt) && !TERMINAL_STAGES.includes(receipt.stage) &&
-    roleForReceipt(receipt) === ROLE_REVIEW && !cardRunEpisodeOver(receipt, now);
+// "release" only on positive evidence from the supervisor asked:
+// - a durable COMPLETED/FAILED bound to this exact attempt and head; or
+// - for a launch no run was ever acknowledged for (LAUNCH_UNKNOWN without a run
+//   id), its affirmative refusal (MISSING_CLAIM with NO_RECORDS), which it states
+//   only for an attempt it holds the refused intent of.
+// A supervisor that never saw the attempt (another worker's) answers a bare
+// MISSING_CLAIM, so it, a live run, a malformed answer and a transport fault all
+// "hold", and the receipt keeps the gate.
+export function endedEpisodeReviewDisposition(receipt, answer) {
+  const finished = finishedSupervisorStage(answer, receipt);
+  if (finished) return { verdict: "release", evidence: `the supervisor's durable ${finished} record for this attempt and head` };
+  const unacknowledged = receipt?.stage === "LAUNCH_UNKNOWN" && !(typeof receipt.external_run_id === "string" && receipt.external_run_id.length);
+  if (unacknowledged && supervisorDisownsLaunch(answer)) {
+    return { verdict: "release", evidence: "the supervisor refused this attempt and holds no record of it (MISSING_CLAIM, NO_RECORDS)" };
+  }
+  const said = answer?.ok === true ? `reports it ${answer.stage ?? "admitted"}` : answer ? `gave no conclusive answer (${answer.hold_code ?? answer.reason ?? "unrecognised"})` : "could not be asked";
+  return { verdict: "hold", evidence: `the supervisor ${said}` };
 }
 
-export function selectNextReservation({ ready = [], config = {}, receipts = [], episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set(), now = null }) {
+export function selectNextReservation({ ready = [], config = {}, receipts = [], episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set() }) {
   const scope = resolveDispatchScope(config);
   if (!scope.valid) {
     return { candidate: null, adapter: null, skipped: [{ id: "*", reason: `invalid dispatch_scope — ${scope.reason}; no fallback` }] };
@@ -1508,7 +1535,7 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [], 
     // (reviewer-sandbox.sh holds a root lock and refuses a second at once), so a
     // review that starts beside another fails REVIEW_EXECUTION_UNAVAILABLE and
     // ends its lane. It waits for a later tick instead.
-    const holder = successor?.role === ROLE_REVIEW ? active.find((r) => reviewHoldsSandbox(r, now)) : null;
+    const holder = successor?.role === ROLE_REVIEW ? active.find((r) => reviewHoldsSandbox(r)) : null;
     if (holder) {
       skipped.push({ id: issue.id, reason: `a review is already running — the reviewer sandbox runs one review at a time (held by ${describeReviewHolder(holder)})` });
       continue;
@@ -2325,9 +2352,9 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled, 
 
 // reconcileOnce — pure-ish orchestration shared by dry-run and dispatch paths.
 // Returns { report, plan } and performs NO I/O except what the caller injects.
-export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set(), writerLanes = null, repairCard = null, now = null }) {
+export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set(), writerLanes = null, repairCard = null }) {
   const eligibility = computeEligibility({ issues, openPRs, config, writerLanes, repairCard });
-  const selection = selectNextReservation({ ready: eligibility.ready, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, now });
+  const selection = selectNextReservation({ ready: eligibility.ready, config, receipts, episodeContinuations, episodeScope, episodeIssueIds });
   return { eligibility, selection };
 }
 
@@ -2884,6 +2911,33 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       if (idx >= 0) receipts[idx] = released.receipt;
       if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} RESERVED -> HOLD (${RESERVATION_UNLAUNCHED}, attempt ${receipt.attempt_id}) — never launched; slot released`);
     }
+    // An ended episode's review on another card: asked over status only, and
+    // released to HOLD with a durable reason only on positive evidence.
+    const settleNow = io.now?.() ?? new Date();
+    for (const receipt of receipts.filter((r) => endedEpisodeReviewDue(r, lifecycleStartReceipts, settleNow))) {
+      const adapter = adapterNameFor(receipt.requested_worker);
+      const adapterModule = await dispatchModuleFor(adapter, receipt, env, io);
+      let answer = null;
+      if (typeof adapterModule.status === "function") {
+        try { answer = await adapterModule.status(); } catch { answer = null; }
+      }
+      const disposition = endedEpisodeReviewDisposition(receipt, answer);
+      if (disposition.verdict !== "release") {
+        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} held — ${disposition.evidence}; the review gate stays closed`);
+        continue;
+      }
+      const linearIssueId = resolveLinearIssueId(receipt, ENDED_EPISODE_REVIEW);
+      if (!linearIssueId) continue;
+      const released = nextReceiptState(receipt, { type: "hold",
+        reason: `${ENDED_EPISODE_REVIEW}: review from episode ${receipt.episode_id}, which has ended; released on ${disposition.evidence}; verdict not applied` }, { now: io.now });
+      if (!released.accepted) continue;
+      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
+      lifecyclePersisted = true;
+      lifecycleSlotReleased = true;
+      const idx = receipts.indexOf(receipt);
+      if (idx >= 0) receipts[idx] = released.receipt;
+      if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} ${receipt.stage} -> HOLD (${ENDED_EPISODE_REVIEW}, attempt ${receipt.attempt_id}) — released on ${disposition.evidence}`);
+    }
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "LAUNCH_UNKNOWN")) {
       const adapter = adapterNameFor(receipt.requested_worker);
       // A paused adapter must not be re-entered through RECOVERY either — the
@@ -3285,7 +3339,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         ? new Map([[singleRunActivation.target_issue_id, singleRunActivation.reviewer_lane]]) : null;
   // Self-repair B1: only an armed landing repair builds this; otherwise null.
   const repairCard = await repairCardFor(singleRunActivation, { config, githubToken, fetchImpl, openPRsOverride });
-  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, writerLanes, repairCard, now: io.now?.() ?? new Date() });
+  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, writerLanes, repairCard });
   // Self-watch 0b: the armed card's progress, from the receipts this tick
   // already read (trusted writers only). Output only; nothing reads it here.
   const watchActors = new Set(config.linear_receipt_actor_ids ?? []);
@@ -3636,7 +3690,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         : { ok: false, reason: "the repair binding cannot be read" };
       if (!still.ok) return held(`landing repair no longer eligible: ${still.reason}`);
     }
-    const holder = role === ROLE_REVIEW ? receipts.find((r) => r !== receipt && reviewHoldsSandbox(r, io.now?.() ?? new Date())) : null;
+    const holder = role === ROLE_REVIEW ? receipts.find((r) => r !== receipt && reviewHoldsSandbox(r)) : null;
     if (holder) {
       if (io.stdout) io.stdout(`dispatch: reservation ${receipt.attempt_id} on ${receipt.issue_id} waits — another review is active (${describeReviewHolder(holder)})`);
       return 0;

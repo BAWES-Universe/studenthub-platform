@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import * as reconcile from "../reconcile.mjs";
 import { roleForReceipt } from "../launch-vocabulary.mjs";
+import { SUPERVISOR_PROTOCOL_VERSION } from "../supervisor.mjs";
 import * as routing from "../review-routing.mjs";
 import * as activation from "../single-run-activation.mjs";
 import { createEpisodeHarness, SHA_INPUT, SHA_WRITE, SHA_REVISED, REVISION } from "./fixture/episode-harness.mjs";
@@ -140,29 +141,66 @@ test("SHU71_ONE_REVIEW_AT_A_TIME: a review successor waits while another card's 
 // LAUNCH_UNKNOWN in episode shu-304-run-20261123T110018Z (a Linear quota error
 // mid-launch) was reconciled by no worker, so from 18:18Z it held the SHU-698 and
 // SHU-699 reviews behind "a review is already running" for their whole window.
-test("SHU71_ENDED_EPISODE_REVIEW: a review from a card-run episode that has ended does not hold the sandbox", () => {
+// Age makes it due for a status-only settlement; only positive evidence from
+// the supervisor releases it, and the gate itself never looks at age.
+const STUCK_EPISODE = "shu-304-run-20261123T110018Z";
+const stuckReview = (over = {}) => ({ ...receipt({ issue: OTHER, attempt: ATTEMPT("rereview"), worker: "claude-verifier", stage: "LAUNCH_UNKNOWN", verdict: undefined, identity: null }),
+  episode_id: STUCK_EPISODE, external_run_id: null, ...over });
+const supervisorSaid = (r, over = {}) => ({ version: SUPERVISOR_PROTOCOL_VERSION, ok: true, durable: true, attempt_id: r.attempt_id, target_sha: r.target_sha, stage: "COMPLETED", ...over });
+const AFTER_EPISODE = new Date(Date.parse("2026-11-23T11:00:18Z") + 8 * 60 * 60 * 1000 + 1000);
+
+test("SHU71_ENDED_EPISODE_REVIEW_HOLDS_THE_GATE: an old review still holds the gate, and the gate names it", () => {
   const built = receipt({ stage: "COMPLETED", verdict: "BUILD_READY", result: SHA_WRITE });
-  const stuck = { ...receipt({ issue: OTHER, attempt: ATTEMPT("rereview"), worker: "claude-verifier", stage: "LAUNCH_UNKNOWN", verdict: undefined, identity: null }),
-    episode_id: "shu-304-run-20261123T110018Z" };
-  assert.equal(roleForReceipt(stuck), "review");
-  const select = (receipts, now) => reconcile.selectNextReservation({ ready: [readyIssue()], config: { max_dispatch: 2 }, receipts,
-    episodeContinuations: new Map([[TARGET, { successor: successorOrder() }]]), now });
-  const start = Date.parse("2026-11-23T11:00:18Z");
-  const max = reconcile.CARD_RUN_EPISODE_MAX_MS;
-  assert.equal(select([built, stuck], new Date(start + max + 1000)).candidate?.id, TARGET, "SHU71_ENDED_REVIEW_RELEASES_THE_GATE");
-  assert.equal(select([built, stuck], new Date(start + max - 1000)).candidate, null, "SHU71_REVIEW_INSIDE_ITS_BOUND_STILL_HOLDS");
-  assert.ok(select([built, stuck], new Date(start + max - 1000)).skipped.at(-1).reason.endsWith(
-    `(held by ${OTHER} attempt ${ATTEMPT("rereview")} LAUNCH_UNKNOWN in episode shu-304-run-20261123T110018Z)`), "SHU71_GATE_NAMES_ITS_HOLDER");
-  assert.equal(select([built, stuck], null).candidate, null, "SHU71_NO_CLOCK_FAILS_CLOSED");
-  assert.equal(select([built, stuck]).candidate, null, "SHU71_DEFAULT_IS_UNCHANGED");
-  const unnamed = { ...stuck, episode_id: undefined };
-  assert.equal(select([built, unnamed], new Date(start + max * 3)).candidate, null, "SHU71_NO_EPISODE_ID_STILL_HOLDS");
-  const handMinted = { ...stuck, episode_id: "shu71-card-1" };
-  assert.equal(select([built, handMinted], new Date(start + max * 3)).candidate, null, "SHU71_NON_CARD_RUN_EPISODE_STILL_HOLDS");
-  const live = { ...stuck, stage: "RUNNING", episode_id: "shu-699-run-20261123T180014Z" };
-  assert.equal(select([built, live], new Date(Date.parse("2026-11-23T20:30:00Z"))).candidate, null, "SHU71_LIVE_EPISODE_REVIEW_STILL_HOLDS");
-  assert.equal(reconcile.reviewHoldsSandbox({ ...stuck, stage: "HOLD" }, new Date(start)), false, "SHU71_TERMINAL_NEVER_HOLDS");
-  assert.equal(reconcile.reviewHoldsSandbox(receipt({ issue: OTHER, stage: "RUNNING", verdict: undefined }), new Date(start)), false, "SHU71_BUILD_NEVER_HOLDS");
+  const select = (receipts) => reconcile.selectNextReservation({ ready: [readyIssue()], config: { max_dispatch: 2 }, receipts,
+    episodeContinuations: new Map([[TARGET, { successor: successorOrder() }]]) });
+  for (const [label, held] of [["LAUNCH_UNKNOWN", stuckReview()], ["RUNNING", stuckReview({ stage: "RUNNING", external_run_id: "supervisor_1", identity: "claude:1" })]]) {
+    assert.equal(roleForReceipt(held), "review");
+    const selection = select([built, held]);
+    assert.equal(selection.candidate, null, `SHU71_OLD_${label}_STILL_HOLDS`);
+    assert.ok(selection.skipped.at(-1).reason.endsWith(`(held by ${OTHER} attempt ${ATTEMPT("rereview")} ${held.stage} in episode ${STUCK_EPISODE})`), "SHU71_GATE_NAMES_ITS_HOLDER");
+  }
+  assert.equal(select([built, stuckReview({ stage: "HOLD" })]).candidate?.id, TARGET, "SHU71_RELEASED_REVIEW_FREES_THE_GATE");
+  assert.equal(reconcile.reviewHoldsSandbox(receipt({ issue: OTHER, stage: "RUNNING", verdict: undefined })), false, "SHU71_BUILD_NEVER_HOLDS");
+});
+
+test("SHU71_ENDED_EPISODE_REVIEW_DUE: only another card's review from an ended card-run episode is asked about", () => {
+  const stuck = stuckReview();
+  const before = new Date(Date.parse("2026-11-23T11:00:18Z") + 8 * 60 * 60 * 1000 - 1000);
+  assert.equal(reconcile.endedEpisodeReviewDue(stuck, [], AFTER_EPISODE), true, "SHU71_ENDED_REVIEW_IS_DUE");
+  assert.equal(reconcile.endedEpisodeReviewDue(stuck, [stuck], AFTER_EPISODE), false, "SHU71_OWN_SCOPE_KEEPS_ITS_OWN_PATH");
+  assert.equal(reconcile.endedEpisodeReviewDue(stuck, [], before), false, "SHU71_INSIDE_ITS_BOUND_NOT_DUE");
+  assert.equal(reconcile.endedEpisodeReviewDue(stuck, [], null), false, "SHU71_NO_CLOCK_NOT_DUE");
+  assert.equal(reconcile.endedEpisodeReviewDue(stuckReview({ episode_id: undefined }), [], AFTER_EPISODE), false, "SHU71_NO_EPISODE_ID_NOT_DUE");
+  assert.equal(reconcile.endedEpisodeReviewDue(stuckReview({ episode_id: "shu71-card-1" }), [], AFTER_EPISODE), false, "SHU71_NON_CARD_RUN_EPISODE_NOT_DUE");
+  assert.equal(reconcile.endedEpisodeReviewDue(stuckReview({ stage: "HOLD" }), [], AFTER_EPISODE), false, "SHU71_TERMINAL_NOT_DUE");
+  assert.equal(reconcile.endedEpisodeReviewDue(receipt({ issue: OTHER, stage: "RUNNING", verdict: undefined }), [], AFTER_EPISODE), false, "SHU71_BUILD_NOT_DUE");
+});
+
+test("SHU71_ENDED_EPISODE_REVIEW_DISPOSITION: the replayed SHU-304 receipt is released only on the supervisor's positive evidence", () => {
+  const stuck = stuckReview();
+  const release = (r, answer) => reconcile.endedEpisodeReviewDisposition(r, answer).verdict;
+  assert.equal(release(stuck, supervisorSaid(stuck)), "release", "SHU71_DURABLE_COMPLETED_RELEASES");
+  assert.equal(release(stuck, supervisorSaid(stuck, { stage: "FAILED" })), "release", "SHU71_DURABLE_FAILED_RELEASES");
+  assert.equal(release(stuck, { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS" }), "release", "SHU71_REFUSED_UNACKNOWLEDGED_LAUNCH_RELEASES");
+  assert.match(reconcile.endedEpisodeReviewDisposition(stuck, supervisorSaid(stuck)).evidence, /durable COMPLETED record for this attempt and head/);
+  const holds = [
+    ["bare MISSING_CLAIM (another worker's supervisor, or unreadable records)", { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" }],
+    ["live RUNNING", supervisorSaid(stuck, { stage: "RUNNING" })],
+    ["ACCEPTED", supervisorSaid(stuck, { stage: "ACCEPTED" })],
+    ["not durable", supervisorSaid(stuck, { durable: false })],
+    ["another attempt", supervisorSaid(stuck, { attempt_id: ATTEMPT("review") })],
+    ["another head", supervisorSaid(stuck, { target_sha: "b".repeat(40) })],
+    ["another protocol version", supervisorSaid(stuck, { version: "0.0.1" })],
+    ["transport fault", { ok: false, stage: "HOLD", reason: "supervisor configuration unavailable: ENOENT" }],
+    ["no answer", null],
+  ];
+  for (const [label, answer] of holds) assert.equal(release(stuck, answer), "hold", `SHU71_AMBIGUOUS_LAUNCH_UNKNOWN_HOLDS: ${label}`);
+  const running = stuckReview({ stage: "RUNNING", external_run_id: "supervisor_1", identity: "claude:1" });
+  assert.equal(release(running, { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS" }), "hold", "SHU71_OLD_RUNNING_NOT_RELEASED_BY_A_REFUSAL");
+  assert.equal(release(running, supervisorSaid(running, { stage: "RUNNING" })), "hold", "SHU71_OLD_RUNNING_STILL_RUNNING_HOLDS");
+  assert.equal(release(running, supervisorSaid(running)), "release", "SHU71_OLD_RUNNING_FINISHED_RELEASES");
+  const discovered = stuckReview({ external_run_id: "supervisor_2" });
+  assert.equal(release(discovered, { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS" }), "hold", "SHU71_DISCOVERED_RUN_NOT_RELEASED_BY_A_REFUSAL");
 });
 
 test("SHU71_ENDED_EPISODE_BOUND: the bound covers a card run's window, its grace and the unit's own limit", async () => {
