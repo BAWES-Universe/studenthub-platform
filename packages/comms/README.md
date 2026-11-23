@@ -36,10 +36,14 @@ an end date on/after the reminder day (the query does not test assignment start)
 Expired means expiry equals that day. Expiring means expiry **strictly before
 day + 25 days**, including already expired IDs; there is no lower bound.
 
-Those recipient predicates are checked again by the
-[email outbox claim](../db/src/postgres-email-outbox-store.ts) against the day in
-the idempotency key. These are recipient eligibility rules, not a staff grant
-check in the scheduling module.
+The [email outbox claim](../db/src/postgres-email-outbox-store.ts) rechecks the
+birthday, civil ID, assignment, and pause predicates against the day in the
+idempotency key. It reloads the current address but does not recheck the nonblank
+email selection rule. For an otherwise eligible reminder within the attempt
+limit, a configured production [delivery service](../notifications/src/email-outbox.ts)
+records a now-missing (null or empty) address as `failed` with
+`address_unavailable`, without suppression or a retry. These are recipient and
+delivery rules, not a staff grant check in the scheduling module.
 
 ## Recruit dispatch
 
@@ -146,7 +150,7 @@ Run from the repository root with Node 22 or newer. Root commands are defined in
 | `npm ci` | Passed. |
 | `npm run typecheck` | Passed. |
 | `npm test` (includes build) | Passed, including all 10 comms mutation checks. |
-| Relative links and source/export inventory | Passed: all 28 links resolve at the PR base; all 24 exports are documented. |
+| Relative links and source/export inventory | Passed: all 29 links resolve at the PR base; all 24 exports are documented. |
 | `npm run test:db` | Not run locally: no disposable PostgreSQL 17 database configured for this documentation task; database execution is left to CI. |
 
 This documents source behavior, not live delivery or production acceptance.
