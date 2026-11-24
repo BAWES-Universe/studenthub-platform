@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test, { type TestContext } from "node:test";
 import { inflateSync } from "node:zlib";
-import type { TransferInvoiceDocument } from "@studenthub/db/billing";
+import type { TransferInvoiceDocument, TransferStatement } from "@studenthub/db/billing";
 import { createInvoicesHttp, handleInvoices, type TransferInvoiceReads } from "../src/billing/invoices-http.js";
 import { invoiceBankInfo, invoicePdf } from "../src/billing/invoice-pdf.js";
 
@@ -12,6 +12,12 @@ const FIN = "f".repeat(43), OTHER = "o".repeat(43);
 const UNPAID: TransferInvoiceDocument = { invoiceNumber: "SH-2026-11-000001", transferId: "t-1", orgId: "C1", companyName: "Sultan <Center>", currencyCode: "KWD",
   invoiceDate: "2026-11-22", total: "12.500", lineCount: 3, status: "unpaid", paidOn: null, periodStart: "2026-10-01", periodEnd: "2026-10-31" };
 const PAID: TransferInvoiceDocument = { ...UNPAID, invoiceNumber: "SH-2026-11-000002", orgId: "P", companyName: "Parent", status: "paid", paidOn: "2026-11-25", lineCount: 1 };
+const STATEMENT = (from: string, to: string): TransferStatement => ({ orgId: "P", name: "Parent <Co>", from, to,
+  currencies: [{ currencyCode: "KWD", opening: "5.000", invoiced: "12.500", paid: "5.000", closing: "12.500", members: [
+    { orgId: "C1", companyName: "Sultan <Center>", opening: "0.000", invoiced: "12.500", paid: "0.000", closing: "12.500" },
+    { orgId: "P", companyName: "Parent", opening: "5.000", invoiced: "0.000", paid: "5.000", closing: "0.000" }] }],
+  entries: [{ date: "2026-11-22", kind: "invoice", invoiceNumber: "SH-2026-11-000001", orgId: "C1", companyName: "Sultan <Center>", currencyCode: "KWD", amount: "12.500" },
+    { date: "2026-11-25", kind: "payment", invoiceNumber: "SH-2026-11-000002", orgId: "P", companyName: "Parent", currencyCode: "KWD", amount: "5.000" }] });
 const BANK = { accountName: "Synthetic Account", bankName: "Synthetic Bank", iban: "KW00SYNT0000000000000000000000", accountNumber: "0000000000", swiftCode: "SYNTKWKW" };
 
 /** Text drawn on the PDF's page, from its content stream. */
@@ -30,8 +36,11 @@ async function rig(t: TestContext) {
   const reads: TransferInvoiceReads = {
     async listForOrganization(principal, orgId) { calls.push(`list:${principal}:${orgId}`); return principal === "fin" && orgId === "P" ? { orgId: "P", name: "Parent <Co>", invoices: [PAID, UNPAID] } : null; },
     async document(principal, orgId, number) { calls.push(`doc:${principal}:${orgId}:${number}`); return principal === "fin" && orgId === "P" ? [UNPAID, PAID].find(i => i.invoiceNumber === number) ?? null : null; },
+    async statement(principal, orgId, from, to) { calls.push(`statement:${principal}:${orgId}:${from}:${to}`); return principal === "fin" && orgId === "P" ? STATEMENT(from, to) : null; },
   };
-  const service = createInvoicesHttp({ sessions: { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [OTHER]: { personId: "other" } } as Record<string, { personId: string }>)[id] as never }, reads, bank: BANK });
+  // 22:30Z on 30 November is already 1 December in Kuwait.
+  const service = createInvoicesHttp({ sessions: { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [OTHER]: { personId: "other" } } as Record<string, { personId: string }>)[id] as never }, reads, bank: BANK,
+    now: () => new Date("2026-11-30T22:30:00Z") });
   const server = createServer(async (req, res) => { if (!await handleInvoices(req, res, service)) { res.writeHead(418); res.end(); } });
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
   t.after(() => new Promise<void>(r => server.close(() => r())));
@@ -96,7 +105,7 @@ test("INVOICES_HTTP unavailable without a service, and a store failure is a 503,
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   assert.equal((await fetch(`${base}/organization/invoices/P`)).status, 503);
   const failing = createInvoicesHttp({ sessions: { get: async () => ({ personId: "fin" }) as never },
-    reads: { listForOrganization: async () => { throw new Error("db down: secret"); }, document: async () => null } });
+    reads: { listForOrganization: async () => { throw new Error("db down: secret"); }, document: async () => null, statement: async () => null } });
   const s2 = createServer(async (req, res) => { await handleInvoices(req, res, failing); });
   await new Promise<void>(r => s2.listen(0, "127.0.0.1", r));
   t.after(() => new Promise<void>(r => s2.close(() => r())));
@@ -119,7 +128,8 @@ test("INVOICES_ROUTE the gateway's route table reaches the invoices handler; no 
   const { ROUTES } = await import("../src/routes/index.js");
   const { runRoutes } = await import("../src/routes/context.js");
   const web = await import("../src/web-ui.js");
-  const reads: TransferInvoiceReads = { listForOrganization: async () => ({ orgId: "P", name: "P", invoices: [UNPAID] }), document: async () => UNPAID };
+  const reads: TransferInvoiceReads = { listForOrganization: async () => ({ orgId: "P", name: "P", invoices: [UNPAID] }), document: async () => UNPAID,
+    statement: async (_, __, from, to) => STATEMENT(from, to) };
   const invoices = createInvoicesHttp({ sessions: { get: async () => ({ personId: "fin" }) as never }, reads });
   const server = createServer(async (request, response) => {
     const ctx = { request, response, login: { invoices } as never, authz: undefined as never, documents: undefined, catalogue: undefined, profileRecords: undefined,
@@ -133,4 +143,45 @@ test("INVOICES_ROUTE the gateway's route table reaches the invoices handler; no 
   assert.equal(list.status, 200); assert.equal(((await list.json()) as { invoices: unknown[] }).invoices.length, 1);
   const pdf = await fetch(`${base}/organization/invoices/P/SH-2026-11-000001.pdf`, { headers });
   assert.equal(pdf.status, 200); assert.equal(pdf.headers.get("content-type"), "application/pdf");
+  const statement = await fetch(`${base}/organization/P/statements`, { headers });
+  assert.equal(statement.status, 200); assert.equal(((await statement.json()) as TransferStatement).currencies.length, 1);
+});
+
+test("STATEMENTS_HTTP a company reader sees its statement as JSON or a page; the default period is this Kuwait month to today", async (t) => {
+  const x = await rig(t);
+  const json = await (await x.call("/organization/P/statements", FIN)).json() as TransferStatement;
+  assert.deepEqual([json.from, json.to, json.currencies[0]!.closing], ["2026-12-01", "2026-12-01", "12.500"]);
+  await x.call("/organization/P/statements?from=2026-10-01&to=2026-11-30", FIN);
+  await x.call("/organization/P/statements?from=2026-11-15", FIN);
+  assert.deepEqual(x.calls, ["statement:fin:P:2026-12-01:2026-12-01", "statement:fin:P:2026-10-01:2026-11-30", "statement:fin:P:2026-11-15:2026-12-01"]);
+  const page = await x.call("/organization/P/statements?from=2026-11-01&to=2026-11-30", FIN, "text/html");
+  assert.equal(page.status, 200); assert.equal(page.headers.get("cache-control"), "no-store");
+  const html = await page.text();
+  for (const text of ["Parent &lt;Co&gt;, 1 November 2026 to 30 November 2026", "Sultan &lt;Center&gt;", "<th>Total</th><th>KWD 5.000</th><th>KWD 12.500</th><th>KWD 5.000</th><th>KWD 12.500</th>",
+    "Invoice issued", "Payment received", "−KWD 5.000", 'href="/organization/invoices/P">Invoices']) assert.ok(html.includes(text), text);
+  assert.doesNotMatch(html, /<Center>/);
+});
+
+test("STATEMENTS_HTTP sign in first; a refused reader is not found; a bad period is refused before the store", async (t) => {
+  const x = await rig(t);
+  assert.equal((await x.call("/organization/P/statements")).status, 401);
+  const refused = await x.call("/organization/P/statements", OTHER), missing = await x.call("/organization/Nope/statements", FIN);
+  assert.equal(refused.status, 404); assert.deepEqual(await refused.text(), await missing.text());
+  const before = x.calls.length;
+  for (const bad of ["from=2026-11-31", "from=2026-12-02&to=2026-12-01", "from=2025-01-01&to=2026-11-30", "from=1999-12-31&to=2000-01-01", "to=yesterday", "from="]) {
+    assert.equal((await x.call(`/organization/P/statements?${bad}`, FIN)).status, 400, bad);
+  }
+  assert.equal((await x.call("/organization/P/statements?from=2025-11-30&to=2026-11-30", FIN)).status, 200, "a leap-free year plus a day is the longest window");
+  assert.equal(x.calls.length, before + 1, "bad periods never reach the store");
+  assert.equal((await x.call("/organization/%E0%A4%A/statements", FIN)).status, 404);
+  assert.equal((await x.call("/organization/P/statements", FIN, "application/json", "POST")).status, 405);
+  assert.equal((await x.call("/organization/P/statements/x", FIN)).status, 418, "not this route's path");
+});
+
+test("STATEMENTS_ROUTE each path has one meaning: the invoice list of an organization named statements is never read as the statement of invoices", async (t) => {
+  const x = await rig(t);
+  await x.call("/organization/invoices/statements", FIN);
+  await x.call("/organization/invoices/statements/SH-2026-11-000001.pdf", FIN);
+  await x.call("/organization/statements/statements", FIN);
+  assert.deepEqual(x.calls, ["list:fin:statements", "doc:fin:statements:SH-2026-11-000001", "statement:fin:statements:2026-12-01:2026-12-01"]);
 });

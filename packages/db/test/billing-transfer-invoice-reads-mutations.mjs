@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// Invoices lane, transfer invoice reads (I3): every read guard must be load-bearing. Each mutant
+// Invoices lane, transfer invoice reads (I3) and statements (F4.8): every read guard must be load-bearing. Each mutant
 // rewrites one built module or the migration, the named test must fail by
 // assertion, and the file is restored before the next. PostgreSQL is required.
 assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required for transfer invoice read mutations (scratch PostgreSQL)");
@@ -34,6 +34,20 @@ const mutations = [
     "(i.status = 'paid' OR t.status IN", "(t.status IN"],
   ["skip the read check on the asked organization", "TRANSFER_INVOICE_READS_REFUSED", reads,
     "if (!this.#decision(grants.rows, orgId, above))\n            return null;", ""],
+  ["date a payment on its invoice's issue day", "TRANSFER_STATEMENT_FIGURES", reads,
+    "THEN (i.paid_at AT TIME ZONE 'Asia/Kuwait')::date END", "THEN i.invoice_date END"],
+  ["leave earlier movements out of the opening balance", "TRANSFER_STATEMENT_FIGURES", reads,
+    "FROM moves WHERE on_date < $2::date GROUP BY", "FROM moves WHERE on_date < $2::date AND false GROUP BY"],
+  ["count payments as invoiced", "TRANSFER_STATEMENT_FIGURES", reads,
+    'if (row.kind === "invoice")', "if (true)"],
+  ["add payments to the closing balance", "TRANSFER_STATEMENT_FIGURES", reads,
+    "const closing = m.opening + m.invoiced - m.paid;", "const closing = m.opening + m.invoiced + m.paid;"],
+  ["list movements after the period", "TRANSFER_STATEMENT_STABLE", reads,
+    "FROM moves WHERE on_date BETWEEN $2::date AND $3::date", "FROM moves WHERE on_date >= $2::date AND $3::date IS NOT NULL"],
+  ["carry amounts through floating point", "TRANSFER_STATEMENT_PRECISION", reads,
+    "abs(amount)::text, on_date", "abs(amount)::float8::numeric(40,3)::text, on_date"],
+  ["subtotal every company in the tree", "TRANSFER_STATEMENT_SCOPE", reads,
+    "WHERE NOT i.deleted AND i.org_id = ANY($1::text[])", "WHERE NOT i.deleted AND i.org_id IN (SELECT id FROM organizations WHERE id = ANY($1::text[]) OR parent_org_id = ANY($1::text[]))"],
 ];
 
 function run(files, pattern) {

@@ -84,7 +84,7 @@ test("PAY_HISTORY_ROUTE the gateway's route table reaches the pay history handle
   const web = await import("../src/web-ui.js");
   const payHistory = createPayHistoryHttp({ sessions: { get: async () => ({ personId: "me" }) as never },
     reads: { list: async (_, page) => ({ page, pageCount: 1, total: 1, entries: [OCT] }), detail: async () => DETAIL } });
-  const invoices = createInvoicesHttp({ sessions: { get: async () => ({ personId: "me" }) as never }, reads: { listForOrganization: async () => null, document: async () => null } });
+  const invoices = createInvoicesHttp({ sessions: { get: async () => ({ personId: "me" }) as never }, reads: { listForOrganization: async () => null, document: async () => null, statement: async () => null } });
   const server = createServer(async (request, response) => {
     const ctx = { request, response, login: { invoices, payHistory } as never, authz: undefined as never, documents: undefined, catalogue: undefined, profileRecords: undefined,
       organizationDocuments: undefined, writeHtml: web.writeHtml, pageDocument: web.pageDocument, renderError: web.renderError };
