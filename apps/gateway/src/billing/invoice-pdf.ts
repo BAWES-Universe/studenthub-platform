@@ -75,7 +75,7 @@ export function invoicePdf(invoice: InvoicePdfInput, bank?: InvoiceBankInfo): Bu
     `Transfer number: ${invoice.transferId}`,
     paid ? `Payment date: ${longDate(invoice.paidOn ?? invoice.invoiceDate)}` : `Issue date: ${longDate(invoice.invoiceDate)}`,
     ...(credit ? [credit] : paid ? [] : ["Payment terms: Due immediately"]),
-    `${paid ? "Amount paid" : "Amount due"} in ${invoice.currencyCode}: ${invoice.total}`,
+    `${paid ? "Amount paid" : credit ? "Amount invoiced" : "Amount due"} in ${invoice.currencyCode}: ${invoice.total}`,
   ];
   details.forEach((line, i) => { const fit = fitText(line, inner / 2, 10, 7); page.text(col, y - 18 - i * 16, fit.text, fit.size, GREY); });
 
@@ -84,7 +84,7 @@ export function invoicePdf(invoice: InvoicePdfInput, bank?: InvoiceBankInfo): Bu
   page.text(left, y, `For time period: ${longDate(invoice.periodStart)} to ${longDate(invoice.periodEnd)}`, 10, GREY);
   y -= 28;
   const interns = `${invoice.lineCount} ${invoice.lineCount === 1 ? "intern" : "interns"}`;
-  page.text(left, y, `${paid ? "Amount paid" : "Amount Due"} for ${interns}`, 12, INK, "bold");
+  page.text(left, y, `${paid ? "Amount paid" : credit ? "Amount invoiced" : "Amount Due"} for ${interns}`, 12, INK, "bold");
   page.text(right, y, `${invoice.currencyCode} ${invoice.total}`, 12, INK, "bold", "right");
   page.rect(left, y - 12, inner, 1, RULE);
 

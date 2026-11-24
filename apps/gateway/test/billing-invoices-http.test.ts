@@ -208,5 +208,6 @@ test("CREDIT_NOTES_HTTP a credited invoice says so on the list, the statement an
   }
   const lines = pdfText(Buffer.from(await (await get(`/organization/invoices/P/${UNPAID.invoiceNumber}.pdf`, "*/*")).arrayBuffer())).split("\n");
   for (const line of ["Voided by credit note SH-2026-11-000009 on 26 November 2026", "Voided by credit note SH-2026-11-000009 on 26 November 2026. No payment is required."]) assert.ok(lines.includes(line), line);
-  for (const line of ["Payment terms: Due immediately", "Bank Info"]) assert.ok(!lines.includes(line), `a credited invoice does not print ${line}`);
+  for (const line of ["Amount invoiced in KWD: 12.500", "Amount invoiced for 3 interns"]) assert.ok(lines.includes(line), line);
+  for (const line of ["Payment terms: Due immediately", "Bank Info", "Amount due in KWD: 12.500", "Amount Due for 3 interns"]) assert.ok(!lines.includes(line), `a credited invoice does not print ${line}`);
 });
