@@ -46,7 +46,7 @@ export const STAFF_STATISTICS_COUNTERS = [
   { key: "requireFollowup", label: "Clients requiring follow-up", source: missing("company follow-up dates, which no lane holds yet") },
   { key: "activeRequests", label: "Active requests", source: available },
   { key: "totalMinor", label: "Candidates under 16", source: available },
-  { key: "assignedIdleCandidates", label: "Assigned candidates who have not received any payment in the past two months", source: available },
+  { key: "assignedIdleCandidates", label: "Assigned candidates not paid for any pay period that ended in the past two months", source: available },
   { key: "companyMoreThen40DaysWithoutPayment", label: "Companies with assigned staff that have not made a payment in 40 days", source: available },
   { key: "last40daysNoRequest", label: "Active clients who have not made a request in over 40 days", source: missing("company start dates and active flags from the importer") },
   { key: "companyUnderReview", label: "Company registrations waiting for review", source: available },

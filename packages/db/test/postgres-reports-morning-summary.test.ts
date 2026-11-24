@@ -211,7 +211,7 @@ async function placed(org: { id: string; shop: string }, start: string, end: str
     VALUES($1,$2,$3,$4,'{}',$5,$6,'staff',$7)`, [randomUUID(), person, org.id, org.shop, start, end, creator]);
   return person;
 }
-async function paid(org: { id: string; shop: string }, person: string, month: string, at: string, ...actions: TransferAction[]): Promise<void> {
+async function paid(org: { id: string; shop: string }, person: string, month: string, at: string, ...actions: TransferAction[]): Promise<string> {
   const id = randomUUID();
   await pool.query("INSERT INTO pay_transfers(id,company_id,period_start,period_end,currency_code) VALUES($1,$2,$3::date,($3::date + interval '1 month' - interval '1 day')::date,'KWD')", [id, org.id, `${month}-01`]);
   await pool.query("INSERT INTO pay_transfer_lines(id,transfer_id,person_id,store_id,currency_code,candidate_total,company_total,note,calculation) VALUES($1,$2,$3,$4,'KWD','1.000','2.000','synthetic','{}')",
@@ -219,9 +219,11 @@ async function paid(org: { id: string; shop: string }, person: string, month: st
   const policy: PayLifecyclePolicy = { authorize: async () => true, unassignedPersonIds: async () => [] };
   const lifecycle = new TransferLifecycleService(new PostgresTransferLifecycleStore(pool, policy, new PostgresTransferInvoiceEffects()), () => new Date(at));
   for (const action of actions) assert.equal((await lifecycle.transition({ principalId: creator, actingAs: false }, id, action)).kind, "changed", action);
+  return id;
 }
+const linesPaid = (transfer: string) => pool.query("UPDATE pay_transfer_lines SET paid = true WHERE transfer_id = $1", [transfer]);
 
-test("REPORTS_MORNING_SUMMARY_PG payment counters: KWD companies with staff for 40 days and no payment received in 40 days; people placed over two months with no transfer since", async () => {
+test("REPORTS_MORNING_SUMMARY_PG payment counters: KWD companies with staff for 40 days and no payment received in the 40 days to the report day; people placed over two months with no paid line for a pay period ended in the last two months", async () => {
   const day = "2026-11-20";
   const read = async () => { const c = await store.counts(day); return [c.companyMoreThen40DaysWithoutPayment!, c.assignedIdleCandidates!] as const; };
   const [companiesBefore, idleBefore] = await read();
@@ -229,7 +231,7 @@ test("REPORTS_MORNING_SUMMARY_PG payment counters: KWD companies with staff for 
   await placed(unpaid, "2026-09-01"); // no transfer at all: counted, and so is the person
   const parent = await payCompany(), sub = await payCompany(parent.id);
   const subWorker = await placed(sub, "2026-09-01");
-  await paid(sub, subWorker, "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // the sub-company's payment counts for its parent
+  await linesPaid(await paid(sub, subWorker, "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received")); // the sub-company's payment counts for its parent; its person was paid
   const late = await payCompany();
   const lateWorker = await placed(late, "2026-08-01"), other = await placed(late, "2026-08-01");
   await paid(late, lateWorker, "2026-08", "2026-09-15T08:00:00Z", "lock", "payment_received"); // received 66 days before: counted; the period ended before the two months
@@ -244,7 +246,11 @@ test("REPORTS_MORNING_SUMMARY_PG payment counters: KWD companies with staff for 
   const paidByGone = await payCompany(), paidSub = await payCompany(paidByGone.id);
   await placed(paidByGone, "2026-08-01");
   await paid(paidSub, await placed(paidSub, "2026-11-01"), "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // a deleted sub-company's payment does not count
+  const unpaidLine = await payCompany(), unpaidLineWorker = await placed(unpaidLine, "2026-08-01");
+  await paid(unpaidLine, unpaidLineWorker, "2026-10", "2026-10-31T08:00:00Z", "lock"); // a locked October line not yet paid: still idle, and the company has not paid
+  const later = await payCompany(), laterWorker = await placed(later, "2026-08-01");
+  await linesPaid(await paid(later, laterWorker, "2026-10", "2026-11-25T08:00:00Z", "lock", "payment_received")); // received after the report day: does not count for 20 November
   for (const org of [goneSub.id, paidSub.id]) await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [org, `receipt-${randomUUID()}`]);
   const [companies, idle] = await read();
-  assert.deepEqual([companies - companiesBefore, idle - idleBefore], [3, 7]);
+  assert.deepEqual([companies - companiesBefore, idle - idleBefore], [5, 8]);
 });

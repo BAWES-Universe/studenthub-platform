@@ -46,7 +46,7 @@ test("REPORTS_MORNING_SUMMARY_EMAIL legacy's subject, one line per counter, \"no
   assert.match(mail.body, /Assigned candidates with an expired civil ID: 1/);
   assert.match(mail.body, /Candidates missing bank info: not available/);
   assert.match(mail.body, /Urgent: companies with assigned staff that have not made a payment in 40 days: 5/);
-  assert.match(mail.body, /Assigned candidates who have not received any payment in the past two months: 6/);
+  assert.match(mail.body, /Assigned candidates not paid for any pay period that ended in the past two months: 6/);
   assert.equal(mail.body.match(/without ID cards/g)?.length, 1, "legacy's duplicated row is listed once");
   const quiet = EMAIL_TEMPLATES["staff.morning_summary"].render({ day: "2026-11-19", counters: counts({ interviewScheduledToday: 0, activeRequests: 0, companyMoreThen40DaysWithoutPayment: 0 }) });
   assert.doesNotMatch(quiet.body, /Interviews scheduled today/);
