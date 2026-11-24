@@ -61,6 +61,32 @@ test("a row whose snapshot names another candidate is refused, and the batch goe
   assert.equal(await snapshots.readCandidate(String(b)), undefined);
 });
 
+test("rows off the contract are refused before any lookup, new or replayed, redacted, and the batch goes on", async () => {
+  const a = await fixtureIds(pool), b = a + 1, c = a + 2;
+  const [held] = people([candidate(a)]);
+  await store.importPeople([held!]);
+  const [later] = people([candidate(c)]);
+  const secret = "Zz Secretvalue";
+  const replayedTampered = { ...held!, snapshot: { ...held!.snapshot, candidate_objective: secret } }; // same id and digest
+  const extraKey = { ...held!, snapshot: { ...held!.snapshot, candidate_email: secret } };
+  const [fresh] = people([candidate(b)]);
+  const wrongDigest = { ...fresh!, digest: "0".repeat(64) };
+  const paddedId = { ...fresh!, legacyId: `0${b}` };
+  const nested = { ...fresh!, snapshot: { ...fresh!.snapshot, candidate_intro: { secret } } };
+  const result = await store.importPeople([replayedTampered, extraKey, wrongDigest, paddedId, nested, later!] as never);
+  assert.deepEqual(result, {
+    inserted: 1, unchanged: 0, conflicts: [],
+    refused: [
+      { legacyId: String(a), code: "invalid" }, { legacyId: String(a), code: "invalid" }, { legacyId: String(b), code: "invalid" },
+      { legacyId: "?", code: "invalid" }, { legacyId: String(b), code: "invalid" },
+    ],
+  });
+  assert.ok(!JSON.stringify(result).includes("Secretvalue"));
+  assert.equal(await snapshots.readCandidate(String(b)), undefined);
+  assert.equal((await snapshots.readCandidate(String(a)) as Record<string, unknown>).candidate_objective, "Retail work");
+  assert.equal((await snapshots.readCandidate(String(c)) as Record<string, unknown>).candidate_id, String(c));
+});
+
 test("a linked person's My profile shows the imported values; an unimported candidate reads as not imported", async () => {
   const a = await fixtureIds(pool);
   await store.importPeople(people([candidate(a)]));
@@ -92,5 +118,7 @@ test("the snapshot table refuses a malformed id or revision", async () => {
   await assert.rejects(pool.query("INSERT INTO legacy_candidate_snapshots (legacy_candidate_id, snapshot, source_revision) VALUES ('0', '{}', $1)", [PROFILE_PARITY_REVISION]), { code: "23514" });
   await assert.rejects(pool.query("INSERT INTO legacy_candidate_snapshots (legacy_candidate_id, snapshot, source_revision) VALUES ('5', '{}', 'nope')"), { code: "23514" });
   await assert.rejects(pool.query("INSERT INTO legacy_candidate_snapshots (legacy_candidate_id, snapshot, source_revision) VALUES ('5', '[]', $1)", [PROFILE_PARITY_REVISION]), { code: "23514" });
+  await assert.rejects(pool.query(`INSERT INTO legacy_candidate_snapshots (legacy_candidate_id, snapshot, source_revision) VALUES ('5', '{"candidate_id":"6"}', $1)`, [PROFILE_PARITY_REVISION]), { code: "23514" });
+  await assert.rejects(pool.query("INSERT INTO legacy_candidate_snapshots (legacy_candidate_id, snapshot, source_revision) VALUES ('5', '{}', $1)", [PROFILE_PARITY_REVISION]));
   assert.equal(await snapshots.readCandidate("not-digits"), undefined);
 });

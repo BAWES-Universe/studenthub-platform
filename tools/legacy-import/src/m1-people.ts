@@ -9,7 +9,7 @@
 // Out of this slice: the store and adapter that serve the snapshot, and the queue 13/14 columns
 // (phone, handle, civil ID) that load into person_profiles for linked people at cutover.
 
-import { createHash } from "node:crypto";
+import { PERSON_SNAPSHOT_KEYS, personSnapshotDigest, type PersonSnapshot, type PersonSnapshotKey } from "../../../packages/db/src/import/person-snapshot-contract.js";
 import {
   PROFILE_PARITY_REVISION,
   isPersonProfileMinimumAge,
@@ -36,17 +36,10 @@ export const M1_SOURCES = {
 export type M1Table = keyof typeof M1_SOURCES;
 
 /** Names this mapper's rules; the reviewed run plan pins it with the run's Kuwait date. */
-export const M1_MAPPER_REVISION = "m1-people-v2";
+export const M1_MAPPER_REVISION = "m1-people-v3";
 
-/** The snapshot keys the profile projector reads (`readField` in packages/profile). */
-export const PERSON_SNAPSHOT_KEYS = [
-  "candidate_id", "candidate_name", "candidate_name_ar", "candidate_gender", "candidate_birth_date", "nationality_name",
-  "university_name", "candidate_objective", "candidate_intro", "candidate_preferred_time", "candidate_language_pref",
-  "area_name", "candidate_driving_license", "candidate_job_search_status", "candidate_committed",
-  "is_incomplete_profile", "candidate_pending_profile", "candidate_civil_expiry_date",
-] as const;
-export type PersonSnapshotKey = (typeof PERSON_SNAPSHOT_KEYS)[number];
-export type PersonSnapshot = Readonly<Record<PersonSnapshotKey, string | number | null>>;
+export { PERSON_SNAPSHOT_KEYS } from "../../../packages/db/src/import/person-snapshot-contract.js";
+export type { PersonSnapshot, PersonSnapshotKey } from "../../../packages/db/src/import/person-snapshot-contract.js";
 
 export interface PersonImportRow {
   readonly legacyId: string;
@@ -86,6 +79,8 @@ function legacyId(value: unknown): string | null {
 
 const isUnset = (raw: unknown) => raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "");
 const isTrue = (raw: unknown) => raw === true || raw === 1 || raw === "1";
+/** Legacy's active-only relation matches deleted = 0; anything else (null, unknown) is not active. */
+const isActiveMarker = (raw: unknown) => raw === 0 || raw === "0" || raw === false;
 
 /** MySQL tinyint and enum-like columns arrive as numbers, digit strings or booleans. */
 function code(raw: unknown): number | null {
@@ -118,11 +113,6 @@ function projectorAccepts(key: PersonSnapshotKey, value: string | number, today:
   }
 }
 
-function digestOf(value: unknown): string {
-  const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical)
-    : v !== null && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])])) : v;
-  return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
-}
 
 type Lookup = { readonly name: unknown; readonly active: boolean } | "ambiguous";
 const lookupId = (raw: unknown, uuid: boolean) => uuid ? (typeof raw === "string" && raw.trim() !== "" ? raw.trim().toLowerCase() : null) : legacyId(raw);
@@ -133,7 +123,7 @@ function nameIndex(rows: readonly Row[], idColumn: string, nameColumn: string, u
   for (const row of rows) {
     const id = lookupId(row[idColumn], uuid);
     if (id === null) continue;
-    index.set(id, index.has(id) ? "ambiguous" : { name: row[nameColumn], active: !activeOnly || !isTrue(row.deleted) });
+    index.set(id, index.has(id) ? "ambiguous" : { name: row[nameColumn], active: !activeOnly || isActiveMarker(row.deleted) });
   }
   return index;
 }
@@ -257,7 +247,7 @@ export function mapLegacyCandidates(sources: M1Sources, today: string): M1People
     }
 
     const frozen = Object.freeze(snapshot);
-    people.set(id, Object.freeze({ legacyId: id, snapshot: frozen, digest: digestOf({ legacyId: id, snapshot: frozen }) }));
+    people.set(id, Object.freeze({ legacyId: id, snapshot: frozen, digest: personSnapshotDigest(id, frozen) }));
   }
 
   const byId = (a: string, b: string) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);

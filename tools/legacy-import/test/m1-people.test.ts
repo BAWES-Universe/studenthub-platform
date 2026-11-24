@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { projectApprovedProfile } from "@studenthub/profile";
+import { isValidPersonSnapshotRow } from "../../../packages/db/src/import/person-snapshot-contract.js";
 import { M1_SOURCES, PERSON_SNAPSHOT_KEYS, approvedSnapshotRow, mapLegacyCandidates, type M1Sources } from "../src/m1-people.js";
 
 // Synthetic rows only, shaped like the legacy candidate, country, university and area tables.
@@ -55,18 +56,22 @@ test("ids: bad, duplicate and archived rows are reported and never imported; ord
 
 test("references: a deleted university and an id on two lookup rows are not recorded, with a row each", () => {
   const AREA_B = "6f1c2b9e-0000-4000-8000-00000000000b";
-  const rows = [candidate(1, { university_id: 4 }), candidate(2, { country_id: 5, candidate_area_uuid: AREA_B }), candidate(3, { university_id: 6 })];
+  const rows = [candidate(1, { university_id: 4 }), candidate(2, { country_id: 5, candidate_area_uuid: AREA_B }), candidate(3, { university_id: 6 }),
+    candidate(4, { university_id: 8 }), candidate(5, { university_id: 9 })];
   const { people, issues } = mapLegacyCandidates({
     candidate: rows,
     country: [{ country_id: 5, country_nationality_name_en: "One" }, { country_id: "5", country_nationality_name_en: "Two" }, { country_id: 7, country_nationality_name_en: "Synthetic" }],
     university: [{ university_id: 3, university_name_en: "Synthetic University", deleted: 0 }, { university_id: 4, university_name_en: "Closed", deleted: 1 },
-      { university_id: 6, university_name_en: "Open", deleted: "0" }],
+      { university_id: 6, university_name_en: "Open", deleted: "0" }, { university_id: 8, university_name_en: "No marker", deleted: null },
+      { university_id: 9, university_name_en: "Odd marker", deleted: 2 }],
     area: [{ area_uuid: AREA, area_name_en: "Synthetic Area" }, { area_uuid: AREA_B, area_name_en: "B" }, { area_uuid: AREA_B.toUpperCase(), area_name_en: "B again" }],
   }, TODAY);
   assert.deepEqual(issues, [
     { rule: "candidate.inactiveReference", legacyId: "1", field: "university_id" },
     { rule: "candidate.ambiguousReference", legacyId: "2", field: "country_id" },
     { rule: "candidate.ambiguousReference", legacyId: "2", field: "candidate_area_uuid" },
+    { rule: "candidate.inactiveReference", legacyId: "4", field: "university_id" },
+    { rule: "candidate.inactiveReference", legacyId: "5", field: "university_id" },
   ]);
   assert.equal(people[0]!.snapshot.university_name, null);
   assert.equal(people[1]!.snapshot.nationality_name, null);
@@ -187,7 +192,10 @@ test("every mapped snapshot projects without error, whatever legacy holds (synth
     ...keys.map((key) => [key, values[next() % values.length]])]));
   const { people } = map(rows);
   assert.equal(people.length, 400);
-  for (const person of people) projectApprovedProfile(approvedSnapshotRow(person, "2026-11-24T00:30:00.000Z"), TODAY);
+  for (const person of people) {
+    projectApprovedProfile(approvedSnapshotRow(person, "2026-11-24T00:30:00.000Z"), TODAY);
+    assert.ok(isValidPersonSnapshotRow(person), person.legacyId);
+  }
 });
 
 test("the run date and import time are checked", () => {

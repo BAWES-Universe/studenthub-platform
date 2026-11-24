@@ -7,6 +7,8 @@
 CREATE TABLE legacy_candidate_snapshots (
   legacy_candidate_id text PRIMARY KEY CHECK (legacy_candidate_id ~ '^[1-9][0-9]{0,17}$'),
   snapshot jsonb NOT NULL CHECK (jsonb_typeof(snapshot) = 'object'),
+  -- Backstop: a snapshot always names its own candidate, so one person is never served another's.
+  CHECK (snapshot->>'candidate_id' IS NOT NULL AND snapshot->>'candidate_id' = legacy_candidate_id),
   source_revision text NOT NULL CHECK (source_revision ~ '^[0-9a-f]{40}$'),
   imported_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );

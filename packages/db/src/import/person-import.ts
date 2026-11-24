@@ -7,10 +7,11 @@
 
 import pg from "pg";
 import type { Pool as PgPool, PoolClient, PoolConfig } from "pg";
+import { CANONICAL_CANDIDATE_ID, isValidPersonSnapshotRow, type PersonSnapshot } from "./person-snapshot-contract.js";
 
 export interface PersonSnapshotImportRow {
   readonly legacyId: string;
-  readonly snapshot: Readonly<Record<string, string | number | null>>;
+  readonly snapshot: PersonSnapshot;
   readonly digest: string;
 }
 
@@ -49,6 +50,13 @@ export class PostgresPersonSnapshotImportStore {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended('legacy-import:person_snapshot', 0))");
       for (const row of rows) {
+        // The contract is checked before any lookup, so an invalid row is refused whether or not
+        // its id is already mapped. The refusal names the id only when it is canonical.
+        if (!isValidPersonSnapshotRow(row)) {
+          const id = (row as { legacyId?: unknown } | null)?.legacyId;
+          refused.push({ legacyId: typeof id === "string" && CANONICAL_CANDIDATE_ID.test(id) ? id : "?", code: "invalid" });
+          continue;
+        }
         await client.query("SAVEPOINT person_import");
         try {
           const outcome = await this.#importOne(client, row);
@@ -77,8 +85,6 @@ export class PostgresPersonSnapshotImportStore {
     const { rows: held } = await client.query<{ digest: string }>(
       "SELECT digest FROM legacy_id_maps WHERE legacy_table = $1 AND legacy_id = $2 FOR UPDATE", [LEGACY_TABLE, row.legacyId]);
     if (held[0]) return held[0].digest === row.digest ? "unchanged" : { existing: held[0].digest };
-    // The snapshot's own candidate id must be the row's: a mismatch would serve one person another's profile.
-    if (row.snapshot.candidate_id !== row.legacyId) throw Object.assign(new Error("candidate id mismatch"), { code: "23514" });
     await client.query("INSERT INTO legacy_candidate_snapshots (legacy_candidate_id, snapshot, source_revision) VALUES ($1, $2::jsonb, $3)",
       [row.legacyId, JSON.stringify(row.snapshot), this.sourceRevision]);
     await client.query(
@@ -116,7 +122,7 @@ export class PostgresImportedPersonSnapshots {
   constructor(pool: PgPool) { this.#pool = pool; }
 
   async readCandidate(candidateRef: string): Promise<unknown | undefined> {
-    if (!/^[1-9][0-9]{0,17}$/.test(candidateRef)) return undefined;
+    if (!CANONICAL_CANDIDATE_ID.test(candidateRef)) return undefined;
     const { rows } = await this.#pool.query<{ snapshot: Record<string, unknown>; source_revision: string; imported_at: Date }>(
       "SELECT snapshot, source_revision, imported_at FROM legacy_candidate_snapshots WHERE legacy_candidate_id = $1", [candidateRef]);
     const row = rows[0];
