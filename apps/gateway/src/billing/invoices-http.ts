@@ -121,8 +121,12 @@ function reply(req: IncomingMessage, res: ServerResponse, status: number, error:
 }
 const notFound = (req: IncomingMessage, res: ServerResponse) => reply(req, res, 404, "not_found", "Not found", "The page could not be found.");
 
-/** The invoice list; `documents` false for one who may only void (no PDF links), `canVoid` adds the void forms. */
-function listHtml(page: TransferInvoicePage | InvoiceVoidPage, canVoid: boolean, documents: boolean): string {
+/**
+ * The invoice list; `documents` false for one who may only void (no PDF links). `voidable` (the numbers
+ * the viewer may void) adds the void column, with a form on those rows alone. The reason's length is
+ * left to the server, which counts characters; a browser's maxlength counts UTF-16 units.
+ */
+function listHtml(page: TransferInvoicePage | InvoiceVoidPage, voidable: ReadonlySet<string> | null, documents: boolean): string {
   const base = `${INVOICES_PATH}/${encodeURIComponent(page.orgId)}`;
   // A void-only entry carries no payment or credit dates; a reader's entry does.
   const dated = (i: TransferInvoiceListEntry | InvoiceVoidEntry) => "paidOn" in i ? i : { ...i, paidOn: null, creditedOn: null };
@@ -131,10 +135,10 @@ function listHtml(page: TransferInvoicePage | InvoiceVoidPage, canVoid: boolean,
     + `<td>${esc(i.currencyCode)} ${esc(i.total)}</td><td>${i.status === "paid" ? `Paid${i.paidOn ? ` on ${esc(longDate(i.paidOn))}` : ""}` : "Unpaid"}`
     + `${i.creditNumber ? `, voided by credit note ${esc(i.creditNumber)}${i.creditedOn ? ` on ${esc(longDate(i.creditedOn))}` : ""}` : ""}</td>`
     + (documents ? `<td>${pdf ? `<a href="${esc(`${base}/${i.invoiceNumber}.pdf`)}">${i.status === "paid" ? "Receipt" : "Invoice"} (PDF)</a>` : ""}</td>` : "")
-    + (canVoid ? `<td>${i.creditNumber ? "" : `<form method="post" action="${esc(`${base}/${i.invoiceNumber}/void`)}"><label>Reason <input name="reason" required maxlength="500"></label> <button>Void with a credit note</button></form>`}</td>` : "")
+    + (voidable ? `<td>${i.creditNumber || !voidable.has(i.invoiceNumber) ? "" : `<form method="post" action="${esc(`${base}/${i.invoiceNumber}/void`)}"><label>Reason <input name="reason" required></label> <button>Void with a credit note</button></form>`}</td>` : "")
     + "</tr>").join("");
   return `<main><h1>Invoices</h1><p>${esc(page.name)}: invoices for its transfers and its sub-companies' transfers, newest first.</p>${page.invoices.length
-    ? `<table><thead><tr><th>Invoice number</th><th>Billed to</th><th>Transfer</th><th>Issue date</th><th>Amount</th><th>Status</th>${documents ? "<th>Document</th>" : ""}${canVoid ? "<th>Void</th>" : ""}</tr></thead><tbody>${rows}</tbody></table>`
+    ? `<table><thead><tr><th>Invoice number</th><th>Billed to</th><th>Transfer</th><th>Issue date</th><th>Amount</th><th>Status</th>${documents ? "<th>Document</th>" : ""}${voidable ? "<th>Void</th>" : ""}</tr></thead><tbody>${rows}</tbody></table>`
     : "<p>There are no invoices yet. An invoice is issued when a transfer is locked.</p>"}</main>`;
 }
 
@@ -212,7 +216,7 @@ export async function handleInvoices(req: IncomingMessage, res: ServerResponse, 
     const page = read && voidable ? withVoidable(read, voidable) : read ?? voidable;
     if (!page) return notFound(req, res);
     if (!wantsHtml(req.headers.accept)) return json(res, 200, { orgId: page.orgId, name: page.name, invoices: page.invoices });
-    writeHtml(res, 200, pageDocument("Invoices", listHtml(page, voidable !== null, read !== null)), { "cache-control": "no-store" });
+    writeHtml(res, 200, pageDocument("Invoices", listHtml(page, voidable && new Set(voidable.invoices.map(i => i.invoiceNumber)), read !== null)), { "cache-control": "no-store" });
     return true;
   } catch {
     if (!res.headersSent) return reply(req, res, 503, "invoices_unavailable", "Invoices unavailable", "Invoices are not available right now.");
