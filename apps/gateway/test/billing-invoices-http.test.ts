@@ -177,3 +177,11 @@ test("STATEMENTS_HTTP sign in first; a refused reader is not found; a bad period
   assert.equal((await x.call("/organization/P/statements", FIN, "application/json", "POST")).status, 405);
   assert.equal((await x.call("/organization/P/statements/x", FIN)).status, 418, "not this route's path");
 });
+
+test("STATEMENTS_ROUTE each path has one meaning: the invoice list of an organization named statements is never read as the statement of invoices", async (t) => {
+  const x = await rig(t);
+  await x.call("/organization/invoices/statements", FIN);
+  await x.call("/organization/invoices/statements/SH-2026-11-000001.pdf", FIN);
+  await x.call("/organization/statements/statements", FIN);
+  assert.deepEqual(x.calls, ["list:fin:statements", "doc:fin:statements:SH-2026-11-000001", "statement:fin:statements:2026-12-01:2026-12-01"]);
+});

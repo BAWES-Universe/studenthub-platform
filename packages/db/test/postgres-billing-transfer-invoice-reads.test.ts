@@ -184,10 +184,11 @@ test("TRANSFER_INVOICE_READS_PAYABLE an unpaid invoice is listed and served only
  * now and then moving the dates back. Only this fixture lifts the forward-only guard, and only for
  * the dates; the reads under test never write.
  */
-async function backdate(transferId: string, issued: string, paid?: string): Promise<void> {
+async function backdate(transferId: string, issued: string, paid?: string, total?: string): Promise<void> {
   await pool.query("ALTER TABLE transfer_invoice DISABLE TRIGGER transfer_invoice_forward_only");
   try {
     await pool.query("UPDATE transfer_invoice SET invoice_date = $2::date WHERE transfer_id = $1", [transferId, issued]);
+    if (total) await pool.query("UPDATE transfer_invoice SET total = $2::numeric WHERE transfer_id = $1", [transferId, total]);
     if (paid) await pool.query("UPDATE transfer_invoice SET paid_at = ($2::date + time '12:00') AT TIME ZONE 'Asia/Kuwait' WHERE transfer_id = $1 AND status = 'paid'", [transferId, paid]);
   } finally { await pool.query("ALTER TABLE transfer_invoice ENABLE TRIGGER transfer_invoice_forward_only"); }
 }
@@ -247,4 +248,42 @@ test("TRANSFER_STATEMENT_SCOPE a statement never widens access: a self grant sho
   assert.deepEqual(figures(await reads.statement("fin-c1", "C1", "2026-10-01", "2026-10-31")), [["KWD", "0.000", "2.500", "0.000", "2.500", [["C1", "0.000", "2.500", "0.000", "2.500"]]]]);
   for (const who of ["fin-c1", "recruiter", "op-fin", "nobody"]) assert.equal(await reads.statement(who, "P", "2026-10-01", "2026-10-31"), null, who);
   assert.equal(await reads.statement("self-p", "root", "2026-10-01", "2026-10-31"), null, "an operator organization has no statement");
+});
+
+test("TRANSFER_STATEMENT_PRECISION invoices up to numeric(18,3), and sums beyond it, keep every fils", async () => {
+  await grant("fin-p", "P", "finance", "subtree");
+  const big = await transfer([["P", "1.000"]], "P"), bigger = await transfer([["C1", "1.000"]], "P");
+  await lockOn(big, "2026-10-10"); await lockOn(bigger, "2026-10-11");
+  await backdate(big, "2026-10-10", undefined, "999999999999999.999"); await backdate(bigger, "2026-10-11", undefined, "123456789012345.678");
+  const s = await reads.statement("fin-p", "P", "2026-10-01", "2026-10-31");
+  assert.deepEqual(figures(s), [["KWD", "0.000", "1123456789012345.677", "0.000", "1123456789012345.677",
+    [["C1", "0.000", "123456789012345.678", "0.000", "123456789012345.678"], ["P", "0.000", "999999999999999.999", "0.000", "999999999999999.999"]]]]);
+  assert.deepEqual(s?.entries.map(e => e.amount), ["999999999999999.999", "123456789012345.678"]);
+  assert.deepEqual(figures(await reads.statement("fin-p", "P", "2026-11-01", "2026-11-30")), [["KWD", "1123456789012345.677", "0.000", "0.000", "1123456789012345.677",
+    [["C1", "123456789012345.678", "0.000", "0.000", "123456789012345.678"], ["P", "999999999999999.999", "0.000", "0.000", "999999999999999.999"]]]], "a large opening balance too");
+});
+
+test("TRANSFER_STATEMENT_SNAPSHOT figures and movements come from one snapshot, even when a payment commits while the statement is read", async () => {
+  await grant("fin-p", "P", "finance", "subtree");
+  const october = await transfer([["P", "4.000"], ["C1", "2.500"]], "P");
+  await lockOn(october, "2026-10-10");
+  const today = await kuwaitToday();
+  // A pool that lets a payment commit, on another connection, just before each statement query after the first.
+  let reads_ = 0;
+  const racing = new Proxy(pool, { get(target, key) {
+    if (key !== "query") return Reflect.get(target, key);
+    return async (text: string, values?: unknown[]) => {
+      if (typeof text === "string" && text.includes("moves AS") && reads_++ === 0) await move(october, "payment_received");
+      return target.query(text, values);
+    };
+  } });
+  const raced = new PostgresTransferInvoiceReads({ pool: racing as pg.Pool, decision: (rows, orgId, ancestors) => transferInvoiceReadDecision(rows, orgId, ancestors, ["root"]) });
+  const s = (await raced.statement("fin-p", "P", "2026-10-01", today))!;
+  for (const c of s.currencies) {
+    const sum = (kind: string) => s.entries.filter(e => e.kind === kind && e.currencyCode === c.currencyCode).reduce((n, e) => n + Math.round(Number(e.amount) * 1000), 0);
+    assert.equal(sum("invoice"), Math.round(Number(c.invoiced) * 1000)); assert.equal(sum("payment"), Math.round(Number(c.paid) * 1000));
+    assert.equal(Math.round(Number(c.opening) * 1000) + sum("invoice") - sum("payment"), Math.round(Number(c.closing) * 1000));
+  }
+  assert.deepEqual(figures(s), [["KWD", "0.000", "6.500", "6.500", "0.000", [["C1", "0.000", "2.500", "2.500", "0.000"], ["P", "0.000", "4.000", "4.000", "0.000"]]]],
+    "the payment that committed first is in both the figures and the movements");
 });

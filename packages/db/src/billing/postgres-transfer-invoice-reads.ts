@@ -133,25 +133,46 @@ export class PostgresTransferInvoiceReads {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) throw new RangeError("invalid_window");
     const visible = await this.#visible(principalId, orgId);
     if (!visible) return null;
-    const [organization, members, entries] = await Promise.all([
-      this.#pool.query<{ name: string }>(`SELECT ${NAME("o", "p")} AS name FROM organizations o LEFT JOIN organization_profiles p ON p.org_id = o.id WHERE o.id = $1`, [orgId]),
-      this.#pool.query<TransferStatementMember & { currencyCode: string }>(`${MOVEMENTS}
-        SELECT currency_code AS "currencyCode", org_id AS "orgId", min(company) AS "companyName",
-          COALESCE(sum(amount) FILTER (WHERE on_date < $2::date), 0)::numeric(14,3)::text AS opening,
-          COALESCE(sum(amount) FILTER (WHERE kind = 'invoice' AND on_date BETWEEN $2::date AND $3::date), 0)::numeric(14,3)::text AS invoiced,
-          COALESCE(-sum(amount) FILTER (WHERE kind = 'payment' AND on_date BETWEEN $2::date AND $3::date), 0)::numeric(14,3)::text AS paid,
-          COALESCE(sum(amount), 0)::numeric(14,3)::text AS closing
-        FROM moves WHERE on_date <= $3::date GROUP BY currency_code, org_id ORDER BY currency_code, org_id`, [visible, from, to]),
-      this.#pool.query<TransferStatementEntry>(`${MOVEMENTS}
-        SELECT on_date::text AS date, kind, invoice_number AS "invoiceNumber", org_id AS "orgId", company AS "companyName", currency_code AS "currencyCode",
-          abs(amount)::numeric(14,3)::text AS amount
-        FROM moves WHERE on_date BETWEEN $2::date AND $3::date ORDER BY on_date, kind, invoice_number`, [visible, from, to]),
-    ]);
+    const name = (await this.#pool.query<{ name: string }>(
+      `SELECT ${NAME("o", "p")} AS name FROM organizations o LEFT JOIN organization_profiles p ON p.org_id = o.id WHERE o.id = $1`, [orgId])).rows[0]?.name ?? orgId;
+    // One statement, so one snapshot: the opening balances and the movements always come from the same documents.
+    // Amounts stay unbounded numeric at scale 3 (invoice totals are numeric(18,3), and sums can exceed that).
+    const rows = (await this.#pool.query<{ row: "opening" | "move"; date: string | null; kind: "invoice" | "payment" | null; invoiceNumber: string | null;
+      orgId: string; companyName: string; currencyCode: string; amount: string }>(`${MOVEMENTS}
+      SELECT 'opening' AS row, NULL AS date, NULL AS kind, NULL AS "invoiceNumber", org_id AS "orgId", min(company) AS "companyName", currency_code AS "currencyCode",
+        sum(amount)::text AS amount, NULL::date AS sort_date
+      FROM moves WHERE on_date < $2::date GROUP BY currency_code, org_id
+      UNION ALL
+      SELECT 'move', on_date::text, kind, invoice_number, org_id, company, currency_code, abs(amount)::text, on_date
+      FROM moves WHERE on_date BETWEEN $2::date AND $3::date
+      ORDER BY sort_date NULLS FIRST, kind, "invoiceNumber"`, [visible, from, to])).rows;
+    const members = new Map<string, { currencyCode: string; orgId: string; companyName: string; opening: bigint; invoiced: bigint; paid: bigint }>();
+    const member = (row: (typeof rows)[number]) => {
+      const key = JSON.stringify([row.currencyCode, row.orgId]);
+      let m = members.get(key);
+      if (!m) members.set(key, m = { currencyCode: row.currencyCode, orgId: row.orgId, companyName: row.companyName, opening: 0n, invoiced: 0n, paid: 0n });
+      return m;
+    };
+    const entries: TransferStatementEntry[] = [];
+    for (const row of rows) {
+      const m = member(row);
+      if (row.row === "opening") { m.opening = toFils(row.amount); continue; }
+      if (row.kind === "invoice") m.invoiced += toFils(row.amount); else m.paid += toFils(row.amount);
+      entries.push({ date: row.date!, kind: row.kind!, invoiceNumber: row.invoiceNumber!, orgId: row.orgId, companyName: row.companyName, currencyCode: row.currencyCode, amount: row.amount });
+    }
     const currencies = new Map<string, TransferStatementMember[]>();
-    for (const { currencyCode, ...member } of members.rows) currencies.set(currencyCode, [...(currencies.get(currencyCode) ?? []), member]);
-    return { orgId, name: organization.rows[0]?.name ?? orgId, from, to, entries: entries.rows,
-      currencies: [...currencies].map(([currencyCode, list]) => ({ currencyCode, members: list,
-        opening: fils(list.map(m => m.opening)), invoiced: fils(list.map(m => m.invoiced)), paid: fils(list.map(m => m.paid)), closing: fils(list.map(m => m.closing)) })) };
+    const totals = new Map<string, { opening: bigint; invoiced: bigint; paid: bigint }>();
+    for (const m of [...members.values()].sort((a, b) => a.currencyCode.localeCompare(b.currencyCode) || a.orgId.localeCompare(b.orgId))) {
+      const closing = m.opening + m.invoiced - m.paid;
+      currencies.set(m.currencyCode, [...(currencies.get(m.currencyCode) ?? []), { orgId: m.orgId, companyName: m.companyName,
+        opening: fromFils(m.opening), invoiced: fromFils(m.invoiced), paid: fromFils(m.paid), closing: fromFils(closing) }]);
+      const t = totals.get(m.currencyCode) ?? { opening: 0n, invoiced: 0n, paid: 0n };
+      totals.set(m.currencyCode, { opening: t.opening + m.opening, invoiced: t.invoiced + m.invoiced, paid: t.paid + m.paid });
+    }
+    return { orgId, name, from, to, entries, currencies: [...currencies].map(([currencyCode, list]) => {
+      const t = totals.get(currencyCode)!;
+      return { currencyCode, members: list, opening: fromFils(t.opening), invoiced: fromFils(t.invoiced), paid: fromFils(t.paid), closing: fromFils(t.opening + t.invoiced - t.paid) };
+    }) };
   }
 
   /** One live, paid or payable invoice billed inside what the reader may see, with its transfer's period; null otherwise. */
@@ -165,13 +186,13 @@ export class PostgresTransferInvoiceReads {
   }
 }
 
-/** Exact sum of three-decimal amounts, in fils. */
-function fils(amounts: readonly string[]): string {
-  const total = amounts.reduce((n, a) => {
-    const m = /^(-?)(\d+)\.(\d{3})$/.exec(a);
-    if (!m) throw new RangeError("invalid_amount");
-    return n + (m[1] ? -1n : 1n) * (BigInt(m[2]!) * 1000n + BigInt(m[3]!));
-  }, 0n);
-  const abs = total < 0n ? -total : total;
-  return `${total < 0n ? "-" : ""}${abs / 1000n}.${String(abs % 1000n).padStart(3, "0")}`;
+/** A scale-3 decimal as whole fils, exactly, at any size. */
+function toFils(amount: string): bigint {
+  const m = /^(-?)(\d+)\.(\d{3})$/.exec(amount);
+  if (!m) throw new RangeError("invalid_amount");
+  return (m[1] ? -1n : 1n) * (BigInt(m[2]!) * 1000n + BigInt(m[3]!));
+}
+function fromFils(fils: bigint): string {
+  const abs = fils < 0n ? -fils : fils;
+  return `${fils < 0n ? "-" : ""}${abs / 1000n}.${String(abs % 1000n).padStart(3, "0")}`;
 }

@@ -107,8 +107,11 @@ function statementHtml(s: TransferStatement): string {
 /** Handles the invoice paths; false for any other path. */
 export async function handleInvoices(req: IncomingMessage, res: ServerResponse, service: InvoicesHttp | undefined): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://gateway.invalid"), path = url.pathname;
-  const list = LIST.exec(path), pdf = PDF.exec(path), statement = STATEMENT.exec(path);
-  if (!list && !pdf && !statement) return false;
+  // Exactly one route per path. `/organization/invoices/<x>` is always the invoice list of <x>, never the
+  // statement of an organization called "invoices", so the statement only matches when the others do not.
+  const list = LIST.exec(path), pdf = list ? null : PDF.exec(path), statement = list || pdf ? null : STATEMENT.exec(path);
+  const matched = list ?? pdf ?? statement;
+  if (!matched) return false;
   req.resume();
   try {
     if (!service) return reply(req, res, 503, "invoices_unavailable", "Invoices unavailable", "Invoices are not available right now.");
@@ -116,7 +119,7 @@ export async function handleInvoices(req: IncomingMessage, res: ServerResponse, 
     const viewer = await service.viewer(cookie(req.headers.cookie));
     if (!viewer) return reply(req, res, 401, "unauthorized", "Sign in", "Sign in to see your company's invoices.");
     let orgId: string;
-    try { orgId = decodeURIComponent((list ?? pdf ?? statement)![1]!); } catch { return notFound(req, res); }
+    try { orgId = decodeURIComponent(matched[1]!); } catch { return notFound(req, res); }
     if (!ORG_ID.test(orgId)) return notFound(req, res);
     if (statement) {
       const today = service.today(), rawFrom = url.searchParams.get("from"), rawTo = url.searchParams.get("to");
