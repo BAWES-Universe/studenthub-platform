@@ -1330,10 +1330,18 @@
     "A-31": {
       "lane": "reports",
       "subject": "`/reports/revenue`",
+      "served": [
+        {
+          "route": "/reports/revenue",
+          "test": "apps/gateway/test/revenue-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "not started (audit 2026-11-20): revenue roll-ups (P-4)"
+          "state": "done",
+          "evidence": "PR #675 at 48d437c",
+          "note": "P-4, live from pay transfer lines, operator admins only. Staff salaries, expenses and net profit show as not available."
         },
         "verified": {
           "state": "open"

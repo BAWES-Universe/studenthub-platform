@@ -9,6 +9,7 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 import { handleCertificates, type CertificatesHttpService } from "./certificates-http.js";
 import { handleStatistics, type StatisticsHttpService } from "./statistics-http.js";
 import { handleCampaigns, type CampaignsHttpService } from "./campaigns-http.js";
+import { handleRevenue, type RevenueHttpService } from "./revenue-http.js";
 
 /**
  * S8 ID cards on the web.
@@ -49,6 +50,8 @@ export interface IdCardsHttpService {
   statistics?: StatisticsHttpService;
   /** A-22 marketing campaigns, sharing this service's staff check. */
   campaigns?: CampaignsHttpService;
+  /** A-31 revenue, for operator admins only. */
+  revenue?: RevenueHttpService;
   /** The per-address brake on the public check; absent means no limit (tests, no key). */
   publicLimit?: PublicCheckLimit;
 }
@@ -265,6 +268,7 @@ export async function handleIdCards(req: IncomingMessage, res: ServerResponse, s
   if (await handleCertificates(req, res, service?.certificates, path, signedIn, viewer => service!.isStaff(viewer))) return true;
   if (await handleStatistics(req, res, service?.statistics, path, signedIn, viewer => service!.isStaff(viewer), origin)) return true;
   if (await handleCampaigns(req, res, service?.campaigns, path, signedIn, viewer => service!.isStaff(viewer), origin)) return true;
+  if (await handleRevenue(req, res, service?.revenue, path, signedIn)) return true;
   if (path !== ID_CARDS_PATH && path !== PRINT_PATH && path !== OWN_ID_CARD_PATH && path !== OWN_PDF_PATH) return false;
   const session = cookie(req.headers.cookie), viewer = service && session ? await authorize(session).catch(() => undefined) : undefined;
   if (path === OWN_ID_CARD_PATH || path === OWN_PDF_PATH) { if (!service) { req.resume(); return notFound(req, res); } return path === OWN_PDF_PATH ? ownPdf(req, res, service, viewer, origin) : ownPage(req, res, service, viewer); }

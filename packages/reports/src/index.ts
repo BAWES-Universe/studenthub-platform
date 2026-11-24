@@ -14,3 +14,4 @@ export * from "./firing-spike.js";
 export * from "./recruiter-activity.js";
 export * from "./operations.js";
 export * from "./campaigns.js";
+export * from "./revenue.js";
