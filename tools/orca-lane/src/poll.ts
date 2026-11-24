@@ -5,12 +5,13 @@
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode check --key <claimKey> --token <runToken> --purpose ready
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode expect --key <claimKey> --token <runToken> --sha <head about to be pushed> --pull <n> --changes <comment id>
 //   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode release --key <claimKey> --token <runToken>
-//   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode recover --key <runLock.key> --token <runLock.token>
+//   node dist/tools/orca-lane/src/poll.js --bot studenthub-universe --mode recover --key <runLock.key> --fingerprint <runLock.fingerprint>
 // observe never claims or locks; it lists observe-mode rows and what work mode would pick.
 // work claims at most one ticket, takes the bot-wide run lock and prints it with a run token.
 // check must pass immediately before every push, PR change or comment of a run.
 // release ends a run; it frees the lock only for the matching key and token.
-// recover frees a lock left by a run verified stopped, only for that exact run (key and token).
+// recover frees a lock left by a run verified stopped, only for that exact run (key and token fingerprint).
+// Diagnostics print a held lock's key and fingerprint, never its token.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
@@ -18,7 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { acquireRun, type BranchPull, claim, type ClaimRecord, decide, expectHead, type ExpectedHead, readExpected, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, ticketBranch, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
+import { acquireRun, type BranchPull, claim, type ClaimRecord, decide, expectHead, type ExpectedHead, readExpected, holdsRun, parseRegister, readClaim, recoverRunByFingerprint, releaseRun, viewRun, ticketBranch, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
 import { readAtRemoteMain } from "./tick.js";
 
 const REPO = "BAWES-Universe/studenthub-platform";
@@ -104,7 +105,7 @@ export function admitDeclaration(mine: WorkDecision | undefined, holds: boolean,
 
 type Mode = "observe" | "work" | "check" | "expect" | "release" | "recover";
 
-function args(argv: readonly string[]): { bot: string; mode: Mode; claims: string; key?: string; token?: string; sha?: string; pull?: number; changes?: number; purpose: "write" | "ready" } {
+function args(argv: readonly string[]): { bot: string; mode: Mode; claims: string; key?: string; token?: string; fingerprint?: string; sha?: string; pull?: number; changes?: number; purpose: "write" | "ready" } {
   const value = (flag: string): string | undefined => {
     const at = argv.indexOf(flag);
     return at >= 0 ? argv[at + 1] : undefined;
@@ -112,18 +113,20 @@ function args(argv: readonly string[]): { bot: string; mode: Mode; claims: strin
   const bot = value("--bot");
   const mode = value("--mode");
   if (!bot || (mode !== "observe" && mode !== "work" && mode !== "check" && mode !== "expect" && mode !== "release" && mode !== "recover")) {
-    throw new Error("usage: poll --bot <name> --mode observe|work|check|expect|release|recover [--key <claimKey>] [--token <runToken>] [--sha <sha> --pull <n> --changes <id>] [--purpose write|ready] [--claims <dir>]");
+    throw new Error("usage: poll --bot <name> --mode observe|work|check|expect|release|recover [--key <claimKey>] [--token <runToken>] [--fingerprint <runLock.fingerprint>] [--sha <sha> --pull <n> --changes <id>] [--purpose write|ready] [--claims <dir>]");
   }
   const key = value("--key");
   const token = value("--token");
-  if ((mode === "check" || mode === "expect" || mode === "release" || mode === "recover") && (!key || !token)) throw new Error(`${mode} needs --key and --token`);
+  const fingerprint = value("--fingerprint");
+  if ((mode === "check" || mode === "expect" || mode === "release") && (!key || !token)) throw new Error(`${mode} needs --key and --token`);
+  if (mode === "recover" && (!key || !fingerprint)) throw new Error("recover needs --key and --fingerprint (as runLock shows them)");
   const sha = value("--sha");
   const pull = value("--pull");
   const changes = value("--changes");
   if (mode === "expect" && (!sha || !pull || !changes)) throw new Error("expect needs --sha, --pull and --changes");
   const purpose = value("--purpose") ?? "write";
   if (purpose !== "write" && purpose !== "ready") throw new Error("--purpose is write or ready");
-  return { bot, mode, purpose, claims: value("--claims") ?? path.join(os.homedir(), ".orca-lane", "claims"), ...(key ? { key } : {}), ...(token ? { token } : {}),
+  return { bot, mode, purpose, claims: value("--claims") ?? path.join(os.homedir(), ".orca-lane", "claims"), ...(key ? { key } : {}), ...(token ? { token } : {}), ...(fingerprint ? { fingerprint } : {}),
     ...(sha ? { sha } : {}), ...(pull ? { pull: Number(pull) } : {}), ...(changes ? { changes: Number(changes) } : {}) };
 }
 
@@ -162,13 +165,13 @@ export function heldClaims(dir: string): Map<string, ClaimRecord> {
 }
 
 function main(): void {
-  const { bot, mode, claims, key, token, sha, pull, changes, purpose } = args(process.argv.slice(2));
+  const { bot, mode, claims, key, token, fingerprint, sha, pull, changes, purpose } = args(process.argv.slice(2));
   if (mode === "release") {
     process.stdout.write(`${JSON.stringify({ mode, bot, key, result: releaseRun(claims, bot, key!, token!) })}\n`);
     return;
   }
   if (mode === "recover") {
-    process.stdout.write(`${JSON.stringify({ mode, bot, key, result: recoverRun(claims, bot, key!, token!) })}\n`);
+    process.stdout.write(`${JSON.stringify({ mode, bot, key, result: recoverRunByFingerprint(claims, bot, key!, fingerprint!) })}\n`);
     return;
   }
   // Fresh authorization read of main, by the SHA it resolves to now; no shared ref or FETCH_HEAD is written.
@@ -217,7 +220,7 @@ function main(): void {
     const observe = decisions.filter((d): d is ObserveDecision => d.action === "observe");
     const wouldPick = decisions.find((d): d is WorkDecision => d.action === "resume") ?? decisions.find((d): d is WorkDecision => d.action === "start") ?? null;
     // Read-only: also shows a held run lock, so a verified-stopped run can be recovered without a work-mode poll.
-    const runLock = readRun(claims, bot);
+    const runLock = viewRun(claims, bot);
     process.stdout.write(`${JSON.stringify({ mode, bot, at, observe, wouldPick, decisions, runLock }, null, 2)}\n`);
     return;
   }
@@ -232,7 +235,7 @@ function main(): void {
   );
   const result = { decisions, next };
   // When next is null because a run holds the lock, say which run (for manual recovery after a verified stop).
-  const held = readRun(claims, bot);
+  const held = viewRun(claims, bot);
   const runLock = held && result.next === null ? held : null;
   process.stdout.write(`${JSON.stringify({ mode, bot, at, ...result, runLock }, null, 2)}\n`);
 }

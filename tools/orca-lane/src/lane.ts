@@ -1,6 +1,6 @@
 // Orca lane intake: decides, from GitHub state only, whether an Orca bot may
 // start or resume a ticket. Pure functions here; poll.ts does the I/O.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -415,4 +415,28 @@ export function readExpected(dir: string, bot: string, key: string, token: strin
  */
 export function recoverRun(dir: string, bot: string, key: string, token: string): "recovered" | "not-owner" {
   return releaseRun(dir, bot, key, token) === "released" ? "recovered" : "not-owner";
+}
+
+/** A one-way, fixed-length tag for a run token: it names the exact run without revealing the credential. */
+export function runFingerprint(token: string): string {
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+/** What diagnostics may print about a held run lock: never the token, only its fingerprint. */
+export interface RunLockView { readonly key: string; readonly since: string; readonly fingerprint: string }
+
+export function viewRun(dir: string, bot: string): RunLockView | null {
+  const owner = readRun(dir, bot);
+  return owner ? { key: owner.key, since: owner.since, fingerprint: runFingerprint(owner.token) } : null;
+}
+
+/**
+ * Recovery by the fingerprint a diagnostic printed. Still bound to the exact run: a successor (or the same
+ * generation run again) holds a different token, so its fingerprint differs and nothing is freed.
+ */
+export function recoverRunByFingerprint(dir: string, bot: string, key: string, fingerprint: string): "recovered" | "not-owner" {
+  if (!/^[0-9a-f]{16}$/.test(fingerprint)) return "not-owner";
+  const owner = readRun(dir, bot);
+  if (!owner || owner.key !== key || runFingerprint(owner.token) !== fingerprint) return "not-owner";
+  return recoverRun(dir, bot, key, owner.token);
 }

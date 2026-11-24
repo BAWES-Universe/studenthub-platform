@@ -59,16 +59,18 @@ function git(cwd: string, args: readonly string[]): string {
 
 /**
  * Removes a run's own tree. Git for Windows can unregister a worktree and still fail to delete some of its
- * files ("Directory not empty": long node_modules paths, or a scanner's brief open handle). The caller has
- * already proved the tree is this run's, so finish the deletion with Node, which retries busy files, then
- * unregister it if Git still lists it (`worktree remove` accepts a tree that is already gone). Never prunes.
+ * files ("Directory not empty": long node_modules paths, or a scanner's brief open handle). Only when the
+ * run's reservation carries the `tree` marker (written by setup after its own `worktree add` succeeded) does
+ * cleanup finish the deletion with Node, which retries busy files; a path the run did not create is never
+ * deleted that way. Then it unregisters the tree if Git still lists it (`worktree remove` accepts a tree
+ * that is already gone). Never prunes.
  */
-function removeTree(clone: string, dir: string): void {
+function removeTree(clone: string, dir: string, created: boolean): void {
   let gitError: unknown = null;
   if (registered(clone, dir)) {
     try { git(clone, ["worktree", "remove", "--force", dir]); } catch (error) { gitError = error; }
   }
-  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  if (created && existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   if (registered(clone, dir)) {
     try { git(clone, ["worktree", "remove", "--force", dir]); }
     catch (error) { throw new Error(`${dir} is still registered: ${failure(error)}${gitError ? `; first attempt: ${failure(gitError)}` : ""}`); }
@@ -116,6 +118,9 @@ export function runDir(ticks: string, run: string): string {
   return path.join(path.resolve(ticks), run);
 }
 
+/** Reservation marker: setup's own `worktree add` succeeded, so the files at the run's path are its own. */
+const TREE = "tree";
+
 const reservation = (ticks: string, run: string): string => path.join(path.resolve(ticks), ".runs", run);
 
 /** A path with symlinks resolved; for a path that no longer exists, its parent is resolved instead. */
@@ -145,7 +150,7 @@ export function setupRun(options: SetupOptions): SetupResult {
   // From here the run id is ours for good: a reservation is never deleted, so no later run can hold this id
   // and removing its tree on failure can only remove our own. The reservation stays as a spent marker.
   const abandon = (step: TickStep, message: string, ownTree = true): never => {
-    try { if (ownTree) removeTree(clone, dir); } catch { /* reported below */ }
+    try { if (ownTree) removeTree(clone, dir, existsSync(path.join(reserved, TREE))); } catch { /* reported below */ }
     try { mkdirSync(path.join(reserved, "abandoned")); } catch { /* already marked */ }
     throw new TickError(step, message);
   };
@@ -160,6 +165,9 @@ export function setupRun(options: SetupOptions): SetupResult {
   }
   try { git(clone, ["worktree", "add", "--quiet", "--detach", dir, sha]); }
   catch (error) { return abandon("worktree", failure(error)); }
+  // Durable proof that this run created the tree at `dir`: only then may cleanup delete leftover files itself.
+  try { mkdirSync(path.join(reserved, TREE)); }
+  catch (error) { return abandon("worktree", `could not record the tree: ${failure(error)}`); }
   let head: string;
   try { head = git(dir, ["rev-parse", "HEAD"]); }
   catch (error) { return abandon("verify", failure(error)); }
@@ -201,7 +209,7 @@ export function cleanupRun(options: CleanupOptions): CleanupResult {
   }
   try {
     options.afterClaim?.();
-    removeTree(options.clone, dir);
+    removeTree(options.clone, dir, existsSync(path.join(reserved, TREE)));
     if (existsSync(dir)) throw new Error(`${dir} is still present after removal`);
     options.afterRemoval?.();
     mkdirSync(path.join(reserved, "removed"));

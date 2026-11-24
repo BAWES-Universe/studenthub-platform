@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acquireRun, CLAUDE_APP_ID, changesHeader, claim, claimKey, decide, dispatchHeader, expectHead, readExpected, holdsRun, parseRegister, readClaim, recoverRun, RegisterError, readyReceiptHeader, releaseRun, startReceiptHeader, ticketBranch, type BranchPull, type ExpectedHead, type IssueComment } from "../src/lane.js";
+import { acquireRun, CLAUDE_APP_ID, changesHeader, claim, claimKey, decide, dispatchHeader, expectHead, readExpected, holdsRun, parseRegister, readClaim, recoverRun, recoverRunByFingerprint, RegisterError, readyReceiptHeader, releaseRun, startReceiptHeader, ticketBranch, viewRun, type BranchPull, type ExpectedHead, type IssueComment } from "../src/lane.js";
 import { admitDeclaration, checkRun, heldClaims, pickNext } from "../src/poll.js";
 import type { WorkDecision } from "../src/lane.js";
 
@@ -376,6 +376,27 @@ test("a revoked run that is still alive blocks every new run until it is verifie
   assert.equal(holdsRun(dir, BOT, g2, "B"), true);
   // A third wake C is refused while B runs.
   assert.equal(pickNext(decisions, () => "claimed", acquire(dir)), null);
+});
+
+test("diagnostics show a held run lock by key and fingerprint, never its token, and recovery by fingerprint is bound to that exact run", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "orca-view-"));
+  const g1 = claimKey(BOT, 581, 1);
+  const secret = "3f1c9a0e-5b7d-4e21-9c44-1a2b3c4d5e6f";
+  assert.equal(viewRun(dir, BOT), null);
+  assert.equal(acquireRun(dir, BOT, g1, NOW, secret), "acquired");
+  const view = viewRun(dir, BOT)!;
+  assert.deepEqual(Object.keys(view).sort(), ["fingerprint", "key", "since"]);
+  assert.equal(JSON.stringify(view).includes(secret), false);
+  assert.match(view.fingerprint, /^[0-9a-f]{16}$/);
+  assert.equal(recoverRunByFingerprint(dir, BOT, claimKey(BOT, 581, 2), view.fingerprint), "not-owner");
+  assert.equal(recoverRunByFingerprint(dir, BOT, g1, "0".repeat(16)), "not-owner");
+  assert.equal(recoverRunByFingerprint(dir, BOT, g1, secret), "not-owner");
+  assert.equal(holdsRun(dir, BOT, g1, secret), true);
+  assert.equal(recoverRunByFingerprint(dir, BOT, g1, view.fingerprint), "recovered");
+  // The same generation runs again with a new token: the old fingerprint, replayed late, frees nothing.
+  assert.equal(acquireRun(dir, BOT, g1, NOW, "C"), "acquired");
+  assert.equal(recoverRunByFingerprint(dir, BOT, g1, view.fingerprint), "not-owner");
+  assert.equal(holdsRun(dir, BOT, g1, "C"), true);
 });
 
 test("recovery is bound to the exact run, and a late or repeated release or recovery never clears a successor", () => {
