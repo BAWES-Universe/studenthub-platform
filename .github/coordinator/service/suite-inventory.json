@@ -2776,6 +2776,7 @@
     "foreign review receipt: a run the supervisor reports live, an inconclusive answer, or a supervisor that cannot be asked keeps the slot and writes nothing",
     "foreign review receipt: the armed episode's own receipt, or one at the approved head, keeps the pull-request check",
     "SHU71_ENDED_EPISODE_REVIEW_SETTLED: another card's review from an ended episode is released only on the supervisor's positive evidence",
+    "SHU71_ENDED_EPISODE_OWNING_SUPERVISOR: the worker that ran the review answers for it, whichever worker ticks",
     "SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keeps the gate and nothing is written",
     "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
     "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
@@ -22418,6 +22419,10 @@
     },
     {
       "name": "SHU71_ENDED_EPISODE_REVIEW_SETTLED: another card's review from an ended episode is released only on the supervisor's positive evidence",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_ENDED_EPISODE_OWNING_SUPERVISOR: the worker that ran the review answers for it, whichever worker ticks",
       "capabilities": []
     },
     {
