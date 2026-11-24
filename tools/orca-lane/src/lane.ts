@@ -1,6 +1,6 @@
 // Orca lane intake: decides, from GitHub state only, whether an Orca bot may
 // start or resume a ticket. Pure functions here; poll.ts does the I/O.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -415,4 +415,43 @@ export function readExpected(dir: string, bot: string, key: string, token: strin
  */
 export function recoverRun(dir: string, bot: string, key: string, token: string): "recovered" | "not-owner" {
   return releaseRun(dir, bot, key, token) === "released" ? "recovered" : "not-owner";
+}
+
+/** A one-way, fixed-length tag for a run token: it names the exact run without revealing the credential. */
+export function runFingerprint(token: string): string {
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+/**
+ * What diagnostics may print about a held run lock: its key, start, a fingerprint of its token (identity
+ * only, never authority) and the local file that holds the token. The token itself is never printed.
+ */
+export interface RunLockView { readonly key: string; readonly since: string; readonly fingerprint: string; readonly ownerFile: string }
+
+export function viewRun(dir: string, bot: string): RunLockView | null {
+  const latest = slots(dir, bot).at(-1);
+  if (!latest || latest.released) return null;
+  const { key, since, token } = latest.owner;
+  return { key, since, fingerprint: runFingerprint(token), ownerFile: path.join(slotsDir(dir, bot), String(latest.n), "owner.json") };
+}
+
+/** The run token stored in a lock slot's owner file on this machine, or null if the file is not a lock owner record. */
+export function readOwnerToken(file: string): string | null {
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { token?: unknown };
+    return typeof parsed.token === "string" && parsed.token.length > 0 ? parsed.token : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Recovery with identity and authority kept apart. The key and fingerprint a diagnostic printed say which run
+ * the operator verified stopped; the token, read on this machine from that run's owner file, is the authority.
+ * All three must match the current holder, and the release itself is the token-fenced `releaseRun`, so a
+ * successor (or the same generation run again with a new token) is never freed.
+ */
+export function recoverRunWithIdentity(dir: string, bot: string, key: string, fingerprint: string, token: string): "recovered" | "not-owner" {
+  if (!/^[0-9a-f]{16}$/.test(fingerprint) || runFingerprint(token) !== fingerprint) return "not-owner";
+  return recoverRun(dir, bot, key, token);
 }
