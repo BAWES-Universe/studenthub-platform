@@ -2364,7 +2364,7 @@
     "a rate-limited tick dispatches NOTHING and exits cleanly instead of failing the service",
     "a quota refusal that states its reset after launch HOLDs the tick for that wait and keeps the launch intent",
     "LINEAR_QUOTA_UNCLASSIFIED: a reset-less quota refusal of a comment write on a thread not known to be full fails the tick by code and alias, never a HOLD",
-    "isLinearRateLimited: only a 429, a RATELIMITED code, or a budget refusal that states its reset is a rate limit",
+    "isLinearRateLimited: only a 429, a RATELIMITED code, explicit retry timing, or a budget refusal with a spent bucket is a rate limit",
     "landing-verdict-consumed-exactly-once",
     "BLOCK-routes-to-writer",
     "duplicate-consumption",
@@ -4989,7 +4989,11 @@
     "LINEAR_HOLD_LINE: the hold line keeps retry_after first and adds source, status and code; card-run reads every form",
     "LINEAR_QUOTA_CLASSIFICATION: a reset-less quota refusal is the comment cap only on a comment write with a cap code; anything else is unclassified, and no message carries Linear's words",
     "LINEAR_COMMENT_CAP tick: a reset-less refusal of a write to a thread this tick read at Linear's cap is named the comment cap, by alias",
-    "COMMENT_CONTINUATIONS merge readiness: a card with a continuation binds its own identifier, finds the PASS on its own thread, records its attempt on the continuation, and lands once"
+    "COMMENT_CONTINUATIONS merge readiness: a card with a continuation binds its own identifier, finds the PASS on its own thread, records its attempt on the continuation, and lands once",
+    "LINEAR_THROTTLE_CLASSIFICATION: a comment-cap refusal and an ambiguous quota refusal with budget left and ordinary reset headers never HOLD",
+    "LINEAR_THROTTLE_CLASSIFICATION: a spent requests bucket and a spent complexity bucket each HOLD until their own bucket's reset",
+    "SHU-226 CONTINUATION: a confirmed marker older than the last 250 comments of a long original thread is still found, so nothing is rewritten",
+    "SHU-226 CONTINUATION: an unreadable continuation writes nothing and leaves the episode stopped"
   ],
   "requirements": [
     {
@@ -20235,7 +20239,7 @@
       "capabilities": []
     },
     {
-      "name": "isLinearRateLimited: only a 429, a RATELIMITED code, or a budget refusal that states its reset is a rate limit",
+      "name": "isLinearRateLimited: only a 429, a RATELIMITED code, explicit retry timing, or a budget refusal with a spent bucket is a rate limit",
       "capabilities": []
     },
     {
@@ -35490,6 +35494,22 @@
     },
     {
       "name": "COMMENT_CONTINUATIONS merge readiness: a card with a continuation binds its own identifier, finds the PASS on its own thread, records its attempt on the continuation, and lands once",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR_THROTTLE_CLASSIFICATION: a comment-cap refusal and an ambiguous quota refusal with budget left and ordinary reset headers never HOLD",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR_THROTTLE_CLASSIFICATION: a spent requests bucket and a spent complexity bucket each HOLD until their own bucket's reset",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-226 CONTINUATION: a confirmed marker older than the last 250 comments of a long original thread is still found, so nothing is rewritten",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-226 CONTINUATION: an unreadable continuation writes nothing and leaves the episode stopped",
       "capabilities": []
     }
   ],

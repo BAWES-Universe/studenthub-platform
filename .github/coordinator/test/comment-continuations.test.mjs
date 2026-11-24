@@ -22,6 +22,8 @@ import {
   commentReadIds,
   linearHoldLine,
   linearRateLimitHold,
+  isLinearRateLimited,
+  linearExhaustedBucket,
   sendLinear,
   LINEAR_RATE_LIMIT_FALLBACK_SECONDS,
   parseReceiptsFromComments,
@@ -374,11 +376,68 @@ test("LINEAR_QUOTA_CLASSIFICATION: a reset-less quota refusal is the comment cap
     (error) => error.code === "LINEAR_RATE_LIMITED" && error.retryAfterSeconds === 30 && error.hold.source === "header" && clean(error));
 });
 
+// Linear sends its rate-limit headers on every answer. With budget left they
+// say nothing about a refusal; only a bucket whose Remaining is spent does.
+const T0 = Date.parse("2026-10-22T12:00:00.000Z");
+function budgetHeaders(at, { requests = 4_999, requestsReset = 3_600_000, complexity = 2_999_000, complexityReset = 3_600_000, cost = 12 } = {}) {
+  return new Headers({
+    "X-RateLimit-Requests-Limit": "5000",
+    "X-RateLimit-Requests-Remaining": String(requests),
+    "X-RateLimit-Requests-Reset": String(at + requestsReset),
+    "X-RateLimit-Complexity-Limit": "3000000",
+    "X-RateLimit-Complexity-Remaining": String(complexity),
+    "X-RateLimit-Complexity-Reset": String(at + complexityReset),
+    "X-Complexity": String(cost),
+  });
+}
+const COMMENT_WRITE = "mutation CoordinatorReserve($issueId: String!, $body: String!) { commentCreate(input: { issueId: $issueId, body: $body }) { success } }";
+const refusal = (errors, headers) => ({ status: 400, ok: false, headers, json: async () => ({ errors }) });
+const CAP_REFUSAL = [{ message: "x", extensions: { code: "COMMENT_LIMIT_EXCEEDED" } }];
+const AMBIGUOUS_QUOTA = [{ message: "quota exceeded", extensions: { code: "USAGE_LIMIT_EXCEEDED" } }];
+
+test("LINEAR_THROTTLE_CLASSIFICATION: a comment-cap refusal and an ambiguous quota refusal with budget left and ordinary reset headers never HOLD", async () => {
+  for (const [errors, expected] of [[CAP_REFUSAL, "LINEAR_COMMENT_CAP"], [AMBIGUOUS_QUOTA, "LINEAR_QUOTA_UNCLASSIFIED"]]) {
+    const fixed = refusal(errors, budgetHeaders(T0));
+    assert.equal(isLinearRateLimited(fixed, { errors }), false, `${expected}: ordinary reset headers are not a throttle`);
+    assert.equal(linearExhaustedBucket(fixed, T0), null, "no bucket is spent");
+    await assert.rejects(sendLinear(COMMENT_WRITE, { issueId: CARD.id, body: "b" }, "tok", async () => refusal(errors, budgetHeaders(Date.now()))), (error) => {
+      assert.equal(error.code, expected, "the refusal is classified, not held");
+      assert.equal(error.hold, undefined);
+      assert.doesNotMatch(error.message, /^HOLD=/);
+      return true;
+    });
+  }
+});
+
+test("LINEAR_THROTTLE_CLASSIFICATION: a spent requests bucket and a spent complexity bucket each HOLD until their own bucket's reset", async () => {
+  const cases = [
+    // requests spent (resets in 120s); complexity has budget and a later reset
+    ["requests", { requests: 0, requestsReset: 120_000, complexityReset: 3_600_000 }, 120],
+    // complexity spent (resets in 300s); requests has budget and an earlier reset
+    ["complexity", { requests: 4_000, requestsReset: 30_000, complexity: 0, complexityReset: 300_000 }, 300],
+    // complexity left, but below this request's own X-Complexity
+    ["complexity", { requests: 4_000, requestsReset: 30_000, complexity: 50, cost: 200, complexityReset: 300_000 }, 300],
+  ];
+  for (const [bucket, shape, seconds] of cases) {
+    const fixed = refusal(AMBIGUOUS_QUOTA, budgetHeaders(T0, shape));
+    assert.equal(isLinearRateLimited(fixed, { errors: AMBIGUOUS_QUOTA }), true, `a spent ${bucket} bucket is a throttle`);
+    assert.deepEqual(linearExhaustedBucket(fixed, T0), { bucket, seconds, source: "header" });
+    assert.deepEqual(linearRateLimitHold(fixed, { errors: AMBIGUOUS_QUOTA }, T0), { seconds, source: "header", status: 400, code: "USAGE_LIMIT_EXCEEDED" });
+    await assert.rejects(sendLinear(COMMENT_WRITE, { issueId: CARD.id, body: "b" }, "tok", async () => refusal(AMBIGUOUS_QUOTA, budgetHeaders(Date.now(), shape))), (error) => {
+      assert.equal(error.code, "LINEAR_RATE_LIMITED");
+      assert.equal(error.hold.source, "header");
+      assert.ok(error.retryAfterSeconds >= seconds - 2 && error.retryAfterSeconds <= seconds, `the wait is the ${bucket} bucket's own reset`);
+      assert.match(error.message, new RegExp(`^HOLD=LINEAR_RATE_LIMITED retry_after=${error.retryAfterSeconds} source=header status=400 code=USAGE_LIMIT_EXCEEDED$`));
+      return true;
+    });
+  }
+});
+
 test("LINEAR_COMMENT_CAP tick: a reset-less refusal of a write to a thread this tick read at Linear's cap is named the comment cap, by alias", async () => {
   const full = Array.from({ length: LINEAR_COMMENT_CAP }, (_, i) => comment(`old ${i}`, "2026-10-22T00:00:00Z"));
   const store = linearStore([CARD], { threads: { [CARD.id]: full } });
   const refusing = { ...store, fetch: async (url, opts) => (JSON.parse(opts.body).query.includes("commentCreate")
-    ? { status: 400, ok: false, headers: new Headers(), json: async () => ({ errors: [{ message: "quota exceeded" }] }) }
+    ? { status: 400, ok: false, headers: budgetHeaders(Date.now()), json: async () => ({ errors: [{ message: "quota exceeded" }] }) }
     : store.fetch(url, opts)) };
   const wa = workspaceAgents();
   await assert.rejects(tick(refusing, wa, tickConfig({ comment_continuations: {} })), (error) => {

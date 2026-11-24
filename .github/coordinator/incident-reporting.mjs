@@ -22,6 +22,8 @@ export const INCIDENT_MAX_ATTEMPTS = 3;
 export const INCIDENT_MAX_EPISODE_ATTEMPTS = 8;
 export const INCIDENT_MAX_BODY_BYTES = 12_000;
 export const INCIDENT_CALL_TIMEOUT_MS = 1_500;
+// How many calls' time a continued card's whole comment thread may take.
+export const INCIDENT_THREAD_READ_CALLS = 40;
 export const INCIDENT_BACKOFF_MS = Object.freeze([0, 1_000, 5_000]);
 
 const ISSUE_ID_RE = /^SHU-[0-9]+$/;
@@ -538,6 +540,10 @@ export async function reportCoordinatorIncident({
   // thread and written on its last continuation. Relations stay on the card.
   targetCommentReadIds = [targetLinearId],
   targetCommentWriteId = targetLinearId,
+  // A continued card's complete logical thread (original, then each
+  // continuation, every page, fail closed): it throws rather than return a
+  // partial or conflicting thread. Without it, each read id's last 250.
+  readTargetThread = null,
   config = {},
   token,
   fetchImpl,
@@ -555,10 +561,21 @@ export async function reportCoordinatorIncident({
   const log = (status) => stdout(`incident-reporting: ${event.event_id} ${status}`);
   let comments;
   try {
-    comments = [];
-    for (const issueId of targetCommentReadIds) {
-      const data = await boundedCall(() => sendLinear(LINEAR_INCIDENT_COMMENTS_QUERY, { issueId }, token, fetchImpl), options);
-      comments.push(...(data?.issue?.comments?.nodes ?? []));
+    if (typeof readTargetThread === "function") {
+      // One bound for the whole paged read: a full 2,000-comment original is
+      // 20 pages, plus its continuations.
+      comments = await boundedCall(() => readTargetThread(), { ...options, timeoutMs: options.timeoutMs * INCIDENT_THREAD_READ_CALLS });
+      if (!Array.isArray(comments)) throw new Error("the comment thread was not read");
+    } else {
+      comments = [];
+      for (const issueId of targetCommentReadIds) {
+        const data = await boundedCall(() => sendLinear(LINEAR_INCIDENT_COMMENTS_QUERY, { issueId }, token, fetchImpl), options);
+        // A missing issue or thread is unreadable evidence, never an empty
+        // one: it could make an old event look fresh.
+        const nodes = data?.issue?.comments?.nodes;
+        if (!Array.isArray(nodes)) throw new Error("the comment thread was not read");
+        comments.push(...nodes);
+      }
     }
   } catch {
     log("state-unreadable; episode remains stopped");

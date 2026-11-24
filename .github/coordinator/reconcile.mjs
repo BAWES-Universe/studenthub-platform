@@ -1623,28 +1623,25 @@ const LINEAR_RATE_LIMIT_CODES = new Set(["RATELIMITED", "RATE_LIMITED"]);
 const LINEAR_QUOTA_CODES = new Set(["QUOTA_EXCEEDED", "USAGE_LIMIT_EXCEEDED"]);
 const LINEAR_RATE_LIMIT_MESSAGE_RE = /rate[ -]?limit|too many requests/i;
 const LINEAR_QUOTA_MESSAGE_RE = /quota exceeded|usage[ -]?limit/i;
-// The reset headers Linear publishes, one per budget it enforces.
-export const LINEAR_RESET_HEADERS = Object.freeze([
-  "x-ratelimit-requests-reset",
-  "x-ratelimit-complexity-reset",
-  "x-ratelimit-endpoint-requests-reset",
-  "x-ratelimit-endpoint-complexity-reset",
+// Linear's rate-limit buckets and the headers that describe them
+// (https://linear.app/developers/rate-limiting). Linear sends these on ordinary
+// answers too, with budget left, so a reset header alone proves nothing: a
+// bucket is spent only when its Remaining says so.
+export const LINEAR_RATE_LIMIT_BUCKETS = Object.freeze([
+  Object.freeze({ name: "requests", remaining: "x-ratelimit-requests-remaining", reset: "x-ratelimit-requests-reset", cost: null }),
+  Object.freeze({ name: "complexity", remaining: "x-ratelimit-complexity-remaining", reset: "x-ratelimit-complexity-reset", cost: "x-complexity" }),
+  Object.freeze({ name: "endpoint-requests", remaining: "x-ratelimit-endpoint-requests-remaining", reset: "x-ratelimit-endpoint-requests-reset", cost: null }),
 ]);
 const linearErrorCode = (error) => String(error?.extensions?.code ?? "").toUpperCase();
 const linearErrors = (body) => (Array.isArray(body?.errors) ? body.errors : []);
 const budgetWorded = (error) => LINEAR_RATE_LIMIT_CODES.has(linearErrorCode(error)) || LINEAR_QUOTA_CODES.has(linearErrorCode(error))
   || LINEAR_RATE_LIMIT_MESSAGE_RE.test(String(error?.message ?? "")) || LINEAR_QUOTA_MESSAGE_RE.test(String(error?.message ?? ""));
 
-// linearResetSignal — the wait Linear ITSELF stated, or null when it stated
-// none: { seconds, source } with source "header" (Retry-After or a reset
-// header, epoch ms) or "extension" (extensions.retryAfter on the error).
-export function linearResetSignal(res, body, now = Date.now()) {
+// linearExplicitRetry — retry timing Linear states only when it refuses for
+// the budget: the Retry-After header (seconds) or extensions.retryAfter.
+export function linearExplicitRetry(res, body) {
   const retryAfter = headerNumber(res, "retry-after");
   if (retryAfter !== null && retryAfter >= 0) return { seconds: Math.ceil(retryAfter), source: "header" };
-  for (const name of LINEAR_RESET_HEADERS) {
-    const reset = headerNumber(res, name);
-    if (reset !== null && reset > 0) return { seconds: Math.max(0, Math.ceil((reset - now) / 1000)), source: "header" };
-  }
   for (const error of linearErrors(body)) {
     const extension = error?.extensions?.retryAfter;
     if (extension === null || extension === undefined || extension === "") continue;
@@ -1654,11 +1651,44 @@ export function linearResetSignal(res, body, now = Date.now()) {
   return null;
 }
 
+// linearExhaustedBucket — the first bucket the headers show affirmatively
+// spent (Remaining at or below 0, or below this request's own X-Complexity),
+// with the wait until THAT bucket's reset (epoch ms); null when none is spent.
+export function linearExhaustedBucket(res, now = Date.now()) {
+  for (const bucket of LINEAR_RATE_LIMIT_BUCKETS) {
+    const remaining = headerNumber(res, bucket.remaining);
+    if (remaining === null) continue;
+    const cost = bucket.cost ? headerNumber(res, bucket.cost) : null;
+    if (!(remaining <= 0 || (cost !== null && cost > 0 && remaining < cost))) continue;
+    const reset = headerNumber(res, bucket.reset);
+    return reset !== null && reset > 0
+      ? { bucket: bucket.name, seconds: Math.max(0, Math.ceil((reset - now) / 1000)), source: "header" }
+      : { bucket: bucket.name, seconds: null, source: "fallback" };
+  }
+  return null;
+}
+
+// linearResetSignal — the wait to report for a HOLD: explicit retry timing,
+// else the spent bucket's own reset; null when Linear stated neither.
+export function linearResetSignal(res, body, now = Date.now()) {
+  const explicit = linearExplicitRetry(res, body);
+  if (explicit) return explicit;
+  const spent = linearExhaustedBucket(res, now);
+  return spent?.seconds !== null && spent?.seconds !== undefined ? { seconds: spent.seconds, source: spent.source, bucket: spent.bucket } : null;
+}
+
+// isLinearRateLimited — a HOLD only on a genuine throttle: HTTP 429, a
+// RATELIMITED / RATE_LIMITED code, a refusal with explicit retry timing, or a
+// budget-worded refusal (rate limit, quota, usage limit) whose headers show
+// a bucket affirmatively spent. Ordinary reset headers on an answer with
+// budget left are never enough: such a quota refusal is the comment cap or
+// unclassified (sendLinear), never a HOLD.
 export function isLinearRateLimited(res, body) {
   if (res?.status === 429) return true;
   const errors = linearErrors(body);
   if (errors.some((error) => LINEAR_RATE_LIMIT_CODES.has(linearErrorCode(error)))) return true;
-  return errors.some(budgetWorded) && linearResetSignal(res, body) !== null;
+  if (errors.length && linearExplicitRetry(res, body)) return true;
+  return errors.some(budgetWorded) && linearExhaustedBucket(res) !== null;
 }
 
 // A quota or usage-limit refusal (by code or by message), whatever else it says.
@@ -2106,9 +2136,11 @@ export async function fetchThreadComments({ issueIds, token, fetchImpl = fetch }
     err.code = "LINEAR_COMMENT_CONTINUATION_UNREADABLE";
     throw err;
   }
+  if (issueIds.length === 1) return fetchIssueComments({ issueId: issueIds[0], token, fetchImpl });
+  // A continued thread is read strictly: an issue Linear does not return is
+  // an unreadable thread, never an empty one.
   const threads = [];
-  for (const issueId of issueIds) threads.push(await fetchIssueComments({ issueId, token, fetchImpl }));
-  if (threads.length === 1) return threads[0];
+  for (const issueId of issueIds) threads.push(await fetchIssueComments({ issueId, token, fetchImpl, strict: true }));
   const merged = mergeCommentThreads(threads, { parse: parseReceiptCommentBody });
   if (merged.error) {
     const err = new Error(merged.error);
@@ -2128,13 +2160,18 @@ export async function fetchLinearIssues(request) {
 // Linear returns the newest comments first, so a single page silently dropped the
 // oldest receipts once a thread passed 100 comments (SHU-140 did on 2026-09-29).
 // Every page is followed to the end; a bad cursor throws rather than truncating.
-export async function fetchIssueComments({ issueId, token, fetchImpl = fetch }) {
+export async function fetchIssueComments({ issueId, token, fetchImpl = fetch, strict = false }) {
   const comments = [];
   const seenCursors = new Set();
   let after = null;
   for (;;) {
     const data = await sendLinear(LINEAR_ISSUE_COMMENTS_QUERY, { issueId, after }, token, fetchImpl, { retryServerErrors: true });
     const page = data?.issue?.comments;
+    if (strict && !Array.isArray(page?.nodes)) {
+      const err = new Error("a comment thread page was not returned");
+      err.code = "LINEAR_COMMENT_CONTINUATION_UNREADABLE";
+      throw err;
+    }
     comments.push(...(page?.nodes ?? []));
     if (page?.pageInfo?.hasNextPage !== true) return comments;
     const cursor = page.pageInfo.endCursor;
@@ -3135,6 +3172,11 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       targetLinearId: issues.find((i) => i.id === targetIssueId)?.linearId ?? undefined,
       targetCommentReadIds: threadIdsFor.get(targetIssueId) ?? undefined,
       targetCommentWriteId: linearIdFor.get(targetIssueId) ?? null,
+      // A continued card's markers may sit anywhere in a full original thread
+      // (far past its last 250): read the whole logical thread, strictly.
+      readTargetThread: (threadIdsFor.get(targetIssueId)?.length ?? 0) > 1
+        ? () => fetchThreadComments({ issueIds: threadIdsFor.get(targetIssueId), token: linearToken, fetchImpl })
+        : null,
       config,
       token: linearToken,
       fetchImpl,

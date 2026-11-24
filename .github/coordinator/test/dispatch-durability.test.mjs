@@ -597,23 +597,27 @@ test("LINEAR_QUOTA_UNCLASSIFIED: a reset-less quota refusal of a comment write o
   assert.deepEqual(parseReceiptsFromComments(run.comments).map((r) => r.stage), ["LAUNCH_UNKNOWN"], "the launch intent stays durable");
 });
 
-test("isLinearRateLimited: only a 429, a RATELIMITED code, or a budget refusal that states its reset is a rate limit", () => {
-  const reset = new Headers({ "X-RateLimit-Requests-Reset": String(Date.now() + 60_000) });
-  // A quota or usage-limit refusal with no reset is NOT the budget.
+test("isLinearRateLimited: only a 429, a RATELIMITED code, explicit retry timing, or a budget refusal with a spent bucket is a rate limit", () => {
+  // Linear sends these on ordinary answers, with budget left.
+  const ordinary = new Headers({ "X-RateLimit-Requests-Remaining": "4999", "X-RateLimit-Requests-Reset": String(Date.now() + 60_000),
+    "X-RateLimit-Complexity-Remaining": "5999996", "X-RateLimit-Complexity-Reset": String(Date.now() + 60_000), "X-Complexity": "4" });
+  const spentRequests = new Headers({ "X-RateLimit-Requests-Remaining": "0", "X-RateLimit-Requests-Reset": String(Date.now() + 60_000) });
+  // A quota or usage-limit refusal with no spent bucket is NOT the budget.
   assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "quota exceeded" }] }), false);
   assert.equal(isLinearRateLimited({ status: 200 }, { errors: [{ message: "Quota exceeded for this API key" }] }), false);
   assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "x", extensions: { code: "USAGE_LIMIT_EXCEEDED" } }] }), false);
   assert.equal(isLinearRateLimited({ status: 400, headers: new Headers() }, { errors: [{ message: "Too many requests" }] }), false);
-  // ...and it is when Linear states the reset.
-  assert.equal(isLinearRateLimited({ status: 400, headers: reset }, { errors: [{ message: "quota exceeded" }] }), true);
+  assert.equal(isLinearRateLimited({ status: 400, headers: ordinary }, { errors: [{ message: "quota exceeded" }] }), false, "ordinary reset headers are not a throttle");
+  assert.equal(isLinearRateLimited({ status: 400, headers: ordinary }, { errors: [{ message: "Too many requests" }] }), false);
+  // ...and it is when a bucket is spent, or Linear states when to retry.
+  assert.equal(isLinearRateLimited({ status: 400, headers: spentRequests }, { errors: [{ message: "quota exceeded" }] }), true);
   assert.equal(isLinearRateLimited({ status: 400, headers: new Headers({ "Retry-After": "5" }) }, { errors: [{ message: "x", extensions: { code: "USAGE_LIMIT_EXCEEDED" } }] }), true);
   assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "Too many requests", extensions: { retryAfter: 9 } }] }), true);
-  assert.equal(isLinearRateLimited({ status: 400, headers: reset }, { errors: [{ message: "Too many requests" }] }), true);
   // A 429 and a RATELIMITED code are the budget with or without a reset.
   assert.equal(isLinearRateLimited({ status: 429 }, null), true);
   assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "x", extensions: { code: "RATE_LIMITED" } }] }), true);
-  // Reset headers ride on every Linear answer; on any other error they mean nothing.
-  assert.equal(isLinearRateLimited({ status: 400, headers: reset }, { errors: [{ message: "Entity not found" }] }), false);
+  // A spent bucket on any other error means nothing.
+  assert.equal(isLinearRateLimited({ status: 400, headers: spentRequests }, { errors: [{ message: "Entity not found" }] }), false);
   assert.equal(isLinearRateLimited({ status: 500 }, null), false);
   assert.equal(isLinearQuotaRefusal({ errors: [{ message: "x", extensions: { code: "QUOTA_EXCEEDED" } }] }), true);
   assert.equal(isLinearQuotaRefusal({ errors: [{ message: "usage limit reached" }] }), true);
