@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -141,12 +141,12 @@ test("while a cleanup holds its run id, a second cleanup and a same-id setup can
   assert.ok(during.second instanceof TickError && during.second.step === "cleanup");
   assert.ok(during.setup instanceof TickError && during.setup.step === "reserve");
   assert.equal(existsSync(a.dir), false);
-  assert.deepEqual(readdirSync(reserved).sort(), ["owner", "removed"]);
+  assert.deepEqual(readdirSync(reserved).sort(), ["owner", "removed", "tree"]);
   assert.equal(readFileSync(path.join(reserved, "owner"), "utf8"), a.owner);
   // The id stays spent: a later setup is refused, and a late cleanup by the same owner is refused too.
   assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "a" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
   assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner }), (e: unknown) => e instanceof TickError && /already removed/.test(e.message));
-  assert.deepEqual(readdirSync(reserved).sort(), ["owner", "removed"]);
+  assert.deepEqual(readdirSync(reserved).sort(), ["owner", "removed", "tree"]);
 });
 
 test("an abandoned setup never frees its id; a cleanup held during abandonment keeps exclusive ownership of its claim", () => {
@@ -164,11 +164,11 @@ test("an abandoned setup never frees its id; a cleanup held during abandonment k
       assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: "0".repeat(32) }), (e: unknown) => e instanceof TickError && /not the owner/.test(e.message));
       assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "x" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
       assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "a" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
-      assert.deepEqual(readdirSync(reservedA).sort(), ["cleaning", "owner"]);
+      assert.deepEqual(readdirSync(reservedA).sort(), ["cleaning", "owner", "tree"]);
       assert.deepEqual(readdirSync(reservedX).sort(), ["abandoned", "owner"]);
     },
   }).status, "removed");
-  assert.deepEqual(readdirSync(reservedA).sort(), ["owner", "removed"]);
+  assert.deepEqual(readdirSync(reservedA).sort(), ["owner", "removed", "tree"]);
   assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "x" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
   assert.equal(existsSync(orphan), true);
 });
@@ -182,9 +182,9 @@ test("a cleanup that fails after the tree is gone but before its marker can be r
     (e: unknown) => e instanceof TickError && e.step === "cleanup" && /marker write failed/.test(e.message) && /retry/.test(e.message),
   );
   assert.equal(existsSync(a.dir), false);
-  assert.deepEqual(readdirSync(reserved), ["owner"]);
+  assert.deepEqual(readdirSync(reserved).sort(), ["owner", "tree"]);
   assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner }).status, "removed");
-  assert.deepEqual(readdirSync(reserved).sort(), ["owner", "removed"]);
+  assert.deepEqual(readdirSync(reserved).sort(), ["owner", "removed", "tree"]);
   assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "a" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
 });
 
@@ -211,7 +211,67 @@ test("a failed cleanup keeps the reservation in place, even with a same-id setup
   assert.equal(readFileSync(path.join(w.ticks, ".runs", "a", "owner"), "utf8"), a.owner);
   assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner }).status, "removed");
   assert.equal(existsSync(a.dir), false);
-  assert.deepEqual(readdirSync(path.join(w.ticks, ".runs", "a")).sort(), ["owner", "removed"]);
+  assert.deepEqual(readdirSync(path.join(w.ticks, ".runs", "a")).sort(), ["owner", "removed", "tree"]);
+});
+
+test("cleanup finishes a tree that Git already unregistered but could not delete (the Windows \"Directory not empty\" case)", () => {
+  const w = world();
+  const before = shared(w.clone);
+  const a = setupRun({ clone: w.clone, ticks: w.ticks, run: "20261124T060012Z-9c1d" });
+  // Reproduce what Git for Windows left behind: the worktree's admin entry is gone, its files are not.
+  mkdirSync(path.join(a.dir, "node_modules", "deep", "nested"), { recursive: true });
+  writeFileSync(path.join(a.dir, "node_modules", "deep", "nested", "file.js"), "x");
+  rmSync(git(a.dir, "rev-parse", "--absolute-git-dir"), { recursive: true, force: true });
+  assert.equal(git(w.clone, "worktree", "list", "--porcelain").includes(a.dir), false);
+  assert.equal(existsSync(a.dir), true);
+  // A wrong owner still removes nothing.
+  assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run: a.run, owner: "0".repeat(32) }), (e: unknown) => e instanceof TickError && /not the owner/.test(e.message));
+  assert.equal(existsSync(a.dir), true);
+  assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: a.run, owner: a.owner }).status, "removed");
+  assert.equal(existsSync(a.dir), false);
+  assert.deepEqual(readdirSync(path.join(w.ticks, ".runs", a.run)).sort(), ["owner", "removed", "tree"]);
+  assert.deepEqual(shared(w.clone), before);
+});
+
+test("a path the run did not create is never deleted by cleanup, even by the reservation's owner", () => {
+  const w = world();
+  const run = "20261124T061512Z-7e2a";
+  const foreign = runDir(w.ticks, run);
+  mkdirSync(path.join(foreign, "keep"), { recursive: true });
+  writeFileSync(path.join(foreign, "keep", "data.txt"), "not the run's");
+  assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run }), (e: unknown) => e instanceof TickError && e.step === "reserve" && /left in place/.test(e.message));
+  const reserved = path.join(w.ticks, ".runs", run);
+  assert.deepEqual(readdirSync(reserved).sort(), ["abandoned", "owner"]);
+  const owner = readFileSync(path.join(reserved, "owner"), "utf8");
+  assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run, owner }), (e: unknown) => e instanceof TickError && e.step === "cleanup" && /never recorded a tree/.test(e.message));
+  assert.equal(readFileSync(path.join(foreign, "keep", "data.txt"), "utf8"), "not the run's");
+  assert.deepEqual(readdirSync(reserved).sort(), ["abandoned", "owner"]);
+});
+
+test("a registered tree already at the run's path is never removed, by Git or otherwise, by that run's abandonment or cleanup", () => {
+  const w = world();
+  const run = "20261124T063012Z-4b8e";
+  const existing = runDir(w.ticks, run);
+  mkdirSync(w.ticks, { recursive: true });
+  git(w.clone, "worktree", "add", "--quiet", "--detach", existing, w.first);
+  writeFileSync(path.join(existing, "work-in-progress.txt"), "someone else's");
+  assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run }), (e: unknown) => e instanceof TickError && e.step === "reserve");
+  const reserved = path.join(w.ticks, ".runs", run);
+  const owner = readFileSync(path.join(reserved, "owner"), "utf8");
+  assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run, owner }), (e: unknown) => e instanceof TickError && /never recorded a tree/.test(e.message));
+  assert.equal(readFileSync(path.join(existing, "work-in-progress.txt"), "utf8"), "someone else's");
+  assert.equal(git(w.clone, "worktree", "list", "--porcelain").includes(existing), true);
+  assert.deepEqual(readdirSync(reserved).sort(), ["abandoned", "owner"]);
+});
+
+test("cleanup removes a registered tree that holds untracked build output, and leaves no worktree entry", () => {
+  const w = world();
+  const a = setupRun({ clone: w.clone, ticks: w.ticks, run: "build-output" });
+  mkdirSync(path.join(a.dir, "node_modules", "pkg"), { recursive: true });
+  writeFileSync(path.join(a.dir, "node_modules", "pkg", "index.js"), "x");
+  assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: a.run, owner: a.owner }).status, "removed");
+  assert.equal(existsSync(a.dir), false);
+  assert.equal(git(w.clone, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).length, 1);
 });
 
 /** Fills the Part C placeholders for one wake. */

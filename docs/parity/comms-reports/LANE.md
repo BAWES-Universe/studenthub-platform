@@ -335,3 +335,23 @@ Changes from legacy, by the rule that legacy prod is the benchmark and best prac
 - Signups and revenue are not stored here: attribution at signup is the access lane's and revenue the pay lane's, so both show as "not available" with what they wait on, never 0.
 
 Files: `packages/reports/src/campaigns.ts` (`CampaignsService`/`CampaignsStore`, `campaignValues` validation mirroring legacy's limits — the three required UTM fields, 100 characters, investment at most 9 digits and 3 decimals, never negative), `packages/db/src/reports/postgres-campaigns-store.ts` (`PostgresCampaignsStore`, migration 0357_marketing_campaigns), `apps/gateway/src/reports/campaigns-http.ts` (same staff check and same-origin POST as the statistics pages; create/update/retire by the form's `action`, PRG redirect on success, the page re-rendered with the reason on a refusal).
+
+## A-31 revenue (P-4) build notes
+
+Legacy evidence (`BAWES-Universe/studenthub` @ 55119d3): `status/modules/v1/controllers/StatisticController.php` (`actionList`, `actionTransfer`: totals over payment-received transfers, `filterPaymentReceived` = payment sent, salary distribution in progress, complete; `actionGraph` = `Transfer::getTotalsByMonths(12)`), and `Company::getRevenue`/`getProfit`.
+
+Page `/reports/revenue`, operator admins only (`isOperatorAdmin`, the work lane's check that also gates staff time and standup); everyone else, staff included, gets the same not found for every method. Read only: it reads the pay lane's `pay_transfers` and `pay_transfer_lines`, never writes, and stores nothing.
+
+- Payment received per currency: billed to companies (sum of line `company_total`), belonging to candidates (sum of `candidate_total`) and gross profit, over transfers that are payment sent, distributing or complete.
+- By month: the 12 whole months before the current Kuwait month, by the month each transfer's pay period ends; drafts and cancelled transfers are left out; the payment-received part of each month is shown beside it.
+- Reconciliation: every transfer by currency and status, with transfer and line counts and sums, so the received totals can be checked against the rows they come from (P-4's "reconciliation report against transfers").
+- Staff salaries, expenses and net profit show as not available: no lane holds staff salary or expense records yet.
+
+Changes from legacy, by the rule that legacy prod is the benchmark and best practice wins:
+- Legacy served revenue from the "status" app with no sign-in; here it needs an operator admin.
+- Legacy summed amounts across currencies; here every figure is per currency.
+- Legacy's graph grouped by the month a transfer was created and included drafts; here a month is the pay period and drafts and cancelled transfers are left out.
+- Legacy's stored revenue columns (`company_stats`, `candidate_stats`) were incremented by a job and drifted (RP-F2, the `update-company-stats` double count); here nothing is stored and every figure is one live query. Amounts stay exact (`numeric` in the database, fils as integers in TypeScript).
+- The reconciliation and the months are read in one read-only repeatable-read transaction, so a payment recorded while the page loads shows in both views or neither. Amounts leave the database as exact scale-3 numeric text with no integer width limit.
+
+Files: `packages/reports/src/revenue.ts`, `packages/db/src/reports/postgres-revenue-store.ts`, `apps/gateway/src/reports/revenue-http.ts`; one dispatch line in `id-cards-http.ts`, the service in `comms/wiring.ts`, the `./reports` subpath assertion. No migration.
