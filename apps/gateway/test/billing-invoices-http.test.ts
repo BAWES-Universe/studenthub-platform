@@ -216,12 +216,13 @@ async function voidRig(t: TestContext) {
   const ORIGIN = "https://studenthub.example";
   const credits: { actorId: string; invoiceNumber: string; reason: string }[] = [], creditedNumbers = new Set<string>();
   // "co" (company finance) reads but never voids; "fin" (StudentHub finance) voids but does not read;
-  // "both" reads the parent's own invoice only (a self grant) and voids all of them.
+  // "both" reads the parent's own invoices only (a self grant), one of which the void list does not
+  // show, and voids the parent's and its sub-company's.
   const list = (orgId: string) => orgId === "P" ? { orgId: "P", name: "Parent", invoices: [PAID, UNPAID] } : null;
   const doc = (orgId: string, number: string) => orgId === "P" ? [UNPAID, PAID, DRAFT].find(i => i.invoiceNumber === number) ?? null : null;
   const reads: TransferInvoiceReads = {
-    listForOrganization: async (principal, orgId) => principal === "co" ? list(orgId) : principal === "both" && orgId === "P" ? { orgId: "P", name: "Parent", invoices: [PAID] } : null,
-    document: async (principal, orgId, number) => principal === "co" ? doc(orgId, number) : principal === "both" && number === PAID.invoiceNumber ? doc(orgId, number) : null,
+    listForOrganization: async (principal, orgId) => principal === "co" ? list(orgId) : principal === "both" && orgId === "P" ? { orgId: "P", name: "Parent", invoices: [READ_ONLY, PAID] } : null,
+    document: async (principal, orgId, number) => principal === "co" ? doc(orgId, number) : principal === "both" && orgId === "P" ? [PAID, READ_ONLY].find(i => i.invoiceNumber === number) ?? null : null,
     statement: async (principal, orgId, from, to) => principal === "co" && orgId === "P" ? STATEMENT(from, to) : null,
   };
   const voidReads = { listForOrganization: async (p: string, o: string) => p === "fin" || p === "both" ? list(o) : null,
@@ -245,6 +246,8 @@ async function voidRig(t: TestContext) {
   return { post, page, credits, base };
 }
 const VOID_PATH = `/organization/invoices/P/${UNPAID.invoiceNumber}/void`;
+/** The parent's own invoice that "both" reads but the void list does not show. */
+const READ_ONLY: TransferInvoiceDocument = { ...UNPAID, invoiceNumber: "SH-2026-11-000004", orgId: "P", companyName: "Parent" };
 /** An unpaid invoice whose transfer the store finds not payable (a draft or cancelled). */
 const DRAFT: TransferInvoiceDocument = { ...UNPAID, invoiceNumber: "SH-2026-11-000003" };
 
@@ -264,6 +267,11 @@ test("INVOICE_VOID_HTTP StudentHub finance voids with a reason; a second void an
   const multibyte = await x.post(`/organization/invoices/P/${PAID.invoiceNumber}/void`, `reason=${encodeURIComponent(wide)}`, { type: "application/x-www-form-urlencoded", accept: "text/html" });
   assert.equal(multibyte.status, 303, "the longest reason in three-byte characters fits the form body limit");
   assert.equal(x.credits.at(-1)?.reason, wide);
+  // 500 characters with one outside the BMP: 501 UTF-16 units, which a browser maxlength would refuse.
+  const astral = "a".repeat(499) + "💰";
+  const supplementary = await x.post(`/organization/invoices/P/${PAID.invoiceNumber}/void`, `reason=${encodeURIComponent(astral)}`, { type: "application/x-www-form-urlencoded", accept: "text/html" });
+  assert.equal(supplementary.status, 303, "a 500-character reason with an astral character is accepted");
+  assert.ok(!(await (await x.page(FIN)).text()).includes("maxlength"), "the form leaves the length to the server, which counts characters");
   const refused = await x.post(`/organization/invoices/P/${DRAFT.invoiceNumber}/void`, JSON.stringify({ reason: "x" }));
   assert.equal(refused.status, 409); assert.deepEqual(await refused.json(), { error: "not_creditable" });
 });
@@ -314,13 +322,15 @@ test("INVOICE_VOID_HTTP only StudentHub finance voids, and sees only the void li
 test("INVOICE_VOID_HTTP one who reads some invoices and may void more sees both, with PDF links only on those they read", async (t) => {
   const x = await voidRig(t);
   const json = await (await x.page(BOTH, "/organization/invoices/P", "application/json")).json() as { invoices: Record<string, unknown>[] };
-  assert.deepEqual(json.invoices.map(i => i.invoiceNumber), [PAID.invoiceNumber, UNPAID.invoiceNumber], "the void-only invoice is not dropped");
-  assert.equal(json.invoices[0]!.lineCount, PAID.lineCount, "the read invoice keeps its full fields");
-  assert.ok(!("lineCount" in json.invoices[1]!) && !("paidOn" in json.invoices[1]!), "the void-only invoice shows the void view alone");
+  assert.deepEqual(json.invoices.map(i => i.invoiceNumber), [READ_ONLY.invoiceNumber, PAID.invoiceNumber, UNPAID.invoiceNumber], "the void-only invoice is not dropped");
+  assert.equal(json.invoices[1]!.lineCount, PAID.lineCount, "the read invoice keeps its full fields");
+  assert.ok(!("lineCount" in json.invoices[2]!) && !("paidOn" in json.invoices[2]!), "the void-only invoice shows the void view alone");
   const html = await (await x.page(BOTH)).text();
   assert.ok(html.includes(`${PAID.invoiceNumber}.pdf`), "a PDF link for the invoice they read");
   assert.ok(!html.includes(`${UNPAID.invoiceNumber}.pdf`), "none for the one they may only void");
   for (const n of [PAID.invoiceNumber, UNPAID.invoiceNumber]) assert.ok(html.includes(`action="/organization/invoices/P/${n}/void"`), n);
+  assert.ok(html.includes(`${READ_ONLY.invoiceNumber}.pdf`), "the read-only invoice keeps its PDF link");
+  assert.ok(!html.includes(`${READ_ONLY.invoiceNumber}/void`), "but gets no void form, since the void list does not show it");
   assert.equal((await x.page(BOTH, `/organization/invoices/P/${UNPAID.invoiceNumber}.pdf`, "application/json")).status, 404, "nor its PDF");
   assert.equal((await x.post(VOID_PATH, JSON.stringify({ reason: "Wrong hours" }), { session: BOTH })).status, 201);
 });
