@@ -19,6 +19,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { acquireRun, type BranchPull, claim, type ClaimRecord, decide, expectHead, type ExpectedHead, readExpected, holdsRun, parseRegister, readClaim, readRun, recoverRun, releaseRun, ticketBranch, type Decision, type IssueComment, type ObserveDecision, type WorkDecision } from "./lane.js";
+import { readAtRemoteMain } from "./tick.js";
 
 const REPO = "BAWES-Universe/studenthub-platform";
 const REGISTER = "docs/lanes/orca/REGISTER.md";
@@ -170,8 +171,8 @@ function main(): void {
     process.stdout.write(`${JSON.stringify({ mode, bot, key, result: recoverRun(claims, bot, key!, token!) })}\n`);
     return;
   }
-  execFileSync("git", ["fetch", "--quiet", "origin", "main"]);
-  const rows = parseRegister(execFileSync("git", ["show", `origin/main:${REGISTER}`], { encoding: "utf8" }));
+  // Fresh authorization read of main, by the SHA it resolves to now; no shared ref or FETCH_HEAD is written.
+  const rows = parseRegister(readAtRemoteMain(process.cwd(), REGISTER).content);
   const mine = rows.filter((row) => row.bot === bot && row.state === "active");
   // GitHub state (comments, open PRs) is read fresh each time decisions are made, including the re-read under the run lock.
   const remote = (): { byIssue: Map<number, IssueComment[]>; pulls: Map<string, BranchPull[]> } => {
