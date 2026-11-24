@@ -248,14 +248,21 @@ export class PostgresTransferInvoiceReads {
   async companyTransfer(principalId: string, orgId: string, transferId: string): Promise<CompanyTransferDetail | null> {
     const visible = await this.#visible(principalId, orgId);
     if (!visible) return null;
-    const transfer = (await this.#pool.query<CompanyTransferEntry>(`SELECT ${TRANSFER} ${TRANSFERS} AND t.id = $2`, [visible, transferId])).rows[0];
-    if (!transfer) return null;
-    const lines = (await this.#pool.query<{ lineId: string; personName: string; storeName: string; calculation: unknown; companyTotal: string; paid: boolean }>(
+    // The header and its lines come from one snapshot, so a status never sits beside lines from another moment.
+    const client = await this.#pool.connect();
+    let transfer: CompanyTransferEntry | undefined, lines: { lineId: string; personName: string; storeName: string; calculation: unknown; companyTotal: string; paid: boolean }[];
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      transfer = (await client.query<CompanyTransferEntry>(`SELECT ${TRANSFER} ${TRANSFERS} AND t.id = $2`, [visible, transferId])).rows[0];
+      lines = transfer ? (await client.query<{ lineId: string; personName: string; storeName: string; calculation: unknown; companyTotal: string; paid: boolean }>(
       `SELECT l.id AS "lineId", COALESCE(NULLIF(btrim(pp.display_name), ''), NULLIF(btrim(pr.display_name), ''), l.person_id) AS "personName",
          s.name AS "storeName", l.calculation, l.company_total::text AS "companyTotal", l.paid
        FROM pay_transfer_lines l JOIN principals pr ON pr.id = l.person_id LEFT JOIN person_profiles pp ON pp.principal_id = l.person_id
          JOIN organization_stores s ON s.id = l.store_id
-       WHERE l.transfer_id = $1 ORDER BY "personName", l.id`, [transfer.transferId])).rows;
+       WHERE l.transfer_id = $1 ORDER BY "personName", l.id`, [transfer.transferId])).rows : [];
+      await client.query("COMMIT");
+    } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; } finally { client.release(); }
+    if (!transfer) return null;
     return { ...transfer, lines: lines.map(({ calculation, ...line }) => {
       const worked = candidateWorked(calculation);
       return { ...line, worked: worked && { hours: worked.hours, minutes: worked.minutes } };
