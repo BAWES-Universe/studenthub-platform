@@ -20,7 +20,7 @@ import {
   episodeVerdict,
 } from "../single-run-activation.mjs";
 import { createReceipt, nextReceiptState, validateReceipt, verifyReviewOnlyPull, receiptCommentBody, parseReceiptsFromComments, RECEIPT_IMMUTABLE_FIELDS,
-  foreignReviewReceipt, foreignReviewDisposition } from "../reconcile.mjs";
+  foreignReviewReceipt, foreignReviewDisposition, endedEpisodeSupervisorSockets, settledSupervisorAnswer } from "../reconcile.mjs";
 import { resolveReviewOnlyLane, fixtureReviewTests } from "../workspace-scope.mjs";
 import { readPullChange, reviewRule, REVIEW_ONLY_VERDICT_RULE, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { REVIEW_ONLY_BRIEF } from "../card-contracts.mjs";
@@ -1029,13 +1029,19 @@ async function endedEpisodeTick(answer, { episode = "shu-304-run-20260909T230000
   assert.ok(made.ok, JSON.stringify(made.errors));
   const unknown = nextReceiptState(made.receipt, { type: "launch" }).receipt;
   h.comments.push({ body: receiptCommentBody(unknown), createdAt: unknown.last_activity });
-  const operations = [];
+  const operations = [], sockets = [];
   const mine = () => h.comments.filter((c) => c.body.includes(unknown.attempt_id)).length;
   const before = mine();
   const run = await h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET }, io: {
-    supervisorTransport: async ({ request }) => { operations.push(request.operation); if (answer instanceof Error) throw answer; return answer(request.order); } } });
-  return { h, unknown, operations, run, written: mine() - before };
+    supervisorTransport: async ({ request, socketPath }) => { operations.push(request.operation); sockets.push(socketPath); if (answer instanceof Error) throw answer; return answer(request.order, socketPath); } } });
+  return { h, unknown, operations, sockets, run, written: mine() - before };
 }
+
+// Every card worker's supervisor is asked, over status only.
+const statusOnEveryWorker = (operations) => {
+  assert.equal(operations.length, endedEpisodeSupervisorSockets({}).length, "one status per card worker's supervisor");
+  assert.ok(operations.every((op) => op === "status"), "status only, never submit");
+};
 
 test("SHU71_ENDED_EPISODE_REVIEW_SETTLED: another card's review from an ended episode is released only on the supervisor's positive evidence", async () => {
   for (const [label, answer, stage] of [
@@ -1049,7 +1055,7 @@ test("SHU71_ENDED_EPISODE_REVIEW_SETTLED: another card's review from an ended ep
       assert.ok(held.notes.some((n) => n.startsWith(`held: ENDED_EPISODE_REVIEW: review from episode shu-304-run-20260909T230000Z, which has ended; released on the supervisor's durable ${stage} record`)), `SHU71_DURABLE_DISPOSITION: ${JSON.stringify(held.notes)}`);
       assert.equal(held.verdict_stage ?? null, null, `${label}: the verdict is never applied`);
       assert.equal(written, 1, `${label}: one receipt written`);
-      assert.deepEqual(operations, ["status"], `${label}: status only, never submit`);
+      statusOnEveryWorker(operations);
       assert.equal(h.launched.length, 0, `${label}: nothing launched this tick`);
       assert.deepEqual(h.pauses, [], `${label}: no adapter paused`);
       assert.match(run.text, /dispatch: DEFERRED — lifecycle transitions were persisted this run/);
@@ -1059,6 +1065,35 @@ test("SHU71_ENDED_EPISODE_REVIEW_SETTLED: another card's review from an ended ep
   try {
     assert.equal(refused.h.receiptFor(refused.unknown.attempt_id).stage, "HOLD", "SHU71_REFUSED_LAUNCH_RELEASED");
   } finally { refused.h.cleanup(); }
+});
+
+test("SHU71_ENDED_EPISODE_OWNING_SUPERVISOR: the worker that ran the review answers for it, whichever worker ticks", async () => {
+  const owner = "/srv/shu/state/workspaces/supervisor.sock";
+  const bare = { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" };
+  const refused = { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS", reason: "supervisor refused this attempt and holds no record of it" };
+  assert.ok(endedEpisodeSupervisorSockets({ SHU_SUPERVISOR_SOCKET: "/srv/shu/state/workspaces/w2/supervisor.sock" }).includes(owner), "worker 1's socket is asked from worker 2");
+  assert.equal(new Set(endedEpisodeSupervisorSockets({ SHU_SUPERVISOR_SOCKET: owner })).size, endedEpisodeSupervisorSockets({}).length, "the own socket is asked once");
+  // 24 Nov: worker 2 ticks, its own supervisor never saw b760441e, worker 1 holds the durable FAILED run.
+  const failed = await endedEpisodeTick((order, socket) => socket === owner ? supervisorAnswer(order, { stage: "FAILED", result: null }) : bare);
+  try {
+    const held = failed.h.receiptFor(failed.unknown.attempt_id);
+    assert.equal(held.stage, "HOLD", failed.run.text);
+    assert.ok(held.notes.some((n) => n.includes("released on the supervisor's durable FAILED record")), JSON.stringify(held.notes));
+    assert.ok(failed.sockets.includes(owner));
+    statusOnEveryWorker(failed.operations);
+  } finally { failed.h.cleanup(); }
+  for (const [label, ownerAnswer] of [
+    ["the owner still runs it, another refuses", (order) => supervisorAnswer(order, { stage: "RUNNING", result: null })],
+    ["the owner reports another head", (order) => supervisorAnswer(order, { target_sha: "b".repeat(40) })],
+    ["the store holding its refused intent disowns it, the rest never saw it", () => bare],
+  ]) {
+    const live = await endedEpisodeTick((order, socket) => socket === owner ? ownerAnswer(order) : refused);
+    try {
+      const expected = label.startsWith("the store holding") ? "HOLD" : "LAUNCH_UNKNOWN";
+      assert.equal(live.h.receiptFor(live.unknown.attempt_id).stage, expected, `${label}\n${live.run.text}`);
+    } finally { live.h.cleanup(); }
+  }
+  assert.equal(settledSupervisorAnswer({ attempt_id: "a", target_sha: "c" }, []), null, "no answer holds");
 });
 
 test("SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keeps the gate and nothing is written", async () => {
@@ -1074,7 +1109,7 @@ test("SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keep
       assert.equal(h.receiptFor(unknown.attempt_id).stage, "LAUNCH_UNKNOWN", `${label}\n${run.text}`);
       assert.equal(written, 0, `${label}: no receipt written for the held review`);
       assert.ok(!h.launched.some((l) => l.attempt_id === unknown.attempt_id), `${label}: the held review is never launched`);
-      assert.deepEqual(operations, ["status"], `${label}: status only`);
+      statusOnEveryWorker(operations);
       assert.match(run.text, /lifecycle: ENDED_EPISODE_REVIEW SHU-304 attempt \S+ LAUNCH_UNKNOWN in episode shu-304-run-20260909T230000Z held — the supervisor/, label);
     } finally { h.cleanup(); }
   }
