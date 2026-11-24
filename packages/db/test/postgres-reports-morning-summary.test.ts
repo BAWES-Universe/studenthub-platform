@@ -8,6 +8,9 @@ import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { PostgresMorningSummaryStore } from "@studenthub/db/reports";
 import { EmailOutboxService, FakeEmailPort, validateTemplateParameters } from "../../notifications/src/index.js";
 import { MorningSummaryService } from "../../reports/src/index.js";
+import { PostgresTransferInvoiceEffects } from "@studenthub/db/billing";
+import { TransferLifecycleService, type TransferAction } from "../../payroll/src/transfer-lifecycle.js";
+import { PostgresTransferLifecycleStore, type PayLifecyclePolicy } from "../src/payroll/postgres-transfer-lifecycle-store.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS = `ms-ops-${randomUUID()}`;
@@ -192,4 +195,48 @@ test("REPORTS_MORNING_SUMMARY_PG every delivery attempt rechecks the recipient: 
   const mine = new Set([kept, left, demoted, paused].map(id => `${id}@example.invalid`)), delivered = port.sent.filter(m => mine.has(m.to));
   assert.deepEqual(delivered.map(m => m.to), [`${kept}@example.invalid`]);
   assert.equal(delivered[0]?.subject.startsWith("Morning Report for "), true);
+});
+
+// Synthetic companies under the operator, assignments, and transfers moved through the pay lane's own lifecycle.
+async function payCompany(parent: string = OPS, currency?: string): Promise<{ id: string; shop: string }> {
+  const id = `ms-pay-${randomUUID()}`, shop = randomUUID();
+  await authz.upsertOrganization(createOrganization({ id, name: id, parentOrgId: parent }));
+  await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Mall',$3,$3)", [shop, id, "a".repeat(64)]);
+  if (currency) await pool.query("INSERT INTO organization_commercial_terms(org_id,field,value) VALUES($1,'currency_code',$2)", [id, currency]);
+  return { id, shop };
+}
+async function placed(org: { id: string; shop: string }, start: string, end: string | null = null): Promise<string> {
+  const person = await principal("worker");
+  await pool.query(`INSERT INTO work_assignments(id,person_principal_id,org_id,store_id,contract_resolution,start_date,end_date,source,created_by)
+    VALUES($1,$2,$3,$4,'{}',$5,$6,'staff',$7)`, [randomUUID(), person, org.id, org.shop, start, end, creator]);
+  return person;
+}
+async function paid(org: { id: string; shop: string }, person: string, month: string, at: string, ...actions: TransferAction[]): Promise<void> {
+  const id = randomUUID();
+  await pool.query("INSERT INTO pay_transfers(id,company_id,period_start,period_end,currency_code) VALUES($1,$2,$3::date,($3::date + interval '1 month' - interval '1 day')::date,'KWD')", [id, org.id, `${month}-01`]);
+  await pool.query("INSERT INTO pay_transfer_lines(id,transfer_id,person_id,store_id,currency_code,candidate_total,company_total,note,calculation) VALUES($1,$2,$3,$4,'KWD','1.000','2.000','synthetic','{}')",
+    [`line-${randomUUID()}`, id, person, org.shop]);
+  const policy: PayLifecyclePolicy = { authorize: async () => true, unassignedPersonIds: async () => [] };
+  const lifecycle = new TransferLifecycleService(new PostgresTransferLifecycleStore(pool, policy, new PostgresTransferInvoiceEffects()), () => new Date(at));
+  for (const action of actions) assert.equal((await lifecycle.transition({ principalId: creator, actingAs: false }, id, action)).kind, "changed", action);
+}
+
+test("REPORTS_MORNING_SUMMARY_PG payment counters: KWD companies with staff for 40 days and no payment received in 40 days; people placed over two months with no transfer since", async () => {
+  const day = "2026-11-20";
+  const read = async () => { const c = await store.counts(day); return [c.companyMoreThen40DaysWithoutPayment!, c.assignedIdleCandidates!] as const; };
+  const [companiesBefore, idleBefore] = await read();
+  const unpaid = await payCompany();
+  await placed(unpaid, "2026-09-01"); // no transfer at all: counted, and so is the person
+  const parent = await payCompany(), sub = await payCompany(parent.id);
+  const subWorker = await placed(sub, "2026-09-01");
+  await paid(sub, subWorker, "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // the sub-company's payment counts for its parent
+  const late = await payCompany();
+  const lateWorker = await placed(late, "2026-08-01"), other = await placed(late, "2026-08-01");
+  await paid(late, lateWorker, "2026-08", "2026-09-15T08:00:00Z", "lock", "payment_received"); // received 66 days before: counted; the period ended before the two months
+  await paid(late, other, "2026-10", "2026-11-01T08:00:00Z", "cancel"); // a cancelled transfer is not a payment
+  await placed(await payCompany(), "2026-11-01"); // staff for under 40 days
+  await placed(await payCompany(), "2026-08-01", "2026-11-10"); // no one assigned any more
+  await placed(await payCompany(OPS, "USD"), "2026-08-01"); // not KWD (its person is still idle)
+  const [companies, idle] = await read();
+  assert.deepEqual([companies - companiesBefore, idle - idleBefore], [2, 4]);
 });

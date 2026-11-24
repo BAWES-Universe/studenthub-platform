@@ -6,6 +6,17 @@
  * lane's data exists.
  *
  * Legacy lists "Candidates Assigned to work without ID cards" twice; here it is one counter.
+ *
+ * The two payment counters read the pay lane's transfers (slice 9 of P-3, shared with statistics):
+ * - Companies with no payment in 40 days: a top-level KWD company (sub-companies rolled up, deleted
+ *   ones left out) with an assignment running today that started at least 40 days ago, and no
+ *   transfer whose payment was received in the last 40 days. Legacy used the company's creation
+ *   date and a stored last-payment date; here the payment date is the transfer's own
+ *   `payment_received_on`, and only companies that have staff assigned count, as the label says.
+ * - Idle candidates: people with an assignment running today that started more than two months
+ *   ago, and no line in any live transfer (not deleted or cancelled) whose pay period ended in the
+ *   last two months. Legacy's query could never match (it asked for a transfer line created in the
+ *   last two months that did not exist), so it always showed 0.
  */
 export type MorningSummarySource =
   | { readonly kind: "available" }
@@ -17,7 +28,7 @@ const available: MorningSummarySource = { kind: "available" };
 
 export const MORNING_SUMMARY_COUNTERS = [
   { key: "interviewScheduledToday", label: "Interviews scheduled today: organise the meeting between the company and the candidates", source: available },
-  { key: "companyMoreThen40DaysWithoutPayment", label: "Urgent: companies with assigned staff that have not made a payment in 40 days", source: missing("transfers from the pay lane") },
+  { key: "companyMoreThen40DaysWithoutPayment", label: "Urgent: companies with assigned staff that have not made a payment in 40 days", source: available },
   { key: "totalExpiredCards", label: "Candidates with expired ID cards", source: available },
   { key: "id_need_generated", label: "Candidates assigned to work without ID cards", source: available },
   { key: "activeRequests", label: "Active requests that need an update", source: available },
@@ -25,7 +36,7 @@ export const MORNING_SUMMARY_COUNTERS = [
   { key: "requireFollowup", label: "Clients requiring follow-up", source: missing("company follow-up dates, which no lane holds yet") },
   { key: "missingBankInfo", label: "Candidates missing bank info", source: missing("unpaid transfers from the pay lane (a count without them would be too low)") },
   { key: "assignedExpiredCivilID", label: "Assigned candidates with an expired civil ID", source: available },
-  { key: "assignedIdleCandidates", label: "Assigned candidates who have not received any payment in the past two months", source: missing("transfers from the pay lane") },
+  { key: "assignedIdleCandidates", label: "Assigned candidates who have not received any payment in the past two months", source: available },
   { key: "incompleteAssignedToWork", label: "Assigned candidates with incomplete profiles", source: missing("profile completeness, which no lane holds yet") },
   { key: "profileApprovalRequire", label: "Profiles to be reviewed and approved", source: missing("profile approval, which no lane holds yet") },
 ] as const satisfies readonly MorningSummaryCounter[];

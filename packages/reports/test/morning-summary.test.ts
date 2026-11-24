@@ -4,8 +4,8 @@ import { EMAIL_TEMPLATES, validateTemplateParameters } from "../../notifications
 import { MORNING_SUMMARY_COUNTERS, MORNING_SUMMARY_KEYS, MorningSummaryService, completeCounts, kuwaitHour, queueMorningSummaryThenDeliver, sendMorningSummaryIfDue,
   type MorningSummaryCounts, type MorningSummaryStore } from "../src/index.js";
 
-const AVAILABLE = ["interviewScheduledToday", "totalExpiredCards", "id_need_generated", "activeRequests", "assignedExpiredCivilID"];
-const RAW = { interviewScheduledToday: 2, totalExpiredCards: 3, id_need_generated: 4, activeRequests: 7, assignedExpiredCivilID: 1 };
+const AVAILABLE = ["interviewScheduledToday", "companyMoreThen40DaysWithoutPayment", "totalExpiredCards", "id_need_generated", "activeRequests", "assignedExpiredCivilID", "assignedIdleCandidates"];
+const RAW = { interviewScheduledToday: 2, companyMoreThen40DaysWithoutPayment: 5, totalExpiredCards: 3, id_need_generated: 4, activeRequests: 7, assignedExpiredCivilID: 1, assignedIdleCandidates: 6 };
 
 test("REPORTS_MORNING_SUMMARY_REGISTRY the twelve legacy counters in email order, and only landed sources are available", () => {
   assert.deepEqual(MORNING_SUMMARY_KEYS, ["interviewScheduledToday", "companyMoreThen40DaysWithoutPayment", "totalExpiredCards", "id_need_generated", "activeRequests",
@@ -19,7 +19,8 @@ test("REPORTS_MORNING_SUMMARY_REGISTRY a missing source is null, never 0, and an
   assert.deepEqual(Object.entries(counts).filter(([, v]) => v !== null).map(([k]) => k), AVAILABLE);
   assert.equal(counts.missingBankInfo, null, "a number for a missing source is ignored");
   assert.equal(counts.activeRequests, 7);
-  assert.throws(() => completeCounts({ interviewScheduledToday: 2, totalExpiredCards: 3, id_need_generated: 4, activeRequests: 7 }), /assignedExpiredCivilID/);
+  const { assignedExpiredCivilID: _gone, ...noCivil } = RAW;
+  assert.throws(() => completeCounts(noCivil), /assignedExpiredCivilID/);
   assert.throws(() => completeCounts({ ...RAW, activeRequests: -1 }), /activeRequests/);
   assert.throws(() => completeCounts({ ...RAW, activeRequests: 1.5 }), /activeRequests/);
 });
@@ -44,7 +45,8 @@ test("REPORTS_MORNING_SUMMARY_EMAIL legacy's subject, one line per counter, \"no
   assert.match(mail.body, /Active requests that need an update: 7/);
   assert.match(mail.body, /Assigned candidates with an expired civil ID: 1/);
   assert.match(mail.body, /Candidates missing bank info: not available/);
-  assert.match(mail.body, /Urgent: companies with assigned staff that have not made a payment in 40 days: not available/);
+  assert.match(mail.body, /Urgent: companies with assigned staff that have not made a payment in 40 days: 5/);
+  assert.match(mail.body, /Assigned candidates who have not received any payment in the past two months: 6/);
   assert.equal(mail.body.match(/without ID cards/g)?.length, 1, "legacy's duplicated row is listed once");
   const quiet = EMAIL_TEMPLATES["staff.morning_summary"].render({ day: "2026-11-19", counters: counts({ interviewScheduledToday: 0, activeRequests: 0, companyMoreThen40DaysWithoutPayment: 0 }) });
   assert.doesNotMatch(quiet.body, /Interviews scheduled today/);
@@ -78,7 +80,8 @@ test("REPORTS_MORNING_SUMMARY_SEND from 08:00 Kuwait time, once per Kuwait day",
   assert.deepEqual(await sendMorningSummaryIfDue(store, new Date("2026-11-19T21:00:00Z")), { status: "not_yet", day: "2026-11-20" });
   assert.deepEqual(store.sent.get("2026-11-19"), { day: "2026-11-19", counters: counts() });
   // A store answer without an available counter sends nothing.
-  store.raw = { interviewScheduledToday: 1, totalExpiredCards: 0, id_need_generated: 0, activeRequests: 1 };
+  const { assignedExpiredCivilID: _civil, ...partial } = RAW;
+  store.raw = partial;
   await assert.rejects(sendMorningSummaryIfDue(store, new Date("2026-11-20T06:00:00Z")), /assignedExpiredCivilID/);
 });
 
