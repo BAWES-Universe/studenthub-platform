@@ -171,19 +171,64 @@ test("TRANSFER_INVOICE_VOID_GUARDED the table itself refuses a credit that does 
   const id = await transfer([["P", "4.000"]]);
   await move(id, "lock");
   const number = (await live(id, "P"))!.invoiceNumber;
-  const insert = (total: string, org = "P", invoice = number) => pool.query(
-    `INSERT INTO transfer_invoice_credit(credit_number,invoice_number,org_id,currency_code,credit_date,total,reason,actor_id)
-     VALUES('SH-2026-11-900000',$1,$2,'KWD','2026-11-24',$3,'synthetic','op-admin')`, [invoice, org, total]);
-  for (const [total, org] of [["3.999", "P"], ["4.000", "C1"]] as const) await assert.rejects(insert(total, org), (e: { code?: string }) => e.code === "23514", `${total} ${org}`);
+  // Each mismatch is tried as a complete, paired void, so only the copy check can refuse it.
+  for (const [total, org] of [["3.999", "P"], ["4.000", "C1"]] as const) {
+    await assert.rejects(inTransaction(async client => {
+      await client.query(`INSERT INTO transfer_invoice_credit(credit_number,invoice_number,org_id,currency_code,credit_date,total,reason,actor_id)
+        VALUES('SH-2026-11-900000',$1,$2,'KWD','2026-11-24',$3,'synthetic','op-admin')`, [number, org, total]);
+      await client.query("UPDATE transfer_invoice SET deleted = true, void_reason = 'credited' WHERE invoice_number = $1", [number]);
+    }), (e: { code?: string }) => e.code === "23514", `${total} ${org}`);
+  }
   await refused("UPDATE transfer_invoice SET deleted = true, void_reason = 'credited' WHERE invoice_number = $1", [number]);
   await move(id, "payment_received");
   await refused("UPDATE transfer_invoice SET deleted = true, void_reason = 'reissued' WHERE invoice_number = $1", [number]);
-  await insert("4.000");
-  await refused("UPDATE transfer_invoice SET deleted = true, void_reason = 'credited', status = 'unpaid', paid_at = NULL WHERE invoice_number = $1", [number]);
-  await pool.query("UPDATE transfer_invoice SET deleted = true, void_reason = 'credited' WHERE invoice_number = $1", [number]);
+  await inTransaction(async client => {
+    await client.query(`INSERT INTO transfer_invoice_credit(credit_number,invoice_number,org_id,currency_code,credit_date,total,reason,actor_id)
+      VALUES('SH-2026-11-900000',$1,'P','KWD','2026-11-24','4.000','synthetic','op-admin')`, [number]);
+    await client.query("SAVEPOINT status");
+    await assert.rejects(client.query("UPDATE transfer_invoice SET deleted = true, void_reason = 'credited', status = 'unpaid', paid_at = NULL WHERE invoice_number = $1", [number]),
+      (e: { code?: string }) => e.code === "23514", "a credited void keeps the paid status");
+    await client.query("ROLLBACK TO SAVEPOINT status");
+    await client.query("UPDATE transfer_invoice SET deleted = true, void_reason = 'credited' WHERE invoice_number = $1", [number]);
+  });
   await assert.rejects(pool.query(`INSERT INTO transfer_invoice_credit(credit_number,invoice_number,org_id,currency_code,credit_date,total,reason,actor_id)
      VALUES('SH-2026-11-900001',$1,'P','KWD','2026-11-24','4.000','synthetic','op-admin')`, [number]), (e: { code?: string }) => e.code === "23514" || e.code === "23505", "one credit note per invoice");
 });
+
+test("TRANSFER_INVOICE_VOID_PAIRED a credit note commits only together with its invoice's credited void", async () => {
+  const id = await transfer([["P", "4.000"]]);
+  await move(id, "lock");
+  const number = (await live(id, "P"))!.invoiceNumber;
+  const insert = (client: Pick<pg.PoolClient, "query">, credit: string) => client.query(
+    `INSERT INTO transfer_invoice_credit(credit_number,invoice_number,org_id,currency_code,credit_date,total,reason,actor_id)
+     VALUES($1,$2,'P','KWD','2026-11-24','4.000','synthetic','op-admin')`, [credit, number]);
+  await refused(`INSERT INTO transfer_invoice_credit(credit_number,invoice_number,org_id,currency_code,credit_date,total,reason,actor_id)
+     VALUES('SH-2026-11-900000',$1,'P','KWD','2026-11-24','4.000','synthetic','op-admin')`, [number]);
+  await assert.rejects(inTransaction(client => insert(client, "SH-2026-11-900001").then(() => undefined)),
+    (e: { code?: string }) => e.code === "23514", "an orphan credit note is refused at commit");
+  assert.deepEqual(await credits(), []);
+  assert.equal((await live(id, "P"))?.invoiceNumber, number, "the invoice stays live");
+  await inTransaction(async client => {
+    await insert(client, "SH-2026-11-900002");
+    await client.query("UPDATE transfer_invoice SET deleted = true, void_reason = 'credited' WHERE invoice_number = $1", [number]);
+  });
+  assert.deepEqual((await credits()).map(c => c.credit_number), ["SH-2026-11-900002"]);
+  assert.equal(await live(id, "P"), undefined);
+  await refused("UPDATE transfer_invoice_credit SET reason = 'changed'");
+  await refused("UPDATE transfer_invoice SET deleted = false, void_reason = NULL WHERE invoice_number = $1", [number]);
+});
+
+async function inTransaction(work: (client: pg.PoolClient) => Promise<void>): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await work(client);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally { client.release(); }
+}
 
 function nextDay(day: string): string {
   const d = new Date(`${day}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10);

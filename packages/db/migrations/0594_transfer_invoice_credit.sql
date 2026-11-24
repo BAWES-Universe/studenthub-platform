@@ -40,6 +40,23 @@ CREATE TRIGGER transfer_invoice_credit_insert_only BEFORE INSERT OR UPDATE OR DE
 CREATE TRIGGER transfer_invoice_credit_no_truncate BEFORE TRUNCATE ON transfer_invoice_credit
   FOR EACH STATEMENT EXECUTE FUNCTION transfer_invoice_credit_guard();
 
+-- The pair commits together: by the end of the transaction that inserts a credit note, its
+-- invoice must be void as 'credited'. A credit note never stands beside a live invoice, so no
+-- committed state shows a credit while the pay lifecycle still bills or pays that invoice.
+CREATE FUNCTION transfer_invoice_credit_paired() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM transfer_invoice i
+     WHERE i.invoice_number = NEW.invoice_number AND i.deleted AND i.void_reason = 'credited'
+  ) THEN
+    RAISE EXCEPTION 'a credit note commits only with its invoice voided as credited' USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+CREATE CONSTRAINT TRIGGER transfer_invoice_credit_voids_invoice AFTER INSERT ON transfer_invoice_credit
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION transfer_invoice_credit_paired();
+
 ALTER TABLE transfer_invoice DROP CONSTRAINT transfer_invoice_void_reason_check;
 ALTER TABLE transfer_invoice ADD CONSTRAINT transfer_invoice_void_reason_check
   CHECK (void_reason IN ('reissued', 'transfer_deleted', 'credited'));

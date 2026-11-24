@@ -13,8 +13,10 @@ const voids = "packages/db/dist/billing/postgres-transfer-invoice-voids.js";
 const reads = "packages/db/dist/billing/postgres-transfer-invoice-reads.js";
 const migration = "packages/db/migrations/0594_transfer_invoice_credit.sql";
 const mutations = [
-  ["void with the re-issue reason, so nothing records the credit", "TRANSFER_INVOICE_VOID_PRESERVES_HISTORY", voids,
-    "SET deleted = true, void_reason = 'credited' WHERE", "SET deleted = true, void_reason = 'reissued' WHERE"],
+  // Voiding with another reason, or not voiding at all, now fails at commit in the database
+  // (TRANSFER_INVOICE_VOID_PAIRED proves that trigger), so the store mutants test what is left to it.
+  ["date the credit note on another day", "TRANSFER_INVOICE_VOID_PRESERVES_HISTORY", voids,
+    "invoice.currency_code, transfer.today, invoice.total", "invoice.currency_code, '2026-01-01', invoice.total"],
   ["credit an invoice a second time", "TRANSFER_INVOICE_VOID_PRESERVES_HISTORY", voids,
     'if (invoice.void_reason === "credited") {', "if (false) {"],
   ["credit a draft's unpaid invoice", "TRANSFER_INVOICE_VOID_REFUSED", voids,
@@ -27,6 +29,8 @@ const mutations = [
     "AND i.org_id = NEW.org_id", ""],
   ["mark an invoice credited without its credit note", "TRANSFER_INVOICE_VOID_GUARDED", migration,
     "AND EXISTS (SELECT 1 FROM transfer_invoice_credit c WHERE c.invoice_number = OLD.invoice_number)", ""],
+  ["commit a credit note beside a live invoice", "TRANSFER_INVOICE_VOID_PAIRED", migration,
+    "CREATE CONSTRAINT TRIGGER transfer_invoice_credit_voids_invoice AFTER INSERT ON transfer_invoice_credit\n  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION transfer_invoice_credit_paired();", ""],
   ["hide a credited invoice once its transfer is unlocked", "TRANSFER_INVOICE_VOID_VISIBLE", reads,
     "OR t.status IN ('locked', 'payment_sent') OR i.void_reason = 'credited')", "OR t.status IN ('locked', 'payment_sent'))"],
   ["leave credit notes off the statement", "TRANSFER_INVOICE_VOID_PAID", reads,
