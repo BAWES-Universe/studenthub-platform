@@ -599,6 +599,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/comment-continuations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core APIs only; Linear and GitHub answers are doubled in memory, no external tool runs",
+    "call_sites": []
+  },
+  {
     "file": ".github/coordinator/test/disk-prune.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem APIs on real temporary directories (read errors injected by wrapping lstatSync and readFileSync); rm, du and journalctl are doubled in memory; the D12m mutant is a rewritten copy imported from a temporary directory; no external tool runs",

@@ -60,6 +60,7 @@
   ".github/coordinator/test/ci-before-review.test.mjs",
   ".github/coordinator/test/claude-contract.test.mjs",
   ".github/coordinator/test/codex-contract.test.mjs",
+  ".github/coordinator/test/comment-continuations.test.mjs",
   ".github/coordinator/test/dispatch-durability.test.mjs",
   ".github/coordinator/test/durable-handoff.test.mjs",
   ".github/coordinator/test/eligibility.test.mjs",
