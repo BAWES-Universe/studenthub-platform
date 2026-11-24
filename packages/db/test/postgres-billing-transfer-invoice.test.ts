@@ -208,7 +208,9 @@ test("TRANSFER_INVOICE_FROZEN the table refuses edits, removal and backwards mov
   await refused("UPDATE transfer_invoice SET deleted = true, void_reason = 'reissued', org_id = 'C1' WHERE transfer_id=$1", [open.id]);
   assert.deepEqual((await live(open.id)).map(i => [i.total, i.status, i.orgId]), [["1.000", "unpaid", "P"]]);
   await refused("DELETE FROM transfer_invoice");
-  await refused("TRUNCATE transfer_invoice");
+  // Credit notes reference invoices, so a truncate must cascade; the invoice table's own guard still refuses it.
+  await assert.rejects(pool.query("TRUNCATE transfer_invoice CASCADE"), (error: { code?: string; message?: string }) =>
+    error.code === "23514" && error.message === "transfer invoices are retained", "TRUNCATE transfer_invoice");
   await refused("INSERT INTO transfer_invoice(invoice_number,transfer_id,org_id,currency_code,invoice_date,total,line_count,lines_hash) VALUES ('LEGACY-1',$1,'P','KWD','2026-11-22',1,1,$2)", [id, "0".repeat(64)]);
   await assert.rejects(pool.query("INSERT INTO transfer_invoice(invoice_number,transfer_id,org_id,currency_code,invoice_date,total,line_count,lines_hash) VALUES ('SH-2026-11-999999',$1,'P','KWD','2026-11-22',1,1,$2)", [id, "0".repeat(64)]),
     (error: { code?: string }) => error.code === "23505", "one live invoice per transfer and company");
