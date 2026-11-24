@@ -3,12 +3,13 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// Invoices lane, transfer invoice reads (I3) and statements (F4.8): every read guard must be load-bearing. Each mutant
+// Invoices lane, transfer invoice reads (I3), statements (F4.8) and company transfers (O-13): every read guard must be load-bearing. Each mutant
 // rewrites one built module or the migration, the named test must fail by
 // assertion, and the file is restored before the next. PostgreSQL is required.
 assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required for transfer invoice read mutations (scratch PostgreSQL)");
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const postgres = "dist/packages/db/test/postgres-billing-transfer-invoice-reads.test.js";
+const transfers = "dist/packages/db/test/postgres-billing-company-transfers.test.js";
 const reads = "packages/db/dist/billing/postgres-transfer-invoice-reads.js";
 const decision = "dist/packages/billing/src/transfer-invoice-access.js";
 const mutations = [
@@ -48,8 +49,19 @@ const mutations = [
     "abs(amount)::text, on_date", "abs(amount)::float8::numeric(40,3)::text, on_date"],
   ["subtotal every company in the tree", "TRANSFER_STATEMENT_SCOPE", reads,
     "WHERE (NOT i.deleted OR i.void_reason = 'credited') AND i.org_id = ANY($1::text[])", "WHERE (NOT i.deleted OR i.void_reason = 'credited') AND i.org_id IN (SELECT id FROM organizations WHERE id = ANY($1::text[]) OR parent_org_id = ANY($1::text[]))"],
+  ["list deleted transfers", "COMPANY_TRANSFERS_LIST", reads,
+    "WHERE NOT t.deleted AND t.company_id", "WHERE t.company_id"],
+  ["list every company's transfers", "COMPANY_TRANSFERS_REFUSED", reads,
+    "AND t.company_id = ANY($1::text[])", "AND $1::text[] IS NOT NULL"],
+  ["charge the company the candidates' totals", "COMPANY_TRANSFERS_LIST", reads,
+    "COALESCE(sum(l.company_total), 0)", "COALESCE(sum(l.candidate_total), 0)"],
+  ["show the company the candidate's side of the calculation", "COMPANY_TRANSFERS_DETAIL", reads,
+    "worked: worked && { hours: worked.hours, minutes: worked.minutes }", "worked"],
+  ["show the line's account name over the profile name", "COMPANY_TRANSFERS_DETAIL", reads,
+    "COALESCE(NULLIF(btrim(pp.display_name), ''), NULLIF(btrim(pr.display_name), ''), l.person_id)", "COALESCE(NULLIF(btrim(pr.display_name), ''), l.person_id)"],
 ];
 
+const suites = [postgres, transfers];
 function run(files, pattern) {
   const result = spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-concurrency=1",
     ...(pattern ? [`--test-name-pattern=^${pattern} `] : []), ...files],
@@ -57,7 +69,7 @@ function run(files, pattern) {
   return { ...result, output: result.stdout + result.stderr };
 }
 function green(label) {
-  const result = run([postgres]);
+  const result = run(suites);
   assert.equal(result.error, undefined, `${label}: runner error`);
   assert.equal(result.status, 0, `${label} must pass\n${result.output}`);
   assert.match(result.output, /# skipped 0\b/);
@@ -71,7 +83,7 @@ for (const [name, title, path, from, to] of mutations) {
   assert.equal(original.split(from).length - 1, 1, `mutation binds exactly once: ${name}`);
   try {
     writeFileSync(target, original.replace(from, to));
-    const result = run([postgres], title);
+    const result = run(suites, title);
     assert.equal(result.error, undefined, `${name}: runner error`);
     assert.notEqual(result.status, 0, `${name}: survived\n${result.output}`);
     assert.match(result.output, new RegExp(`not ok \\d+ - ${title} `), `${name}: named test did not fail\n${result.output}`);

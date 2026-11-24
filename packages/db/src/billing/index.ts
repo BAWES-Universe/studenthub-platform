@@ -4,7 +4,7 @@ export { issueInvoice, resolveInvoice } from "./postgres-invoice-store.js";
 export { PostgresLegacyInvoiceStore } from "./postgres-legacy-invoice-store.js";
 export { PostgresTransferInvoiceEffects, TRANSFER_INVOICE_SERIES, listTransferInvoices, transferInvoiceForLine,
   type TransferInvoice } from "./postgres-transfer-invoice-effects.js";
-export { PostgresTransferInvoiceReads, type TransferInvoiceDocument, type TransferInvoiceListEntry, type TransferInvoicePage,
+export { PostgresTransferInvoiceReads, type CompanyTransferDetail, type CompanyTransferEntry, type CompanyTransferLine, type CompanyTransferPage, type CompanyTransferStatus, type TransferInvoiceDocument, type TransferInvoiceListEntry, type TransferInvoicePage,
   type TransferInvoiceReadDecision, type TransferStatement, type TransferStatementCurrency, type TransferStatementEntry,
   type TransferStatementMember, type TransferStatementTotals } from "./postgres-transfer-invoice-reads.js";
 export { CREDIT_REASON_MAX, PostgresTransferInvoiceVoids, creditReason, type TransferInvoiceCredit, type TransferInvoiceCreditResult }
