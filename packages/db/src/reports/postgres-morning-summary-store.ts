@@ -26,14 +26,14 @@ SELECT
      WHERE c.id IN (SELECT company_id FROM top) AND COALESCE(ct.value, 'KWD') = 'KWD'
        AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = c.id)
        AND EXISTS (SELECT 1 FROM work_assignments a JOIN top t ON t.org_id = a.org_id
-         WHERE t.company_id = c.id AND a.start_date <= $1::date - 40 AND (a.end_date IS NULL OR a.end_date >= $1::date))
+         WHERE t.company_id = c.id AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = t.org_id) AND a.start_date <= $1::date - 40 AND (a.end_date IS NULL OR a.end_date >= $1::date))
        AND NOT EXISTS (SELECT 1 FROM pay_transfers p JOIN top t ON t.org_id = p.company_id
-         WHERE t.company_id = c.id AND NOT p.deleted AND p.payment_received_on > $1::date - 40)) AS "companyMoreThen40DaysWithoutPayment",
+         WHERE t.company_id = c.id AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = t.org_id) AND NOT p.deleted AND p.payment_received_on > $1::date - 40)) AS "companyMoreThen40DaysWithoutPayment",
   (SELECT count(DISTINCT a.person_principal_id)::int FROM work_assignments a
      WHERE a.start_date < ($1::date - interval '2 months')::date AND (a.end_date IS NULL OR a.end_date >= $1::date)
        AND NOT EXISTS (SELECT 1 FROM pay_transfer_lines l JOIN pay_transfers p ON p.id = l.transfer_id
          WHERE l.person_id = a.person_principal_id AND NOT p.deleted AND p.status <> 'cancelled'
-           AND p.period_end >= ($1::date - interval '2 months')::date)) AS "assignedIdleCandidates",
+           AND p.period_end >= ($1::date - interval '2 months')::date AND p.period_end <= $1::date)) AS "assignedIdleCandidates",
   (SELECT count(*)::int FROM recruit_interviews i JOIN recruit_pipeline_cards c ON c.id = i.card_id JOIN recruit_requests r ON r.id = c.request_id
      WHERE i.status = 'scheduled' AND i.${KUWAIT_DAY("$1")} AND r.status NOT IN ('filled','closed')) AS "interviewScheduledToday",
   (SELECT count(*)::int FROM recruit_requests r LEFT JOIN organization_commercial_terms t ON t.org_id = r.org_id AND t.field = 'currency_code'

@@ -237,6 +237,14 @@ test("REPORTS_MORNING_SUMMARY_PG payment counters: KWD companies with staff for 
   await placed(await payCompany(), "2026-11-01"); // staff for under 40 days
   await placed(await payCompany(), "2026-08-01", "2026-11-10"); // no one assigned any more
   await placed(await payCompany(OPS, "USD"), "2026-08-01"); // not KWD (its person is still idle)
+  const current = await payCompany(), currentWorker = await placed(current, "2026-08-01");
+  await paid(current, currentWorker, "2026-11", "2026-11-05T08:00:00Z", "lock", "payment_received"); // paid this month, but the November period has not ended: still idle
+  const gone = await payCompany(), goneSub = await payCompany(gone.id);
+  await placed(goneSub, "2026-08-01"); // staff only at a deleted sub-company: the parent has no staff
+  const paidByGone = await payCompany(), paidSub = await payCompany(paidByGone.id);
+  await placed(paidByGone, "2026-08-01");
+  await paid(paidSub, await placed(paidSub, "2026-11-01"), "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // a deleted sub-company's payment does not count
+  for (const org of [goneSub.id, paidSub.id]) await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [org, `receipt-${randomUUID()}`]);
   const [companies, idle] = await read();
-  assert.deepEqual([companies - companiesBefore, idle - idleBefore], [2, 4]);
+  assert.deepEqual([companies - companiesBefore, idle - idleBefore], [3, 7]);
 });

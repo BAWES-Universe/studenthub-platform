@@ -8,14 +8,14 @@
  * Legacy lists "Candidates Assigned to work without ID cards" twice; here it is one counter.
  *
  * The two payment counters read the pay lane's transfers (slice 9 of P-3, shared with statistics):
- * - Companies with no payment in 40 days: a top-level KWD company (sub-companies rolled up, deleted
- *   ones left out) with an assignment running today that started at least 40 days ago, and no
+ * - Companies with no payment in 40 days: a top-level KWD company (sub-companies rolled up; a deleted
+ *   company or sub-company, with its staff and payments, is left out) with an assignment running today that started at least 40 days ago, and no
  *   transfer whose payment was received in the last 40 days. Legacy used the company's creation
  *   date and a stored last-payment date; here the payment date is the transfer's own
  *   `payment_received_on`, and only companies that have staff assigned count, as the label says.
  * - Idle candidates: people with an assignment running today that started more than two months
  *   ago, and no line in any live transfer (not deleted or cancelled) whose pay period ended in the
- *   last two months. Legacy's query could never match (it asked for a transfer line created in the
+ *   last two months (a period still running does not count). Legacy's query could never match (it asked for a transfer line created in the
  *   last two months that did not exist), so it always showed 0.
  */
 export type MorningSummarySource =
