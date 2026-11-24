@@ -14,7 +14,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -99,9 +99,17 @@ export function runDir(ticks: string, run: string): string {
 
 const reservation = (ticks: string, run: string): string => path.join(path.resolve(ticks), ".runs", run);
 
+/** A path with symlinks resolved; for a path that no longer exists, its parent is resolved instead. */
+function canonical(p: string): string {
+  const resolved = path.resolve(p);
+  try { return realpathSync(resolved); } catch { /* gone; resolve what is left */ }
+  try { return path.join(realpathSync(path.dirname(resolved)), path.basename(resolved)); } catch { return resolved; }
+}
+
 function registered(clone: string, dir: string): boolean {
   const list = git(clone, ["worktree", "list", "--porcelain"]);
-  return list.split("\n").some((line) => line.startsWith("worktree ") && path.resolve(line.slice(9)) === dir);
+  const want = canonical(dir);
+  return list.split("\n").some((line) => line.startsWith("worktree ") && canonical(line.slice(9)) === want);
 }
 
 export function setupRun(options: SetupOptions): SetupResult {
@@ -133,7 +141,9 @@ export function setupRun(options: SetupOptions): SetupResult {
   }
   try { git(clone, ["worktree", "add", "--quiet", "--detach", dir, sha]); }
   catch (error) { return abandon("worktree", failure(error)); }
-  const head = git(dir, ["rev-parse", "HEAD"]);
+  let head: string;
+  try { head = git(dir, ["rev-parse", "HEAD"]); }
+  catch (error) { return abandon("verify", failure(error)); }
   if (head !== sha) abandon("verify", `tree is at ${head}, expected ${sha}`);
   return { status: "ready", run, dir, sha, owner };
 }
@@ -223,9 +233,9 @@ export function main(argv: readonly string[]): number {
 export const BOOTSTRAP = [
   "git ls-remote origin refs/heads/main",
   "git fetch --quiet --no-tags --refmap= --no-write-fetch-head origin refs/heads/main",
-  "mkdir -p <ticks-dir>/.launch && mktemp -d <ticks-dir>/.launch/<run-id>.XXXXXX",
-  "git show <sha>:tools/orca-lane/src/tick.ts > <launch>/tick.ts",
-  "node --experimental-strip-types <launch>/tick.ts setup --clone <clone> --ticks <ticks-dir> --run <run-id> --sha <sha>",
+  'mkdir -p "<ticks-dir>/.launch" && mktemp -d "<ticks-dir>/.launch/<run-id>.XXXXXX"',
+  'git show <sha>:tools/orca-lane/src/tick.ts > "<launch>/tick.ts"',
+  'node --experimental-strip-types "<launch>/tick.ts" setup --clone "<clone>" --ticks "<ticks-dir>" --run <run-id> --sha <sha>',
 ] as const;
 
 /**
@@ -233,8 +243,9 @@ export const BOOTSTRAP = [
  * invocation's own launcher; removing the launcher directory always runs last, ready or not.
  */
 export const TEARDOWN = [
-  "node --experimental-strip-types <launch>/tick.ts cleanup --clone <clone> --ticks <ticks-dir> --run <run-id> --owner <owner>",
-  "rm -rf <launch>",
+  'node --experimental-strip-types "<launch>/tick.ts" cleanup --clone "<clone>" --ticks "<ticks-dir>" --run <run-id> --owner <owner>',
+  'rm -rf "<launch>"',
 ] as const;
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main(process.argv.slice(2));
+// Compare canonical paths, so a launcher reached through a symlinked directory still runs as the CLI.
+if (process.argv[1] && canonical(process.argv[1]) === canonical(fileURLToPath(import.meta.url))) process.exitCode = main(process.argv.slice(2));

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -287,6 +287,30 @@ test("simultaneous same-id wakes through the shell bootstrap and teardown: each 
   assert.equal((await sh(w.clone, end(TEARDOWN[1]))).code, 0);
   assert.equal(existsSync(winner.result.dir), false);
   assert.deepEqual(readdirSync(path.join(w.ticks, ".launch")), []);
+  assert.deepEqual(shared(w.clone), before);
+});
+
+test("a ticks directory reached through a symlink, with spaces in its path, runs the verbatim Part C bootstrap and teardown", async () => {
+  const base = world();
+  const real = path.join(base.root, "real ticks dir");
+  mkdirSync(real);
+  const link = path.join(base.root, "ticks link");
+  symlinkSync(real, link);
+  const w = { ...base, ticks: link };
+  const before = shared(w.clone);
+  const sha = (await sh(w.clone, BOOTSTRAP[0])).out.split(/\s+/)[0]!;
+  const { launch, fill } = await wake(w, "20261124T071512Z-5be1", sha);
+  // The launcher path runs through the symlink and contains spaces, so the CLI guard and the quoting both matter.
+  assert.ok(launch.startsWith(link) && launch.includes(" "));
+  const out = JSON.parse((await sh(w.clone, fill(BOOTSTRAP[4]))).out);
+  assert.equal(out.status, "ready");
+  assert.equal(git(out.dir, "rev-parse", "HEAD"), w.first);
+  const end = filler({ ticks: w.ticks, run: out.run, clone: w.clone, launch, owner: out.owner });
+  assert.equal(JSON.parse((await sh(w.clone, end(TEARDOWN[0]))).out).status, "removed");
+  assert.equal((await sh(w.clone, end(TEARDOWN[1]))).code, 0);
+  assert.equal(existsSync(out.dir), false);
+  assert.equal(git(w.clone, "worktree", "list", "--porcelain").includes("real ticks dir"), false);
+  assert.deepEqual(readdirSync(path.join(real, ".launch")), []);
   assert.deepEqual(shared(w.clone), before);
 });
 
