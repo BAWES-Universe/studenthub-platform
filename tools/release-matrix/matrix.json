@@ -722,10 +722,17 @@
     "O-13": {
       "lane": "pay",
       "subject": "`/organization/:orgId/transfers`, `/transfers/:id`",
+      "served": [
+        {
+          "route": "/organization/:orgId/transfers",
+          "test": "apps/gateway/test/billing-transfers-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "not started (audit 2026-11-20): pay lane: transfers"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #689 at 33b4f3e9"
         },
         "verified": {
           "state": "open"

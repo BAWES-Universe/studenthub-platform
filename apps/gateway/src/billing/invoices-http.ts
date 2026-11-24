@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { creditReason, type TransferInvoiceCreditResult, type TransferInvoiceDocument, type TransferInvoiceListEntry, type TransferInvoicePage, type TransferStatement } from "@studenthub/db/billing";
+import { creditReason, type CompanyTransferDetail, type CompanyTransferPage, type CompanyTransferStatus, type TransferInvoiceCreditResult, type TransferInvoiceDocument, type TransferInvoiceListEntry, type TransferInvoicePage, type TransferStatement } from "@studenthub/db/billing";
 import { TRANSFER_INVOICE_NUMBER } from "../../../../packages/billing/src/transfer-invoice-access.js";
 import { longDate } from "../../../../packages/reports/src/id-card-pdf.js";
 import { readBody, sameOrigin } from "../recruit/http-common.js";
@@ -21,6 +21,10 @@ import { invoicePdf, type InvoiceBankInfo } from "./invoice-pdf.js";
  * line per company. `?from=YYYY-MM-DD&to=YYYY-MM-DD` (Kuwait dates); by default the current month
  * to today, so its closing figure is the balance owed now. Same readers and the same not found.
  *
+ * GET /organization/<orgId>/transfers lists the company's transfers (O-13; legacy company `TransferController::actionList`),
+ * and GET /organization/<orgId>/transfers/<id> is one of them with a line per person (`actionView`): what the
+ * company owes, never what the person is paid. Same readers and the same not found as the invoices.
+ *
  * POST /organization/invoices/<orgId>/<number>/void voids one invoice with a credit note (F4.7), with
  * a `reason` in a JSON or form body. Only StudentHub's finance users void
  * (`transferInvoiceVoidDecision`, decided again by the store inside the credit's transaction). The list
@@ -35,12 +39,16 @@ export interface TransferInvoiceReads {
   listForOrganization(principalId: string, orgId: string): Promise<TransferInvoicePage | null>;
   document(principalId: string, orgId: string, invoiceNumber: string): Promise<TransferInvoiceDocument | null>;
   statement(principalId: string, orgId: string, from: string, to: string): Promise<TransferStatement | null>;
+  companyTransfers?(principalId: string, orgId: string): Promise<CompanyTransferPage | null>;
+  companyTransfer?(principalId: string, orgId: string, transferId: string): Promise<CompanyTransferDetail | null>;
 }
 export interface InvoicesHttp {
   viewer(sessionId: string | undefined): Promise<string | undefined>;
   list(viewer: string, orgId: string): Promise<TransferInvoicePage | null>;
   pdf(viewer: string, orgId: string, invoiceNumber: string): Promise<{ readonly bytes: Buffer; readonly paid: boolean } | null>;
   statement(viewer: string, orgId: string, from: string, to: string): Promise<TransferStatement | null>;
+  transfers(viewer: string, orgId: string): Promise<CompanyTransferPage | null>;
+  transfer(viewer: string, orgId: string, transferId: string): Promise<CompanyTransferDetail | null>;
   /** Today's date in Kuwait, YYYY-MM-DD. */
   today(): string;
   /** The gateway origin a void post must come from; voids are refused without one. */
@@ -78,6 +86,8 @@ export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">;
       return invoice ? { bytes: invoicePdf(invoice, ports.bank), paid: invoice.status === "paid" } : null;
     },
     statement: (viewer, orgId, from, to) => ports.reads.statement(viewer, orgId, from, to),
+    transfers: async (viewer, orgId) => await ports.reads.companyTransfers?.(viewer, orgId) ?? null,
+    transfer: async (viewer, orgId, transferId) => await ports.reads.companyTransfer?.(viewer, orgId, transferId) ?? null,
     today: () => new Date((ports.now?.() ?? new Date()).getTime() + 3 * 3600_000).toISOString().slice(0, 10),
     origin: voids?.origin || undefined,
     async voidList(viewer, orgId) {
@@ -98,6 +108,8 @@ export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">;
 export const INVOICES_PATH = "/organization/invoices";
 const LIST = /^\/organization\/invoices\/([^/]+)$/, PDF = /^\/organization\/invoices\/([^/]+)\/([^/]+)\.pdf$/;
 const STATEMENT = /^\/organization\/([^/]+)\/statements$/;
+const TRANSFERS = /^\/organization\/([^/]+)\/transfers$/, TRANSFER = /^\/organization\/([^/]+)\/transfers\/([^/]+)$/;
+const TRANSFER_ID = /^[A-Za-z0-9._:-]{1,256}$/;
 const VOID = /^\/organization\/invoices\/([^/]+)\/([^/]+)\/void$/;
 /** Longest statement window, in days; a year and a leap day of slack. */
 const STATEMENT_DAYS = 366;
@@ -151,6 +163,29 @@ function withVoidable(read: TransferInvoicePage, voidable: InvoiceVoidPage): Tra
   return { orgId: read.orgId, name: read.name, invoices };
 }
 
+/** Legacy `Transfer::statusList` wording. */
+const TRANSFER_STATUS_NAME: Readonly<Record<CompanyTransferStatus, string>> = { draft: "Draft", locked: "Locked", payment_sent: "Payment sent",
+  distributing: "Received, paying salaries", complete: "Transfer completed", cancelled: "Cancelled" };
+const transferStatus = (s: CompanyTransferStatus, received: string | null) => `${TRANSFER_STATUS_NAME[s]}${received ? ` (payment received ${longDate(received)})` : ""}`;
+
+function transfersHtml(page: CompanyTransferPage): string {
+  const base = `/organization/${encodeURIComponent(page.orgId)}/transfers`;
+  const rows = page.transfers.map(t => `<tr><td><a href="${esc(`${base}/${encodeURIComponent(t.transferId)}`)}">${esc(longDate(t.periodStart))} to ${esc(longDate(t.periodEnd))}</a></td>`
+    + `<td>${esc(t.companyName)}</td><td>${t.lineCount}</td><td>${esc(t.currencyCode)} ${esc(t.companyTotal)}</td><td>${esc(transferStatus(t.status, t.paymentReceivedOn))}</td></tr>`).join("");
+  return `<main><h1>Transfers</h1><p>${esc(page.name)}: salary transfers for the company and its sub-companies, newest period first.</p>${page.transfers.length
+    ? `<table><thead><tr><th>Period</th><th>Company</th><th>People</th><th>Amount</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`
+    : "<p>There are no transfers yet.</p>"}<p><a href="${esc(`${INVOICES_PATH}/${encodeURIComponent(page.orgId)}`)}">Invoices</a></p></main>`;
+}
+
+function transferHtml(orgId: string, t: CompanyTransferDetail): string {
+  const rows = t.lines.map(l => `<tr><td>${esc(l.personName)}</td><td>${esc(l.storeName)}</td><td>${l.worked ? `${esc(l.worked.hours)} h ${l.worked.minutes} min` : ""}</td>`
+    + `<td>${esc(t.currencyCode)} ${esc(l.companyTotal)}</td><td>${l.paid ? "Paid" : "Not paid yet"}</td></tr>`).join("");
+  return `<main><h1>Transfer</h1><p>${esc(t.companyName)}, ${esc(longDate(t.periodStart))} to ${esc(longDate(t.periodEnd))}. ${esc(transferStatus(t.status, t.paymentReceivedOn))}.</p>`
+    + `<p>Amount: ${esc(t.currencyCode)} ${esc(t.companyTotal)} for ${t.lineCount} ${t.lineCount === 1 ? "person" : "people"}.</p>`
+    + (t.lines.length ? `<table><thead><tr><th>Person</th><th>Store</th><th>Worked</th><th>Amount</th><th>Salary</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>This transfer has no lines yet.</p>")
+    + `<p><a href="${esc(`/organization/${encodeURIComponent(orgId)}/transfers`)}">All transfers</a></p></main>`;
+}
+
 /** A real calendar date from 2000 on, or undefined. */
 function isoDate(v: string | null): string | undefined {
   if (v === null || !/^\d{4}-\d{2}-\d{2}$/.test(v) || v < "2000-01-01") return undefined;
@@ -180,7 +215,9 @@ export async function handleInvoices(req: IncomingMessage, res: ServerResponse, 
   // statement of an organization called "invoices", so the statement only matches when the others do not.
   const list = LIST.exec(path), pdf = list ? null : PDF.exec(path), voiding = list || pdf ? null : VOID.exec(path);
   const statement = list || pdf || voiding ? null : STATEMENT.exec(path);
-  const matched = list ?? pdf ?? voiding ?? statement;
+  const transfers = list || pdf || voiding || statement ? null : TRANSFERS.exec(path);
+  const transfer = list || pdf || voiding || statement || transfers ? null : TRANSFER.exec(path);
+  const matched = list ?? pdf ?? voiding ?? statement ?? transfers ?? transfer;
   if (!matched) return false;
   if (voiding) return await handleVoid(req, res, service, voiding);
   req.resume();
@@ -192,6 +229,23 @@ export async function handleInvoices(req: IncomingMessage, res: ServerResponse, 
     let orgId: string;
     try { orgId = decodeURIComponent(matched[1]!); } catch { return notFound(req, res); }
     if (!ORG_ID.test(orgId)) return notFound(req, res);
+    if (transfers) {
+      const result = await service.transfers(viewer, orgId);
+      if (!result) return notFound(req, res);
+      if (!wantsHtml(req.headers.accept)) return json(res, 200, result);
+      writeHtml(res, 200, pageDocument("Transfers", transfersHtml(result)), { "cache-control": "no-store" });
+      return true;
+    }
+    if (transfer) {
+      let id: string;
+      try { id = decodeURIComponent(transfer[2]!); } catch { return notFound(req, res); }
+      if (!TRANSFER_ID.test(id)) return notFound(req, res);
+      const result = await service.transfer(viewer, orgId, id);
+      if (!result) return notFound(req, res);
+      if (!wantsHtml(req.headers.accept)) return json(res, 200, result);
+      writeHtml(res, 200, pageDocument("Transfer", transferHtml(orgId, result)), { "cache-control": "no-store" });
+      return true;
+    }
     if (statement) {
       const today = service.today(), rawFrom = url.searchParams.get("from"), rawTo = url.searchParams.get("to");
       const from = rawFrom === null ? `${today.slice(0, 8)}01` : isoDate(rawFrom), to = rawTo === null ? today : isoDate(rawTo);
