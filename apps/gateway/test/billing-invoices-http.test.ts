@@ -215,14 +215,16 @@ test("CREDIT_NOTES_HTTP a credited invoice says so on the list, the statement an
 async function voidRig(t: TestContext) {
   const ORIGIN = "https://studenthub.example";
   const credits: { actorId: string; invoiceNumber: string; reason: string }[] = [], creditedNumbers = new Set<string>();
+  // "co" (company finance) reads but never voids; "fin" (StudentHub finance) voids but does not read.
+  const list = (orgId: string) => orgId === "P" ? { orgId: "P", name: "Parent", invoices: [PAID, UNPAID] } : null;
+  const doc = (orgId: string, number: string) => orgId === "P" ? [UNPAID, PAID].find(i => i.invoiceNumber === number) ?? null : null;
   const reads: TransferInvoiceReads = {
-    listForOrganization: async (principal, orgId) => ["fin", "co"].includes(principal) && orgId === "P" ? { orgId: "P", name: "Parent", invoices: [PAID, UNPAID] } : null,
-    document: async (principal, orgId, number) => ["fin", "co"].includes(principal) && orgId === "P" ? [UNPAID, PAID].find(i => i.invoiceNumber === number) ?? null : null,
-    statement: async () => null,
+    listForOrganization: async (principal, orgId) => principal === "co" ? list(orgId) : null,
+    document: async (principal, orgId, number) => principal === "co" ? doc(orgId, number) : null,
+    statement: async (principal, orgId, from, to) => principal === "co" && orgId === "P" ? STATEMENT(from, to) : null,
   };
-  // Only "fin" (StudentHub finance) passes the void decision; "co" (company finance) reads but never voids.
-  const voidReads = { listForOrganization: async (p: string, o: string) => p === "fin" ? reads.listForOrganization(p, o) : null,
-    document: async (p: string, o: string, n: string) => p === "fin" ? reads.document(p, o, n) : null };
+  const voidReads = { listForOrganization: async (p: string, o: string) => p === "fin" ? list(o) : null,
+    document: async (p: string, o: string, n: string) => p === "fin" ? doc(o, n) : null };
   const credit = { creditNumber: "SH-2026-11-000009", invoiceNumber: UNPAID.invoiceNumber, orgId: "C1", currencyCode: "KWD", creditDate: "2026-11-26", total: "12.500", reason: "Wrong hours", actorId: "fin" };
   const service = createInvoicesHttp({ sessions: { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [OTHER]: { personId: "co" } } as Record<string, { personId: string }>)[id] as never }, reads,
     voids: { reads: voidReads, origin: ORIGIN, async credit(input) {
@@ -238,7 +240,7 @@ async function voidRig(t: TestContext) {
   const post = (path: string, body: string, opts: { session?: string; origin?: string | null; type?: string; accept?: string; site?: string } = {}) => fetch(base + path, { method: "POST", redirect: "manual", body,
     headers: { "content-type": opts.type ?? "application/json", accept: opts.accept ?? "application/json", ...(opts.session === undefined ? { cookie: `__Host-studenthub_session=${FIN}` } : opts.session ? { cookie: `__Host-studenthub_session=${opts.session}` } : {}),
       ...(opts.origin === null ? {} : { origin: opts.origin ?? ORIGIN }), ...(opts.site ? { "sec-fetch-site": opts.site } : {}) } });
-  const page = (session: string) => fetch(`${base}/organization/invoices/P`, { headers: { cookie: `__Host-studenthub_session=${session}`, accept: "text/html" } });
+  const page = (session: string, path = "/organization/invoices/P", accept = "text/html") => fetch(`${base}${path}`, { headers: { cookie: `__Host-studenthub_session=${session}`, accept } });
   return { post, page, credits, base };
 }
 const VOID_PATH = `/organization/invoices/P/${UNPAID.invoiceNumber}/void`;
@@ -257,12 +259,17 @@ test("INVOICE_VOID_HTTP StudentHub finance voids with a reason; a second void an
   assert.equal(refused.status, 409); assert.deepEqual(await refused.json(), { error: "not_creditable" });
 });
 
-test("INVOICE_VOID_HTTP only StudentHub finance and admins void; company readers, strangers and cross-site posts are refused before the store", async (t) => {
+test("INVOICE_VOID_HTTP only StudentHub finance voids, and sees only the void list; company readers, strangers and cross-site posts are refused before the store", async (t) => {
   const x = await voidRig(t);
   const fin = await (await x.page(FIN)).text(), company = await (await x.page(OTHER)).text();
   assert.ok(fin.includes(`<form method="post" action="${VOID_PATH}">`), "StudentHub finance sees a void form per standing invoice");
   assert.ok(fin.includes("<th>Void</th>"));
+  assert.ok(!fin.includes(".pdf") && !fin.includes("<th>Document</th>"), "voiding does not open the invoice documents");
+  assert.equal((await x.page(FIN, `/organization/invoices/P/${UNPAID.invoiceNumber}.pdf`, "application/json")).status, 404, "nor a PDF");
+  assert.equal((await x.page(FIN, "/organization/P/statements", "application/json")).status, 404, "nor the statement");
+  assert.equal((await x.page(OTHER, "/organization/P/statements", "application/json")).status, 200, "the company still reads its statement");
   assert.ok(!company.includes("/void") && !company.includes("<th>Void</th>"), "a company's own finance user reads but sees no void");
+  assert.ok(company.includes(`${UNPAID.invoiceNumber}.pdf`), "and keeps its PDF links");
   const cases: [string, Parameters<typeof x.post>[2], number, string][] = [
     ["company finance", { session: OTHER }, 404, "not_found"],
     ["signed out", { session: "" }, 401, "unauthorized"],
@@ -290,7 +297,7 @@ test("INVOICE_VOID_HTTP without a gateway origin or a void store nobody voids", 
   const reads: TransferInvoiceReads = { listForOrganization: async () => ({ orgId: "P", name: "Parent", invoices: [UNPAID] }), document: async () => UNPAID, statement: async () => null };
   for (const voids of [undefined, { reads, origin: "", credit: async () => { throw new Error("never"); } }]) {
     const service = createInvoicesHttp({ sessions: { get: async () => ({ personId: "fin" }) as never }, reads, ...(voids ? { voids } : {}) });
-    assert.equal(await service.canVoid("fin", "P"), voids !== undefined);
+    assert.equal((await service.voidList("fin", "P")) !== null, voids !== undefined);
     const server = createServer(async (req, res) => { await handleInvoices(req, res, service); });
     await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
     t.after(() => new Promise<void>(r => server.close(() => r())));

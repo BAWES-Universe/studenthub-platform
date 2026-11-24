@@ -13,7 +13,7 @@ import { invoicePdf, type InvoiceBankInfo } from "./invoice-pdf.js";
  * GET /organization/invoices/<orgId> lists the live invoices of the company and its
  * sub-companies, as a page or JSON. GET /organization/invoices/<orgId>/<number>.pdf is one of
  * them: an "Invoice" while unpaid, a "Receipt" once paid. Readers are the company's owners and
- * finance users and StudentHub staff, admins and finance users (`transferInvoiceReadDecision`). A reader who may
+ * finance users and StudentHub staff and admins (`transferInvoiceReadDecision`). A reader who may
  * not see the company, a missing company and an invoice outside it all get the same not found.
  *
  * GET /organization/<orgId>/statements is the company's account statement (F4.8): opening balance,
@@ -23,8 +23,10 @@ import { invoicePdf, type InvoiceBankInfo } from "./invoice-pdf.js";
  *
  * POST /organization/invoices/<orgId>/<number>/void voids one invoice with a credit note (F4.7), with
  * a `reason` in a JSON or form body. Only StudentHub's finance users void
- * (`transferInvoiceVoidDecision`, decided again by the store inside the credit's transaction); the list page shows them a void form per standing invoice. Same-origin
- * posts only. Voiding twice answers the first credit note.
+ * (`transferInvoiceVoidDecision`, decided again by the store inside the credit's transaction). The list
+ * page shows them a void form per standing invoice; one who may void but not read gets that list alone,
+ * without PDF links, and no PDF or statement. Same-origin posts only. Voiding twice answers the first
+ * credit note.
  */
 export interface TransferInvoiceReads {
   listForOrganization(principalId: string, orgId: string): Promise<TransferInvoicePage | null>;
@@ -40,8 +42,8 @@ export interface InvoicesHttp {
   today(): string;
   /** The gateway origin a void post must come from; voids are refused without one. */
   readonly origin: string | undefined;
-  /** Whether the viewer may void this company's invoices. */
-  canVoid(viewer: string, orgId: string): Promise<boolean>;
+  /** The company's invoices as one who may void them sees them; null when the viewer may not void. */
+  voidList(viewer: string, orgId: string): Promise<TransferInvoicePage | null>;
   void(viewer: string, orgId: string, invoiceNumber: string, reason: unknown): Promise<InvoiceVoidResult>;
 }
 export type InvoiceVoidResult = TransferInvoiceCreditResult | { readonly kind: "invalid_reason" };
@@ -64,7 +66,7 @@ export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">;
     statement: (viewer, orgId, from, to) => ports.reads.statement(viewer, orgId, from, to),
     today: () => new Date((ports.now?.() ?? new Date()).getTime() + 3 * 3600_000).toISOString().slice(0, 10),
     origin: voids?.origin || undefined,
-    async canVoid(viewer, orgId) { return voids ? (await voids.reads.listForOrganization(viewer, orgId)) !== null : false; },
+    async voidList(viewer, orgId) { return voids ? await voids.reads.listForOrganization(viewer, orgId) : null; },
     async void(viewer, orgId, invoiceNumber, raw) {
       let reason: string;
       try { reason = creditReason(raw); } catch { return { kind: "invalid_reason" }; }
@@ -102,16 +104,17 @@ function reply(req: IncomingMessage, res: ServerResponse, status: number, error:
 }
 const notFound = (req: IncomingMessage, res: ServerResponse) => reply(req, res, 404, "not_found", "Not found", "The page could not be found.");
 
-function listHtml(page: TransferInvoicePage, canVoid: boolean): string {
+/** The invoice list; `documents` false for one who may only void (no PDF links), `canVoid` adds the void forms. */
+function listHtml(page: TransferInvoicePage, canVoid: boolean, documents: boolean): string {
   const base = `${INVOICES_PATH}/${encodeURIComponent(page.orgId)}`;
   const rows = page.invoices.map(i => `<tr><td>${esc(i.invoiceNumber)}</td><td>${esc(i.companyName)}</td><td>${esc(i.transferId)}</td><td>${esc(longDate(i.invoiceDate))}</td>`
     + `<td>${esc(i.currencyCode)} ${esc(i.total)}</td><td>${i.status === "paid" ? `Paid${i.paidOn ? ` on ${esc(longDate(i.paidOn))}` : ""}` : "Unpaid"}`
     + `${i.creditNumber ? `, voided by credit note ${esc(i.creditNumber)}${i.creditedOn ? ` on ${esc(longDate(i.creditedOn))}` : ""}` : ""}</td>`
-    + `<td><a href="${esc(`${base}/${i.invoiceNumber}.pdf`)}">${i.status === "paid" ? "Receipt" : "Invoice"} (PDF)</a></td>`
+    + (documents ? `<td><a href="${esc(`${base}/${i.invoiceNumber}.pdf`)}">${i.status === "paid" ? "Receipt" : "Invoice"} (PDF)</a></td>` : "")
     + (canVoid ? `<td>${i.creditNumber ? "" : `<form method="post" action="${esc(`${base}/${i.invoiceNumber}/void`)}"><label>Reason <input name="reason" required maxlength="500"></label> <button>Void with a credit note</button></form>`}</td>` : "")
     + "</tr>").join("");
   return `<main><h1>Invoices</h1><p>${esc(page.name)}: invoices for its transfers and its sub-companies' transfers, newest first.</p>${page.invoices.length
-    ? `<table><thead><tr><th>Invoice number</th><th>Billed to</th><th>Transfer</th><th>Issue date</th><th>Amount</th><th>Status</th><th>Document</th>${canVoid ? "<th>Void</th>" : ""}</tr></thead><tbody>${rows}</tbody></table>`
+    ? `<table><thead><tr><th>Invoice number</th><th>Billed to</th><th>Transfer</th><th>Issue date</th><th>Amount</th><th>Status</th>${documents ? "<th>Document</th>" : ""}${canVoid ? "<th>Void</th>" : ""}</tr></thead><tbody>${rows}</tbody></table>`
     : "<p>There are no invoices yet. An invoice is issued when a transfer is locked.</p>"}</main>`;
 }
 
@@ -174,10 +177,12 @@ export async function handleInvoices(req: IncomingMessage, res: ServerResponse, 
         "content-length": String(document.bytes.length), "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
       res.end(document.bytes); return true;
     }
-    const page = await service.list(viewer, orgId);
+    // A reader gets the list with documents; one who may only void gets the void list alone.
+    const read = await service.list(viewer, orgId), voidable = await service.voidList(viewer, orgId);
+    const page = read ?? voidable;
     if (!page) return notFound(req, res);
     if (!wantsHtml(req.headers.accept)) return json(res, 200, { orgId: page.orgId, name: page.name, invoices: page.invoices });
-    writeHtml(res, 200, pageDocument("Invoices", listHtml(page, await service.canVoid(viewer, orgId))), { "cache-control": "no-store" });
+    writeHtml(res, 200, pageDocument("Invoices", listHtml(page, voidable !== null, read !== null)), { "cache-control": "no-store" });
     return true;
   } catch {
     if (!res.headersSent) return reply(req, res, 503, "invoices_unavailable", "Invoices unavailable", "Invoices are not available right now.");

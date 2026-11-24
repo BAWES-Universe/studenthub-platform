@@ -14,10 +14,8 @@ const decision = "dist/packages/billing/src/transfer-invoice-access.js";
 const mutations = [
   ["let recruiters read invoices", "TRANSFER_INVOICE_READS_REFUSED", decision,
     'Object.freeze(["org-owner", "finance"])', 'Object.freeze(["org-owner", "finance", "recruiter"])'],
-  ["let an operator-level owner grant read company invoices", "TRANSFER_INVOICE_READS_REFUSED", decision,
+  ["let operator-level finance read company invoices", "TRANSFER_INVOICE_READS_REFUSED", decision,
     "&& !operators.includes(row.org_id)", ""],
-  ["refuse StudentHub's own finance users", "TRANSFER_INVOICE_READS_REFUSED", decision,
-    'Object.freeze(["finance"])', "Object.freeze([])"],
   ["bill an operator organization", "TRANSFER_INVOICE_READS_REFUSED", decision,
     "transferInvoiceReadDecision(rows, orgId, ancestors, operators) {\n    if (operators.includes(orgId))\n        return false;", "transferInvoiceReadDecision(rows, orgId, ancestors, operators) {"],
   ["treat a self grant as subtree", "TRANSFER_INVOICE_READS_SCOPE", decision,

@@ -238,7 +238,7 @@ test("TRANSFER_INVOICE_VOID_WHO StudentHub's finance users may void a company's 
   assert.deepEqual(await credits(), [], "no refused voider issued a credit note");
   assert.equal((await voids.credit({ actorId: "op-fin", invoiceNumber: c1.invoiceNumber, reason: "Wrong hours" })).kind, "credited");
   assert.equal(await voiders.listForOrganization("op-fin", "root"), null, "an operator organization is never billed");
-  assert.ok(await reads.document("op-fin", "P", c1.invoiceNumber), "StudentHub finance also reads what it voids");
+  assert.equal(await reads.document("op-fin", "P", c1.invoiceNumber), null, "voiding does not open the ordinary invoice reads");
 });
 
 test("TRANSFER_INVOICE_VOID_REVOKED a finance grant revoked or narrowed while a void waits on its locks refuses that void", async () => {
