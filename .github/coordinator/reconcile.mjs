@@ -1440,26 +1440,31 @@ export function endedEpisodeReviewDue(receipt, lifecycleReceipts, now) {
 }
 
 // SHU-71, 24 Nov: each card worker has its own supervisor, and the tick that
-// settles an ended episode's review is usually not the worker that ran it. Asked
-// only over the ticking worker's own socket, a supervisor that never saw the
-// attempt answers its catch-all MISSING_CLAIM, so b760441e held the review gate
-// although worker 1's store held its durable FAILED run. The settlement asks
-// every card worker's supervisor and takes the attributable answer.
+// settles an ended episode's review is another worker's (one worker reconciles
+// every receipt itself, receiptsForLifecycle). Asked only over the ticking
+// worker's own socket, a supervisor that never saw the attempt answers its
+// catch-all MISSING_CLAIM, so b760441e held the review gate although worker 1's
+// store held its durable FAILED run. The settlement asks every card worker's
+// supervisor.
 export function endedEpisodeSupervisorSockets(env) {
   const workers = Array.from({ length: MAX_CARD_WORKERS }, (_, i) => path.join(workerWorkspaceStateDir(i + 1), "supervisor.sock"));
   return [...new Set([env?.SHU_SUPERVISOR_SOCKET, ...workers].filter((s) => typeof s === "string" && s.length > 0))];
 }
 
-// One answer from many supervisors. A supervisor that holds the attempt and does
-// not report it finished at this head (live, not durable, another head) wins, so
-// the review keeps holding; then a durable finished run; then an affirmative
-// refusal (NO_RECORDS). Otherwise the first answer, which never releases.
+// One answer from the supervisors asked. A supervisor that holds the attempt and
+// does not report it finished at this head (live, not durable, another head)
+// wins, so the review keeps holding; then a durable COMPLETED/FAILED bound to
+// attempt and head, the only answer that releases. An affirmative refusal
+// (NO_RECORDS) proves refusal and absence in the store that gave it, not that
+// no other worker's store ran the attempt, which may be unreachable this tick,
+// so here it holds like any other inconclusive answer.
+export const UNATTRIBUTED_REFUSAL = Object.freeze({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM",
+  reason: "a refusal from one card worker's supervisor does not show the attempt never ran on another" });
 export function settledSupervisorAnswer(receipt, answers) {
   const bound = answers.filter((a) => a?.ok === true && a.attempt_id === receipt.attempt_id);
   return bound.find((a) => !finishedSupervisorStage(a, receipt))
     ?? bound.find((a) => finishedSupervisorStage(a, receipt))
-    ?? answers.find((a) => supervisorDisownsLaunch(a))
-    ?? answers[0] ?? null;
+    ?? (answers.some((a) => supervisorDisownsLaunch(a)) ? UNATTRIBUTED_REFUSAL : answers[0] ?? null);
 }
 
 // "release" only on positive evidence from the supervisor asked:

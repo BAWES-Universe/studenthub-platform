@@ -1018,7 +1018,7 @@ test("foreign review receipt: the armed episode's own receipt, or one at the app
 // the review gate for SHU-698 and SHU-699. Another worker's tick now asks the
 // supervisor about it over status only once the episode has certainly ended, and
 // releases it only on positive evidence; anything else leaves it holding.
-async function endedEpisodeTick(answer, { episode = "shu-304-run-20260909T230000Z" } = {}) {
+async function endedEpisodeTick(answer, { episode = "shu-304-run-20260909T230000Z", env = {} } = {}) {
   const { createEpisodeHarness } = await import("./fixture/episode-harness.mjs");
   const h = createEpisodeHarness({ configOverrides: { workers: { max: 2 }, dispatch_scope: { issue_ids: ["SHU-140"] } },
     extraNodes: [{ id: "uuid-SHU-304", identifier: DESK, title: "review desk", state: { name: "Todo" }, priorityLabel: "Low",
@@ -1032,7 +1032,7 @@ async function endedEpisodeTick(answer, { episode = "shu-304-run-20260909T230000
   const operations = [], sockets = [];
   const mine = () => h.comments.filter((c) => c.body.includes(unknown.attempt_id)).length;
   const before = mine();
-  const run = await h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET }, io: {
+  const run = await h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET, ...env }, io: {
     supervisorTransport: async ({ request, socketPath }) => { operations.push(request.operation); sockets.push(socketPath); if (answer instanceof Error) throw answer; return answer(request.order, socketPath); } } });
   return { h, unknown, operations, sockets, run, written: mine() - before };
 }
@@ -1061,9 +1061,11 @@ test("SHU71_ENDED_EPISODE_REVIEW_SETTLED: another card's review from an ended ep
       assert.match(run.text, /dispatch: DEFERRED — lifecycle transitions were persisted this run/);
     } finally { h.cleanup(); }
   }
+  // A refusal releases nothing across workers: another store may hold the run.
   const refused = await endedEpisodeTick(() => ({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS", reason: "supervisor refused this attempt and holds no record of it" }));
   try {
-    assert.equal(refused.h.receiptFor(refused.unknown.attempt_id).stage, "HOLD", "SHU71_REFUSED_LAUNCH_RELEASED");
+    assert.equal(refused.h.receiptFor(refused.unknown.attempt_id).stage, "LAUNCH_UNKNOWN", "SHU71_UNATTRIBUTED_REFUSAL_HOLDS");
+    assert.equal(refused.written, 0);
   } finally { refused.h.cleanup(); }
 });
 
@@ -1072,7 +1074,7 @@ test("SHU71_ENDED_EPISODE_OWNING_SUPERVISOR: the worker that ran the review answ
   const bare = { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" };
   const refused = { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS", reason: "supervisor refused this attempt and holds no record of it" };
   assert.ok(endedEpisodeSupervisorSockets({ SHU_SUPERVISOR_SOCKET: "/srv/shu/state/workspaces/w2/supervisor.sock" }).includes(owner), "worker 1's socket is asked from worker 2");
-  assert.equal(new Set(endedEpisodeSupervisorSockets({ SHU_SUPERVISOR_SOCKET: owner })).size, endedEpisodeSupervisorSockets({}).length, "the own socket is asked once");
+  assert.equal(endedEpisodeSupervisorSockets({ SHU_SUPERVISOR_SOCKET: owner }).length, endedEpisodeSupervisorSockets({}).length, "the own socket is asked once");
   // 24 Nov: worker 2 ticks, its own supervisor never saw b760441e, worker 1 holds the durable FAILED run.
   const failed = await endedEpisodeTick((order, socket) => socket === owner ? supervisorAnswer(order, { stage: "FAILED", result: null }) : bare);
   try {
@@ -1082,15 +1084,19 @@ test("SHU71_ENDED_EPISODE_OWNING_SUPERVISOR: the worker that ran the review answ
     assert.ok(failed.sockets.includes(owner));
     statusOnEveryWorker(failed.operations);
   } finally { failed.h.cleanup(); }
-  for (const [label, ownerAnswer] of [
-    ["the owner still runs it, another refuses", (order) => supervisorAnswer(order, { stage: "RUNNING", result: null })],
-    ["the owner reports another head", (order) => supervisorAnswer(order, { target_sha: "b".repeat(40) })],
-    ["the store holding its refused intent disowns it, the rest never saw it", () => bare],
+  const unreachable = { ok: false, stage: "HOLD", reason: "supervisor unavailable; direct spawn is forbidden" };
+  for (const [label, ownerAnswer, otherAnswer] of [
+    ["the owner still runs it, another refuses", (order) => supervisorAnswer(order, { stage: "RUNNING", result: null }), refused],
+    ["the owner reports another head, another refuses", (order) => supervisorAnswer(order, { target_sha: "b".repeat(40) }), refused],
+    ["a refusal elsewhere while the possible owner cannot be reached", () => unreachable, refused],
+    ["a refusal elsewhere while the possible owner's records cannot be read", () => bare, refused],
+    ["a local refusal while another worker cannot be reached", () => refused, unreachable],
   ]) {
-    const live = await endedEpisodeTick((order, socket) => socket === owner ? ownerAnswer(order) : refused);
+    const live = await endedEpisodeTick((order, socket) => socket === owner ? ownerAnswer(order) : otherAnswer, { env: { SHU_SUPERVISOR_SOCKET: owner } });
     try {
-      const expected = label.startsWith("the store holding") ? "HOLD" : "LAUNCH_UNKNOWN";
-      assert.equal(live.h.receiptFor(live.unknown.attempt_id).stage, expected, `${label}\n${live.run.text}`);
+      assert.equal(live.h.receiptFor(live.unknown.attempt_id).stage, "LAUNCH_UNKNOWN", `${label}\n${live.run.text}`);
+      assert.equal(live.written, 0, `${label}: nothing written`);
+      assert.match(live.run.text, /lifecycle: ENDED_EPISODE_REVIEW SHU-304 attempt \S+ LAUNCH_UNKNOWN in episode \S+ held/, label);
     } finally { live.h.cleanup(); }
   }
   assert.equal(settledSupervisorAnswer({ attempt_id: "a", target_sha: "c" }, []), null, "no answer holds");
