@@ -332,7 +332,7 @@ test("LINEAR BUDGET: a rate-limited answer HOLDs the tick with the retry Linear 
   }));
 
   assert.equal(code, 0, "a spent workspace budget is a HOLD, not a failed tick");
-  assert.deepEqual(out, ["HOLD=LINEAR_RATE_LIMITED retry_after=900"]);
+  assert.deepEqual(out, ["HOLD=LINEAR_RATE_LIMITED retry_after=900 source=header status=200"]);
   assert.equal(queries.length, 1, "a rate-limited tick stops reading instead of spending the rest of the budget");
 });
 

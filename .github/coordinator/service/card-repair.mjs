@@ -27,7 +27,7 @@
 //
 // Nothing here writes to GitHub or Linear.
 import path from "node:path";
-import { sendLinear, fetchIssueComments, parseReceiptsFromComments } from "../reconcile.mjs";
+import { sendLinear, parseReceiptsFromComments, resolveCommentThread, fetchThreadComments } from "../reconcile.mjs";
 import { reviewVerdictProvenanceValid } from "../review-routing.mjs";
 import { validReviewFindings, secretShaped } from "../review-findings.mjs";
 import { repairEvidenceDigest, ACTIVATION_ID_RE } from "../single-run-activation.mjs";
@@ -369,13 +369,14 @@ const REPAIR_ISSUE_QUERY = `
 // The PASS being repaired: on the card, by a trusted actor, the newest
 // receipt on its branch, of the claim's own episode, COMPLETED with PASS at
 // the claim's reviewed head, and an independent review by its provenance.
-export async function priorPass({ fetchImpl, linearToken, actorIds, card, repo, claim }) {
+export async function priorPass({ fetchImpl, linearToken, actorIds, card, repo, claim, config = {} }) {
   if (!linearToken || !Array.isArray(actorIds) || actorIds.length === 0) repairSkip("REPAIR_UNREADABLE", "the coordinator's Linear token or trusted receipt actors are missing");
   let receipts;
   try {
     const issue = (await sendLinear(REPAIR_ISSUE_QUERY, { id: card }, linearToken, fetchImpl))?.issue;
     if (!issue?.id || issue.identifier !== card) repairSkip("REPAIR_UNREADABLE", `${card} cannot be read from Linear`);
-    receipts = parseReceiptsFromComments(await fetchIssueComments({ issueId: issue.id, token: linearToken, fetchImpl }), actorIds);
+    const thread = await resolveCommentThread({ identifier: card, linearId: issue.id, config, token: linearToken, fetchImpl });
+    receipts = parseReceiptsFromComments(await fetchThreadComments({ issueIds: thread.readIds, token: linearToken, fetchImpl }), actorIds);
   } catch (error) {
     if (error.repairSkip) throw error;
     repairSkip("REPAIR_UNREADABLE", `the receipts of ${card} cannot be read (${error.message})`);

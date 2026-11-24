@@ -435,7 +435,7 @@ export async function claimRepair({ io, paths, limits = CARD_RUN_LIMITS, config,
   }
   await readRepairPull({ io, token: credentials.GITHUB_TOKEN, repo, number: claim.pr, branch, head: failed, timeoutMs });
   const pass = await priorPass({ fetchImpl: boundedFetch(io, timeoutMs), linearToken: credentials.LINEAR_API_TOKEN,
-    actorIds: config.linear_receipt_actor_ids, card: id, repo, claim });
+    actorIds: config.linear_receipt_actor_ids, card: id, repo, claim, config });
   const evidence = await readRepairEvidence({ io, token: credentials.GITHUB_TOKEN, repo, head: failed,
     limits: { ...REPAIR_LIMITS, requestTimeoutMs: timeoutMs } });
   let plan;
@@ -671,7 +671,9 @@ function repairStep(io, paths, revision, id, claim, parallel = false) {
 // One sleep is at most TICK_HOLD_MAX_SLEEP_MS, so a held run still writes its
 // status well inside the watchdog's stale threshold; a longer hold is waited
 // out over several sleeps, with no tick until the whole hold has passed.
-export const TICK_HOLD_RE = /^HOLD=LINEAR_RATE_LIMITED retry_after=(\d+)$/;
+// The hold line may carry its diagnostics after the wait, in this order:
+// source (where the wait came from), the HTTP status, Linear's error code.
+export const TICK_HOLD_RE = /^HOLD=LINEAR_RATE_LIMITED retry_after=(\d+)(?: source=(?:header|extension|fallback))?(?: status=\d{3})?(?: code=[A-Z0-9_]{1,64})?$/;
 export const TICK_HOLD_MAX_SLEEP_MS = 30 * 60 * 1000;
 export function tickOutcome(text, activationId = null) {
   const lines = String(text ?? "").split("\n");
@@ -1316,7 +1318,7 @@ async function finishReview({ io, paths, limits, summary, credentials, plan, con
     let terminal = null;
     if (verdict !== "HOLD" && custody.on && custody.token) {
       const read = await readReviewTerminal({ fetchImpl: boundedFetch(io, timeoutMs), linearToken: credentials?.LINEAR_API_TOKEN,
-        actorIds: config.linear_receipt_actor_ids, card: plan.id, activationId: plan.record.activation_id, verdict, sha: decided.sha });
+        actorIds: config.linear_receipt_actor_ids, card: plan.id, activationId: plan.record.activation_id, verdict, sha: decided.sha, config });
       if (read.warning) warnings.push(read.warning);
       // Only a terminal receipt that agrees confirms the verdict: a missing,
       // unreadable or contradicting receipt publishes no verdict.

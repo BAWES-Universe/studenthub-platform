@@ -41,6 +41,9 @@ export function createEpisodeHarness({
   initialBranchHead = SHA_INPUT,
   configOverrides = {},
   extraNodes = [],
+  // comment_continuations: issues whose comment thread is their OWN, not the
+  // shared one every other node answers with (h.threads, keyed by UUID).
+  threadNodes = [],
   // SHU-298: answer the settle query and the SHU-71 summary line. Off by
   // default so the SHU-226/SHU-260 suites see no extra Linear traffic.
   settleSupport = false,
@@ -61,8 +64,10 @@ export function createEpisodeHarness({
     parent: null,
     relations: { nodes: [] },
   };
-  const nodes = [node, ...extraNodes];
+  const nodes = [node, ...extraNodes, ...threadNodes];
   const comments = [];
+  const threads = new Map(threadNodes.map((entry) => [entry.id, []]));
+  const threadOf = (id) => threads.get(id) ?? comments;
   const pauses = [];
   const incidentIssues = new Map();
   const incidentRelations = new Map();
@@ -91,9 +96,14 @@ export function createEpisodeHarness({
   const linearFetch = async (url, opts) => {
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
     const { query, variables } = JSON.parse(opts.body);
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments(nodes, () => comments) } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments(nodes, (entry) => threadOf(entry.id)) } });
     if (query.includes("CoordinatorIncidentComments")) {
-      return respond({ issue: { comments: { nodes: [...comments] } } });
+      return respond({ issue: { comments: { nodes: [...threadOf(variables.issueId)] } } });
+    }
+    if (query.includes("CoordinatorCommentContinuation") || query.includes("CoordinatorIssueIdentity")) {
+      const found = nodes.find((n) => n.identifier === variables.issueId || n.id === variables.issueId) ?? null;
+      return respond({ issue: found ? { id: found.id, identifier: found.identifier,
+        comments: { nodes: [...threadOf(found.id)], pageInfo: { hasNextPage: false, endCursor: null } } } : null });
     }
     if (query.includes("CoordinatorIncidentLookup")) {
       const issue = incidentIssues.get(variables.issueId) ?? null;
@@ -197,8 +207,8 @@ export function createEpisodeHarness({
       return respond({ issueRelationCreate: { success: true, issueRelation: { id: variables.input.id } } });
     }
     if (query.includes("CoordinatorIssueComments")) {
-      const known = nodes.some((n) => n.id === variables.issueId || n.identifier === variables.issueId);
-      return respond({ issue: { comments: { nodes: known ? [...comments] : [] } } });
+      const known = nodes.find((n) => n.id === variables.issueId || n.identifier === variables.issueId);
+      return respond({ issue: { comments: { nodes: known ? [...threadOf(known.id)] : [] } } });
     }
     if (query.includes("commentCreate")) {
       const isFixture = nodes.some((n) => n.id === variables.issueId);
@@ -211,7 +221,7 @@ export function createEpisodeHarness({
         list.push({ body, createdAt: new Date().toISOString() });
         entityComments.set(variables.issueId, list);
       } else if (body.startsWith("coordinator-pause:")) pauses.push(body);
-      else comments.push({ body, createdAt: new Date().toISOString() });
+      else threadOf(variables.issueId).push({ body, createdAt: new Date().toISOString() });
       return respond({ commentCreate: { success: true, comment: { id: `c${comments.length + pauses.length}` } } });
     }
     return respond({});
@@ -359,6 +369,7 @@ export function createEpisodeHarness({
     nodeId,
     nodes,
     comments,
+    threads,
     pauses,
     incidentIssues,
     incidentRelations,

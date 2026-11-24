@@ -78,7 +78,7 @@
 // never in the coordinator's environment file, so neither the coordinator unit
 // nor any worker can see it. Without it the run behaves as before and reports
 // LAND_SKIPPED_NO_TOKEN.
-import { sendLinear, fetchIssueComments, parseReceiptsFromComments, LINEAR_COMMENT_CREATE_MUTATION } from "../reconcile.mjs";
+import { sendLinear, parseReceiptsFromComments, LINEAR_COMMENT_CREATE_MUTATION, resolveCommentThread, fetchThreadComments } from "../reconcile.mjs";
 import { writeHandoffReceipt, validHandoff, handoffReceipt } from "../durable-handoff.mjs";
 import { consumeMergeReadiness, parseMergeAttemptsFromComments } from "../merge-readiness.mjs";
 import { externalPolicy, holdsRun, holdsStatus, holdsThread, advisoryNote } from "./external-checks.mjs";
@@ -244,16 +244,16 @@ async function rereadThread(gh, id, snapshot, markerFor = settleMarker) {
 // Settles one classified thread. Every write is sent once: a write whose
 // answer is lost stops the landing, and a later run finds its marker.
 async function settleThread(ctx, entry) {
-  const { gh, issue, linearToken, fetchImpl, actorIds, card, prNumber, head, audit } = ctx;
+  const { gh, commentThread, linearToken, fetchImpl, actorIds, card, prNumber, head, audit } = ctx;
   const marker = settleMarker(entry.id);
-  const notes = await fetchIssueComments({ issueId: issue.id, token: linearToken, fetchImpl });
+  const notes = await fetchThreadComments({ issueIds: commentThread.readIds, token: linearToken, fetchImpl });
   if (!notes.some((comment) => actorIds.includes(comment?.user?.id) && String(comment?.body ?? "").includes(marker))) {
     // Quoted, with no comment markers or code fences, so the bot's text can
     // never read as a record on the card.
     const finding = String(entry.first ?? "").replace(/<!--|-->/g, " ").replace(/```/g, "'''").slice(0, 1500);
     const body = [marker, `Follow-up from pull request #${prNumber}: ${entry.bot} labelled a review thread ${entry.severity} after the independent PASS at ${head}. The landing settled it so ${card} could land; it is left for a later card.`,
       `Thread: ${entry.url}`, "", ...finding.split("\n").map((line) => `> ${line}`)].join("\n");
-    const posted = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: issue.id, body }, linearToken, fetchImpl);
+    const posted = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: commentThread.writeId, body }, linearToken, fetchImpl);
     if (posted?.commentCreate?.success !== true) stop("LAND_ERROR", `the follow-up note for review thread ${entry.url} was not written`);
   }
   let reply = null;
@@ -971,7 +971,11 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     if (!linearToken || !Array.isArray(actorIds) || actorIds.length === 0) stop("LAND_ERROR", "the coordinator's Linear token or trusted receipt actors are missing");
     const issue = (await sendLinear(CARD_LAND_ISSUE_QUERY, { id: card }, linearToken, fetchImpl))?.issue;
     if (!issue?.id || issue.identifier !== card || typeof issue.title !== "string") stop("LAND_ERROR", `${card} cannot be read from Linear`);
-    const before = parseReceiptsFromComments(await fetchIssueComments({ issueId: issue.id, token: linearToken, fetchImpl }), actorIds);
+    // The card's comment thread, its continuations included (comment_continuations):
+    // read across all of them, written on the last.
+    const commentThread = await resolveCommentThread({ identifier: card, linearId: issue.id, config, token: linearToken, fetchImpl });
+    const readCommentThread = () => fetchThreadComments({ issueIds: commentThread.readIds, token: linearToken, fetchImpl });
+    const before = parseReceiptsFromComments(await readCommentThread(), actorIds);
     const { terminal } = passedTerminal(before, { card, repo, branch, activationId });
     head = terminal.target_sha;
 
@@ -995,7 +999,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     // SHU-310: settles review bot threads only when every unresolved thread
     // is settleable and the run stays within its limit.
     const settled = new Map();
-    const ctx = { gh, issue, linearToken, fetchImpl, actorIds, card, prNumber: pr.number, head, audit };
+    const ctx = { gh, issue, commentThread, linearToken, fetchImpl, actorIds, card, prNumber: pr.number, head, audit };
     const settle = policy && (async (open, viewer) => {
       const entries = open.map((node) => classifyThread(node, viewer, policy));
       const blocking = entries.filter((entry) => !entry.settle);
@@ -1116,19 +1120,19 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       }
     } else {
       if (!validHandoff(handoffReceipt(terminal, head, decision))) stop("LAND_ERROR", "the PASS cannot carry a merge-readiness handoff");
-      await writeHandoffReceipt({ terminal, target: head, decision, issueId: issue.id, linearToken, fetchImpl });
+      await writeHandoffReceipt({ terminal, target: head, decision, issueId: commentThread.writeId, linearToken, fetchImpl });
     }
 
     // What the consumer reads: the trusted thread as it is now, cut to this
     // card's branch, with no handoff but this PASS's own.
-    const after = parseReceiptsFromComments(await fetchIssueComments({ issueId: issue.id, token: linearToken, fetchImpl }), actorIds);
+    const after = parseReceiptsFromComments(await readCommentThread(), actorIds);
     const source = after.find((r) => r.attempt_id === terminal.attempt_id && r.handoff?.action === "merge-readiness" && r.handoff.target_sha === head);
     if (!source) stop("LAND_ERROR", "the handoff did not read back");
     const receipts = after.filter((r) => r.issue_id === card && r.repo === repo && r.branch === branch && (!r.handoff || r === source));
     const lines = [];
     const consumed = await consumeMergeReadiness({
       receipts,
-      issues: [{ id: card, linearId: issue.id }],
+      issues: [{ id: card, linearId: issue.id, ...(commentThread.continuations.length ? { commentIssueId: commentThread.writeId } : {}) }],
       linearToken,
       githubToken: landToken,
       config: { ...config, routine_merge_authority: { ...config.routine_merge_authority, enabled: true } },
@@ -1154,7 +1158,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     });
     if (consumed.error) stop("LAND_ERROR", consumed.error);
 
-    const thread = await fetchIssueComments({ issueId: issue.id, token: linearToken, fetchImpl });
+    const thread = await readCommentThread();
     const parsed = parseMergeAttemptsFromComments(thread, actorIds);
     const record = parsed.records.find((r) => r.source_attempt_id === terminal.attempt_id && r.approved_head_sha === landHead);
     if (!record || parsed.conflicts.has(record.attempt_id)) stop("LAND_ERROR", `no merge attempt was recorded${lines.length ? `: ${lines.at(-1)}` : ""}`);
@@ -1178,7 +1182,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     if (!commented) {
       const body = [marker, `Merged by card run ${activationId}: pull request #${pr.number} landed on main as ${record.merge_commit_sha}.`,
         ...(checks.advisory ? [`${checks.advisory[0].toUpperCase()}${checks.advisory.length > 300 ? `${checks.advisory.slice(1, 299)}…` : checks.advisory.slice(1)}.`] : [])].join("\n");
-      const posted = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: issue.id, body }, linearToken, fetchImpl);
+      const posted = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: commentThread.writeId, body }, linearToken, fetchImpl);
       commented = posted?.commentCreate?.success === true;
     }
     return result("MERGED", { ...landed(), merge_commit: record.merge_commit_sha, attempt_id: record.attempt_id, commented,

@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { requireHoldCode } from './intended-work.mjs';
 import { reviewVerdictProvenanceValid } from './review-routing.mjs';
 import { LINEAR_COMMENT_CREATE_MUTATION, parseReceiptCommentBody, parseReceiptsFromComments,
-  receiptCommentBody, sendLinear, validateReceipt } from './reconcile.mjs';
+  receiptCommentBody, sendLinear, validateReceipt, commentWriteId } from './reconcile.mjs';
 import { validHandoff } from './durable-handoff.mjs';
 import { holdsRun, holdsStatus, holdsThread } from './service/external-checks.mjs';
 
@@ -412,7 +412,11 @@ export async function consumeMergeReadiness({
   for (const source of sources) {
     if (writes > 0 || merges >= authority.max_per_tick) break;
     if (source.repo !== authority.repo) continue;
-    const linearIssueId = issueMap.get(source.issue_id)?.linearId ?? source.issue_id;
+    // A card with comment continuations keeps its merge attempts on its last
+    // continuation; an unresolved continuation holds with nothing written.
+    const card = issueMap.get(source.issue_id);
+    const linearIssueId = card ? (commentWriteId(card) ?? (Object.hasOwn(card, 'commentIssueId') ? null : source.issue_id)) : source.issue_id;
+    if (!linearIssueId) { stdout(`merge-readiness: ${source.issue_id} HOLD=EXPLICIT_HOLD — comment continuation unresolved`); continue; }
     let issue;
     try { issue = await fetchMergeIssue({ issueId: linearIssueId, token: linearToken, fetchImpl }); }
     catch { stdout(`merge-readiness: ${source.issue_id} HOLD=EXPLICIT_HOLD — Linear authority unavailable`); continue; }

@@ -19,7 +19,7 @@ import {
   receiptCommentBody,
   createReceipt,
   isLinearRateLimited,
-  LINEAR_RATE_LIMIT_FALLBACK_SECONDS,
+  isLinearQuotaRefusal,
 } from "../reconcile.mjs";
 
 const SHA = "b".repeat(40);
@@ -535,48 +535,87 @@ test("a rate-limited tick dispatches NOTHING and exits cleanly instead of failin
   const result = await runMain({ configPath: tempConfig(), wa, linear: rateLimited });
 
   assert.equal(result.code, 0, "the tick must exit cleanly — a failed tick is a tick that never reconciles");
-  assert.deepEqual(result.out, ["HOLD=LINEAR_RATE_LIMITED retry_after=42"]);
+  assert.deepEqual(result.out, ["HOLD=LINEAR_RATE_LIMITED retry_after=42 source=header status=429"]);
   assert.equal(wa.calls(), 0, "a rate-limited tick must never reach an adapter");
   assert.equal(comments.length, 0, "and must never write to Linear");
 });
 
 // 23 Nov 11:01Z: the receipt write AFTER a worker launched was answered
-// "quota exceeded". That message fell through to the generic Linear error, so
-// the tick threw, logged ACT_COORDINATOR_TICK_FAILED and exited 1, and the card
-// run counted a failed command. A spent quota is a rate limit: the tick HOLDs,
-// exits 0, and the launch intent written before the adapter stays durable, so
-// the next tick reconciles the run from LAUNCH_UNKNOWN.
-test("a quota-exceeded Linear write after launch HOLDs the tick and keeps the launch intent", async () => {
+// "quota exceeded". #669 read that as a spent budget and HOLDed. It was not:
+// SHU-304 had reached Linear's 2,000-comment cap (its newest comment is from
+// 11:01:10Z) while the key had spent 1 of its 5,000 requests, so the HOLD came
+// back every tick and parked every card worker for the 3,600 s fallback.
+// A genuine budget refusal says when the budget resets, and still HOLDs: exit
+// 0, nothing repeated, and the launch intent written before the adapter stays
+// durable for the next tick.
+const afterLaunch = (answer) => {
   const comments = [];
   const backing = fakeLinearStore(makeIssueNodes(), comments);
-  const wa = fakeWorkspaceAgents({ mode: "accept" });
-  let creates = 0;
-  const quotaAfterLaunch = async (url, opts) => {
+  const state = { creates: 0, comments };
+  state.linear = async (url, opts) => {
     if (JSON.parse(opts.body).query.includes("commentCreate")) {
-      creates += 1;
+      state.creates += 1;
       // 1 = RESERVED, 2 = LAUNCH_UNKNOWN (write-ahead intent), 3 = post-launch receipt.
-      if (creates === 3) {
-        return { ok: false, status: 400, headers: new Headers(), json: async () => ({ errors: [{ message: "quota exceeded" }] }) };
-      }
+      if (state.creates === 3) return answer();
     }
     return backing(url, opts);
   };
+  return state;
+};
 
-  const result = await runMain({ configPath: tempConfig(), wa, linear: quotaAfterLaunch });
+test("a quota refusal that states its reset after launch HOLDs the tick for that wait and keeps the launch intent", async () => {
+  const run = afterLaunch(() => ({ ok: false, status: 400, headers: new Headers({ "Retry-After": "120" }),
+    json: async () => ({ errors: [{ message: "quota exceeded", extensions: { code: "QUOTA_EXCEEDED" } }] }) }));
+  const wa = fakeWorkspaceAgents({ mode: "accept" });
+  const result = await runMain({ configPath: tempConfig(), wa, linear: run.linear });
 
-  assert.equal(result.code, 0, `a spent quota is a HOLD, not a failed tick\n${result.out.join("\n")}`);
-  assert.equal(result.out.at(-1), `HOLD=LINEAR_RATE_LIMITED retry_after=${LINEAR_RATE_LIMIT_FALLBACK_SECONDS}`);
+  assert.equal(result.code, 0, `a spent budget is a HOLD, not a failed tick\n${result.out.join("\n")}`);
+  assert.equal(result.out.at(-1), "HOLD=LINEAR_RATE_LIMITED retry_after=120 source=header status=400 code=QUOTA_EXCEEDED");
   assert.equal(wa.calls(), 1, "the worker was launched once");
-  const durable = parseReceiptsFromComments(comments);
-  assert.equal(creates, 3, "the post-launch receipt write was attempted once and not repeated");
-  assert.deepEqual(durable.map((r) => r.stage), ["LAUNCH_UNKNOWN"], "the launch intent stays durable for the next tick");
+  assert.equal(run.creates, 3, "the post-launch receipt write was attempted once and not repeated");
+  assert.deepEqual(parseReceiptsFromComments(run.comments).map((r) => r.stage), ["LAUNCH_UNKNOWN"], "the launch intent stays durable for the next tick");
 });
 
-test("isLinearRateLimited: quota and usage-limit answers are rate limits; other errors are not", () => {
-  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "quota exceeded" }] }), true);
-  assert.equal(isLinearRateLimited({ status: 200 }, { errors: [{ message: "Quota exceeded for this API key" }] }), true);
-  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "x", extensions: { code: "USAGE_LIMIT_EXCEEDED" } }] }), true);
-  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "Too many requests" }] }), true);
-  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "Entity not found" }] }), false);
+test("LINEAR_QUOTA_UNCLASSIFIED: a reset-less quota refusal of a comment write on a thread not known to be full fails the tick by code and alias, never a HOLD", async () => {
+  // The 23 Nov shape exactly: HTTP 400, "quota exceeded", no reset header.
+  // This fixture's thread is short, so nothing proves the comment cap.
+  const run = afterLaunch(() => ({ ok: false, status: 400, headers: new Headers(),
+    json: async () => ({ errors: [{ message: "quota exceeded for SECRET-DETAIL" }] }) }));
+  const wa = fakeWorkspaceAgents({ mode: "accept" });
+  const out = [];
+  await assert.rejects(runMain({ configPath: tempConfig(), wa, linear: run.linear, io: { stdout: (line) => out.push(line) } }), (error) => {
+    assert.equal(error.code, "LINEAR_QUOTA_UNCLASSIFIED");
+    assert.equal(error.operation, "commentCreate");
+    assert.equal(error.issueIdentifier, "SHU-099");
+    assert.match(error.message, /^LINEAR_QUOTA_UNCLASSIFIED operation=commentCreate target=SHU-099 comments=\d+ status=400 — /);
+    assert.doesNotMatch(error.message, /quota exceeded|SECRET-DETAIL|tok|"stage"/, "no Linear text, no token, no comment body");
+    return true;
+  });
+  assert.equal(out.some((line) => line.startsWith("HOLD=")), false, "a reset-less quota refusal is never a HOLD");
+  assert.equal(wa.calls(), 1, "the worker was launched once");
+  assert.equal(run.creates, 3, "the refused write was not repeated");
+  assert.deepEqual(parseReceiptsFromComments(run.comments).map((r) => r.stage), ["LAUNCH_UNKNOWN"], "the launch intent stays durable");
+});
+
+test("isLinearRateLimited: only a 429, a RATELIMITED code, or a budget refusal that states its reset is a rate limit", () => {
+  const reset = new Headers({ "X-RateLimit-Requests-Reset": String(Date.now() + 60_000) });
+  // A quota or usage-limit refusal with no reset is NOT the budget.
+  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "quota exceeded" }] }), false);
+  assert.equal(isLinearRateLimited({ status: 200 }, { errors: [{ message: "Quota exceeded for this API key" }] }), false);
+  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "x", extensions: { code: "USAGE_LIMIT_EXCEEDED" } }] }), false);
+  assert.equal(isLinearRateLimited({ status: 400, headers: new Headers() }, { errors: [{ message: "Too many requests" }] }), false);
+  // ...and it is when Linear states the reset.
+  assert.equal(isLinearRateLimited({ status: 400, headers: reset }, { errors: [{ message: "quota exceeded" }] }), true);
+  assert.equal(isLinearRateLimited({ status: 400, headers: new Headers({ "Retry-After": "5" }) }, { errors: [{ message: "x", extensions: { code: "USAGE_LIMIT_EXCEEDED" } }] }), true);
+  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "Too many requests", extensions: { retryAfter: 9 } }] }), true);
+  assert.equal(isLinearRateLimited({ status: 400, headers: reset }, { errors: [{ message: "Too many requests" }] }), true);
+  // A 429 and a RATELIMITED code are the budget with or without a reset.
+  assert.equal(isLinearRateLimited({ status: 429 }, null), true);
+  assert.equal(isLinearRateLimited({ status: 400 }, { errors: [{ message: "x", extensions: { code: "RATE_LIMITED" } }] }), true);
+  // Reset headers ride on every Linear answer; on any other error they mean nothing.
+  assert.equal(isLinearRateLimited({ status: 400, headers: reset }, { errors: [{ message: "Entity not found" }] }), false);
   assert.equal(isLinearRateLimited({ status: 500 }, null), false);
+  assert.equal(isLinearQuotaRefusal({ errors: [{ message: "x", extensions: { code: "QUOTA_EXCEEDED" } }] }), true);
+  assert.equal(isLinearQuotaRefusal({ errors: [{ message: "usage limit reached" }] }), true);
+  assert.equal(isLinearQuotaRefusal({ errors: [{ message: "Rate limit exceeded" }] }), false);
 });

@@ -65,6 +65,7 @@
     ".github/coordinator/test/ci-before-review.test.mjs",
     ".github/coordinator/test/claude-contract.test.mjs",
     ".github/coordinator/test/codex-contract.test.mjs",
+    ".github/coordinator/test/comment-continuations.test.mjs",
     ".github/coordinator/test/disk-prune.test.mjs",
     ".github/coordinator/test/dispatch-durability.test.mjs",
     ".github/coordinator/test/durable-handoff.test.mjs",
@@ -2253,6 +2254,7 @@
     "SHU-321 R7: the claim records the pull request, its head and base, the run and every file's blob, and never reads as a landing",
     "SHU-321 R8: a GitHub read that fails is a skip that claims nothing",
     "M18 G1 R1: a box PASS sets pending then success on the exact reviewed head, posts one PASS comment, and writes one metrics line",
+    "COMMENT_CONTINUATIONS R1: the review card's terminal receipt on its continuation (SHU-711) still confirms the verdict, read after the card's own thread",
     "M18 G1 R1b: a PASS ending on the coordinator's generic line is published only when the receipt confirms PASS at the armed head",
     "M18 G1 R2: a box BLOCK sets failure with the findings' first line, and its comment is headed BLOCK at the full SHA",
     "M18 G1 R3: a review that ends with no verdict posts no comment and never success, and is a dropped metrics line",
@@ -2360,8 +2362,9 @@
     "SHU-222: authoritative recheck catches a claim race before reservation",
     "SHU-222: authoritative recheck catches a new active receipt before reservation",
     "a rate-limited tick dispatches NOTHING and exits cleanly instead of failing the service",
-    "a quota-exceeded Linear write after launch HOLDs the tick and keeps the launch intent",
-    "isLinearRateLimited: quota and usage-limit answers are rate limits; other errors are not",
+    "a quota refusal that states its reset after launch HOLDs the tick for that wait and keeps the launch intent",
+    "LINEAR_QUOTA_UNCLASSIFIED: a reset-less quota refusal of a comment write on a thread not known to be full fails the tick by code and alias, never a HOLD",
+    "isLinearRateLimited: only a 429, a RATELIMITED code, or a budget refusal that states its reset is a rate limit",
     "landing-verdict-consumed-exactly-once",
     "BLOCK-routes-to-writer",
     "duplicate-consumption",
@@ -2777,6 +2780,7 @@
     "foreign review receipt: the armed episode's own receipt, or one at the approved head, keeps the pull-request check",
     "SHU71_ENDED_EPISODE_REVIEW_SETTLED: another card's review from an ended episode is released only on the supervisor's positive evidence",
     "SHU71_ENDED_EPISODE_OWNING_SUPERVISOR: the worker that ran the review answers for it, whichever worker ticks",
+    "COMMENT_CONTINUATIONS_FIXTURE: b760441e's history stays on the full SHU-304, one terminal receipt lands on SHU-711, a re-tick writes nothing, and a real 429 still backs off",
     "SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keeps the gate and nothing is written",
     "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
     "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
@@ -4971,7 +4975,20 @@
     "CI before review: a failing advisory third-party check neither holds nor revises the head; the landing's external policy decides",
     "CI before review: a failing third-party check the policy names as required still mints a CI revise",
     "CI before review: after max_ci_revise CI revises a red head is reviewed, and the revises spent no review round",
-    "CI before review: the committed config.json turns the gate on, and its settings send a red build head back to the writer"
+    "CI before review: the committed config.json turns the gate on, and its settings send a red build head back to the writer",
+    "COMMENT_CONTINUATIONS config: the committed config continues SHU-304 on SHU-711, and a malformed map is refused",
+    "COMMENT_CONTINUATIONS merge: the original's comments come first, a receipt carried twice is kept once, and conflicting copies fail closed",
+    "COMMENT_CONTINUATIONS board: a card's thread reads across its continuations in order, writes go to the last, and continuations are never cards",
+    "COMMENT_CONTINUATIONS board: a continuation off the open board is read on its own; one Linear cannot find fails the card closed with no write target",
+    "COMMENT_CONTINUATIONS board: an empty or missing list is a no-op, request for request and field for field",
+    "COMMENT_CONTINUATIONS thread: resolveCommentThread costs nothing without continuations and names the last one as the write target",
+    "COMMENT_CONTINUATIONS tick: every receipt is written on the continuation, read back across the card's whole thread, and the continuation is never dispatched",
+    "COMMENT_CONTINUATIONS tick: a pause marker on the card's own (full) thread still pauses its adapter",
+    "COMMENT_CONTINUATIONS tick: a continuation Linear cannot find prevents dispatch and writes nothing anywhere",
+    "COMMENT_CONTINUATIONS tick: a malformed comment_continuations refuses the tick before any read",
+    "LINEAR_HOLD_LINE: the hold line keeps retry_after first and adds source, status and code; card-run reads every form",
+    "LINEAR_QUOTA_CLASSIFICATION: a reset-less quota refusal is the comment cap only on a comment write with a cap code; anything else is unclassified, and no message carries Linear's words",
+    "LINEAR_COMMENT_CAP tick: a reset-less refusal of a write to a thread this tick read at Linear's cap is named the comment cap, by alias"
   ],
   "requirements": [
     {
@@ -19336,6 +19353,10 @@
       "capabilities": []
     },
     {
+      "name": "COMMENT_CONTINUATIONS R1: the review card's terminal receipt on its continuation (SHU-711) still confirms the verdict, read after the card's own thread",
+      "capabilities": []
+    },
+    {
       "name": "M18 G1 R1b: a PASS ending on the coordinator's generic line is published only when the receipt confirms PASS at the armed head",
       "capabilities": []
     },
@@ -20205,11 +20226,15 @@
       "capabilities": []
     },
     {
-      "name": "a quota-exceeded Linear write after launch HOLDs the tick and keeps the launch intent",
+      "name": "a quota refusal that states its reset after launch HOLDs the tick for that wait and keeps the launch intent",
       "capabilities": []
     },
     {
-      "name": "isLinearRateLimited: quota and usage-limit answers are rate limits; other errors are not",
+      "name": "LINEAR_QUOTA_UNCLASSIFIED: a reset-less quota refusal of a comment write on a thread not known to be full fails the tick by code and alias, never a HOLD",
+      "capabilities": []
+    },
+    {
+      "name": "isLinearRateLimited: only a 429, a RATELIMITED code, or a budget refusal that states its reset is a rate limit",
       "capabilities": []
     },
     {
@@ -22423,6 +22448,10 @@
     },
     {
       "name": "SHU71_ENDED_EPISODE_OWNING_SUPERVISOR: the worker that ran the review answers for it, whichever worker ticks",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS_FIXTURE: b760441e's history stays on the full SHU-304, one terminal receipt lands on SHU-711, a re-tick writes nothing, and a real 429 still backs off",
       "capabilities": []
     },
     {
@@ -35404,6 +35433,58 @@
     },
     {
       "name": "CI before review: the committed config.json turns the gate on, and its settings send a red build head back to the writer",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS config: the committed config continues SHU-304 on SHU-711, and a malformed map is refused",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS merge: the original's comments come first, a receipt carried twice is kept once, and conflicting copies fail closed",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS board: a card's thread reads across its continuations in order, writes go to the last, and continuations are never cards",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS board: a continuation off the open board is read on its own; one Linear cannot find fails the card closed with no write target",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS board: an empty or missing list is a no-op, request for request and field for field",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS thread: resolveCommentThread costs nothing without continuations and names the last one as the write target",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS tick: every receipt is written on the continuation, read back across the card's whole thread, and the continuation is never dispatched",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS tick: a pause marker on the card's own (full) thread still pauses its adapter",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS tick: a continuation Linear cannot find prevents dispatch and writes nothing anywhere",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS tick: a malformed comment_continuations refuses the tick before any read",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR_HOLD_LINE: the hold line keeps retry_after first and adds source, status and code; card-run reads every form",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR_QUOTA_CLASSIFICATION: a reset-less quota refusal is the comment cap only on a comment write with a cap code; anything else is unclassified, and no message carries Linear's words",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR_COMMENT_CAP tick: a reset-less refusal of a write to a thread this tick read at Linear's cap is named the comment cap, by alias",
       "capabilities": []
     }
   ],

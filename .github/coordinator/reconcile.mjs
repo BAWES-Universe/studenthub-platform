@@ -45,6 +45,7 @@ import { triageCoordinatorIncident } from "./incident-triage.mjs";
 import { settleCoordinatorIncident } from "./incident-settlement.mjs";
 import { coordinatorJournalDirectory } from "./push-broker.mjs";
 import { renderWatchLine } from "./watch-progress.mjs";
+import { resolveCommentContinuations, continuationIssueIds, continuationsOf, mergeCommentThreads } from "./comment-continuations.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -466,6 +467,9 @@ export function computeEligibility({ issues, openPRs = [], config = {}, writerLa
     ready.push({
       id,
       linearId: issue.linearId ?? null, // kept through selection: Linear comment writes need the UUID
+      // A card whose thread continues on other issues keeps where it is read
+      // and written (comment_continuations); a card without keeps neither.
+      ...(Object.hasOwn(issue, "commentIssueId") ? { commentIssueId: issue.commentIssueId, commentIssueIdentifier: issue.commentIssueIdentifier, commentThreadIds: issue.commentThreadIds } : {}),
       title: issue.title ?? "",
       state: issue.state,
       priority: issue.priority ?? "No priority",
@@ -1601,33 +1605,118 @@ function headerNumber(res, name) {
   return Number.isFinite(value) ? value : null;
 }
 
-// isLinearRateLimited — Linear reports an exhausted budget either as HTTP 429 or
-// as a 200/400 GraphQL error carrying RATELIMITED. Both are the same condition.
-// A spent quota is the same condition under another name: on 23 Nov 11:01Z a
-// write answered "quota exceeded", fell through to the generic Linear error,
-// and failed the whole tick (exit 1) right after the worker had launched,
-// although the next tick ran fine. It now HOLDs the tick like any rate limit.
-const LINEAR_BUDGET_CODES = new Set(["RATELIMITED", "RATE_LIMITED", "QUOTA_EXCEEDED", "USAGE_LIMIT_EXCEEDED"]);
-const LINEAR_BUDGET_MESSAGE_RE = /rate[ -]?limit|quota exceeded|too many requests/i;
-export function isLinearRateLimited(res, body) {
-  if (res?.status === 429) return true;
-  return (body?.errors ?? []).some((error) =>
-    LINEAR_BUDGET_CODES.has(String(error?.extensions?.code ?? "").toUpperCase()) ||
-    LINEAR_BUDGET_MESSAGE_RE.test(String(error?.message ?? "")));
+// isLinearRateLimited — a Linear answer is a spent BUDGET only when Linear says
+// so in a way that carries a wait: HTTP 429, a RATELIMITED / RATE_LIMITED code,
+// or a budget-worded refusal (rate limit, too many requests, quota, usage
+// limit) that states when the budget resets (Retry-After, an
+// x-ratelimit-*-reset header, or extensions.retryAfter).
+//
+// History: on 23 Nov 11:01Z a receipt write answered "quota exceeded" and
+// #669 began to HOLD every quota answer as a rate limit. That refusal was not
+// the budget (the key had used 1 of its 5,000 requests): it was SHU-304 holding
+// Linear's 2,000-comment cap, whose newest comment is from 11:01:10Z. Linear
+// states no reset for that refusal, because none is coming, so HOLDing on it
+// parked every card worker for the 3,600 s fallback, forever. A quota refusal
+// with no reset is now named for what it is (LINEAR_COMMENT_CAP on a comment
+// write, see sendLinear) and fails the tick loudly instead.
+const LINEAR_RATE_LIMIT_CODES = new Set(["RATELIMITED", "RATE_LIMITED"]);
+const LINEAR_QUOTA_CODES = new Set(["QUOTA_EXCEEDED", "USAGE_LIMIT_EXCEEDED"]);
+const LINEAR_RATE_LIMIT_MESSAGE_RE = /rate[ -]?limit|too many requests/i;
+const LINEAR_QUOTA_MESSAGE_RE = /quota exceeded|usage[ -]?limit/i;
+// The reset headers Linear publishes, one per budget it enforces.
+export const LINEAR_RESET_HEADERS = Object.freeze([
+  "x-ratelimit-requests-reset",
+  "x-ratelimit-complexity-reset",
+  "x-ratelimit-endpoint-requests-reset",
+  "x-ratelimit-endpoint-complexity-reset",
+]);
+const linearErrorCode = (error) => String(error?.extensions?.code ?? "").toUpperCase();
+const linearErrors = (body) => (Array.isArray(body?.errors) ? body.errors : []);
+const budgetWorded = (error) => LINEAR_RATE_LIMIT_CODES.has(linearErrorCode(error)) || LINEAR_QUOTA_CODES.has(linearErrorCode(error))
+  || LINEAR_RATE_LIMIT_MESSAGE_RE.test(String(error?.message ?? "")) || LINEAR_QUOTA_MESSAGE_RE.test(String(error?.message ?? ""));
+
+// linearResetSignal — the wait Linear ITSELF stated, or null when it stated
+// none: { seconds, source } with source "header" (Retry-After or a reset
+// header, epoch ms) or "extension" (extensions.retryAfter on the error).
+export function linearResetSignal(res, body, now = Date.now()) {
+  const retryAfter = headerNumber(res, "retry-after");
+  if (retryAfter !== null && retryAfter >= 0) return { seconds: Math.ceil(retryAfter), source: "header" };
+  for (const name of LINEAR_RESET_HEADERS) {
+    const reset = headerNumber(res, name);
+    if (reset !== null && reset > 0) return { seconds: Math.max(0, Math.ceil((reset - now) / 1000)), source: "header" };
+  }
+  for (const error of linearErrors(body)) {
+    const extension = error?.extensions?.retryAfter;
+    if (extension === null || extension === undefined || extension === "") continue;
+    const seconds = Number(extension);
+    if (Number.isFinite(seconds) && seconds >= 0) return { seconds: Math.ceil(seconds), source: "extension" };
+  }
+  return null;
 }
 
-// linearRateLimitSeconds — the wait Linear ITSELF stated, in seconds: the
-// Retry-After header, else the reset timestamp (epoch ms) it publishes, else the
-// retryAfter carried on the GraphQL error, else the documented window above.
-export function linearRateLimitSeconds(res, body, now = Date.now()) {
-  const retryAfter = headerNumber(res, "retry-after");
-  if (retryAfter !== null && retryAfter >= 0) return Math.ceil(retryAfter);
-  const reset = headerNumber(res, "x-ratelimit-requests-reset");
-  if (reset !== null && reset > 0) return Math.max(0, Math.ceil((reset - now) / 1000));
-  const extension = Number(body?.errors?.[0]?.extensions?.retryAfter);
-  if (Number.isFinite(extension) && extension >= 0) return Math.ceil(extension);
-  return LINEAR_RATE_LIMIT_FALLBACK_SECONDS;
+export function isLinearRateLimited(res, body) {
+  if (res?.status === 429) return true;
+  const errors = linearErrors(body);
+  if (errors.some((error) => LINEAR_RATE_LIMIT_CODES.has(linearErrorCode(error)))) return true;
+  return errors.some(budgetWorded) && linearResetSignal(res, body) !== null;
 }
+
+// A quota or usage-limit refusal (by code or by message), whatever else it says.
+export function isLinearQuotaRefusal(body) {
+  return linearErrors(body).some((error) => LINEAR_QUOTA_CODES.has(linearErrorCode(error)) || LINEAR_COMMENT_CAP_CODES.has(linearErrorCode(error))
+    || LINEAR_QUOTA_MESSAGE_RE.test(String(error?.message ?? "")));
+}
+
+// linearRateLimitSeconds — the stated wait in seconds, else the documented
+// window above.
+export function linearRateLimitSeconds(res, body, now = Date.now()) {
+  return linearResetSignal(res, body, now)?.seconds ?? LINEAR_RATE_LIMIT_FALLBACK_SECONDS;
+}
+
+// linearRateLimitHold — what the HOLD line reports: the wait, where it came
+// from (header, extension or fallback), the HTTP status, and Linear's error
+// code when it gave one. Never a token, never a request or comment body.
+export function linearRateLimitHold(res, body, now = Date.now()) {
+  const signal = linearResetSignal(res, body, now);
+  const status = Number.isInteger(res?.status) ? res.status : null;
+  const code = linearErrors(body).map(linearErrorCode).find((value) => LINEAR_LOGGED_CODES.has(value)) ?? null;
+  return { seconds: signal?.seconds ?? LINEAR_RATE_LIMIT_FALLBACK_SECONDS, source: signal?.source ?? "fallback", status, code };
+}
+
+// The one line main() prints for a held tick. "HOLD=LINEAR_RATE_LIMITED
+// retry_after=N" stays first, so card-run's TICK_HOLD_RE still reads the wait.
+export function linearHoldLine(hold = {}) {
+  const seconds = Number.isFinite(hold.seconds) ? hold.seconds : LINEAR_RATE_LIMIT_FALLBACK_SECONDS;
+  return [`HOLD=LINEAR_RATE_LIMITED retry_after=${seconds}`,
+    `source=${["header", "extension", "fallback"].includes(hold.source) ? hold.source : "fallback"}`,
+    ...(Number.isInteger(hold.status) && hold.status >= 100 && hold.status <= 599 ? [`status=${hold.status}`] : []),
+    ...(typeof hold.code === "string" && LINEAR_LOGGED_CODES.has(hold.code) ? [`code=${hold.code}`] : [])].join(" ");
+}
+
+// Linear's comment cap per issue, and the error codes that name it outright.
+// Linear documents no such code today; a refusal without one is a comment cap
+// only when the tick itself read the target thread at the cap (see main).
+export const LINEAR_COMMENT_CAP = 2000;
+export const LINEAR_COMMENT_CAP_CODES = Object.freeze(new Set(["COMMENT_LIMIT_EXCEEDED", "COMMENTS_LIMIT_EXCEEDED"]));
+// The only Linear error codes a log line may carry.
+const LINEAR_LOGGED_CODES = new Set([...LINEAR_RATE_LIMIT_CODES, ...LINEAR_QUOTA_CODES, ...LINEAR_COMMENT_CAP_CODES]);
+
+// linearQuotaMessage — the whole message of a reset-less quota refusal: an
+// allowlisted classification code, the operation, the target by alias (the
+// issue identifier when the tick knows it) and the HTTP status. Never Linear's
+// own text, a token, or a request or comment body.
+export function linearQuotaMessage({ code, operation, target = null, status = null, comments = null }) {
+  const fields = [code, `operation=${operation}`];
+  if (target) fields.push(`target=${target}`);
+  if (Number.isInteger(comments)) fields.push(`comments=${comments}`);
+  if (Number.isInteger(status)) fields.push(`status=${status}`);
+  const why = code === "LINEAR_COMMENT_CAP"
+    ? "the target's comment thread is full; list a continuation issue for it under comment_continuations in config.json"
+    : "Linear refused with a quota error that states no reset and is not a known comment cap; not retried";
+  return `${fields.join(" ")} — ${why}`;
+}
+
+const linearCommentCreate = (query) => typeof query === "string" && /^\s*mutation\b/.test(query) && /\bcommentCreate\s*\(/.test(query);
 
 // sendLinear — single injectable GraphQL seam for ALL Linear reads/writes. Tests
 // substitute fetchImpl; production uses global fetch. Token name only, no value.
@@ -1666,9 +1755,30 @@ export async function sendLinear(query, variables, token, fetchImpl = fetch, { r
   // workspace budget is spent, so it is raised as its own condition and the tick
   // HOLDs on it (see main) instead of throwing the run away.
   if (isLinearRateLimited(res, body)) {
-    const err = new Error(body?.errors?.[0]?.message ?? `Linear rate limit (HTTP ${res.status})`);
+    const hold = linearRateLimitHold(res, body);
+    const err = new Error(linearHoldLine(hold)); // classification only, never Linear's own text
     err.code = "LINEAR_RATE_LIMITED";
-    err.retryAfterSeconds = linearRateLimitSeconds(res, body);
+    err.retryAfterSeconds = hold.seconds;
+    err.hold = hold;
+    throw err;
+  }
+  // A quota refusal that states no reset is not the budget: waiting does not
+  // free it, so it never HOLDs, and it is never retried (a write may have
+  // landed). It fails the tick under an allowlisted code. It is the comment
+  // cap (LINEAR_COMMENT_CAP) only for a comment write that Linear refused with
+  // a cap code here, or (main) whose target the tick read at the cap; any
+  // other is LINEAR_QUOTA_UNCLASSIFIED and is never rerouted.
+  if (isLinearQuotaRefusal(body)) {
+    const operation = linearCommentCreate(query) ? "commentCreate" : linearRead(query) ? "read" : "mutation";
+    const capCoded = linearErrors(body).some((error) => LINEAR_COMMENT_CAP_CODES.has(linearErrorCode(error)));
+    const code = operation === "commentCreate" && capCoded ? "LINEAR_COMMENT_CAP" : "LINEAR_QUOTA_UNCLASSIFIED";
+    const issueId = operation === "commentCreate" && typeof variables?.issueId === "string" ? variables.issueId : null;
+    const err = new Error(linearQuotaMessage({ code, operation, target: issueId, status: res.status }));
+    err.code = code;
+    err.operation = operation;
+    err.issueId = issueId;
+    err.httpStatus = res.status;
+    err.capEvidence = capCoded ? "code" : null;
     throw err;
   }
   if (!res.ok || body?.errors?.length) {
@@ -1847,7 +1957,10 @@ export async function readBatchedComments(node, { issueId, token, fetchImpl = fe
 // state, so they never pay for a thread they will not look at.
 export async function fetchLinearBoard({
   token, repo, team = "SHU", repoLabelMap = DEFAULT_REPO_LABEL_MAP, fetchImpl = fetch, readComments = true,
+  commentContinuations = undefined,
 }) {
+  // Malformed continuations refuse before anything is read.
+  const continuations = resolveCommentContinuations({ comment_continuations: commentContinuations });
   const nodes = [];
   let after = null;
   const seenCursors = new Set();
@@ -1866,16 +1979,143 @@ export async function fetchLinearBoard({
     seenCursors.add(cursor);
     after = cursor;
   }
-  const issues = nodes.map((n) => normalizeLinearIssue(n, repo, repoLabelMap));
+  // A continuation issue is never a card: it only carries another card's
+  // thread. It leaves the board here, before anything can select it.
+  const continued = continuationIssueIds(continuations);
+  const cardNodes = nodes.filter((node) => !continued.has(node.identifier));
+  const issues = cardNodes.map((n) => normalizeLinearIssue(n, repo, repoLabelMap));
+  const threadNodes = await continuationNodes({ issues, nodes, continuations, token, fetchImpl });
   const commentsByIssue = new Map();
-  if (readComments) {
-    for (const [index, issue] of issues.entries()) {
-      const read = await readBatchedComments(nodes[index], { issueId: issue.linearId ?? issue.id, token, fetchImpl });
-      commentsByIssue.set(issue.id, read);
-      if (issue.linearId) commentsByIssue.set(issue.linearId, read);
+  // UUID -> how many comments that issue's OWN thread holds, read to its end:
+  // what tells a full thread (Linear's comment cap) from any other refusal.
+  const commentCounts = new Map();
+  for (const [index, issue] of issues.entries()) {
+    const chain = continuationsOf(continuations, issue.id);
+    const parts = chain.map((id) => threadNodes.get(id) ?? null);
+    if (chain.length) {
+      // Writes aimed at this card go to its last continuation; reads cover the
+      // card and every continuation, in order. An unreadable continuation
+      // leaves NO write target (fail closed: nothing is written to a full
+      // thread, nor to a thread that cannot be verified).
+      const resolved = parts.every((node) => typeof node?.id === "string" && node.id);
+      issue.commentIssueId = resolved ? parts.at(-1).id : null;
+      issue.commentIssueIdentifier = chain.at(-1);
+      issue.commentThreadIds = resolved && issue.linearId ? [issue.linearId, ...parts.map((node) => node.id)] : null;
+    }
+    if (!readComments) continue;
+    let read = await readBatchedComments(cardNodes[index], { issueId: issue.linearId ?? issue.id, token, fetchImpl });
+    if (!read.error && issue.linearId) commentCounts.set(issue.linearId, read.comments.length);
+    const threads = read.error ? [] : [read.comments];
+    for (const [at, node] of parts.entries()) {
+      if (read.error) break;
+      if (!node?.id) {
+        read = { error: `comment continuation ${chain[at]} of ${issue.id} cannot be read from Linear` };
+        break;
+      }
+      const more = await readBatchedComments(node, { issueId: node.id, token, fetchImpl });
+      if (more.error) { read = { error: `comment continuation ${chain[at]} of ${issue.id}: ${more.error}` }; break; }
+      commentCounts.set(node.id, more.comments.length);
+      threads.push(more.comments);
+    }
+    if (!read.error && threads.length > 1) read = mergeCommentThreads(threads, { parse: parseReceiptCommentBody });
+    commentsByIssue.set(issue.id, read);
+    if (issue.linearId) commentsByIssue.set(issue.linearId, read);
+  }
+  return { issues, commentsByIssue, commentCounts };
+}
+
+// The query that reads a continuation issue the board read did not carry (one
+// outside the open SHU board, say). Same thread shape as the board's.
+export const LINEAR_CONTINUATION_ISSUE_QUERY = `
+  query CoordinatorCommentContinuation($issueId: String!) {
+    issue(id: $issueId) {
+      id
+      identifier
+      comments(first: ${LINEAR_ISSUE_COMMENT_PAGE}, orderBy: createdAt) {
+        nodes { body createdAt user { id displayName } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }`;
+
+// continuationNodes — identifier -> Linear node of every continuation that a
+// card on this board needs: from the board read when it is there, else one
+// small read of that issue. An answer that is not the issue asked for is null.
+async function continuationNodes({ issues, nodes, continuations, token, fetchImpl }) {
+  const found = new Map();
+  if (!continuations.size) return found;
+  const byIdentifier = new Map(nodes.map((node) => [node.identifier, node]));
+  for (const issue of issues) {
+    for (const id of continuationsOf(continuations, issue.id)) {
+      if (found.has(id)) continue;
+      if (byIdentifier.has(id)) { found.set(id, byIdentifier.get(id)); continue; }
+      let node = null;
+      try {
+        node = (await sendLinear(LINEAR_CONTINUATION_ISSUE_QUERY, { issueId: id }, token, fetchImpl, { retryServerErrors: true }))?.issue ?? null;
+      } catch (err) {
+        if (err?.code === "LINEAR_RATE_LIMITED") throw err; // the whole tick HOLDs
+        node = null;
+      }
+      found.set(id, node?.identifier === id ? node : null);
     }
   }
-  return { issues, commentsByIssue };
+  return found;
+}
+
+// Where a comment aimed at this card is written: its last continuation when it
+// has one (null when that continuation could not be resolved: write nothing),
+// else the card's own UUID.
+export function commentWriteId(issue) {
+  if (issue && Object.hasOwn(issue, "commentIssueId")) return issue.commentIssueId;
+  return issue?.linearId ?? null;
+}
+
+// Which issues make up this card's thread, in read order (null: unresolved).
+export function commentReadIds(issue) {
+  if (issue && Object.hasOwn(issue, "commentThreadIds")) return issue.commentThreadIds;
+  return [issue?.linearId ?? issue?.id].filter(Boolean);
+}
+
+// resolveCommentThread — the same answer for a caller that holds one card's
+// identifier and UUID rather than the board (review verdicts, landings,
+// repairs). With no continuations for the card it makes no request at all.
+export const LINEAR_ISSUE_IDENTITY_QUERY = `
+  query CoordinatorIssueIdentity($issueId: String!) {
+    issue(id: $issueId) { id identifier }
+  }`;
+export async function resolveCommentThread({ identifier, linearId, config = {}, token, fetchImpl = fetch }) {
+  const chain = continuationsOf(resolveCommentContinuations(config), identifier);
+  if (!chain.length) return { identifier, readIds: [linearId], writeId: linearId, continuations: [] };
+  const ids = [];
+  for (const id of chain) {
+    const issue = (await sendLinear(LINEAR_ISSUE_IDENTITY_QUERY, { issueId: id }, token, fetchImpl, { retryServerErrors: true }))?.issue;
+    if (typeof issue?.id !== "string" || !issue.id || issue.identifier !== id) {
+      const err = new Error(`comment continuation ${id} of ${identifier} cannot be read from Linear`);
+      err.code = "LINEAR_COMMENT_CONTINUATION_UNREADABLE";
+      throw err;
+    }
+    ids.push(issue.id);
+  }
+  return { identifier, readIds: [linearId, ...ids], writeId: ids.at(-1), continuations: [...chain] };
+}
+
+// fetchThreadComments — every listed issue's COMPLETE thread, merged in order.
+export async function fetchThreadComments({ issueIds, token, fetchImpl = fetch }) {
+  if (!Array.isArray(issueIds) || issueIds.length === 0 || issueIds.some((id) => typeof id !== "string" || !id)) {
+    const err = new Error("the comment thread's issues are unresolved");
+    err.code = "LINEAR_COMMENT_CONTINUATION_UNREADABLE";
+    throw err;
+  }
+  const threads = [];
+  for (const issueId of issueIds) threads.push(await fetchIssueComments({ issueId, token, fetchImpl }));
+  if (threads.length === 1) return threads[0];
+  const merged = mergeCommentThreads(threads, { parse: parseReceiptCommentBody });
+  if (merged.error) {
+    const err = new Error(merged.error);
+    err.code = "LINEAR_COMMENT_THREAD_CONFLICT";
+    throw err;
+  }
+  return merged.comments;
 }
 
 export async function fetchLinearIssues(request) {
@@ -2439,13 +2679,14 @@ export async function repairCardFor(activation, { config = {}, githubToken = "",
 async function liveIssues({ config, linearToken, githubToken, openPRsOverride, fetchImpl = fetch, readComments = false }) {
   // Linear supplies work state and repo:<name> ownership. GitHub supplies active
   // PR claims. The query repository must never overwrite the card's ownership.
-  const { issues, commentsByIssue } = await fetchLinearBoard({
+  const { issues, commentsByIssue, commentCounts } = await fetchLinearBoard({
     token: linearToken,
     repo: config.pilot_repo,
     team: config.team ?? "SHU",
     repoLabelMap: config.repo_label_map,
     fetchImpl,
     readComments,
+    commentContinuations: config.comment_continuations,
   });
   let openPRs = [];
   let claimEvidenceError = null;
@@ -2472,7 +2713,7 @@ async function liveIssues({ config, linearToken, githubToken, openPRsOverride, f
   } else {
     bindClaimingPullRequests(issues, openPRs);
   }
-  return { issues, openPRs, commentsByIssue };
+  return { issues, openPRs, commentsByIssue, commentCounts };
 }
 
 // main — one tick. A rate-limited Linear is the one refusal that is not this
@@ -2547,17 +2788,33 @@ export async function ciBeforeReview({ successor, terminal, lineage, settings, c
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env, io = {}) {
+  const tick = { identifierFor: new Map(), commentCountFor: new Map() };
   try {
-    return await reconcileTick(argv, env, io);
+    return await reconcileTick(argv, env, io, tick);
   } catch (err) {
+    if (err?.code === "LINEAR_COMMENT_CAP" || err?.code === "LINEAR_QUOTA_UNCLASSIFIED") {
+      // Name the target by its alias, and call a refused comment write the
+      // comment cap only on evidence: Linear's cap code, or this tick's own
+      // complete read of the target thread at the cap.
+      const identifier = err.issueId ? tick.identifierFor.get(err.issueId) ?? null : null;
+      const comments = err.issueId ? tick.commentCountFor?.get(err.issueId) ?? null : null;
+      if (err.code === "LINEAR_QUOTA_UNCLASSIFIED" && err.operation === "commentCreate" && Number.isInteger(comments) && comments >= LINEAR_COMMENT_CAP) {
+        err.code = "LINEAR_COMMENT_CAP";
+        err.capEvidence = "comment_count";
+      }
+      if (identifier) err.issueIdentifier = identifier;
+      err.message = linearQuotaMessage({ code: err.code, operation: err.operation, target: identifier ?? err.issueId,
+        status: err.httpStatus, comments: Number.isInteger(comments) ? comments : null });
+      throw err;
+    }
     if (err?.code !== "LINEAR_RATE_LIMITED") throw err;
     const out = io.stdout ?? ((s) => console.log(s));
-    out(`HOLD=LINEAR_RATE_LIMITED retry_after=${err.retryAfterSeconds}`);
+    out(linearHoldLine(err.hold ?? { seconds: err.retryAfterSeconds, source: "fallback" }));
     return 0;
   }
 }
 
-async function reconcileTick(argv = process.argv.slice(2), env = process.env, io = {}) {
+async function reconcileTick(argv = process.argv.slice(2), env = process.env, io = {}, tick = { identifierFor: new Map() }) {
   // SHU-63: an operator's --activation declaration is parsed here, but its STATUS is
   // computed after the durable receipts are read — the one-use binding needs them.
   const activationArg = parseActivationArgs(argv);
@@ -2565,6 +2822,8 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   const config0 = narrowQueueScope(loadConfig(io.configPath), activationArg.path, io);
   const config = { ...config0, adapter_pause_map: { ...(config0.adapter_pause_map ?? {}) } };
   const dispatchScope = resolveDispatchScope(config);
+  // A malformed comment_continuations refuses the tick before any read.
+  resolveCommentContinuations(config);
   const linearToken = env.LINEAR_API_TOKEN ?? "";
   const githubToken = env.GITHUB_TOKEN ?? "";
   const fetchImpl = io.fetchImpl ?? fetch;
@@ -2589,11 +2848,19 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   let source;
   let boardComments = new Map();
   if (linearToken) {
-    ({ issues, openPRs, commentsByIssue: boardComments } = await liveIssues({
+    let commentCounts;
+    ({ issues, openPRs, commentsByIssue: boardComments, commentCounts } = await liveIssues({
       config, linearToken, githubToken, openPRsOverride, fetchImpl,
       readComments: io.fetchDurable !== false,
     }));
     source = "live Linear";
+    // For a refused comment write: the card it was aimed at, and how full
+    // that issue's own thread was read to be.
+    tick.commentCountFor = commentCounts ?? new Map();
+    for (const issue of issues) {
+      if (issue.linearId) tick.identifierFor.set(issue.linearId, issue.id);
+      if (issue.commentIssueId && issue.commentIssueIdentifier) tick.identifierFor.set(issue.commentIssueId, issue.commentIssueIdentifier);
+    }
   } else {
     const snap = loadSnapshot(io.snapshotPath);
     issues = snap.issues;
@@ -2824,7 +3091,12 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   // GPT BLOCK #3: Linear comment mutations require the issue UUID, not the
   // identifier. Resolve identifier -> linearId from the fetched issue set;
   // a receipt whose issue is not in the map FAILS CLOSED (no write, state kept).
-  const linearIdFor = new Map(issues.filter((i) => i.linearId).map((i) => [i.id, i.linearId]));
+  // comment_continuations: the UUID a card's comments are WRITTEN to is its
+  // last continuation's when it has one, so every receipt, pause marker and
+  // incident marker written through this map lands there; a continuation that
+  // could not be resolved leaves the card unmapped (fail closed, no write).
+  const linearIdFor = new Map(issues.filter((i) => commentWriteId(i)).map((i) => [i.id, commentWriteId(i)]));
+  const threadIdsFor = new Map(issues.map((i) => [i.id, commentReadIds(i)]));
   const resolveLinearIssueId = (receipt, what) => {
     const uuid = linearIdFor.get(receipt.issue_id);
     if (!uuid) {
@@ -2858,7 +3130,11 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     const incident = await reportCoordinatorIncident({
       event,
       authorized: Boolean(event) && !reportingExceptionAllowsLaunch(singleRunActivation),
-      targetLinearId: linearIdFor.get(targetIssueId),
+      // The card itself for relations; its comment thread (continuations
+      // included) for incident markers.
+      targetLinearId: issues.find((i) => i.id === targetIssueId)?.linearId ?? undefined,
+      targetCommentReadIds: threadIdsFor.get(targetIssueId) ?? undefined,
+      targetCommentWriteId: linearIdFor.get(targetIssueId) ?? null,
       config,
       token: linearToken,
       fetchImpl,
@@ -3528,7 +3804,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     candidate = refreshedEligibility.ready[0];
     let refreshedComments;
     try {
-      refreshedComments = await fetchIssueComments({ issueId: candidate.linearId ?? candidate.id, token: linearToken, fetchImpl });
+      refreshedComments = await fetchThreadComments({ issueIds: commentReadIds(candidate), token: linearToken, fetchImpl });
     } catch (error) {
       if (io.stdout) io.stdout(`dispatch: ABORTED before claim — active receipt lookup failed for ${candidate.id}: ${error.message}`);
       return 2;
@@ -3611,7 +3887,13 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       }
     }
   }
-  const linearIssueId = candidate.linearId ?? candidate.id; // UUID for the real API, identifier tolerated by mocks
+  // UUID for the real API (the last comment continuation's when the card has
+  // one), identifier tolerated by mocks.
+  const linearIssueId = Object.hasOwn(candidate, "commentIssueId") ? candidate.commentIssueId : (candidate.linearId ?? candidate.id);
+  if (!linearIssueId) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — ${candidate.id}'s comment continuation cannot be resolved; nothing is written`);
+    return 2;
+  }
 
   // SHU-71: every launch needs room in the temp filesystem for its workspace and
   // the broker's result repository. Nothing is reserved without it, so a short
@@ -3760,7 +4042,8 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     // launching. A missing, failed, or colliding reservation must never authorize
     // a worker — launch only when this attempt's RESERVED receipt is durably
     // present AND no other active receipt owns the issue.
-    const verifyComments = await fetchIssueComments({ issueId: linearIssueId, token: linearToken, fetchImpl });
+    const verifyComments = await fetchThreadComments({ issueIds: threadIdsFor.has(receipt.issue_id) ? threadIdsFor.get(receipt.issue_id) : [linearIssueId],
+      token: linearToken, fetchImpl });
     const durable = parseReceiptsFromComments(verifyComments);
     const ownReservation = durable.find((r) => r.attempt_id === receipt.attempt_id && r.stage === "RESERVED");
     if (!singleRunActivation.requested && successor && !durable.some(r =>
