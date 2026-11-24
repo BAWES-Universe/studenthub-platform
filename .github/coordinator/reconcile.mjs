@@ -35,7 +35,8 @@ import { parseActivationArgs, narrowQueueScope, cardQueue, singleRunActivationSt
 import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext, finishedSupervisorStage } from "./supervisor-dispatch.mjs";
-import { cardWorkers } from "./service/credential-delivery.mjs";
+import { cardWorkers, MAX_CARD_WORKERS } from "./service/credential-delivery.mjs";
+import { workerWorkspaceStateDir } from "./service/units.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote, REVIEW_FINDINGS_SUMMARY_MAX } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
@@ -1436,6 +1437,34 @@ export function cardRunEpisodeOver(receipt, now) {
 // resumed or polled as a run.
 export function endedEpisodeReviewDue(receipt, lifecycleReceipts, now) {
   return reviewHoldsSandbox(receipt) && !lifecycleReceipts.includes(receipt) && cardRunEpisodeOver(receipt, now);
+}
+
+// SHU-71, 24 Nov: each card worker has its own supervisor, and the tick that
+// settles an ended episode's review is another worker's (one worker reconciles
+// every receipt itself, receiptsForLifecycle). Asked only over the ticking
+// worker's own socket, a supervisor that never saw the attempt answers its
+// catch-all MISSING_CLAIM, so b760441e held the review gate although worker 1's
+// store held its durable FAILED run. The settlement asks every card worker's
+// supervisor.
+export function endedEpisodeSupervisorSockets(env) {
+  const workers = Array.from({ length: MAX_CARD_WORKERS }, (_, i) => path.join(workerWorkspaceStateDir(i + 1), "supervisor.sock"));
+  return [...new Set([env?.SHU_SUPERVISOR_SOCKET, ...workers].filter((s) => typeof s === "string" && s.length > 0))];
+}
+
+// One answer from the supervisors asked. A supervisor that holds the attempt and
+// does not report it finished at this head (live, not durable, another head)
+// wins, so the review keeps holding; then a durable COMPLETED/FAILED bound to
+// attempt and head, the only answer that releases. An affirmative refusal
+// (NO_RECORDS) proves refusal and absence in the store that gave it, not that
+// no other worker's store ran the attempt, which may be unreachable this tick,
+// so here it holds like any other inconclusive answer.
+export const UNATTRIBUTED_REFUSAL = Object.freeze({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM",
+  reason: "a refusal from one card worker's supervisor does not show the attempt never ran on another" });
+export function settledSupervisorAnswer(receipt, answers) {
+  const bound = answers.filter((a) => a?.ok === true && a.attempt_id === receipt.attempt_id);
+  return bound.find((a) => !finishedSupervisorStage(a, receipt))
+    ?? bound.find((a) => finishedSupervisorStage(a, receipt))
+    ?? (answers.some((a) => supervisorDisownsLaunch(a)) ? UNATTRIBUTED_REFUSAL : answers[0] ?? null);
 }
 
 // "release" only on positive evidence from the supervisor asked:
@@ -2916,12 +2945,15 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     const settleNow = io.now?.() ?? new Date();
     for (const receipt of receipts.filter((r) => endedEpisodeReviewDue(r, lifecycleStartReceipts, settleNow))) {
       const adapter = adapterNameFor(receipt.requested_worker);
-      const adapterModule = await dispatchModuleFor(adapter, receipt, env, io);
-      let answer = null;
-      if (typeof adapterModule.status === "function") {
-        try { answer = await adapterModule.status(); } catch { answer = null; }
+      const answers = [];
+      // An injected legacy adapter (unit fixtures only) has no socket to choose.
+      const injected = io.adapterModules?.[adapter] && !io.supervisorTransport;
+      for (const socket of injected ? [env.SHU_SUPERVISOR_SOCKET] : endedEpisodeSupervisorSockets(env)) {
+        const adapterModule = await dispatchModuleFor(adapter, receipt, { ...env, SHU_SUPERVISOR_SOCKET: socket }, io);
+        if (typeof adapterModule.status !== "function") continue;
+        try { answers.push(await adapterModule.status()); } catch { answers.push(null); }
       }
-      const disposition = endedEpisodeReviewDisposition(receipt, answer);
+      const disposition = endedEpisodeReviewDisposition(receipt, settledSupervisorAnswer(receipt, answers));
       if (disposition.verdict !== "release") {
         if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} held — ${disposition.evidence}; the review gate stays closed`);
         continue;
