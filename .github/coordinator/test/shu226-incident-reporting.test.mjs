@@ -380,7 +380,7 @@ const CONT_SINK = "11111111-aaaa-4bbb-8ccc-000000000711";
 
 // A Linear double that serves each issue's comments 100 to a page, oldest
 // first, and answers null for an issue it does not know.
-function pagedThreads(threads) {
+function pagedThreads(threads, { pageInfo = {} } = {}) {
   const requests = [];
   const fetchImpl = async (_url, opts) => {
     const { query, variables } = JSON.parse(opts.body);
@@ -390,8 +390,9 @@ function pagedThreads(threads) {
     const start = variables.after ? Number(variables.after) : 0;
     const nodes = thread.slice(start, start + 100);
     const hasNextPage = start + 100 < thread.length;
+    const info = Object.hasOwn(pageInfo, variables.issueId) ? pageInfo[variables.issueId] : { hasNextPage, endCursor: hasNextPage ? String(start + 100) : null };
     return { status: 200, ok: true, headers: new Headers(), json: async () => ({ data: { issue: { comments: {
-      nodes, pageInfo: { hasNextPage, endCursor: hasNextPage ? String(start + 100) : null } } } } }) };
+      nodes, ...(info === undefined ? {} : { pageInfo: info }) } } } }) };
   };
   return { fetchImpl, requests };
 }
@@ -443,7 +444,7 @@ test("SHU-226 CONTINUATION: an unreadable continuation writes nothing and leaves
   assert.equal(linear.requests.includes("commentCreate"), false);
   assert.deepEqual(logs, [`incident-reporting: ${event.event_id} state-unreadable; episode remains stopped`]);
 
-  // Without a full-thread reader, a null issue on any read id is just as unreadable.
+  // Without a full-thread reader, a continued thread is unreadable outright.
   const legacyCalls = [];
   const legacy = await reportCoordinatorIncident({
     event,
@@ -461,7 +462,22 @@ test("SHU-226 CONTINUATION: an unreadable continuation writes nothing and leaves
     timeoutMs: 1_000,
   });
   assert.equal(legacy.status, "state_unreadable");
-  assert.equal(legacyCalls.length, 2, "only the two comment reads ran; nothing was written");
+  assert.equal(legacyCalls.length, 0, "a continued thread is never read piecemeal: nothing is read or written");
+});
+
+test("SHU-226 CONTINUATION: a continued thread page without pageInfo or a boolean hasNextPage writes no incident marker", async () => {
+  const event = eventFor([receipt()], { ended: true, reason: "attempt x ended HOLD without a coherent verdict" });
+  const threads = { [CONT_ORIGINAL]: [{ body: "note", createdAt: NOW.toISOString() }], [CONT_SINK]: [{ body: "later", createdAt: NOW.toISOString() }] };
+  for (const info of [undefined, { hasNextPage: "false", endCursor: null }, { hasNextPage: null, endCursor: null }]) {
+    for (const bad of [CONT_ORIGINAL, CONT_SINK]) {
+      const linear = pagedThreads(threads, { pageInfo: { [bad]: info } });
+      const sendCalls = [];
+      const result = await continuedReport(event, linear.fetchImpl, sendCalls);
+      assert.equal(result.status, "state_unreadable", `pageInfo ${JSON.stringify(info)} on ${bad}`);
+      assert.deepEqual(sendCalls, [], "no marker, card or relation is written");
+      assert.equal(linear.requests.includes("commentCreate"), false);
+    }
+  }
 });
 
 test("SHU-226 M6: an incident card is filed in Backlog or Done, never pickable", () => {

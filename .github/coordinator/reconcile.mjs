@@ -1942,16 +1942,28 @@ export function normalizeLinearIssue(node, _queriedRepo, repoLabelMap = DEFAULT_
   };
 }
 
+// A page of a continued thread proves where it ends only with pageInfo and a
+// boolean hasNextPage; anything else could be a partial page.
+export function hasPageMetadata(page) {
+  return page?.pageInfo !== null && typeof page?.pageInfo === "object" && typeof page.pageInfo.hasNextPage === "boolean";
+}
+
 // readBatchedComments — the card's COMPLETE comment thread, starting from the page
 // the board read already paid for. Completeness is the invariant (GPT review #2):
 // a thread longer than one page is followed to its end, and anything that leaves
 // it unproven is reported as an error for this card so the caller fails closed.
 // Cost: zero extra requests for a card whose page was not full.
-export async function readBatchedComments(node, { issueId, token, fetchImpl = fetch }) {
+//
+// strict (a card with comment continuations): every page must carry pageInfo
+// with a boolean hasNextPage; a page without it may be partial, so the thread
+// is unproven and the card fails closed. Uncontinued cards keep the legacy
+// short-page rule.
+export async function readBatchedComments(node, { issueId, token, fetchImpl = fetch, strict = false }) {
   const page = node?.comments;
   if (!page || !Array.isArray(page.nodes)) {
     return { error: "the board read carried no comment thread for this card" };
   }
+  if (strict && !hasPageMetadata(page)) return { error: "a comment thread page carried no pagination metadata" };
   const comments = [...page.nodes];
   let info = page.pageInfo ?? {};
   // A short page IS the end of the thread — that is what makes the batched read
@@ -1975,6 +1987,7 @@ export async function readBatchedComments(node, { issueId, token, fetchImpl = fe
       return { error: err.message };
     }
     if (!next || !Array.isArray(next.nodes)) return { error: "a comment continuation page carried no thread" };
+    if (strict && !hasPageMetadata(next)) return { error: "a comment thread page carried no pagination metadata" };
     comments.push(...next.nodes);
     nodes = next.nodes;
     info = next.pageInfo ?? {};
@@ -2033,7 +2046,8 @@ export async function fetchLinearBoard({
       issue.commentThreadIds = resolved && issue.linearId ? [issue.linearId, ...parts.map((node) => node.id)] : null;
     }
     if (!readComments) continue;
-    let read = await readBatchedComments(cardNodes[index], { issueId: issue.linearId ?? issue.id, token, fetchImpl });
+    const strict = chain.length > 0;
+    let read = await readBatchedComments(cardNodes[index], { issueId: issue.linearId ?? issue.id, token, fetchImpl, strict });
     if (!read.error && issue.linearId) commentCounts.set(issue.linearId, read.comments.length);
     const threads = read.error ? [] : [read.comments];
     for (const [at, node] of parts.entries()) {
@@ -2042,7 +2056,7 @@ export async function fetchLinearBoard({
         read = { error: `comment continuation ${chain[at]} of ${issue.id} cannot be read from Linear` };
         break;
       }
-      const more = await readBatchedComments(node, { issueId: node.id, token, fetchImpl });
+      const more = await readBatchedComments(node, { issueId: node.id, token, fetchImpl, strict });
       if (more.error) { read = { error: `comment continuation ${chain[at]} of ${issue.id}: ${more.error}` }; break; }
       commentCounts.set(node.id, more.comments.length);
       threads.push(more.comments);
@@ -2167,8 +2181,8 @@ export async function fetchIssueComments({ issueId, token, fetchImpl = fetch, st
   for (;;) {
     const data = await sendLinear(LINEAR_ISSUE_COMMENTS_QUERY, { issueId, after }, token, fetchImpl, { retryServerErrors: true });
     const page = data?.issue?.comments;
-    if (strict && !Array.isArray(page?.nodes)) {
-      const err = new Error("a comment thread page was not returned");
+    if (strict && (!Array.isArray(page?.nodes) || !hasPageMetadata(page))) {
+      const err = new Error("a comment thread page was not returned in full");
       err.code = "LINEAR_COMMENT_CONTINUATION_UNREADABLE";
       throw err;
     }

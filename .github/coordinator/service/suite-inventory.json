@@ -4993,7 +4993,10 @@
     "LINEAR_THROTTLE_CLASSIFICATION: a comment-cap refusal and an ambiguous quota refusal with budget left and ordinary reset headers never HOLD",
     "LINEAR_THROTTLE_CLASSIFICATION: a spent requests bucket and a spent complexity bucket each HOLD until their own bucket's reset",
     "SHU-226 CONTINUATION: a confirmed marker older than the last 250 comments of a long original thread is still found, so nothing is rewritten",
-    "SHU-226 CONTINUATION: an unreadable continuation writes nothing and leaves the episode stopped"
+    "SHU-226 CONTINUATION: an unreadable continuation writes nothing and leaves the episode stopped",
+    "COMMENT_CONTINUATIONS completeness: a continued thread page without pageInfo or a boolean hasNextPage fails closed on the board, in the tick and in the strict read; an uncontinued card is unchanged",
+    "COMMENT_CONTINUATIONS completeness: merge readiness on a continued card whose thread page lacks pageInfo or a boolean hasNextPage records no attempt and merges nothing",
+    "SHU-226 CONTINUATION: a continued thread page without pageInfo or a boolean hasNextPage writes no incident marker"
   ],
   "requirements": [
     {
@@ -35510,6 +35513,18 @@
     },
     {
       "name": "SHU-226 CONTINUATION: an unreadable continuation writes nothing and leaves the episode stopped",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS completeness: a continued thread page without pageInfo or a boolean hasNextPage fails closed on the board, in the tick and in the strict read; an uncontinued card is unchanged",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS completeness: merge readiness on a continued card whose thread page lacks pageInfo or a boolean hasNextPage records no attempt and merges nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-226 CONTINUATION: a continued thread page without pageInfo or a boolean hasNextPage writes no incident marker",
       "capabilities": []
     }
   ],

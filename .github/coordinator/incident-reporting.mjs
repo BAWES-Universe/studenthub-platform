@@ -567,6 +567,9 @@ export async function reportCoordinatorIncident({
       comments = await boundedCall(() => readTargetThread(), { ...options, timeoutMs: options.timeoutMs * INCIDENT_THREAD_READ_CALLS });
       if (!Array.isArray(comments)) throw new Error("the comment thread was not read");
     } else {
+      // A continued thread is only ever read whole (readTargetThread): the
+      // per-id last-250 read cannot prove it complete.
+      if (targetCommentReadIds.length > 1) throw new Error("a continued thread needs its complete read");
       comments = [];
       for (const issueId of targetCommentReadIds) {
         const data = await boundedCall(() => sendLinear(LINEAR_INCIDENT_COMMENTS_QUERY, { issueId }, token, fetchImpl), options);

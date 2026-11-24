@@ -47,8 +47,14 @@ const respond = (data) => ({ status: 200, ok: true, headers: new Headers(), json
 
 // A Linear double that keeps a thread per issue (keyed by UUID), answers the
 // board read with each open issue's thread, and records every request.
-function linearStore(nodes, { threads = {}, offBoard = [] } = {}) {
+// pageInfo: UUID -> the pageInfo to answer for that issue's thread (undefined
+// drops the field), to prove what a page without its metadata does.
+function linearStore(nodes, { threads = {}, offBoard = [], pageInfo = {} } = {}) {
   const byId = new Map([...nodes, ...offBoard].map((entry) => [entry.id, entry]));
+  const page = (id) => {
+    const info = Object.hasOwn(pageInfo, id) ? pageInfo[id] : { hasNextPage: false, endCursor: null };
+    return info === undefined ? { nodes: [...threadOf(id)] } : { nodes: [...threadOf(id)], pageInfo: info };
+  };
   const byIdentifier = new Map([...nodes, ...offBoard].map((entry) => [entry.identifier, entry]));
   const store = { threads: new Map(Object.entries(threads)), requests: [], writes: [] };
   const threadOf = (id) => store.threads.get(id) ?? [];
@@ -59,16 +65,16 @@ function linearStore(nodes, { threads = {}, offBoard = [] } = {}) {
     store.requests.push(`${name} ${variables?.issueId ?? variables?.team ?? ""}`.trim());
     if (name === "CoordinatorIssues") {
       return respond({ issues: { nodes: nodes.map((entry) => ({ ...entry,
-        comments: { nodes: [...threadOf(entry.id)], pageInfo: { hasNextPage: false, endCursor: null } } })),
+        comments: page(entry.id) })),
       pageInfo: { hasNextPage: false, endCursor: null } } });
     }
     if (name === "CoordinatorCommentContinuation" || name === "CoordinatorIssueIdentity") {
       const found = byIdentifier.get(variables.issueId) ?? byId.get(variables.issueId) ?? null;
       return respond({ issue: found ? { id: found.id, identifier: found.identifier,
-        comments: { nodes: [...threadOf(found.id)], pageInfo: { hasNextPage: false, endCursor: null } } } : null });
+        comments: page(found.id) } : null });
     }
     if (name === "CoordinatorIssueComments") {
-      return respond({ issue: { comments: { nodes: [...threadOf(variables.issueId)], pageInfo: { hasNextPage: false, endCursor: null } } } });
+      return respond({ issue: { comments: page(variables.issueId) } });
     }
     if (query.includes("commentCreate")) {
       store.writes.push(variables.issueId);
@@ -310,6 +316,38 @@ test("COMMENT_CONTINUATIONS tick: a continuation Linear cannot find prevents dis
   assert.deepEqual(store.writes, []);
 });
 
+// A page with valid nodes but no pageInfo, or a non-boolean hasNextPage, may
+// be partial: on a continued card it is an unreadable thread.
+const BAD_PAGE_INFO = [["missing", undefined], ["non-boolean", { hasNextPage: "false", endCursor: null }], ["null", { hasNextPage: null, endCursor: null }]];
+
+test("COMMENT_CONTINUATIONS completeness: a continued thread page without pageInfo or a boolean hasNextPage fails closed on the board, in the tick and in the strict read; an uncontinued card is unchanged", async () => {
+  const threads = { [CARD.id]: [comment("old 0", "2026-10-22T00:00:00Z")], [CONT.id]: [comment("old 1", "2026-10-22T00:01:00Z")] };
+  for (const [label, info] of BAD_PAGE_INFO) {
+    for (const bad of [CARD.id, CONT.id]) {
+      const where = `${label} pageInfo on ${bad === CARD.id ? "the original" : "the continuation"}`;
+      const board = await fetchLinearBoard({ token: "tok", repo: "BAWES-Universe/studenthub-platform", fetchImpl: linearStore([CARD, CONT], { threads, pageInfo: { [bad]: info } }).fetch, commentContinuations: { "SHU-140": ["SHU-712"] } });
+      assert.match(board.commentsByIssue.get("SHU-140")?.error ?? "", /pagination metadata/, `${where}: the board read is an error for the card`);
+
+      const store = linearStore([CARD, CONT], { threads, pageInfo: { [bad]: info } });
+      const wa = workspaceAgents();
+      const run = await tick(store, wa, tickConfig());
+      assert.equal(wa.calls(), 0, `${where}: nothing is dispatched\n${run.out.join("\n")}`);
+      assert.deepEqual(store.writes, [], `${where}: no receipt is written`);
+      assert.match(run.out.join("\n"), /durable read failed for SHU-140: .*pagination metadata.* — DISPATCH PREVENTED/);
+
+      const strict = linearStore([CARD, CONT], { threads, pageInfo: { [bad]: info } });
+      await assert.rejects(fetchThreadComments({ issueIds: [CARD.id, CONT.id], token: "tok", fetchImpl: strict.fetch }),
+        (error) => error.code === "LINEAR_COMMENT_CONTINUATION_UNREADABLE", `${where}: the strict thread read refuses`);
+    }
+  }
+  // Legacy: an uncontinued card keeps the short-page rule.
+  const legacy = linearStore([CARD], { threads, pageInfo: { [CARD.id]: undefined } });
+  assert.equal((await fetchThreadComments({ issueIds: [CARD.id], token: "tok", fetchImpl: legacy.fetch })).length, 1);
+  const wa = workspaceAgents();
+  const run = await tick(legacy, wa, tickConfig({ comment_continuations: {} }));
+  assert.equal(wa.calls(), 1, `an uncontinued card still dispatches\n${run.out.join("\n")}`);
+});
+
 test("COMMENT_CONTINUATIONS tick: a malformed comment_continuations refuses the tick before any read", async () => {
   const store = linearStore([CARD, CONT], {});
   await assert.rejects(tick(store, workspaceAgents(), tickConfig({ comment_continuations: { "SHU-140": ["SHU-140"] } })), /may not list itself/);
@@ -453,7 +491,7 @@ test("LINEAR_COMMENT_CAP tick: a reset-less refusal of a write to a thread this 
 // Merge readiness: identity and reads from the card, records on its continuation
 // ---------------------------------------------------------------------------
 
-async function mergeFixture({ continuation = "resolved" } = {}) {
+async function mergeFixture({ continuation = "resolved", pageInfo = {} } = {}) {
   const { consumeMergeReadiness, parseMergeAttemptsFromComments } = await import("../merge-readiness.mjs");
   const { createReceipt, validateReceipt } = await import("../reconcile.mjs");
   const ACTOR = "trusted-linear-actor";
@@ -485,7 +523,10 @@ async function mergeFixture({ continuation = "resolved" } = {}) {
       let data;
       if (query.includes("CoordinatorMergeIssue")) data = { issue: thread ? { id: variables.issueId, identifier: issues.get(variables.issueId), title: "Routine change",
         state: { name: "In Progress", type: "started" }, labels: { nodes: [] }, relations: { nodes: [] }, comments: { nodes: structuredClone(thread) } } : null };
-      else if (query.includes("CoordinatorIssueComments")) data = { issue: { comments: { nodes: structuredClone(thread ?? []), pageInfo: { hasNextPage: false } } } };
+      else if (query.includes("CoordinatorIssueComments")) {
+        const info = Object.hasOwn(pageInfo, variables.issueId) ? pageInfo[variables.issueId] : { hasNextPage: false };
+        data = { issue: { comments: { nodes: structuredClone(thread ?? []), ...(info === undefined ? {} : { pageInfo: info }) } } };
+      }
       else if (query.includes("commentCreate")) {
         writes.push(variables.issueId);
         thread.push({ body: variables.body, createdAt: `2026-09-14T00:10:${String(writes.length).padStart(2, "0")}.000Z`, user: { id: ACTOR } });
@@ -547,4 +588,18 @@ test("COMMENT_CONTINUATIONS merge readiness: a card with a continuation binds it
   assert.equal(held.mergeCalls(), 0);
   assert.deepEqual(held.writes, []);
   assert.match(held.out.join("\n"), /SHU-900 HOLD=EXPLICIT_HOLD — comment continuation unresolved/);
+});
+
+test("COMMENT_CONTINUATIONS completeness: merge readiness on a continued card whose thread page lacks pageInfo or a boolean hasNextPage records no attempt and merges nothing", async () => {
+  for (const [label, info] of BAD_PAGE_INFO) {
+    for (const bad of ["linear-900", "linear-901"]) {
+      const m = await mergeFixture({ pageInfo: { [bad]: info } });
+      const result = await m.consume();
+      const where = `${label} pageInfo on ${bad}`;
+      assert.equal(result.merges, 0, `${where}\n${m.out.join("\n")}`);
+      assert.match(m.out.join("\n"), /SHU-900 HOLD=EXPLICIT_HOLD — Linear authority unavailable/, where);
+      assert.equal(m.mergeCalls(), 0, `${where}: nothing merged`);
+      assert.deepEqual(m.writes, [], `${where}: no merge-attempt record`);
+    }
+  }
 });
