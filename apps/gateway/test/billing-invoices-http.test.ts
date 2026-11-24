@@ -8,7 +8,7 @@ import { createInvoicesHttp, handleInvoices, type TransferInvoiceReads } from ".
 import { invoiceBankInfo, invoicePdf } from "../src/billing/invoice-pdf.js";
 
 // Synthetic companies and amounts only.
-const FIN = "f".repeat(43), OTHER = "o".repeat(43);
+const FIN = "f".repeat(43), OTHER = "o".repeat(43), BOTH = "b".repeat(43);
 const UNPAID: TransferInvoiceDocument = { invoiceNumber: "SH-2026-11-000001", transferId: "t-1", orgId: "C1", companyName: "Sultan <Center>", currencyCode: "KWD",
   invoiceDate: "2026-11-22", total: "12.500", lineCount: 3, status: "unpaid", paidOn: null, creditNumber: null, creditedOn: null, periodStart: "2026-10-01", periodEnd: "2026-10-31" };
 const PAID: TransferInvoiceDocument = { ...UNPAID, invoiceNumber: "SH-2026-11-000002", orgId: "P", companyName: "Parent", status: "paid", paidOn: "2026-11-25", lineCount: 1 };
@@ -215,18 +215,19 @@ test("CREDIT_NOTES_HTTP a credited invoice says so on the list, the statement an
 async function voidRig(t: TestContext) {
   const ORIGIN = "https://studenthub.example";
   const credits: { actorId: string; invoiceNumber: string; reason: string }[] = [], creditedNumbers = new Set<string>();
-  // "co" (company finance) reads but never voids; "fin" (StudentHub finance) voids but does not read.
+  // "co" (company finance) reads but never voids; "fin" (StudentHub finance) voids but does not read;
+  // "both" reads the parent's own invoice only (a self grant) and voids all of them.
   const list = (orgId: string) => orgId === "P" ? { orgId: "P", name: "Parent", invoices: [PAID, UNPAID] } : null;
   const doc = (orgId: string, number: string) => orgId === "P" ? [UNPAID, PAID, DRAFT].find(i => i.invoiceNumber === number) ?? null : null;
   const reads: TransferInvoiceReads = {
-    listForOrganization: async (principal, orgId) => principal === "co" ? list(orgId) : null,
-    document: async (principal, orgId, number) => principal === "co" ? doc(orgId, number) : null,
+    listForOrganization: async (principal, orgId) => principal === "co" ? list(orgId) : principal === "both" && orgId === "P" ? { orgId: "P", name: "Parent", invoices: [PAID] } : null,
+    document: async (principal, orgId, number) => principal === "co" ? doc(orgId, number) : principal === "both" && number === PAID.invoiceNumber ? doc(orgId, number) : null,
     statement: async (principal, orgId, from, to) => principal === "co" && orgId === "P" ? STATEMENT(from, to) : null,
   };
-  const voidReads = { listForOrganization: async (p: string, o: string) => p === "fin" ? list(o) : null,
-    document: async (p: string, o: string, n: string) => p === "fin" ? doc(o, n) : null };
+  const voidReads = { listForOrganization: async (p: string, o: string) => p === "fin" || p === "both" ? list(o) : null,
+    document: async (p: string, o: string, n: string) => p === "fin" || p === "both" ? doc(o, n) : null };
   const credit = { creditNumber: "SH-2026-11-000009", invoiceNumber: UNPAID.invoiceNumber, orgId: "C1", currencyCode: "KWD", creditDate: "2026-11-26", total: "12.500", reason: "Wrong hours", actorId: "fin" };
-  const service = createInvoicesHttp({ sessions: { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [OTHER]: { personId: "co" } } as Record<string, { personId: string }>)[id] as never }, reads,
+  const service = createInvoicesHttp({ sessions: { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [OTHER]: { personId: "co" }, [BOTH]: { personId: "both" } } as Record<string, { personId: string }>)[id] as never }, reads,
     voids: { reads: voidReads, origin: ORIGIN, async credit(input) {
       credits.push(input);
       if (input.invoiceNumber === DRAFT.invoiceNumber) return { kind: "not_creditable" };
@@ -308,6 +309,20 @@ test("INVOICE_VOID_HTTP only StudentHub finance voids, and sees only the void li
   const get = await fetch(x.base + VOID_PATH);
   assert.equal(get.status, 405); assert.equal(get.headers.get("allow"), "POST");
   assert.deepEqual(x.credits, [], "nothing refused reached the credit note store");
+});
+
+test("INVOICE_VOID_HTTP one who reads some invoices and may void more sees both, with PDF links only on those they read", async (t) => {
+  const x = await voidRig(t);
+  const json = await (await x.page(BOTH, "/organization/invoices/P", "application/json")).json() as { invoices: Record<string, unknown>[] };
+  assert.deepEqual(json.invoices.map(i => i.invoiceNumber), [PAID.invoiceNumber, UNPAID.invoiceNumber], "the void-only invoice is not dropped");
+  assert.equal(json.invoices[0]!.lineCount, PAID.lineCount, "the read invoice keeps its full fields");
+  assert.ok(!("lineCount" in json.invoices[1]!) && !("paidOn" in json.invoices[1]!), "the void-only invoice shows the void view alone");
+  const html = await (await x.page(BOTH)).text();
+  assert.ok(html.includes(`${PAID.invoiceNumber}.pdf`), "a PDF link for the invoice they read");
+  assert.ok(!html.includes(`${UNPAID.invoiceNumber}.pdf`), "none for the one they may only void");
+  for (const n of [PAID.invoiceNumber, UNPAID.invoiceNumber]) assert.ok(html.includes(`action="/organization/invoices/P/${n}/void"`), n);
+  assert.equal((await x.page(BOTH, `/organization/invoices/P/${UNPAID.invoiceNumber}.pdf`, "application/json")).status, 404, "nor its PDF");
+  assert.equal((await x.post(VOID_PATH, JSON.stringify({ reason: "Wrong hours" }), { session: BOTH })).status, 201);
 });
 
 test("INVOICE_VOID_HTTP without a gateway origin or a void store nobody voids", async (t) => {

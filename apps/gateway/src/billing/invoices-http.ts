@@ -25,7 +25,10 @@ import { invoicePdf, type InvoiceBankInfo } from "./invoice-pdf.js";
  * a `reason` in a JSON or form body. Only StudentHub's finance users void
  * (`transferInvoiceVoidDecision`, decided again by the store inside the credit's transaction). The list
  * page shows them a void form per standing invoice; one who may void but not read gets that list alone,
- * without PDF links, and no PDF or statement. Same-origin posts only. The JSON receipt is the outcome
+ * without PDF links, and no PDF or statement. One who reads some of the invoices and may void more sees
+ * both: PDF links only on those they read. An invoice the void list does not show (an unpaid one whose
+ * transfer is not locked or paid out) is not found; 409 is for one that stops being creditable between
+ * the page and the post. Same-origin posts only. The JSON receipt is the outcome
  * and the credit note number only; voiding twice answers the first credit note's number.
  */
 export interface TransferInvoiceReads {
@@ -123,15 +126,25 @@ function listHtml(page: TransferInvoicePage | InvoiceVoidPage, canVoid: boolean,
   const base = `${INVOICES_PATH}/${encodeURIComponent(page.orgId)}`;
   // A void-only entry carries no payment or credit dates; a reader's entry does.
   const dated = (i: TransferInvoiceListEntry | InvoiceVoidEntry) => "paidOn" in i ? i : { ...i, paidOn: null, creditedOn: null };
-  const rows = page.invoices.map(dated).map(i => `<tr><td>${esc(i.invoiceNumber)}</td><td>${esc(i.companyName)}</td><td>${esc(i.transferId)}</td><td>${esc(longDate(i.invoiceDate))}</td>`
+  // A reader's entry carries its payment date (null or not); only those get a PDF link.
+  const rows = page.invoices.map(entry => ({ i: dated(entry), pdf: documents && "paidOn" in entry })).map(({ i, pdf }) => `<tr><td>${esc(i.invoiceNumber)}</td><td>${esc(i.companyName)}</td><td>${esc(i.transferId)}</td><td>${esc(longDate(i.invoiceDate))}</td>`
     + `<td>${esc(i.currencyCode)} ${esc(i.total)}</td><td>${i.status === "paid" ? `Paid${i.paidOn ? ` on ${esc(longDate(i.paidOn))}` : ""}` : "Unpaid"}`
     + `${i.creditNumber ? `, voided by credit note ${esc(i.creditNumber)}${i.creditedOn ? ` on ${esc(longDate(i.creditedOn))}` : ""}` : ""}</td>`
-    + (documents ? `<td><a href="${esc(`${base}/${i.invoiceNumber}.pdf`)}">${i.status === "paid" ? "Receipt" : "Invoice"} (PDF)</a></td>` : "")
+    + (documents ? `<td>${pdf ? `<a href="${esc(`${base}/${i.invoiceNumber}.pdf`)}">${i.status === "paid" ? "Receipt" : "Invoice"} (PDF)</a>` : ""}</td>` : "")
     + (canVoid ? `<td>${i.creditNumber ? "" : `<form method="post" action="${esc(`${base}/${i.invoiceNumber}/void`)}"><label>Reason <input name="reason" required maxlength="500"></label> <button>Void with a credit note</button></form>`}</td>` : "")
     + "</tr>").join("");
   return `<main><h1>Invoices</h1><p>${esc(page.name)}: invoices for its transfers and its sub-companies' transfers, newest first.</p>${page.invoices.length
     ? `<table><thead><tr><th>Invoice number</th><th>Billed to</th><th>Transfer</th><th>Issue date</th><th>Amount</th><th>Status</th>${documents ? "<th>Document</th>" : ""}${canVoid ? "<th>Void</th>" : ""}</tr></thead><tbody>${rows}</tbody></table>`
     : "<p>There are no invoices yet. An invoice is issued when a transfer is locked.</p>"}</main>`;
+}
+
+/** The read page plus the void entries it lacks, newest first; the read page as it is when nothing is added. */
+function withVoidable(read: TransferInvoicePage, voidable: InvoiceVoidPage): TransferInvoicePage | InvoiceVoidPage {
+  const seen = new Set(read.invoices.map(i => i.invoiceNumber));
+  const extra = voidable.invoices.filter(i => !seen.has(i.invoiceNumber));
+  if (!extra.length) return read;
+  const invoices = [...read.invoices, ...extra].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate) || b.invoiceNumber.localeCompare(a.invoiceNumber));
+  return { orgId: read.orgId, name: read.name, invoices };
 }
 
 /** A real calendar date from 2000 on, or undefined. */
@@ -193,9 +206,10 @@ export async function handleInvoices(req: IncomingMessage, res: ServerResponse, 
         "content-length": String(document.bytes.length), "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
       res.end(document.bytes); return true;
     }
-    // A reader gets the list with documents; one who may only void gets the void list alone.
+    // A reader gets the list with documents; one who may only void gets the void list alone; one who
+    // may do both sees what they read in full and any further invoice they may void in the void view.
     const read = await service.list(viewer, orgId), voidable = await service.voidList(viewer, orgId);
-    const page = read ?? voidable;
+    const page = read && voidable ? withVoidable(read, voidable) : read ?? voidable;
     if (!page) return notFound(req, res);
     if (!wantsHtml(req.headers.accept)) return json(res, 200, { orgId: page.orgId, name: page.name, invoices: page.invoices });
     writeHtml(res, 200, pageDocument("Invoices", listHtml(page, voidable !== null, read !== null)), { "cache-control": "no-store" });
