@@ -100,7 +100,7 @@ test("a failed wake leaves other runs' trees alone and leaves nothing of its own
   assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "b", remote: "broken" }),
     (e: unknown) => e instanceof TickError && e.step === "resolve" && !e.message.includes("s3cret-token"));
   assert.equal(existsSync(path.join(w.ticks, "b")), false);
-  assert.equal(existsSync(path.join(w.ticks, ".runs", "b")), false);
+  assert.deepEqual(readdirSync(path.join(w.ticks, ".runs", "b")).sort(), ["abandoned", "owner"]);
   assert.throws(() => runDir(w.ticks, "../escape"), (e: unknown) => e instanceof TickError && e.step === "input");
   // A directory that exists without a reservation is never adopted or removed.
   mkdirSync(path.join(w.ticks, "orphan"), { recursive: true });
@@ -123,10 +123,10 @@ test("cleanup removes a tree only for the holder of its owner nonce, and never a
   assert.equal(git(b.dir, "rev-parse", "HEAD"), w.first);
 });
 
-test("while a cleanup holds its run id, a second cleanup and a new same-id setup cannot touch the tree, and a later setup gets its own", () => {
+test("while a cleanup holds its run id, a second cleanup and a same-id setup cannot touch the tree, and the id is never reused", () => {
   const w = world();
   const a = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });
-  const runs = path.join(w.ticks, ".runs");
+  const reserved = path.join(w.ticks, ".runs", "a");
   const during: { second?: unknown; setup?: unknown } = {};
   const result = cleanupRun({
     clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner,
@@ -141,36 +141,36 @@ test("while a cleanup holds its run id, a second cleanup and a new same-id setup
   assert.ok(during.second instanceof TickError && during.second.step === "cleanup");
   assert.ok(during.setup instanceof TickError && during.setup.step === "reserve");
   assert.equal(existsSync(a.dir), false);
-  assert.deepEqual(readdirSync(runs), []);
-  const again = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });
-  assert.equal(git(again.dir, "rev-parse", "HEAD"), w.first);
-  assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner }), (e: unknown) => e instanceof TickError && e.step === "cleanup");
-  assert.equal(existsSync(again.dir), true);
+  assert.deepEqual(readdirSync(reserved).sort(), ["owner", "removed"]);
+  assert.equal(readFileSync(path.join(reserved, "owner"), "utf8"), a.owner);
+  // The id stays spent: a later setup is refused, and a late cleanup by the same owner is refused too.
+  assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "a" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
+  assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner }), (e: unknown) => e instanceof TickError && /already removed/.test(e.message));
+  assert.deepEqual(readdirSync(reserved).sort(), ["owner", "removed"]);
 });
 
-test("a delayed cleanup from an earlier reservation cannot touch a later same-id run's tree", () => {
+test("an abandoned setup never frees its id; a cleanup held during abandonment keeps exclusive ownership of its claim", () => {
   const w = world();
-  const first = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });
-  let second: ReturnType<typeof setupRun> | undefined;
-  assert.throws(
-    () => cleanupRun({
-      clone: w.clone, ticks: w.ticks, run: "a", owner: first.owner,
-      // Between the old cleanup's owner read and its claim, the first run is cleaned up and the id is reused.
-      beforeClaim: () => {
-        assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: first.owner }).status, "removed");
-        second = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });
-      },
-    }),
-    (e: unknown) => e instanceof TickError && e.step === "cleanup" && /not the owner/.test(e.message),
-  );
-  assert.ok(second);
-  assert.notEqual(second.owner, first.owner);
-  assert.equal(existsSync(second.dir), true);
-  assert.equal(git(second.dir, "rev-parse", "HEAD"), w.first);
-  assert.deepEqual(readdirSync(path.join(w.ticks, ".runs", "a")), ["owner"]);
-  assert.equal(readFileSync(path.join(w.ticks, ".runs", "a", "owner"), "utf8"), second.owner);
-  assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: second.owner }).status, "removed");
-  assert.equal(existsSync(second.dir), false);
+  const a = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });
+  const orphan = path.join(w.ticks, "x");
+  mkdirSync(orphan, { recursive: true });
+  const reservedA = path.join(w.ticks, ".runs", "a");
+  const reservedX = path.join(w.ticks, ".runs", "x");
+  // While a's cleanup holds its claim, a wrong-owner cleanup is refused and leaves the claim alone, and a
+  // setup for x abandons (stray directory); abandonment deletes no reservation, its own or a's.
+  assert.equal(cleanupRun({
+    clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner,
+    afterClaim: () => {
+      assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: "0".repeat(32) }), (e: unknown) => e instanceof TickError && /not the owner/.test(e.message));
+      assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "x" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
+      assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "a" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
+      assert.deepEqual(readdirSync(reservedA).sort(), ["cleaning", "owner"]);
+      assert.deepEqual(readdirSync(reservedX).sort(), ["abandoned", "owner"]);
+    },
+  }).status, "removed");
+  assert.deepEqual(readdirSync(reservedA).sort(), ["owner", "removed"]);
+  assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "x" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
+  assert.equal(existsSync(orphan), true);
 });
 
 test("a failed cleanup keeps the reservation in place, even with a same-id setup overlapping it, so the same owner can retry", () => {
@@ -196,7 +196,7 @@ test("a failed cleanup keeps the reservation in place, even with a same-id setup
   assert.equal(readFileSync(path.join(w.ticks, ".runs", "a", "owner"), "utf8"), a.owner);
   assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner }).status, "removed");
   assert.equal(existsSync(a.dir), false);
-  assert.deepEqual(readdirSync(path.join(w.ticks, ".runs")), []);
+  assert.deepEqual(readdirSync(path.join(w.ticks, ".runs", "a")).sort(), ["owner", "removed"]);
 });
 
 /** Fills the Part C placeholders for one wake. */

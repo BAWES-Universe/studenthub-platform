@@ -115,10 +115,11 @@ export function setupRun(options: SetupOptions): SetupResult {
   catch (error) { throw new TickError("reserve", `run ${run} is already reserved; run ids are never reused (${(error as NodeJS.ErrnoException).code ?? "error"})`); }
   const owner = randomBytes(16).toString("hex");
   writeFileSync(path.join(reserved, "owner"), owner, { flag: "wx" });
-  // From here the run id is ours, so removing its tree on failure can only remove our own.
+  // From here the run id is ours for good: a reservation is never deleted, so no later run can hold this id
+  // and removing its tree on failure can only remove our own. The reservation stays as a spent marker.
   const abandon = (step: TickStep, message: string, ownTree = true): never => {
     try { if (ownTree && registered(clone, dir)) git(clone, ["worktree", "remove", "--force", dir]); } catch { /* reported below */ }
-    rmSync(reserved, { recursive: true, force: true });
+    try { mkdirSync(path.join(reserved, "abandoned")); } catch { /* already marked */ }
     throw new TickError(step, message);
   };
   if (existsSync(dir)) abandon("reserve", `${dir} exists without a reservation; left in place`, false);
@@ -142,32 +143,30 @@ export interface CleanupOptions {
   readonly ticks: string;
   readonly run: string;
   readonly owner: string;
-  /** Test seam: runs after the first owner read and before the claim (for example, to finish and reuse the id). */
-  readonly beforeClaim?: () => void;
   /** Test seam: runs while cleanup holds the run id, before the tree is removed; a throw counts as a failed removal. */
   readonly afterClaim?: () => void;
 }
 
 /**
  * Removes exactly this run's tree, and only for the holder of its owner nonce. Never prunes.
- * The run's reservation stays in place until the tree is gone, so a same-id setup is refused at `reserve`
- * the whole time. Inside it, cleanup takes an exclusive claim (one `mkdir` wins), so a second cleanup is
- * refused too. If removal fails, only the claim is dropped: the reservation and its owner value stay
- * exactly where they were, so the same owner can retry.
+ * A run id has exactly one reservation for all time (setup never deletes one and cleanup never does), so
+ * its owner value is immutable and there is no earlier or later generation to confuse it with. Inside the
+ * reservation, cleanup takes an exclusive claim (one `mkdir` wins); only the holder ever deletes that
+ * claim. Success leaves a `removed` marker, so a repeated cleanup is refused. If removal fails, the holder
+ * drops its claim and the same owner can retry.
  */
 export function cleanupRun(options: CleanupOptions): CleanupResult {
   const dir = runDir(options.ticks, options.run);
   const reserved = reservation(options.ticks, options.run);
   const claim = path.join(reserved, "cleaning");
   const refuse = (why: string): never => { throw new TickError("cleanup", `${why}; nothing removed`); };
-  const recorded = (): string => { try { return readFileSync(path.join(reserved, "owner"), "utf8"); } catch { return ""; } };
-  if (!OWNER.test(options.owner) || recorded() !== options.owner) refuse(`not the owner of run ${options.run}`);
-  options.beforeClaim?.();
+  let recorded = "";
+  try { recorded = readFileSync(path.join(reserved, "owner"), "utf8"); } catch { /* no reservation */ }
+  if (!OWNER.test(options.owner) || recorded !== options.owner) refuse(`not the owner of run ${options.run}`);
   try { mkdirSync(claim); } catch { refuse(`run ${options.run} is already being cleaned up`); }
-  // The read above may belong to an earlier reservation of this id; only the owner read under the claim counts.
-  if (recorded() !== options.owner) {
+  if (existsSync(path.join(reserved, "removed"))) {
     rmSync(claim, { recursive: true, force: true });
-    refuse(`not the owner of run ${options.run}`);
+    refuse(`run ${options.run} was already removed`);
   }
   try {
     options.afterClaim?.();
@@ -177,7 +176,8 @@ export function cleanupRun(options: CleanupOptions): CleanupResult {
     rmSync(claim, { recursive: true, force: true });
     throw new TickError("cleanup", `${failure(error)}; the reservation is kept, retry this cleanup with the same owner value`);
   }
-  rmSync(reserved, { recursive: true, force: true });
+  mkdirSync(path.join(reserved, "removed"));
+  rmSync(claim, { recursive: true, force: true });
   return { status: "removed", run: options.run, dir };
 }
 
