@@ -28,6 +28,8 @@ function sources(): M4Sources {
     contact: [{ contact_uuid: "p-1", contact_name: `${SECRET} Person`, contact_email: "secret@example.com", deleted: 0 }],
     company_contact: [{ company_contact_uuid: "l-1", contact_uuid: "p-1", company_id: 7, allow_access: 0 },
       { company_contact_uuid: "l-2", contact_uuid: "p-1", company_id: 7, allow_access: 1 }],
+    candidate: [{ candidate_id: 31, deleted: 0, candidate_name: `${SECRET} Person`, candidate_birth_date: "2010-11-23" },
+      { candidate_id: 32, deleted: 1, candidate_name: `${SECRET} Gone` }],
   };
 }
 
@@ -51,6 +53,8 @@ interface HarnessOptions {
   rows?: M4Sources;
   dir?: string;
   provenance?: Partial<Provenance>;
+  /** The run's clock, default 2026-11-23T02:00:00.000Z. */
+  now?: string;
 }
 
 interface Harness {
@@ -81,6 +85,7 @@ function harness(opts: HarnessOptions = {}): Harness {
     brandLinks: async (r) => { calls.push("brand_company"); return ok(r.length); },
     stores: async (r) => { calls.push("store"); return ok(r.length); },
     contacts: async (r) => { calls.push("company_contact"); return ok(r.length); },
+    people: async (r) => { calls.push("candidate"); return ok(r.length); },
     ...opts.writers,
   };
   const target: WriteTarget = {
@@ -94,7 +99,7 @@ function harness(opts: HarnessOptions = {}): Harness {
         if (db.sessionLost || db.writer !== me) throw new Error("m4.writerLost");
         return f(...a);
       };
-      return { catalogue: fenced(writers.catalogue), companies: fenced(writers.companies), brandLinks: fenced(writers.brandLinks), stores: fenced(writers.stores), contacts: fenced(writers.contacts) };
+      return { catalogue: fenced(writers.catalogue), companies: fenced(writers.companies), brandLinks: fenced(writers.brandLinks), stores: fenced(writers.stores), contacts: fenced(writers.contacts), people: fenced(writers.people) };
     },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
@@ -132,7 +137,7 @@ function harness(opts: HarnessOptions = {}): Harness {
     }),
     target: () => target,
     provenance: () => ({ head: REVISION, clean: true, artifact: ARTIFACT, ...opts.provenance }),
-    now: () => new Date("2026-11-23T02:00:00.000Z"),
+    now: () => new Date(opts.now ?? "2026-11-23T02:00:00.000Z"),
     log: (line) => out.push(line),
     error: (line) => {
       err.push(line);
@@ -161,8 +166,11 @@ test("plan publishes its own counts-only receipt bound to the invocation, revisi
       [2, "plan", "ok", h.invocation, REVISION, ARTIFACT, TARGET, OPERATOR]);
     assert.deepEqual(r.refresh, { startedAt: REFRESH.startedAt, finishedAt: REFRESH.finishedAt, totalRows: 42 });
     assert.match(r.plan!, /^[0-9a-f]{64}$/);
-    assert.equal(r.steps.length, 12);
-    assert.deepEqual(r.steps.at(-1)!.rules, { "contact.access": 1 });
+    assert.equal(r.steps.length, 13);
+    assert.equal(r.today, "2026-11-23");
+    // M-1 on the run date: exactly 16 that day, and an archived candidate reported by rule only.
+    assert.deepEqual(r.steps.at(-1), { step: "candidate", legacy: 2, mapped: 1, rules: { "candidate.archived": 1 } });
+    assert.deepEqual(r.steps.find((s) => s.step === "company_contact")!.rules, { "contact.access": 1 });
     assert.deepEqual(h.calls, []);
     const out = h.file("out");
     assert.deepEqual(readdirSync(out).sort(), [`${h.invocation}.claim`, `${h.invocation}.plan.receipt.json`, `${h.invocation}.plan.report.json`]);
@@ -198,6 +206,21 @@ test("the plan identity follows the revision, the artifact, the refresh, the des
   } finally { cleanup(h); }
 });
 
+test("the plan binds the Kuwait run date: a write on the next Kuwait day is refused before any write", async () => {
+  // 20:59Z is 23:59 on 23 Nov in Kuwait; 21:01Z is already 24 Nov there.
+  const expected = await planId({ now: "2026-11-23T20:59:00.000Z" });
+  assert.equal(await planId({ now: "2026-11-23T00:00:00.000Z" }), expected, "same Kuwait day, same plan");
+  const late = harness({ env: { M4_EXPECTED_PLAN: expected }, now: "2026-11-23T21:01:00.000Z" });
+  try {
+    assert.equal(await main(["write"], late.deps), 2);
+    assert.deepEqual(late.err, ["m4: refused.planMismatch"]);
+    assert.deepEqual(late.calls, []);
+    assert.equal(late.receipt("write").today, "2026-11-24");
+  } finally { cleanup(late); }
+  const same = harness({ env: { M4_EXPECTED_PLAN: expected }, now: "2026-11-23T20:59:30.000Z" });
+  try { assert.equal(await main(["write"], same.deps), 0); } finally { cleanup(same); }
+});
+
 test("write imports in order under the writer lock and its own receipt passes acceptWrite with exit 0", async () => {
   const expected = await planId();
   const db = fakeDb();
@@ -205,8 +228,8 @@ test("write imports in order under the writer lock and its own receipt passes ac
   try {
     const code = await main(["write"], h.deps);
     assert.equal(code, 0);
-    assert.equal(h.calls.length, 12);
-    assert.equal(h.calls.at(-1), "company_contact");
+    assert.equal(h.calls.length, 13);
+    assert.equal(h.calls.at(-1), "candidate");
     const r = h.receipt("write");
     assert.deepEqual([r.kind, r.status, r.plan, r.invocation, r.code, r.unconfirmed], ["write", "ok", expected, h.invocation, undefined, undefined]);
     assert.deepEqual(r.steps.map((s) => s.step), h.calls);
@@ -317,7 +340,7 @@ test("a write step with refused rows or conflicts ends refused_rows, exit 3, wit
     assert.equal(code, 3);
     const r = h.receipt("write");
     assert.equal(r.status, "refused_rows");
-    assert.deepEqual(r.steps.at(-1)!.write!.refused, { no_organization: 1 });
+    assert.deepEqual(r.steps.find((s) => s.step === "company_contact")!.write!.refused, { no_organization: 1 });
     assert.equal(r.steps.find((s) => s.step === "store")!.write!.conflicts, 1);
     assert.ok(!acceptWrite(r, h.invocation, expected, code));
     assert.ok(!readFileSync(path.join(h.file("out"), `${h.invocation}.write.receipt.json`), "utf8").includes("l-1"));
@@ -334,7 +357,7 @@ test("a late failure ends failed, listing the confirmed steps and the unconfirme
     const r = h.receipt("write");
     assert.deepEqual([r.status, r.code, r.plan], ["failed", "m4.failed", expected]);
     assert.deepEqual(r.steps.map((s) => s.step), h.calls); // the failing stores writer records no call
-    assert.deepEqual(r.unconfirmed, ["store", "company_contact"]);
+    assert.deepEqual(r.unconfirmed, ["store", "company_contact", "candidate"]);
     assert.deepEqual(h.err, ["m4: m4.failed"]);
     assert.ok(!acceptWrite(r, h.invocation, expected, 1));
     const shared = readFileSync(path.join(h.file("out"), `${h.invocation}.write.receipt.json`), "utf8") + h.err.join("\n") + h.out.join("\n");
@@ -354,7 +377,7 @@ test("a step whose writer committed but whose result fails the checks is not cou
     assert.equal(r.status, "failed");
     assert.equal(r.code, "m4.report.unsafeRefusal");
     assert.equal(r.steps.at(-1)!.step, "company");
-    assert.deepEqual(r.unconfirmed, ["brand_company", "store", "company_contact"]);
+    assert.deepEqual(r.unconfirmed, ["brand_company", "store", "company_contact", "candidate"]);
     assert.ok(!JSON.stringify(r).includes(SECRET));
   } finally { cleanup(h); }
 });
@@ -426,7 +449,7 @@ test("losing the lock session mid-write stops further writes, fails the attempt 
     const r = h.receipt("write");
     assert.deepEqual([r.status, r.code], ["failed", "m4.writerLost"]);
     assert.equal(r.steps.at(-1)!.step, "company");
-    assert.deepEqual(r.unconfirmed, ["brand_company", "store", "company_contact"]);
+    assert.deepEqual(r.unconfirmed, ["brand_company", "store", "company_contact", "candidate"]);
     assert.ok(!h.calls.includes("store") && !h.calls.includes("company_contact"));
     assert.ok(!acceptWrite(r, h.invocation, expected, code));
   } finally { cleanup(h); }
@@ -436,13 +459,13 @@ test("a lock lost after the last batch still fails the attempt: exclusivity is r
   const expected = await planId();
   const db = fakeDb();
   const h = harness({ env: { M4_EXPECTED_PLAN: expected }, db, writers: {
-    contacts: async (rows) => { h.calls.push("company_contact"); db.sessionLost = true; return ok(rows.length); },
+    people: async (rows) => { h.calls.push("candidate"); db.sessionLost = true; return ok(rows.length); },
   } });
   try {
     const code = await main(["write"], h.deps);
     assert.equal(code, 1);
     const r = h.receipt("write");
-    assert.deepEqual([r.status, r.code, r.steps.length, r.unconfirmed], ["failed", "m4.writerLost", 12, []]);
+    assert.deepEqual([r.status, r.code, r.steps.length, r.unconfirmed], ["failed", "m4.writerLost", 13, []]);
     assert.ok(!acceptWrite(r, h.invocation, expected, code));
   } finally { cleanup(h); }
 });

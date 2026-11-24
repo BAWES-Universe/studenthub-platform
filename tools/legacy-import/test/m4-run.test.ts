@@ -45,7 +45,7 @@ test("a plan maps every step in order, writes nothing, and its report and receip
   assert.equal(report.ok, true);
   assert.deepEqual(report.steps.map((s) => s.step), [
     "catalogue.country", "catalogue.currency", "catalogue.bank", "catalogue.tag", "catalogue.brand", "catalogue.mall",
-    "catalogue.university", "catalogue.area", "company", "brand_company", "store", "company_contact"]);
+    "catalogue.university", "catalogue.area", "company", "brand_company", "store", "company_contact", "candidate"]);
   const by = new Map(report.steps.map((s) => [s.step, s]));
   // A row with no usable id is counted under its rule but has no id to list.
   assert.deepEqual([by.get("company")!.legacy, by.get("company")!.mapped, by.get("company")!.rules, by.get("company")!.issueIds],
@@ -67,6 +67,7 @@ test("write mode calls each store once, in dependency order, and the report keep
     brandLinks: async (rows) => { calls.push("brand_company"); return { inserted: 1, unchanged: 0, conflicts: [], refused: rows.slice(1).map((r) => ({ legacyId: r.brandLegacyId, code: "no_organization" })) }; },
     stores: async (rows) => { calls.push("store"); return done(rows.length); },
     contacts: async (rows) => { calls.push("company_contact"); return { inserted: 0, unchanged: 0, conflicts: rows.map((r) => ({ legacyId: r.legacyId, existingDigest: "a".repeat(64), incomingDigest: "b".repeat(64) })), refused: [] }; },
+    people: async (rows) => { calls.push("candidate"); return done(rows.length); },
   };
   const report = await runM4(sources(), writers, "2026-11-23T00:00:00.000Z");
   assert.deepEqual(calls, report.steps.map((s) => s.step));
@@ -89,4 +90,15 @@ test("the CLI prints our own codes as they are, camel case included, and masks a
   for (const code of ["m4.read.store", "m4.badSourceName", "m4.report.unsafeRefusal", "m4.report.unsafe"]) assert.equal(errorCode(new Error(code)), code);
   for (const other of [`${SECRET} value`, "m4.read.store: Secret", "m4.", "m4..x", "duplicate key value (secret@example.com)"]) assert.equal(errorCode(new Error(other)), "m4.failed");
   assert.equal(errorCode("m4.read.store"), "m4.failed");
+});
+
+test("the run reads M-1's columns through the same allowlist, and nothing private", async () => {
+  const { M1_SOURCES } = await import("../src/m1-people.js");
+  for (const [table, columns] of Object.entries(M1_SOURCES)) {
+    const listed = M4_SOURCES[table as M4Table] as readonly string[];
+    for (const column of columns) assert.ok(listed.includes(column), `${table}.${column}`);
+  }
+  for (const column of ["candidate_password_hash", "candidate_email", "candidate_phone", "candidate_iban", "candidate_civil_id"]) {
+    assert.ok(!(M4_SOURCES.candidate as readonly string[]).includes(column), column);
+  }
 });

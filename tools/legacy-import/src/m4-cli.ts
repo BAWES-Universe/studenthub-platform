@@ -1,5 +1,6 @@
 /**
- * M-4 importer CLI: organizations, stores, contacts and catalogues from the refreshed legacy copy.
+ * M-4 importer CLI: organizations, stores, contacts and catalogues from the refreshed legacy copy,
+ * then M-1's approved profile snapshots (people), in the same plan and write.
  *
  * On the staging host (a Hermes card runs it, with a fresh M4_INVOCATION each time), only
  * through the launcher, which verifies the runtime before this module is loaded:
@@ -38,13 +39,15 @@
  *
  *   plan   Reads the legacy copy and maps every table. Writes nothing to the platform. Publishes
  *          the plan identity: a sha256 over the stated revision, the runtime digest,
- *          the refresh read, the destination (M4_TARGET_ID, M4_OPERATOR_ORG_ID) and every
- *          mapped row's legacy id and digest.
+ *          the refresh read, the destination (M4_TARGET_ID, M4_OPERATOR_ORG_ID), the run's
+ *          Kuwait date with the M-1 mapper revision, and every mapped row's legacy id and digest.
+ *          The date is part of the identity because M-1's minimum-age rule is applied on it, so a
+ *          write on another Kuwait day is refused as planMismatch and needs a fresh plan.
  *   write  Refuses unless M4_EXPECTED_PLAN equals the identity it computes now, the target
  *          database's legacy_import_target row says staging with target_id = M4_TARGET_ID
  *          (migration 0652), the operator organization exists there, and no other writer holds
  *          the target. Then it publishes `started`, imports in order (catalogues, companies,
- *          brand links, stores, contacts) and publishes the outcome. A failure lists the steps
+ *          brand links, stores, contacts, people) and publishes the outcome. A failure lists the steps
  *          whose results were confirmed and the ones that were not; the first unconfirmed step
  *          may have committed in part.
  *
@@ -75,14 +78,15 @@ import { spawn } from "node:child_process";
 import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import pg from "pg";
-import { PostgresCatalogueImportStore, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresStoreImportStore } from "@studenthub/db/import";
+import { PostgresCatalogueImportStore, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore } from "@studenthub/db/import";
+import { PROFILE_PARITY_REVISION } from "@studenthub/profile";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
 import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, lockPathFrom, parseDatabaseUrl } from "./refresh.js";
 import { refreshIdentity } from "./twin/cli.js";
 import type { RefreshIdentity } from "./twin/report.js";
 import type { LegacyReader } from "./twin/journey.js";
 import { mirrorReader } from "./twin/staging.js";
-import { planIdentity, planM4, readM4Sources, receiptSafe, receiptStep, runM4, type M4Report, type M4Step, type M4Writers, type ReceiptStep } from "./m4-run.js";
+import { kuwaitDay, planIdentity, planM4, readM4Sources, receiptSafe, receiptStep, runM4, type M4Report, type M4Step, type M4Writers, type ReceiptStep } from "./m4-run.js";
 
 export const DEFAULT_M4_OUTPUT_DIR = "/var/lib/legacy-import/m4";
 
@@ -91,12 +95,14 @@ export function m4Writers(pool: pg.Pool, actorRef: string, operatorOrgId: string
   const organizations = new PostgresOrganizationImportStore(pool, ORGANIZATION_PARITY_REVISION, operatorOrgId);
   const stores = new PostgresStoreImportStore(pool, actorRef);
   const contacts = new PostgresContactImportStore(pool, actorRef);
+  const people = new PostgresPersonSnapshotImportStore(pool, PROFILE_PARITY_REVISION);
   return {
     catalogue: (_table, items, now) => catalogue.importItems(items, now),
     companies: (rows) => organizations.importOrganizations(rows),
     brandLinks: (rows) => stores.importBrandLinks(rows),
     stores: (rows, now) => stores.importStores(rows, now),
     contacts: (rows, now) => contacts.importContacts(rows, now),
+    people: (rows) => people.importPeople(rows),
   };
 }
 
@@ -127,6 +133,8 @@ export interface M4Receipt {
   readonly refresh?: RefreshIdentity;
   readonly target?: string;
   readonly operator?: string;
+  /** The run's Kuwait date; the plan identity binds it (M-1's age rule). */
+  readonly today?: string;
   readonly plan?: string;
   /** Steps whose results were confirmed, in order. */
   readonly steps: readonly ReceiptStep[];
@@ -412,9 +420,12 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     if (!refresh) refuse("refreshNotOk");
     bound = { revision, artifact, refresh, target: targetId, operator };
     const sources = await readM4Sources(deps.reader(env));
-    const plan = planM4(sources);
-    const identity = planIdentity(plan, { revision, artifact, refresh: refresh!, target: targetId, operator });
-    bound = { ...bound, plan: identity };
+    // One date for the whole run, taken once: a write on another Kuwait day computes another
+    // identity and is refused as planMismatch, so it needs a fresh, reviewed plan.
+    const today = kuwaitDay(deps.now().toISOString());
+    const plan = planM4(sources, today);
+    const identity = planIdentity(plan, { revision, artifact, refresh: refresh!, target: targetId, operator, today });
+    bound = { ...bound, today, plan: identity };
     const planned = await runM4(sources, null, deps.now().toISOString(), undefined, plan);
     if (!receiptSafe(planned)) throw new Error("m4.report.unsafe");
 
