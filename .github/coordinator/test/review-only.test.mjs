@@ -1012,3 +1012,75 @@ test("foreign review receipt: the armed episode's own receipt, or one at the app
   assert.equal(foreignReviewDisposition({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS" }, null), "release", "affirmative absence");
   assert.equal(foreignReviewDisposition(null, "COMPLETED"), "release", "a finished run bound to attempt and head");
 });
+
+// SHU-71, 23 Nov: with two card workers each coordinator reconciles only its own
+// card, so SHU-304's review stuck at LAUNCH_UNKNOWN after its episode ended held
+// the review gate for SHU-698 and SHU-699. Another worker's tick now asks the
+// supervisor about it over status only once the episode has certainly ended, and
+// releases it only on positive evidence; anything else leaves it holding.
+async function endedEpisodeTick(answer, { episode = "shu-304-run-20260909T230000Z" } = {}) {
+  const { createEpisodeHarness } = await import("./fixture/episode-harness.mjs");
+  const h = createEpisodeHarness({ configOverrides: { workers: { max: 2 }, dispatch_scope: { issue_ids: ["SHU-140"] } },
+    extraNodes: [{ id: "uuid-SHU-304", identifier: DESK, title: "review desk", state: { name: "Todo" }, priorityLabel: "Low",
+      labels: { nodes: [{ name: "repo:platform" }] }, assignee: null, delegate: null, parent: null, relations: { nodes: [] } }] });
+  const made = createReceipt({ receipt_version: "1.1.0", issue_id: DESK, authorization_ref: DESK, requested_worker: "codex-verifier",
+    role: "review", runtime: "codex-cli", repo: REPO, branch: "feature/reviewed", target_sha: HEAD,
+    workspace_scope: "full", scope_phase: "review", episode_id: episode, review_base_sha: BASE });
+  assert.ok(made.ok, JSON.stringify(made.errors));
+  const unknown = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+  h.comments.push({ body: receiptCommentBody(unknown), createdAt: unknown.last_activity });
+  const operations = [];
+  const mine = () => h.comments.filter((c) => c.body.includes(unknown.attempt_id)).length;
+  const before = mine();
+  const run = await h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET }, io: {
+    supervisorTransport: async ({ request }) => { operations.push(request.operation); if (answer instanceof Error) throw answer; return answer(request.order); } } });
+  return { h, unknown, operations, run, written: mine() - before };
+}
+
+test("SHU71_ENDED_EPISODE_REVIEW_SETTLED: another card's review from an ended episode is released only on the supervisor's positive evidence", async () => {
+  for (const [label, answer, stage] of [
+    ["durable COMPLETED", (order) => supervisorAnswer(order), "COMPLETED"],
+    ["durable FAILED", (order) => supervisorAnswer(order, { stage: "FAILED", result: null }), "FAILED"],
+  ]) {
+    const { h, unknown, operations, run, written } = await endedEpisodeTick(answer);
+    try {
+      const held = h.receiptFor(unknown.attempt_id);
+      assert.equal(held.stage, "HOLD", `${label}\n${run.text}`);
+      assert.ok(held.notes.some((n) => n.startsWith(`held: ENDED_EPISODE_REVIEW: review from episode shu-304-run-20260909T230000Z, which has ended; released on the supervisor's durable ${stage} record`)), `SHU71_DURABLE_DISPOSITION: ${JSON.stringify(held.notes)}`);
+      assert.equal(held.verdict_stage ?? null, null, `${label}: the verdict is never applied`);
+      assert.equal(written, 1, `${label}: one receipt written`);
+      assert.deepEqual(operations, ["status"], `${label}: status only, never submit`);
+      assert.equal(h.launched.length, 0, `${label}: nothing launched this tick`);
+      assert.deepEqual(h.pauses, [], `${label}: no adapter paused`);
+      assert.match(run.text, /dispatch: DEFERRED — lifecycle transitions were persisted this run/);
+    } finally { h.cleanup(); }
+  }
+  const refused = await endedEpisodeTick(() => ({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS", reason: "supervisor refused this attempt and holds no record of it" }));
+  try {
+    assert.equal(refused.h.receiptFor(refused.unknown.attempt_id).stage, "HOLD", "SHU71_REFUSED_LAUNCH_RELEASED");
+  } finally { refused.h.cleanup(); }
+});
+
+test("SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keeps the gate and nothing is written", async () => {
+  for (const [label, answer] of [
+    ["bare MISSING_CLAIM (a supervisor that never saw the attempt)", () => ({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" })],
+    ["still RUNNING", (order) => supervisorAnswer(order, { stage: "RUNNING", result: null })],
+    ["not durable", (order) => supervisorAnswer(order, { durable: false })],
+    ["another head", (order) => supervisorAnswer(order, { target_sha: "b".repeat(40) })],
+    ["transport fault", new Error("socket vanished")],
+  ]) {
+    const { h, unknown, operations, run, written } = await endedEpisodeTick(answer);
+    try {
+      assert.equal(h.receiptFor(unknown.attempt_id).stage, "LAUNCH_UNKNOWN", `${label}\n${run.text}`);
+      assert.equal(written, 0, `${label}: no receipt written for the held review`);
+      assert.ok(!h.launched.some((l) => l.attempt_id === unknown.attempt_id), `${label}: the held review is never launched`);
+      assert.deepEqual(operations, ["status"], `${label}: status only`);
+      assert.match(run.text, /lifecycle: ENDED_EPISODE_REVIEW SHU-304 attempt \S+ LAUNCH_UNKNOWN in episode shu-304-run-20260909T230000Z held — the supervisor/, label);
+    } finally { h.cleanup(); }
+  }
+  const young = await endedEpisodeTick((order) => supervisorAnswer(order), { episode: "shu-304-run-20260910T060000Z" });
+  try {
+    assert.equal(young.h.receiptFor(young.unknown.attempt_id).stage, "LAUNCH_UNKNOWN", "SHU71_INSIDE_ITS_BOUND_NOT_ASKED");
+    assert.deepEqual(young.operations, [], "an episode that may still run is not asked about");
+  } finally { young.h.cleanup(); }
+});

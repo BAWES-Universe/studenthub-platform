@@ -4,6 +4,7 @@
 // savepoints, batch lock). The report carries table names, legacy ids, rule codes, counts and
 // digests only: no names, emails, phones or other legacy values. Read-only against legacy.
 
+import { createHash } from "node:crypto";
 import { LEGACY_CATALOGUE_TABLES, mapLegacyCatalogue, type LegacyCatalogueTable } from "./m4-catalogue.js";
 import { COMPANY_SNAPSHOT_COLUMNS, mapLegacyCompanies } from "./m4-organizations.js";
 import { mapLegacyBrandLinks, mapLegacyStores } from "./m4-stores.js";
@@ -146,19 +147,22 @@ function step(name: string, legacy: number, mapped: number, issues: readonly { r
  * plan: nothing is written anywhere. A writer that throws stops the run; the steps before it
  * stay committed (each is idempotent, so the next run carries on).
  */
-export async function runM4(sources: M4Sources, writers: M4Writers | null, now: string): Promise<M4Report> {
-  const plan = planM4(sources);
+export async function runM4(sources: M4Sources, writers: M4Writers | null, now: string,
+  onStep: (step: M4Step) => void = () => undefined, plan: M4Plan = planM4(sources)): Promise<M4Report> {
   const steps: M4Step[] = [];
+  // A step is reported once its writer returned and its result passed the checks. A failed run
+  // therefore lists the confirmed steps; the step after them may have committed in part.
+  const add = (item: M4Step) => { steps.push(item); onStep(item); };
   for (const c of plan.catalogue) {
-    steps.push(step(`catalogue.${c.table}`, sources[c.table].length, c.items.length, c.issues, writers ? await writers.catalogue(c.table, c.items, now) : undefined));
+    add(step(`catalogue.${c.table}`, sources[c.table].length, c.items.length, c.issues, writers ? await writers.catalogue(c.table, c.items, now) : undefined));
   }
-  steps.push(step("company", sources.company.length, plan.companies.organizations.length, plan.companies.issues,
+  add(step("company", sources.company.length, plan.companies.organizations.length, plan.companies.issues,
     writers ? await writers.companies(plan.companies.organizations) : undefined));
-  steps.push(step("brand_company", sources.brand.length, plan.brandLinks.links.length, plan.brandLinks.issues,
+  add(step("brand_company", sources.brand.length, plan.brandLinks.links.length, plan.brandLinks.issues,
     writers ? await writers.brandLinks(plan.brandLinks.links) : undefined));
-  steps.push(step("store", sources.store.length, plan.stores.stores.length, plan.stores.issues,
+  add(step("store", sources.store.length, plan.stores.stores.length, plan.stores.issues,
     writers ? await writers.stores(plan.stores.stores, now) : undefined));
-  steps.push(step("company_contact", sources.company_contact.length, plan.contacts.contacts.length, plan.contacts.issues,
+  add(step("company_contact", sources.company_contact.length, plan.contacts.contacts.length, plan.contacts.issues,
     writers ? await writers.contacts(plan.contacts.contacts, now) : undefined));
   const ok = steps.every((s) => !s.write || (s.write.conflicts.length === 0 && Object.keys(s.write.refused).length === 0));
   return { schemaVersion: 1, mode: writers ? "write" : "plan", steps, ok };
@@ -171,4 +175,57 @@ export function receiptSafe(report: M4Report): boolean {
     && Object.keys(s.rules).every((r) => RULE.test(r))
     && Object.entries(s.issueIds).every(([r, list]) => RULE.test(r) && ids(list))
     && (!s.write || (ids(s.write.conflicts) && Object.entries(s.write.refused).every(([c, list]) => RULE.test(c) && ids(list)))));
+}
+
+/** What a plan is bound to besides its rows. None of it is secret. */
+export interface PlanBinding {
+  /** The platform commit the importer was built from, as the operator states it. */
+  readonly revision: string;
+  /** sha256 over the built files the importer actually runs (see `artifactDigest` in m4-cli). */
+  readonly artifact: string;
+  readonly refresh: { readonly startedAt: string; readonly finishedAt: string; readonly totalRows: number };
+  /** The marked staging database's target_id (legacy_import_target, migration 0652). */
+  readonly target: string;
+  /** The operator organization that top-level companies are written under. */
+  readonly operator: string;
+}
+
+/**
+ * The identity of a plan: everything it is bound to (revision, built artifact, refresh read,
+ * destination database and operator parent) and every mapped row's legacy id and digest, step by
+ * step. A write run must find the same identity as the plan that was reviewed, so it imports
+ * exactly what that plan showed, with the same code, into the same place. A sha256, so it carries
+ * no row.
+ */
+export function planIdentity(plan: M4Plan, binding: PlanBinding): string {
+  const rows = (list: readonly { readonly digest: string }[], id: (row: never) => string) => list.map((r) => `${id(r as never)}:${r.digest}`);
+  const steps = [
+    ...plan.catalogue.map((c) => [`catalogue.${c.table}`, rows(c.items, (r: { legacyId: string }) => r.legacyId)]),
+    ["company", rows(plan.companies.organizations, (r: { legacyId: string }) => r.legacyId)],
+    ["brand_company", rows(plan.brandLinks.links, (r: { brandLegacyId: string }) => r.brandLegacyId)],
+    ["store", rows(plan.stores.stores, (r: { legacyId: string }) => r.legacyId)],
+    ["company_contact", rows(plan.contacts.contacts, (r: { legacyId: string }) => r.legacyId)],
+  ];
+  const { revision, artifact, refresh, target, operator } = binding;
+  return createHash("sha256").update(JSON.stringify({
+    revision, artifact, refresh: [refresh.startedAt, refresh.finishedAt, refresh.totalRows], target, operator, steps,
+  })).digest("hex");
+}
+
+/** A step as a receipt shows it: counts and rule codes only, never a legacy id. */
+export interface ReceiptStep {
+  readonly step: string;
+  readonly legacy: number;
+  readonly mapped: number;
+  readonly rules: Readonly<Record<string, number>>;
+  readonly write?: { readonly inserted: number; readonly merged: number; readonly adopted: number; readonly unchanged: number; readonly conflicts: number; readonly refused: Readonly<Record<string, number>> };
+}
+
+export function receiptStep(step: M4Step): ReceiptStep {
+  const w = step.write;
+  return {
+    step: step.step, legacy: step.legacy, mapped: step.mapped, rules: { ...step.rules },
+    ...(w ? { write: { inserted: w.inserted, merged: w.merged, adopted: w.adopted, unchanged: w.unchanged, conflicts: w.conflicts.length,
+      refused: Object.fromEntries(Object.entries(w.refused).map(([code, ids]) => [code, ids.length])) } } : {}),
+  };
 }

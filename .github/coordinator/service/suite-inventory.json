@@ -2425,6 +2425,10 @@
     "SHU-225 I1/I2: without an armed activation the parking rule is byte-for-byte unchanged",
     "SHU-225 I1/I2: the SAME receipts DO continue once the episode's successor is supplied",
     "SHU71_ONE_REVIEW_AT_A_TIME: a review successor waits while another card's review runs",
+    "SHU71_ENDED_EPISODE_REVIEW_HOLDS_THE_GATE: an old review still holds the gate, and the gate names it",
+    "SHU71_ENDED_EPISODE_REVIEW_DUE: only another card's review from an ended card-run episode is asked about",
+    "SHU71_ENDED_EPISODE_REVIEW_DISPOSITION: the replayed SHU-304 receipt is released only on the supervisor's positive evidence",
+    "SHU71_ENDED_EPISODE_BOUND: the bound covers a card run's window, its grace and the unit's own limit",
     "SHU-225 I2 (M1): a terminal receipt on ANOTHER card never becomes selectable",
     "SHU-225 I3: a successor never takes a second slot \u2014 capacity stays global",
     "SHU-225 I3: a successor is only selectable once its predecessor's receipt is terminal",
@@ -2771,6 +2775,8 @@
     "foreign review receipt: another PR's review the supervisor finished or holds no record of is released, never read as STALE_HEAD",
     "foreign review receipt: a run the supervisor reports live, an inconclusive answer, or a supervisor that cannot be asked keeps the slot and writes nothing",
     "foreign review receipt: the armed episode's own receipt, or one at the approved head, keeps the pull-request check",
+    "SHU71_ENDED_EPISODE_REVIEW_SETTLED: another card's review from an ended episode is released only on the supervisor's positive evidence",
+    "SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keeps the gate and nothing is written",
     "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
     "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
     "SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick",
@@ -20470,6 +20476,38 @@
       ]
     },
     {
+      "name": "SHU71_ENDED_EPISODE_REVIEW_HOLDS_THE_GATE: an old review still holds the gate, and the gate names it",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_ENDED_EPISODE_REVIEW_DUE: only another card's review from an ended card-run episode is asked about",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_ENDED_EPISODE_REVIEW_DISPOSITION: the replayed SHU-304 receipt is released only on the supervisor's positive evidence",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_ENDED_EPISODE_BOUND: the bound covers a card run's window, its grace and the unit's own limit",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
       "name": "SHU-225 I2 (M1): a terminal receipt on ANOTHER card never becomes selectable",
       "capabilities": [
         {
@@ -22376,6 +22414,14 @@
     },
     {
       "name": "foreign review receipt: the armed episode's own receipt, or one at the approved head, keeps the pull-request check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_ENDED_EPISODE_REVIEW_SETTLED: another card's review from an ended episode is released only on the supervisor's positive evidence",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keeps the gate and nothing is written",
       "capabilities": []
     },
     {
