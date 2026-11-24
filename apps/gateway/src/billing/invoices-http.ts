@@ -16,7 +16,7 @@ import { invoicePdf, type InvoiceBankInfo } from "./invoice-pdf.js";
  * not see the company, a missing company and an invoice outside it all get the same not found.
  *
  * GET /organization/<orgId>/statements is the company's account statement (F4.8): opening balance,
- * invoices issued and payments received in a window, and closing balance, per currency with a
+ * invoices issued, payments received and credit notes issued in a window, and closing balance, per currency with a
  * line per company. `?from=YYYY-MM-DD&to=YYYY-MM-DD` (Kuwait dates); by default the current month
  * to today, so its closing figure is the balance owed now. Same readers and the same not found.
  */
@@ -75,7 +75,8 @@ const notFound = (req: IncomingMessage, res: ServerResponse) => reply(req, res, 
 function listHtml(page: TransferInvoicePage): string {
   const base = `${INVOICES_PATH}/${encodeURIComponent(page.orgId)}`;
   const rows = page.invoices.map(i => `<tr><td>${esc(i.invoiceNumber)}</td><td>${esc(i.companyName)}</td><td>${esc(i.transferId)}</td><td>${esc(longDate(i.invoiceDate))}</td>`
-    + `<td>${esc(i.currencyCode)} ${esc(i.total)}</td><td>${i.status === "paid" ? `Paid${i.paidOn ? ` on ${esc(longDate(i.paidOn))}` : ""}` : "Unpaid"}</td>`
+    + `<td>${esc(i.currencyCode)} ${esc(i.total)}</td><td>${i.status === "paid" ? `Paid${i.paidOn ? ` on ${esc(longDate(i.paidOn))}` : ""}` : "Unpaid"}`
+    + `${i.creditNumber ? `, voided by credit note ${esc(i.creditNumber)}${i.creditedOn ? ` on ${esc(longDate(i.creditedOn))}` : ""}` : ""}</td>`
     + `<td><a href="${esc(`${base}/${i.invoiceNumber}.pdf`)}">${i.status === "paid" ? "Receipt" : "Invoice"} (PDF)</a></td></tr>`).join("");
   return `<main><h1>Invoices</h1><p>${esc(page.name)}: invoices for its transfers and its sub-companies' transfers, newest first.</p>${page.invoices.length
     ? `<table><thead><tr><th>Invoice number</th><th>Billed to</th><th>Transfer</th><th>Issue date</th><th>Amount</th><th>Status</th><th>Document</th></tr></thead><tbody>${rows}</tbody></table>`
@@ -92,10 +93,10 @@ const days = (from: string, to: string) => (Date.parse(`${to}T00:00:00Z`) - Date
 
 function statementHtml(s: TransferStatement): string {
   const money = (c: string, v: string) => `${esc(c)} ${esc(v)}`;
-  const totals = s.currencies.map(c => `<h2>${esc(c.currencyCode)}</h2><table><thead><tr><th>Company</th><th>Opening balance</th><th>Invoiced</th><th>Paid</th><th>Closing balance</th></tr></thead><tbody>`
-    + c.members.map(m => `<tr><td>${esc(m.companyName)}</td><td>${money(c.currencyCode, m.opening)}</td><td>${money(c.currencyCode, m.invoiced)}</td><td>${money(c.currencyCode, m.paid)}</td><td>${money(c.currencyCode, m.closing)}</td></tr>`).join("")
-    + `</tbody><tfoot><tr><th>Total</th><th>${money(c.currencyCode, c.opening)}</th><th>${money(c.currencyCode, c.invoiced)}</th><th>${money(c.currencyCode, c.paid)}</th><th>${money(c.currencyCode, c.closing)}</th></tr></tfoot></table>`).join("");
-  const rows = s.entries.map(e => `<tr><td>${esc(longDate(e.date))}</td><td>${e.kind === "invoice" ? "Invoice issued" : "Payment received"}</td><td>${esc(e.invoiceNumber)}</td>`
+  const totals = s.currencies.map(c => `<h2>${esc(c.currencyCode)}</h2><table><thead><tr><th>Company</th><th>Opening balance</th><th>Invoiced</th><th>Paid</th><th>Credited</th><th>Closing balance</th></tr></thead><tbody>`
+    + c.members.map(m => `<tr><td>${esc(m.companyName)}</td><td>${money(c.currencyCode, m.opening)}</td><td>${money(c.currencyCode, m.invoiced)}</td><td>${money(c.currencyCode, m.paid)}</td><td>${money(c.currencyCode, m.credited)}</td><td>${money(c.currencyCode, m.closing)}</td></tr>`).join("")
+    + `</tbody><tfoot><tr><th>Total</th><th>${money(c.currencyCode, c.opening)}</th><th>${money(c.currencyCode, c.invoiced)}</th><th>${money(c.currencyCode, c.paid)}</th><th>${money(c.currencyCode, c.credited)}</th><th>${money(c.currencyCode, c.closing)}</th></tr></tfoot></table>`).join("");
+  const rows = s.entries.map(e => `<tr><td>${esc(longDate(e.date))}</td><td>${e.kind === "invoice" ? "Invoice issued" : e.kind === "payment" ? "Payment received" : `Credit note ${esc(e.creditNumber ?? "")}`}</td><td>${esc(e.invoiceNumber)}</td>`
     + `<td>${esc(e.companyName)}</td><td>${e.kind === "invoice" ? "" : "−"}${money(e.currencyCode, e.amount)}</td></tr>`).join("");
   return `<main><h1>Statement</h1><p>${esc(s.name)}, ${esc(longDate(s.from))} to ${esc(longDate(s.to))}. Amounts owed for transfers of the company and its sub-companies.</p>`
     + `<form method="get"><label>From <input type="date" name="from" value="${esc(s.from)}"></label> <label>To <input type="date" name="to" value="${esc(s.to)}"></label> <button>Show</button></form>`

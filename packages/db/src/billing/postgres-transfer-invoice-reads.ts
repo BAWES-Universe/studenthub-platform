@@ -26,6 +26,9 @@ export interface TransferInvoiceListEntry {
   readonly status: "unpaid" | "paid";
   /** Kuwait date the payment was received, for a paid invoice. */
   readonly paidOn: string | null;
+  /** The credit note that voided this invoice (F4.7), and its date; null while the invoice stands. */
+  readonly creditNumber: string | null;
+  readonly creditedOn: string | null;
 }
 export interface TransferInvoiceDocument extends TransferInvoiceListEntry {
   readonly periodStart: string;
@@ -33,17 +36,22 @@ export interface TransferInvoiceDocument extends TransferInvoiceListEntry {
 }
 export interface TransferInvoicePage { readonly orgId: string; readonly name: string; readonly invoices: readonly TransferInvoiceListEntry[] }
 
-/** One movement on a statement: an invoice issued (adds to the balance) or a payment received for one (takes it off). */
+/**
+ * One movement on a statement: an invoice issued (adds to the balance), a payment received for one
+ * or a credit note voiding one (each takes it off). A credit note's `invoiceNumber` is the invoice it reverses.
+ */
 export interface TransferStatementEntry {
   readonly date: string;
-  readonly kind: "invoice" | "payment";
+  readonly kind: "invoice" | "payment" | "credit";
   readonly invoiceNumber: string;
+  /** The credit note's own number, for a credit; null otherwise. */
+  readonly creditNumber: string | null;
   readonly orgId: string;
   readonly companyName: string;
   readonly currencyCode: string;
   readonly amount: string;
 }
-export interface TransferStatementTotals { readonly opening: string; readonly invoiced: string; readonly paid: string; readonly closing: string }
+export interface TransferStatementTotals { readonly opening: string; readonly invoiced: string; readonly paid: string; readonly credited: string; readonly closing: string }
 export interface TransferStatementMember extends TransferStatementTotals { readonly orgId: string; readonly companyName: string }
 export interface TransferStatementCurrency extends TransferStatementTotals { readonly currencyCode: string; readonly members: readonly TransferStatementMember[] }
 /**
@@ -63,26 +71,31 @@ export interface TransferStatement {
 const NAME = (alias: string, profile: string) => `COALESCE(NULLIF(btrim(${profile}.name_en), ''), ${alias}.name)`;
 const ENTRY = `i.invoice_number AS "invoiceNumber", i.transfer_id AS "transferId", i.org_id AS "orgId", ${NAME("o", "p")} AS "companyName",
   i.currency_code AS "currencyCode", i.invoice_date::text AS "invoiceDate", i.total::text AS total, i.line_count AS "lineCount", i.status,
-  (i.paid_at AT TIME ZONE 'Asia/Kuwait')::date::text AS "paidOn"`;
+  (i.paid_at AT TIME ZONE 'Asia/Kuwait')::date::text AS "paidOn", c.credit_number AS "creditNumber", c.credit_date::text AS "creditedOn"`;
 /*
  * Only locked and payment-sent transfers make an unpaid invoice due. After an admin unlock the transfer is a
  * draft again and its amounts can change, and a cancelled transfer is never paid, so their
  * unpaid invoices are neither listed nor served: they are not payable. A relock re-issues or
  * keeps them (`PostgresTransferInvoiceEffects`), and a paid invoice is always shown as a receipt.
+ * A credited invoice (F4.7) was shown when it was credited, so it stays, with its credit note, whatever
+ * its transfer does next; an invoice voided for any other reason is gone.
  */
 const FROM = `FROM transfer_invoice i JOIN organizations o ON o.id = i.org_id LEFT JOIN organization_profiles p ON p.org_id = i.org_id
-  JOIN pay_transfers t ON t.id = i.transfer_id
-  WHERE NOT i.deleted AND i.org_id = ANY($1::text[]) AND (i.status = 'paid' OR t.status IN ('locked', 'payment_sent'))`;
+  JOIN pay_transfers t ON t.id = i.transfer_id LEFT JOIN transfer_invoice_credit c ON c.invoice_number = i.invoice_number
+  WHERE (NOT i.deleted OR i.void_reason = 'credited') AND i.org_id = ANY($1::text[])
+    AND (i.status = 'paid' OR t.status IN ('locked', 'payment_sent') OR i.void_reason = 'credited')`;
 
 /*
  * Statement movements come from the same documents the invoices page shows (FROM above): an invoice
- * counts on its issue date, its payment on the Kuwait date it was received. Nothing is read from
+ * counts on its issue date, its payment on the Kuwait date it was received, its credit note on the
+ * credit note's date. Nothing is read from
  * live pay lines, so a past window keeps its figures when later invoices are issued or paid.
  */
 const MOVEMENTS = `WITH docs AS (SELECT i.invoice_number, i.org_id, ${NAME("o", "p")} AS company, i.currency_code, i.total, i.invoice_date,
-    CASE WHEN i.status = 'paid' THEN (i.paid_at AT TIME ZONE 'Asia/Kuwait')::date END AS paid_on ${FROM}),
-  moves AS (SELECT invoice_date AS on_date, 'invoice' AS kind, invoice_number, org_id, company, currency_code, total AS amount FROM docs
-    UNION ALL SELECT paid_on, 'payment', invoice_number, org_id, company, currency_code, -total FROM docs WHERE paid_on IS NOT NULL)`;
+    CASE WHEN i.status = 'paid' THEN (i.paid_at AT TIME ZONE 'Asia/Kuwait')::date END AS paid_on, c.credit_number, c.credit_date ${FROM}),
+  moves AS (SELECT invoice_date AS on_date, 'invoice' AS kind, invoice_number, NULL::text AS credit_number, org_id, company, currency_code, total AS amount FROM docs
+    UNION ALL SELECT paid_on, 'payment', invoice_number, NULL, org_id, company, currency_code, -total FROM docs WHERE paid_on IS NOT NULL
+    UNION ALL SELECT credit_date, 'credit', invoice_number, credit_number, org_id, company, currency_code, -total FROM docs WHERE credit_number IS NOT NULL)`;
 
 export class PostgresTransferInvoiceReads {
   readonly #pool: pg.Pool;
@@ -137,45 +150,49 @@ export class PostgresTransferInvoiceReads {
       `SELECT ${NAME("o", "p")} AS name FROM organizations o LEFT JOIN organization_profiles p ON p.org_id = o.id WHERE o.id = $1`, [orgId])).rows[0]?.name ?? orgId;
     // One statement, so one snapshot: the opening balances and the movements always come from the same documents.
     // Amounts stay unbounded numeric at scale 3 (invoice totals are numeric(18,3), and sums can exceed that).
-    const rows = (await this.#pool.query<{ row: "opening" | "move"; date: string | null; kind: "invoice" | "payment" | null; invoiceNumber: string | null;
-      orgId: string; companyName: string; currencyCode: string; amount: string }>(`${MOVEMENTS}
-      SELECT 'opening' AS row, NULL AS date, NULL AS kind, NULL AS "invoiceNumber", org_id AS "orgId", min(company) AS "companyName", currency_code AS "currencyCode",
-        sum(amount)::text AS amount, NULL::date AS sort_date
+    const rows = (await this.#pool.query<{ row: "opening" | "move"; date: string | null; kind: "invoice" | "payment" | "credit" | null; invoiceNumber: string | null;
+      creditNumber: string | null; orgId: string; companyName: string; currencyCode: string; amount: string }>(`${MOVEMENTS}
+      SELECT 'opening' AS row, NULL AS date, NULL AS kind, NULL AS "invoiceNumber", NULL AS "creditNumber", org_id AS "orgId", min(company) AS "companyName",
+        currency_code AS "currencyCode", sum(amount)::text AS amount, NULL::date AS sort_date, NULL::int AS sort_kind
       FROM moves WHERE on_date < $2::date GROUP BY currency_code, org_id
       UNION ALL
-      SELECT 'move', on_date::text, kind, invoice_number, org_id, company, currency_code, abs(amount)::text, on_date
+      SELECT 'move', on_date::text, kind, invoice_number, credit_number, org_id, company, currency_code, abs(amount)::text, on_date,
+        CASE kind WHEN 'invoice' THEN 0 WHEN 'payment' THEN 1 ELSE 2 END
       FROM moves WHERE on_date BETWEEN $2::date AND $3::date
-      ORDER BY sort_date NULLS FIRST, kind, "invoiceNumber"`, [visible, from, to])).rows;
-    const members = new Map<string, { currencyCode: string; orgId: string; companyName: string; opening: bigint; invoiced: bigint; paid: bigint }>();
+      ORDER BY sort_date NULLS FIRST, sort_kind, "invoiceNumber"`, [visible, from, to])).rows;
+    const members = new Map<string, { currencyCode: string; orgId: string; companyName: string; opening: bigint; invoiced: bigint; paid: bigint; credited: bigint }>();
     const member = (row: (typeof rows)[number]) => {
       const key = JSON.stringify([row.currencyCode, row.orgId]);
       let m = members.get(key);
-      if (!m) members.set(key, m = { currencyCode: row.currencyCode, orgId: row.orgId, companyName: row.companyName, opening: 0n, invoiced: 0n, paid: 0n });
+      if (!m) members.set(key, m = { currencyCode: row.currencyCode, orgId: row.orgId, companyName: row.companyName, opening: 0n, invoiced: 0n, paid: 0n, credited: 0n });
       return m;
     };
     const entries: TransferStatementEntry[] = [];
     for (const row of rows) {
       const m = member(row);
       if (row.row === "opening") { m.opening = toFils(row.amount); continue; }
-      if (row.kind === "invoice") m.invoiced += toFils(row.amount); else m.paid += toFils(row.amount);
-      entries.push({ date: row.date!, kind: row.kind!, invoiceNumber: row.invoiceNumber!, orgId: row.orgId, companyName: row.companyName, currencyCode: row.currencyCode, amount: row.amount });
+      if (row.kind === "invoice") m.invoiced += toFils(row.amount);
+      else if (row.kind === "payment") m.paid += toFils(row.amount);
+      else m.credited += toFils(row.amount);
+      entries.push({ date: row.date!, kind: row.kind!, invoiceNumber: row.invoiceNumber!, creditNumber: row.creditNumber, orgId: row.orgId, companyName: row.companyName, currencyCode: row.currencyCode, amount: row.amount });
     }
     const currencies = new Map<string, TransferStatementMember[]>();
-    const totals = new Map<string, { opening: bigint; invoiced: bigint; paid: bigint }>();
+    const totals = new Map<string, { opening: bigint; invoiced: bigint; paid: bigint; credited: bigint }>();
     for (const m of [...members.values()].sort((a, b) => a.currencyCode.localeCompare(b.currencyCode) || a.orgId.localeCompare(b.orgId))) {
-      const closing = m.opening + m.invoiced - m.paid;
+      const closing = m.opening + m.invoiced - m.paid - m.credited;
       currencies.set(m.currencyCode, [...(currencies.get(m.currencyCode) ?? []), { orgId: m.orgId, companyName: m.companyName,
-        opening: fromFils(m.opening), invoiced: fromFils(m.invoiced), paid: fromFils(m.paid), closing: fromFils(closing) }]);
-      const t = totals.get(m.currencyCode) ?? { opening: 0n, invoiced: 0n, paid: 0n };
-      totals.set(m.currencyCode, { opening: t.opening + m.opening, invoiced: t.invoiced + m.invoiced, paid: t.paid + m.paid });
+        opening: fromFils(m.opening), invoiced: fromFils(m.invoiced), paid: fromFils(m.paid), credited: fromFils(m.credited), closing: fromFils(closing) }]);
+      const t = totals.get(m.currencyCode) ?? { opening: 0n, invoiced: 0n, paid: 0n, credited: 0n };
+      totals.set(m.currencyCode, { opening: t.opening + m.opening, invoiced: t.invoiced + m.invoiced, paid: t.paid + m.paid, credited: t.credited + m.credited });
     }
     return { orgId, name, from, to, entries, currencies: [...currencies].map(([currencyCode, list]) => {
       const t = totals.get(currencyCode)!;
-      return { currencyCode, members: list, opening: fromFils(t.opening), invoiced: fromFils(t.invoiced), paid: fromFils(t.paid), closing: fromFils(t.opening + t.invoiced - t.paid) };
+      return { currencyCode, members: list, opening: fromFils(t.opening), invoiced: fromFils(t.invoiced), paid: fromFils(t.paid), credited: fromFils(t.credited),
+        closing: fromFils(t.opening + t.invoiced - t.paid - t.credited) };
     }) };
   }
 
-  /** One live, paid or payable invoice billed inside what the reader may see, with its transfer's period; null otherwise. */
+  /** One live, paid, payable or credited invoice billed inside what the reader may see, with its transfer's period; null otherwise. */
   async document(principalId: string, orgId: string, invoiceNumber: string): Promise<TransferInvoiceDocument | null> {
     const visible = await this.#visible(principalId, orgId);
     if (!visible) return null;

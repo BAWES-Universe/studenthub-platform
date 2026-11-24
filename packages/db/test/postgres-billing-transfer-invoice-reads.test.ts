@@ -120,7 +120,7 @@ test("TRANSFER_INVOICE_READS_DOCUMENT one live invoice with its period; voided o
   assert.deepEqual(await reads.document("fin-p", "P", c1), {
     invoiceNumber: c1, transferId: group, orgId: "C1", companyName: "C1", currencyCode: "KWD",
     invoiceDate: (await listTransferInvoices(pool, group)).find(i => i.invoiceNumber === c1)!.invoiceDate,
-    total: "2.500", lineCount: 1, status: "unpaid", paidOn: null, periodStart: "2026-10-01", periodEnd: "2026-10-31",
+    total: "2.500", lineCount: 1, status: "unpaid", paidOn: null, creditNumber: null, creditedOn: null, periodStart: "2026-10-01", periodEnd: "2026-10-31",
   });
   assert.equal(await reads.document("fin-p", "P", "SH-2026-11-999999"), null);
   // Unlock, change C1's line and lock again: the old C1 invoice is voided and a new one issued.

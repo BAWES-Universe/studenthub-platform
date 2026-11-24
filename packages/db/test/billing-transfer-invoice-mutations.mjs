@@ -11,6 +11,8 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 const postgres = "dist/packages/db/test/postgres-billing-transfer-invoice.test.js";
 const effects = "packages/db/dist/billing/postgres-transfer-invoice-effects.js";
 const migration = "packages/db/migrations/0593_transfer_invoice.sql";
+// 0594 (credit notes) replaces the guard function, so the guard body is mutated where it now lives.
+const guard = "packages/db/migrations/0594_transfer_invoice_credit.sql";
 const mutations = [
   ["bill lines of an unrelated company", "TRANSFER_INVOICE_OUTSIDE", effects,
     "if (groups.some(group => !group.in_tree))", "if (false)"],
@@ -26,9 +28,9 @@ const mutations = [
     "WHERE transfer_id = $1 AND NOT deleted AND status = 'unpaid'", "WHERE NOT deleted AND status = 'unpaid' AND $1::text IS NOT NULL"],
   ["leave invoices live on transfer delete", "TRANSFER_INVOICE_DELETE", effects,
     "UPDATE transfer_invoice SET deleted = true, void_reason = 'transfer_deleted' WHERE transfer_id = $1 AND NOT deleted", "SELECT 1 WHERE $1::text IS NULL"],
-  ["allow edits to issued columns", "TRANSFER_INVOICE_FROZEN", migration,
+  ["allow edits to issued columns", "TRANSFER_INVOICE_FROZEN", guard,
     "     OR (to_jsonb(NEW) - 'status' - 'paid_at' - 'deleted' - 'void_reason')\n        IS DISTINCT FROM (to_jsonb(OLD) - 'status' - 'paid_at' - 'deleted' - 'void_reason')\n", ""],
-  ["accept any status move", "TRANSFER_INVOICE_FROZEN", migration,
+  ["accept any status move", "TRANSFER_INVOICE_FROZEN", guard,
     "(OLD.status = 'unpaid' AND NEW.status = 'paid' AND NOT NEW.deleted)", "(NEW.status IN ('unpaid', 'paid'))"],
   ["allow truncate", "TRANSFER_INVOICE_FROZEN", migration,
     "CREATE TRIGGER transfer_invoice_no_truncate BEFORE TRUNCATE ON transfer_invoice\n  FOR EACH STATEMENT EXECUTE FUNCTION transfer_invoice_guard();", ""],
