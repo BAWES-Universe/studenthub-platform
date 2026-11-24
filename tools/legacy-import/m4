@@ -1,0 +1,28 @@
+#!/bin/sh
+# M-4 importer entry for operators: `tools/legacy-import/m4 plan|write`.
+# It starts the checkout's own pinned Node runtime (.runtime/node/bin/node, installed by root with
+# install-runtime.sh and hashed with everything else), never a `node` found on PATH. Before Node
+# starts it removes every environment variable except PATH and LANG, which it sets itself, and the
+# M-4 settings below. Values stay in the environment and are never passed as process arguments.
+# Node gets no flags, so no NODE_OPTIONS, NODE_PATH, preload or loader setting reaches it.
+set -euf
+root=$(CDPATH= cd -- "$(/usr/bin/dirname -- "$0")/../.." && pwd -P)
+node="$root/.runtime/node/bin/node"
+[ -x "$node" ] && [ -x /usr/bin/awk ] || { echo "m4: refused.startup" >&2; exit 2; }
+keep=" M4_INVOCATION M4_REVISION M4_ARTIFACT_DIGEST M4_TARGET_ID M4_OPERATOR_ORG_ID M4_EXPECTED_PLAN M4_OUTPUT_DIR M4_LEGACY_MIRROR_URL M4_DATABASE_URL M4_IMPORT_ACTOR LEGACY_REFRESH_REPORT LEGACY_REFRESH_LOCK "
+names=$(/usr/bin/awk 'BEGIN { for (name in ENVIRON) print name }')
+IFS='
+'
+for name in $names; do
+  case "$name" in
+    "" | [0-9]* | *[!A-Za-z0-9_]*) echo "m4: refused.startup" >&2; exit 2 ;;
+  esac
+  case "$keep" in
+    *" $name "*) ;;
+    *) unset "$name" ;;
+  esac
+done
+PATH=/usr/bin:/bin
+LANG=C
+export PATH LANG
+exec "$node" "$root/tools/legacy-import/m4-launch.mjs" "$@"

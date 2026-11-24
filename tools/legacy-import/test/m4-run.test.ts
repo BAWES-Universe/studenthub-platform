@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { M4_SOURCES, readM4Sources, receiptSafe, runM4, sourceSql, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
-import { receipt } from "../src/m4-cli.js";
+import { errorCode, receipt } from "../src/m4-cli.js";
 import { bind } from "../src/twin/staging.js";
 
 // Synthetic legacy rows only. SECRET marks every value that must never reach a report.
@@ -83,4 +83,10 @@ test("a writer result that would carry free text into the report is refused", as
     companies: async () => ({ inserted: 0, unchanged: 0, conflicts: [], refused: [{ legacyId: `${SECRET} name`, code: "invalid" }] }),
   } as unknown as M4Writers;
   await assert.rejects(runM4(sources(), writers, "2026-11-23T00:00:00.000Z"), (e: Error) => e.message === "m4.report.unsafeRefusal");
+});
+
+test("the CLI prints our own codes as they are, camel case included, and masks any other error", () => {
+  for (const code of ["m4.read.store", "m4.badSourceName", "m4.report.unsafeRefusal", "m4.report.unsafe"]) assert.equal(errorCode(new Error(code)), code);
+  for (const other of [`${SECRET} value`, "m4.read.store: Secret", "m4.", "m4..x", "duplicate key value (secret@example.com)"]) assert.equal(errorCode(new Error(other)), "m4.failed");
+  assert.equal(errorCode("m4.read.store"), "m4.failed");
 });
