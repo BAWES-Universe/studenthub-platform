@@ -168,7 +168,9 @@ test("plan publishes its own counts-only receipt bound to the invocation, revisi
     assert.deepEqual(readdirSync(out).sort(), [`${h.invocation}.claim`, `${h.invocation}.plan.receipt.json`, `${h.invocation}.plan.report.json`]);
     for (const f of readdirSync(out)) assert.equal(statSync(path.join(out, f)).mode & 0o777, 0o600, f);
     // The receipt and the log carry no legacy id or value; the private report keeps ids by rule.
-    const shared = readFileSync(path.join(out, `${h.invocation}.plan.receipt.json`), "utf8") + h.out.join("\n");
+    // The invocation is a random UUID, which can itself contain a fixture id such as "b-1"; it is
+    // checked exactly above, so it is removed before searching for leaked ids.
+    const shared = (readFileSync(path.join(out, `${h.invocation}.plan.receipt.json`), "utf8") + h.out.join("\n")).replaceAll(h.invocation, "<invocation>");
     for (const id of ["l-1", "l-2", "p-1", "b-1", "m-1", SECRET, "example.com"]) assert.ok(!shared.includes(id), id);
     const report = readFileSync(path.join(out, `${h.invocation}.plan.report.json`), "utf8");
     assert.ok(report.includes("l-2") && !report.includes(SECRET));
