@@ -251,12 +251,12 @@ test("INVOICE_VOID_HTTP StudentHub finance voids with a reason; a second void an
   const x = await voidRig(t);
   const first = await x.post(VOID_PATH, JSON.stringify({ reason: "  Wrong hours " }));
   assert.equal(first.status, 201);
-  assert.deepEqual(await first.json(), { kind: "credited", credit: { creditNumber: "SH-2026-11-000009", invoiceNumber: UNPAID.invoiceNumber, orgId: "C1", currencyCode: "KWD", creditDate: "2026-11-26", total: "12.500", reason: "Wrong hours", actorId: "fin" } });
+  assert.deepEqual(await first.json(), { kind: "credited", creditNumber: "SH-2026-11-000009" }, "the receipt carries no actor or reason");
   assert.deepEqual(x.credits, [{ actorId: "fin", invoiceNumber: UNPAID.invoiceNumber, reason: "Wrong hours" }], "the reason is stored trimmed, the actor is the signed-in person");
   const again = await x.post(VOID_PATH, "reason=Again", { type: "application/x-www-form-urlencoded", accept: "text/html" });
   assert.equal(again.status, 303); assert.equal(again.headers.get("location"), "/organization/invoices/P");
   const json = await x.post(VOID_PATH, JSON.stringify({ reason: "Again" }));
-  assert.equal(json.status, 200); assert.equal((await json.json() as { kind: string }).kind, "already_credited");
+  assert.equal(json.status, 200); assert.deepEqual(await json.json(), { kind: "already_credited", creditNumber: "SH-2026-11-000009" }, "nor does a repeat");
   const paid = await x.post(`/organization/invoices/P/${PAID.invoiceNumber}/void`, JSON.stringify({ reason: "Refund agreed" }));
   assert.equal(paid.status, 201, "a paid invoice is credited too");
   const wide = "界".repeat(500);

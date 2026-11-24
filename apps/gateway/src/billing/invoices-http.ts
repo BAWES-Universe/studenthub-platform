@@ -25,8 +25,8 @@ import { invoicePdf, type InvoiceBankInfo } from "./invoice-pdf.js";
  * a `reason` in a JSON or form body. Only StudentHub's finance users void
  * (`transferInvoiceVoidDecision`, decided again by the store inside the credit's transaction). The list
  * page shows them a void form per standing invoice; one who may void but not read gets that list alone,
- * without PDF links, and no PDF or statement. Same-origin posts only. Voiding twice answers the first
- * credit note.
+ * without PDF links, and no PDF or statement. Same-origin posts only. The JSON receipt is the outcome
+ * and the credit note number only; voiding twice answers the first credit note's number.
  */
 export interface TransferInvoiceReads {
   listForOrganization(principalId: string, orgId: string): Promise<TransferInvoicePage | null>;
@@ -226,7 +226,8 @@ async function handleVoid(req: IncomingMessage, res: ServerResponse, service: In
     if (result.kind === "not_found") return notFound(req, res);
     if (result.kind === "not_creditable") return reply(req, res, 409, "not_creditable", "Not voided", "Only an issued invoice that is due or paid can be voided.");
     if (body.form) { res.writeHead(303, { location: `${INVOICES_PATH}/${encodeURIComponent(orgId)}`, "cache-control": "no-store" }); res.end(); return true; }
-    return json(res, result.kind === "credited" ? 201 : 200, result);
+    // The receipt says what happened and names the credit note; the actor and reason stay in the record.
+    return json(res, result.kind === "credited" ? 201 : 200, { kind: result.kind, creditNumber: result.credit.creditNumber });
   } catch {
     if (!res.headersSent) return reply(req, res, 503, "invoices_unavailable", "Invoices unavailable", "Invoices are not available right now.");
     res.destroy(); return true;
