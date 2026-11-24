@@ -18,7 +18,7 @@ const candidate = (id: number | string, extra: Record<string, unknown> = {}) => 
 const sources = (rows: readonly Record<string, unknown>[]): M1Sources => ({
   candidate: rows,
   country: [{ country_id: 7, country_nationality_name_en: "Synthetic" }, { country_id: 8, country_nationality_name_en: "" }],
-  university: [{ university_id: 3, university_name_en: "Synthetic University" }],
+  university: [{ university_id: 3, university_name_en: "Synthetic University", deleted: 0 }],
   area: [{ area_uuid: AREA, area_name_en: "Synthetic Area" }],
 });
 const map = (rows: readonly Record<string, unknown>[]) => mapLegacyCandidates(sources(rows), TODAY);
@@ -43,13 +43,35 @@ test("a legacy candidate maps to a snapshot the profile projector reads in full"
 });
 
 test("ids: bad, duplicate and archived rows are reported and never imported; order is by id", () => {
-  const { people, issues } = map([candidate(10), candidate("x"), candidate(9), candidate(10), candidate(11, { deleted: "1" })]);
-  assert.deepEqual(people.map((p) => p.legacyId), ["9", "10"]);
+  const { people, issues } = map([candidate(10), candidate("x"), candidate(9), candidate(" 10"), candidate(11, { deleted: "1" }), candidate(8)]);
+  assert.deepEqual(people.map((p) => p.legacyId), ["8", "9"]);
   assert.deepEqual(issues, [
+    { rule: "candidate.duplicateId", legacyId: "10" },
     { rule: "candidate.badId", legacyId: "?" },
     { rule: "candidate.duplicateId", legacyId: "10" },
     { rule: "candidate.archived", legacyId: "11" },
   ]);
+});
+
+test("references: a deleted university and an id on two lookup rows are not recorded, with a row each", () => {
+  const AREA_B = "6f1c2b9e-0000-4000-8000-00000000000b";
+  const rows = [candidate(1, { university_id: 4 }), candidate(2, { country_id: 5, candidate_area_uuid: AREA_B }), candidate(3, { university_id: 6 })];
+  const { people, issues } = mapLegacyCandidates({
+    candidate: rows,
+    country: [{ country_id: 5, country_nationality_name_en: "One" }, { country_id: "5", country_nationality_name_en: "Two" }, { country_id: 7, country_nationality_name_en: "Synthetic" }],
+    university: [{ university_id: 3, university_name_en: "Synthetic University", deleted: 0 }, { university_id: 4, university_name_en: "Closed", deleted: 1 },
+      { university_id: 6, university_name_en: "Open", deleted: "0" }],
+    area: [{ area_uuid: AREA, area_name_en: "Synthetic Area" }, { area_uuid: AREA_B, area_name_en: "B" }, { area_uuid: AREA_B.toUpperCase(), area_name_en: "B again" }],
+  }, TODAY);
+  assert.deepEqual(issues, [
+    { rule: "candidate.inactiveReference", legacyId: "1", field: "university_id" },
+    { rule: "candidate.ambiguousReference", legacyId: "2", field: "country_id" },
+    { rule: "candidate.ambiguousReference", legacyId: "2", field: "candidate_area_uuid" },
+  ]);
+  assert.equal(people[0]!.snapshot.university_name, null);
+  assert.equal(people[1]!.snapshot.nationality_name, null);
+  assert.equal(people[1]!.snapshot.area_name, null);
+  assert.equal(people[2]!.snapshot.university_name, "Open");
 });
 
 test("platform rules: one-word names and under-16 birth dates are not recorded, with a row each", () => {

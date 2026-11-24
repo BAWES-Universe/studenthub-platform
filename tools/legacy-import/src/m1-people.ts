@@ -30,10 +30,13 @@ export const M1_SOURCES = {
     "candidate_committed", "is_incomplete_profile", "candidate_pending_profile", "candidate_civil_expiry_date",
   ],
   country: ["country_id", "country_nationality_name_en"],
-  university: ["university_id", "university_name_en"],
+  university: ["university_id", "university_name_en", "deleted"],
   area: ["area_uuid", "area_name_en"],
 } as const satisfies Record<string, readonly string[]>;
 export type M1Table = keyof typeof M1_SOURCES;
+
+/** Names this mapper's rules; the reviewed run plan pins it with the run's Kuwait date. */
+export const M1_MAPPER_REVISION = "m1-people-v2";
 
 /** The snapshot keys the profile projector reads (`readField` in packages/profile). */
 export const PERSON_SNAPSHOT_KEYS = [
@@ -53,12 +56,14 @@ export interface PersonImportRow {
 
 export type PersonIssueRule =
   | "candidate.badId"
-  | "candidate.duplicateId"
+  | "candidate.duplicateId" // the id appears on more than one row; none of them is imported
   | "candidate.archived" // deleted in legacy (a duplicate account is also deleted); not imported
   | "candidate.badValue" // one column unusable; imported with that value not recorded
   | "candidate.nameRule" // a name the platform's name rule refuses (one word, digits); not recorded
   | "candidate.underMinimumAge" // birth date under the platform's minimum age of 16; not recorded
   | "candidate.unknownReference" // country, university or area id not in its legacy table; not recorded
+  | "candidate.inactiveReference" // university deleted in legacy (legacy shows none); not recorded
+  | "candidate.ambiguousReference" // the id names more than one lookup row; not recorded
   | "candidate.completenessMismatch"; // complete marker disagrees with the pending list; both not recorded
 
 export interface PersonIssue {
@@ -119,12 +124,16 @@ function digestOf(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 }
 
-function nameIndex(rows: readonly Row[], idColumn: string, nameColumn: string, uuid: boolean): ReadonlyMap<string, unknown> {
-  const index = new Map<string, unknown>();
+type Lookup = { readonly name: unknown; readonly active: boolean } | "ambiguous";
+const lookupId = (raw: unknown, uuid: boolean) => uuid ? (typeof raw === "string" && raw.trim() !== "" ? raw.trim().toLowerCase() : null) : legacyId(raw);
+
+/** Lookup rows by normalized id. Two rows with the same normalized id make it ambiguous. */
+function nameIndex(rows: readonly Row[], idColumn: string, nameColumn: string, uuid: boolean, activeOnly: boolean): ReadonlyMap<string, Lookup> {
+  const index = new Map<string, Lookup>();
   for (const row of rows) {
-    const raw = row[idColumn];
-    const id = uuid ? (typeof raw === "string" && raw.trim() !== "" ? raw.trim().toLowerCase() : null) : legacyId(raw);
-    if (id !== null && !index.has(id)) index.set(id, row[nameColumn]);
+    const id = lookupId(row[idColumn], uuid);
+    if (id === null) continue;
+    index.set(id, index.has(id) ? "ambiguous" : { name: row[nameColumn], active: !activeOnly || !isTrue(row.deleted) });
   }
   return index;
 }
@@ -137,24 +146,29 @@ export interface M1Sources {
 }
 
 /**
- * Maps legacy candidates to approved profile snapshots, ordered by legacy id. The first row of
- * each id decides it; a later row with the same id is a duplicate and never imported. `today`
+ * Maps legacy candidates to approved profile snapshots, ordered by legacy id. An id that appears
+ * on more than one row is quarantined: each of its rows is reported and none imported. `today`
  * is the Kuwait date of the run (YYYY-MM-DD): the minimum-age rule is applied as of that day.
  */
 export function mapLegacyCandidates(sources: M1Sources, today: string): M1People {
   if (!validPersonBirthDate(today)) throw new Error("m1.badToday");
-  const countries = nameIndex(sources.country, "country_id", "country_nationality_name_en", false);
-  const universities = nameIndex(sources.university, "university_id", "university_name_en", false);
-  const areas = nameIndex(sources.area, "area_uuid", "area_name_en", true);
+  const countries = nameIndex(sources.country, "country_id", "country_nationality_name_en", false, false);
+  // Legacy reads a candidate's university through an active-only relation (deleted = 0).
+  const universities = nameIndex(sources.university, "university_id", "university_name_en", false, true);
+  const areas = nameIndex(sources.area, "area_uuid", "area_name_en", true, false);
   const issues: PersonIssue[] = [];
   const people = new Map<string, PersonImportRow>();
-  const seen = new Set<string>();
+  // An id on two rows is ambiguous: every row of it is quarantined, none imported.
+  const rowsPerId = new Map<string, number>();
+  for (const row of sources.candidate) {
+    const id = legacyId(row.candidate_id);
+    if (id !== null) rowsPerId.set(id, (rowsPerId.get(id) ?? 0) + 1);
+  }
 
   for (const row of sources.candidate) {
     const id = legacyId(row.candidate_id);
     if (id === null) { issues.push({ rule: "candidate.badId", legacyId: "?" }); continue; }
-    if (seen.has(id)) { issues.push({ rule: "candidate.duplicateId", legacyId: id }); continue; }
-    seen.add(id);
+    if (rowsPerId.get(id)! > 1) { issues.push({ rule: "candidate.duplicateId", legacyId: id }); continue; }
     if (isTrue(row.deleted)) { issues.push({ rule: "candidate.archived", legacyId: id }); continue; }
 
     const snapshot = Object.fromEntries(PERSON_SNAPSHOT_KEYS.map((key) => [key, null])) as Record<PersonSnapshotKey, string | number | null>;
@@ -221,9 +235,12 @@ export function mapLegacyCandidates(sources: M1Sources, today: string): M1People
     ] as const) {
       const raw = row[field];
       if (isUnset(raw) || raw === 0 || raw === "0") continue;
-      const ref = uuid ? (typeof raw === "string" ? raw.trim().toLowerCase() : null) : legacyId(raw);
-      if (ref === null || !index.has(ref)) { report("candidate.unknownReference", field); continue; }
-      const name = index.get(ref);
+      const ref = lookupId(raw, uuid);
+      const found = ref === null ? undefined : index.get(ref);
+      if (found === undefined) { report("candidate.unknownReference", field); continue; }
+      if (found === "ambiguous") { report("candidate.ambiguousReference", field); continue; }
+      if (!found.active) { report("candidate.inactiveReference", field); continue; }
+      const name = found.name;
       if (isUnset(name)) { report("candidate.badValue", field); continue; }
       keep(key, typeof name === "string" ? name.trim() : null, field);
     }
