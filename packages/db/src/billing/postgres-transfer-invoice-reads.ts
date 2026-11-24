@@ -1,6 +1,7 @@
 import pg from "pg";
 import { databaseUrl } from "../connection.js";
 import { organizationLive } from "../organization-liveness.js";
+import { candidateWorked } from "./postgres-pay-history-reads.js";
 
 /**
  * Read side of transfer invoices for the company invoices page and the invoice/receipt PDF (I3).
@@ -68,6 +69,38 @@ export interface TransferStatement {
   readonly entries: readonly TransferStatementEntry[];
 }
 
+/**
+ * O-13: a company's transfers as the company sees them (legacy company `TransferController::actionList` and
+ * `actionView`). Same readers and the same per-company tree as the invoices. A company sees what it pays: the
+ * company total per line, and the worked time behind it. The candidate's total, rates and the rest of the
+ * calculation stay behind (legacy company `TransferCandidate::fields` unsets them too).
+ */
+export type CompanyTransferStatus = "draft" | "locked" | "payment_sent" | "distributing" | "complete" | "cancelled";
+export interface CompanyTransferEntry {
+  readonly transferId: string;
+  readonly orgId: string;
+  readonly companyName: string;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly currencyCode: string;
+  readonly status: CompanyTransferStatus;
+  readonly lineCount: number;
+  /** What the company owes for the transfer: the sum of its lines' company totals. */
+  readonly companyTotal: string;
+  readonly paymentReceivedOn: string | null;
+}
+export interface CompanyTransferPage { readonly orgId: string; readonly name: string; readonly transfers: readonly CompanyTransferEntry[] }
+export interface CompanyTransferLine {
+  readonly lineId: string;
+  readonly personName: string;
+  readonly storeName: string;
+  /** Worked time for a line generated from an hourly contract; null otherwise. */
+  readonly worked: { readonly hours: string; readonly minutes: number } | null;
+  readonly companyTotal: string;
+  readonly paid: boolean;
+}
+export interface CompanyTransferDetail extends CompanyTransferEntry { readonly lines: readonly CompanyTransferLine[] }
+
 const NAME = (alias: string, profile: string) => `COALESCE(NULLIF(btrim(${profile}.name_en), ''), ${alias}.name)`;
 const ENTRY = `i.invoice_number AS "invoiceNumber", i.transfer_id AS "transferId", i.org_id AS "orgId", ${NAME("o", "p")} AS "companyName",
   i.currency_code AS "currencyCode", i.invoice_date::text AS "invoiceDate", i.total::text AS total, i.line_count AS "lineCount", i.status,
@@ -96,6 +129,14 @@ const MOVEMENTS = `WITH docs AS (SELECT i.invoice_number, i.org_id, ${NAME("o", 
   moves AS (SELECT invoice_date AS on_date, 'invoice' AS kind, invoice_number, NULL::text AS credit_number, org_id, company, currency_code, total AS amount FROM docs
     UNION ALL SELECT paid_on, 'payment', invoice_number, NULL, org_id, company, currency_code, -total FROM docs WHERE paid_on IS NOT NULL
     UNION ALL SELECT credit_date, 'credit', invoice_number, credit_number, org_id, company, currency_code, -total FROM docs WHERE credit_number IS NOT NULL)`;
+
+const TRANSFER = `t.id AS "transferId", t.company_id AS "orgId", ${NAME("o", "p")} AS "companyName",
+  t.period_start::text AS "periodStart", t.period_end::text AS "periodEnd", t.currency_code AS "currencyCode", t.status,
+  (SELECT count(*)::int FROM pay_transfer_lines l WHERE l.transfer_id = t.id) AS "lineCount",
+  (SELECT COALESCE(sum(l.company_total), 0)::numeric(40,3)::text FROM pay_transfer_lines l WHERE l.transfer_id = t.id) AS "companyTotal",
+  t.payment_received_on::text AS "paymentReceivedOn"`;
+const TRANSFERS = `FROM pay_transfers t JOIN organizations o ON o.id = t.company_id LEFT JOIN organization_profiles p ON p.org_id = t.company_id
+  WHERE NOT t.deleted AND t.company_id = ANY($1::text[])`;
 
 export class PostgresTransferInvoiceReads {
   readonly #pool: pg.Pool;
@@ -189,6 +230,35 @@ export class PostgresTransferInvoiceReads {
       const t = totals.get(currencyCode)!;
       return { currencyCode, members: list, opening: fromFils(t.opening), invoiced: fromFils(t.invoiced), paid: fromFils(t.paid), credited: fromFils(t.credited),
         closing: fromFils(t.opening + t.invoiced - t.paid - t.credited) };
+    }) };
+  }
+
+  /** The company's transfers and its visible sub-companies', newest period first; null when the reader may not see the company. */
+  async companyTransfers(principalId: string, orgId: string): Promise<CompanyTransferPage | null> {
+    const visible = await this.#visible(principalId, orgId);
+    if (!visible) return null;
+    const [organization, transfers] = await Promise.all([
+      this.#pool.query<{ name: string }>(`SELECT ${NAME("o", "p")} AS name FROM organizations o LEFT JOIN organization_profiles p ON p.org_id = o.id WHERE o.id = $1`, [orgId]),
+      this.#pool.query<CompanyTransferEntry>(`SELECT ${TRANSFER} ${TRANSFERS} ORDER BY t.period_end DESC, t.period_start DESC, t.id DESC`, [visible]),
+    ]);
+    return { orgId, name: organization.rows[0]?.name ?? orgId, transfers: transfers.rows };
+  }
+
+  /** One transfer of a company the reader may see, with the company's side of each line; null otherwise. */
+  async companyTransfer(principalId: string, orgId: string, transferId: string): Promise<CompanyTransferDetail | null> {
+    const visible = await this.#visible(principalId, orgId);
+    if (!visible) return null;
+    const transfer = (await this.#pool.query<CompanyTransferEntry>(`SELECT ${TRANSFER} ${TRANSFERS} AND t.id = $2`, [visible, transferId])).rows[0];
+    if (!transfer) return null;
+    const lines = (await this.#pool.query<{ lineId: string; personName: string; storeName: string; calculation: unknown; companyTotal: string; paid: boolean }>(
+      `SELECT l.id AS "lineId", COALESCE(NULLIF(btrim(pp.display_name), ''), NULLIF(btrim(pr.display_name), ''), l.person_id) AS "personName",
+         s.name AS "storeName", l.calculation, l.company_total::text AS "companyTotal", l.paid
+       FROM pay_transfer_lines l JOIN principals pr ON pr.id = l.person_id LEFT JOIN person_profiles pp ON pp.principal_id = l.person_id
+         JOIN organization_stores s ON s.id = l.store_id
+       WHERE l.transfer_id = $1 ORDER BY "personName", l.id`, [transfer.transferId])).rows;
+    return { ...transfer, lines: lines.map(({ calculation, ...line }) => {
+      const worked = candidateWorked(calculation);
+      return { ...line, worked: worked && { hours: worked.hours, minutes: worked.minutes } };
     }) };
   }
 
