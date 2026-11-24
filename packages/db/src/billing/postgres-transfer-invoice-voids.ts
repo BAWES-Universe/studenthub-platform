@@ -2,6 +2,7 @@ import pg from "pg";
 import { databaseUrl } from "../connection.js";
 import { allocateInvoiceNumber } from "./numbering.js";
 import { TRANSFER_INVOICE_SERIES } from "./postgres-transfer-invoice-effects.js";
+import type { TransferInvoiceReadDecision } from "./postgres-transfer-invoice-reads.js";
 
 /**
  * F4.7: voiding an issued transfer invoice with a credit note (legacy has neither; its
@@ -12,8 +13,9 @@ import { TRANSFER_INVOICE_SERIES } from "./postgres-transfer-invoice-effects.js"
  * number, for the same company.
  *
  * Only an invoice the company can see is credited: a paid one, or an unpaid one while its
- * transfer is locked or payment sent. Who may call this is the caller's decision; the store
- * records the actor and a reason.
+ * transfer is locked or payment sent. Who may void is the `decision` given to the store; it is
+ * applied inside the credit's transaction to the company the invoice is billed to, and a refused
+ * actor gets the same not found as a missing invoice. The store records the actor and a reason.
  */
 export interface TransferInvoiceCredit {
   readonly creditNumber: string;
@@ -28,7 +30,7 @@ export interface TransferInvoiceCredit {
 export type TransferInvoiceCreditResult =
   | { readonly kind: "credited"; readonly credit: TransferInvoiceCredit }
   | { readonly kind: "already_credited"; readonly credit: TransferInvoiceCredit }
-  /** Missing, or void for another reason (re-issued or its transfer deleted). */
+  /** Missing, void for another reason (re-issued or its transfer deleted), its company deleted, or not the actor's to void. */
   | { readonly kind: "not_found" }
   /** Unpaid while its transfer is a draft or cancelled: not payable, so nothing to reverse. */
   | { readonly kind: "not_creditable" };
@@ -48,9 +50,11 @@ export function creditReason(reason: unknown): string {
 export class PostgresTransferInvoiceVoids {
   readonly #pool: pg.Pool;
   readonly #owns: boolean;
-  constructor(options: { connectionString?: string; pool?: pg.Pool } = {}) {
+  readonly #decision: TransferInvoiceReadDecision;
+  constructor(options: { connectionString?: string; pool?: pg.Pool; decision: TransferInvoiceReadDecision }) {
     this.#owns = !options.pool;
     this.#pool = options.pool ?? new pg.Pool({ connectionString: options.connectionString ?? databaseUrl() });
+    this.#decision = options.decision;
   }
   async close(): Promise<void> { if (this.#owns) await this.#pool.end(); }
 
@@ -70,6 +74,7 @@ export class PostgresTransferInvoiceVoids {
       const invoice = (await client.query<{ org_id: string; currency_code: string; total: string; status: string; deleted: boolean; void_reason: string | null }>(
         "SELECT org_id, currency_code, total::text AS total, status, deleted, void_reason FROM transfer_invoice WHERE invoice_number = $1 FOR UPDATE",
         [input.invoiceNumber])).rows[0]!;
+      if (!await this.#allowed(client, input.actorId, invoice.org_id)) { await client.query("ROLLBACK"); return { kind: "not_found" }; }
       if (invoice.void_reason === "credited") {
         const credit = (await client.query<TransferInvoiceCredit>(`SELECT ${CREDIT} FROM transfer_invoice_credit WHERE invoice_number = $1`, [input.invoiceNumber])).rows[0]!;
         await client.query("ROLLBACK");
@@ -96,5 +101,28 @@ export class PostgresTransferInvoiceVoids {
     } finally {
       client.release(destroy);
     }
+  }
+
+  /**
+   * The decision, taken inside the credit's transaction on the company the invoice is billed to. The
+   * actor's grants and the company's ancestor rows are locked FOR SHARE first, so a grant revoked or
+   * narrowed, or the company moved, while this credit waits either commits before these reads (and is
+   * seen) or waits for this credit to commit. A deleted company is refused.
+   */
+  async #allowed(client: pg.PoolClient, actorId: string, orgId: string): Promise<boolean> {
+    const chain = async () => (await client.query<{ id: string }>(`WITH RECURSIVE chain(id, parent_org_id, depth) AS (
+        SELECT id, parent_org_id, 0 FROM organizations WHERE id = $1
+        UNION ALL SELECT o.id, o.parent_org_id, c.depth + 1 FROM organizations o JOIN chain c ON o.id = c.parent_org_id WHERE c.depth < 64)
+      SELECT id FROM chain ORDER BY depth`, [orgId])).rows.map(row => row.id);
+    const before = await chain();
+    await client.query("SELECT id FROM organizations WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE", [before]);
+    const grants = (await client.query<{ org_id: string; role: string; scope: string }>(
+      "SELECT org_id, role, scope FROM grants WHERE principal_id = $1 ORDER BY org_id, role, scope FOR SHARE", [actorId])).rows;
+    // Read again after the locks: a company moved while this waited is decided on where it is now,
+    // and only when every organization above it is still the one locked.
+    const after = await chain();
+    if (after[0] !== orgId || after.some(id => !before.includes(id))) return false;
+    if ((await client.query("SELECT 1 FROM organization_deletions WHERE org_id = $1", [orgId])).rowCount) return false;
+    return this.#decision(grants, orgId, after.slice(1));
   }
 }
