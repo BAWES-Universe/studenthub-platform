@@ -67,9 +67,6 @@ export class PostgresTransferInvoiceVoids {
         "SELECT transfer_id FROM transfer_invoice WHERE invoice_number = $1", [input.invoiceNumber])).rows[0]?.transfer_id;
       if (!transferId) { await client.query("ROLLBACK"); return { kind: "not_found" }; }
       const transfer = (await client.query<{ status: string }>("SELECT status FROM pay_transfers WHERE id = $1 FOR UPDATE", [transferId])).rows[0]!;
-      // The issue day is read after the lock: now() is fixed at transaction start, so a wait for the
-      // transfer across Kuwait midnight must not date (or number) the credit note on the day before.
-      const today = (await client.query<{ today: string }>("SELECT (clock_timestamp() AT TIME ZONE 'Asia/Kuwait')::date::text AS today")).rows[0]!.today;
       const invoice = (await client.query<{ org_id: string; currency_code: string; total: string; status: string; deleted: boolean; void_reason: string | null }>(
         "SELECT org_id, currency_code, total::text AS total, status, deleted, void_reason FROM transfer_invoice WHERE invoice_number = $1 FOR UPDATE",
         [input.invoiceNumber])).rows[0]!;
@@ -80,6 +77,11 @@ export class PostgresTransferInvoiceVoids {
       }
       if (invoice.deleted) { await client.query("ROLLBACK"); return { kind: "not_found" }; }
       if (invoice.status !== "paid" && !["locked", "payment_sent"].includes(transfer.status)) { await client.query("ROLLBACK"); return { kind: "not_creditable" }; }
+      // The issue day is read only after every lock this credit waits on: the transfer above and the
+      // series counter here. now() is fixed at transaction start, so a wait across Kuwait midnight
+      // must not date (or number) the credit note on the day before.
+      await client.query("SELECT 1 FROM billing_sequence WHERE account_id = $1 FOR UPDATE", [TRANSFER_INVOICE_SERIES.accountId]);
+      const today = (await client.query<{ today: string }>("SELECT (clock_timestamp() AT TIME ZONE 'Asia/Kuwait')::date::text AS today")).rows[0]!.today;
       const creditNumber = await allocateInvoiceNumber(client, { ...TRANSFER_INVOICE_SERIES, period: today.slice(0, 7) });
       const credit = (await client.query<TransferInvoiceCredit>(
         `INSERT INTO transfer_invoice_credit (credit_number, invoice_number, org_id, currency_code, credit_date, total, reason, actor_id)
