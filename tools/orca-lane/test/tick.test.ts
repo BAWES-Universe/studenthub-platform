@@ -148,17 +148,30 @@ test("while a cleanup holds its run id, a second cleanup and a new same-id setup
   assert.equal(existsSync(again.dir), true);
 });
 
-test("a failed cleanup puts the reservation back, so the same owner can retry", () => {
+test("a failed cleanup keeps the reservation in place, even with a same-id setup overlapping it, so the same owner can retry", () => {
   const w = world();
   const a = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });
+  const overlap: unknown[] = [];
   assert.throws(
-    () => cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner, afterClaim: () => { throw new Error("disk busy"); } }),
+    () => cleanupRun({
+      clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner,
+      afterClaim: () => {
+        try { setupRun({ clone: w.clone, ticks: w.ticks, run: "a" }); } catch (error) { overlap.push(error); }
+        throw new Error("disk busy");
+      },
+    }),
     (e: unknown) => e instanceof TickError && e.step === "cleanup" && /disk busy/.test(e.message) && /retry/.test(e.message),
   );
+  assert.equal(overlap.length, 1);
+  assert.ok(overlap[0] instanceof TickError && overlap[0].step === "reserve");
+  // After the failure, another same-id setup is still refused, and the original owner value is where the retry reads it.
+  assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "a" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
   assert.equal(existsSync(a.dir), true);
+  assert.equal(git(a.dir, "rev-parse", "HEAD"), w.first);
   assert.equal(readFileSync(path.join(w.ticks, ".runs", "a", "owner"), "utf8"), a.owner);
   assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner }).status, "removed");
   assert.equal(existsSync(a.dir), false);
+  assert.deepEqual(readdirSync(path.join(w.ticks, ".runs")), []);
 });
 
 /** Fills the Part C placeholders for one wake. */
