@@ -19,7 +19,7 @@ export interface TransferInvoice {
   readonly lineCount: number;
   readonly status: "unpaid" | "paid";
   readonly deleted: boolean;
-  readonly voidReason: "reissued" | "transfer_deleted" | null;
+  readonly voidReason: "reissued" | "transfer_deleted" | "credited" | null;
 }
 
 interface Group { readonly org_id: string; readonly in_tree: boolean; readonly line_count: number; readonly total: string; readonly lines_hash: string }

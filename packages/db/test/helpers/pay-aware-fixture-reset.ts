@@ -60,6 +60,7 @@ const guards = [
   ["pay_transfer_lifecycle_history", "pay_transfer_lifecycle_history_no_truncate"],
   // Transfer invoices (invoices lane) cascade from pay_transfers and organizations.
   ["transfer_invoice", "transfer_invoice_no_truncate"],
+  ["transfer_invoice_credit", "transfer_invoice_credit_no_truncate"],
 ] as const;
 
 export async function resetPayAwareFixture(pool: pg.Pool, statement: string): Promise<void> {
