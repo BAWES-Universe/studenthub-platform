@@ -24,8 +24,13 @@ function typeContract(document: InvoiceDocument, decimal: DecimalString): void {
 void typeContract;
 
 test("SHU-264/AC-04 document-immutable", () => {
-  assert.deepEqual(Object.keys(store).filter(name => /invoice/i.test(name)).sort(), ["PostgresLegacyInvoiceStore", "PostgresTransferInvoiceEffects", "PostgresTransferInvoiceReads", "TRANSFER_INVOICE_SERIES", "allocateInvoiceNumber", "issueInvoice", "listTransferInvoices", "resolveInvoice", "transferInvoiceForLine"]);
-  assert.equal(Object.keys(store).some(name => /update|delete|void|edit/i.test(name)), false);
+  assert.deepEqual(Object.keys(store).filter(name => /invoice/i.test(name)).sort(), ["PostgresLegacyInvoiceStore", "PostgresTransferInvoiceEffects", "PostgresTransferInvoiceReads", "PostgresTransferInvoiceVoids", "TRANSFER_INVOICE_SERIES", "allocateInvoiceNumber", "issueInvoice", "listTransferInvoices", "resolveInvoice", "transferInvoiceForLine"]);
+  // F4.7's void is additive: it only issues a credit note and never edits an issued document
+  // (TRANSFER_INVOICE_VOID_PRESERVES_HISTORY), so its store and the credit-note reason helpers ("cr-edit")
+  // may match the pattern, and nothing else.
+  assert.deepEqual(Object.getOwnPropertyNames(store.PostgresTransferInvoiceVoids.prototype).sort(), ["close", "constructor", "credit"]);
+  const additive = ["CREDIT_REASON_MAX", "PostgresTransferInvoiceVoids", "creditReason"];
+  assert.deepEqual(Object.keys(store).filter(name => /update|delete|void|edit/i.test(name)).sort(), additive);
   const original = captureInvoiceDocument("ACME-2026-09-000001", content);
   assert.ok(Object.isFrozen(original));
   assert.ok(Object.isFrozen(original.capturedStoreNames));

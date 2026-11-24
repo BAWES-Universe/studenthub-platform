@@ -10,14 +10,14 @@ import { invoiceBankInfo, invoicePdf } from "../src/billing/invoice-pdf.js";
 // Synthetic companies and amounts only.
 const FIN = "f".repeat(43), OTHER = "o".repeat(43);
 const UNPAID: TransferInvoiceDocument = { invoiceNumber: "SH-2026-11-000001", transferId: "t-1", orgId: "C1", companyName: "Sultan <Center>", currencyCode: "KWD",
-  invoiceDate: "2026-11-22", total: "12.500", lineCount: 3, status: "unpaid", paidOn: null, periodStart: "2026-10-01", periodEnd: "2026-10-31" };
+  invoiceDate: "2026-11-22", total: "12.500", lineCount: 3, status: "unpaid", paidOn: null, creditNumber: null, creditedOn: null, periodStart: "2026-10-01", periodEnd: "2026-10-31" };
 const PAID: TransferInvoiceDocument = { ...UNPAID, invoiceNumber: "SH-2026-11-000002", orgId: "P", companyName: "Parent", status: "paid", paidOn: "2026-11-25", lineCount: 1 };
 const STATEMENT = (from: string, to: string): TransferStatement => ({ orgId: "P", name: "Parent <Co>", from, to,
-  currencies: [{ currencyCode: "KWD", opening: "5.000", invoiced: "12.500", paid: "5.000", closing: "12.500", members: [
-    { orgId: "C1", companyName: "Sultan <Center>", opening: "0.000", invoiced: "12.500", paid: "0.000", closing: "12.500" },
-    { orgId: "P", companyName: "Parent", opening: "5.000", invoiced: "0.000", paid: "5.000", closing: "0.000" }] }],
-  entries: [{ date: "2026-11-22", kind: "invoice", invoiceNumber: "SH-2026-11-000001", orgId: "C1", companyName: "Sultan <Center>", currencyCode: "KWD", amount: "12.500" },
-    { date: "2026-11-25", kind: "payment", invoiceNumber: "SH-2026-11-000002", orgId: "P", companyName: "Parent", currencyCode: "KWD", amount: "5.000" }] });
+  currencies: [{ currencyCode: "KWD", opening: "5.000", invoiced: "12.500", paid: "5.000", credited: "0.000", closing: "12.500", members: [
+    { orgId: "C1", companyName: "Sultan <Center>", opening: "0.000", invoiced: "12.500", paid: "0.000", credited: "0.000", closing: "12.500" },
+    { orgId: "P", companyName: "Parent", opening: "5.000", invoiced: "0.000", paid: "5.000", credited: "0.000", closing: "0.000" }] }],
+  entries: [{ date: "2026-11-22", kind: "invoice", invoiceNumber: "SH-2026-11-000001", creditNumber: null, orgId: "C1", companyName: "Sultan <Center>", currencyCode: "KWD", amount: "12.500" },
+    { date: "2026-11-25", kind: "payment", invoiceNumber: "SH-2026-11-000002", creditNumber: null, orgId: "P", companyName: "Parent", currencyCode: "KWD", amount: "5.000" }] });
 const BANK = { accountName: "Synthetic Account", bankName: "Synthetic Bank", iban: "KW00SYNT0000000000000000000000", accountNumber: "0000000000", swiftCode: "SYNTKWKW" };
 
 /** Text drawn on the PDF's page, from its content stream. */
@@ -157,7 +157,7 @@ test("STATEMENTS_HTTP a company reader sees its statement as JSON or a page; the
   const page = await x.call("/organization/P/statements?from=2026-11-01&to=2026-11-30", FIN, "text/html");
   assert.equal(page.status, 200); assert.equal(page.headers.get("cache-control"), "no-store");
   const html = await page.text();
-  for (const text of ["Parent &lt;Co&gt;, 1 November 2026 to 30 November 2026", "Sultan &lt;Center&gt;", "<th>Total</th><th>KWD 5.000</th><th>KWD 12.500</th><th>KWD 5.000</th><th>KWD 12.500</th>",
+  for (const text of ["Parent &lt;Co&gt;, 1 November 2026 to 30 November 2026", "Sultan &lt;Center&gt;", "<th>Total</th><th>KWD 5.000</th><th>KWD 12.500</th><th>KWD 5.000</th><th>KWD 0.000</th><th>KWD 12.500</th>",
     "Invoice issued", "Payment received", "−KWD 5.000", 'href="/organization/invoices/P">Invoices']) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /<Center>/);
 });
@@ -184,4 +184,29 @@ test("STATEMENTS_ROUTE each path has one meaning: the invoice list of an organiz
   await x.call("/organization/invoices/statements/SH-2026-11-000001.pdf", FIN);
   await x.call("/organization/statements/statements", FIN);
   assert.deepEqual(x.calls, ["list:fin:statements", "doc:fin:statements:SH-2026-11-000001", "statement:fin:statements:2026-12-01:2026-12-01"]);
+});
+
+test("CREDIT_NOTES_HTTP a credited invoice says so on the list, the statement and its PDF, which asks for no payment", async (t) => {
+  const credited: TransferInvoiceDocument = { ...UNPAID, creditNumber: "SH-2026-11-000009", creditedOn: "2026-11-26" };
+  const reads: TransferInvoiceReads = {
+    listForOrganization: async () => ({ orgId: "P", name: "Parent", invoices: [credited] }),
+    document: async () => credited,
+    statement: async (_, __, from, to) => ({ orgId: "P", name: "Parent", from, to, currencies: [{ currencyCode: "KWD", opening: "0.000", invoiced: "12.500", paid: "0.000", credited: "12.500",
+      closing: "0.000", members: [{ orgId: "C1", companyName: "Sultan", opening: "0.000", invoiced: "12.500", paid: "0.000", credited: "12.500", closing: "0.000" }] }],
+      entries: [{ date: "2026-11-22", kind: "invoice", invoiceNumber: UNPAID.invoiceNumber, creditNumber: null, orgId: "C1", companyName: "Sultan", currencyCode: "KWD", amount: "12.500" },
+        { date: "2026-11-26", kind: "credit", invoiceNumber: UNPAID.invoiceNumber, creditNumber: "SH-2026-11-000009", orgId: "C1", companyName: "Sultan", currencyCode: "KWD", amount: "12.500" }] }),
+  };
+  const service = createInvoicesHttp({ sessions: { get: async () => ({ personId: "fin" }) as never }, reads, bank: BANK });
+  const server = createServer(async (req, res) => { await handleInvoices(req, res, service); });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>(r => server.close(() => r())));
+  const get = async (path: string, accept = "text/html") => fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`, { headers: { cookie: `__Host-studenthub_session=${FIN}`, accept } });
+  assert.match(await (await get("/organization/invoices/P")).text(), /Unpaid, voided by credit note SH-2026-11-000009 on 26 November 2026/);
+  const statement = await (await get("/organization/P/statements?from=2026-11-01&to=2026-11-30")).text();
+  for (const text of ["<th>Credited</th>", "Credit note SH-2026-11-000009</td><td>SH-2026-11-000001", "−KWD 12.500", "<th>Total</th><th>KWD 0.000</th><th>KWD 12.500</th><th>KWD 0.000</th><th>KWD 12.500</th><th>KWD 0.000</th>"]) {
+    assert.ok(statement.includes(text), text);
+  }
+  const lines = pdfText(Buffer.from(await (await get(`/organization/invoices/P/${UNPAID.invoiceNumber}.pdf`, "*/*")).arrayBuffer())).split("\n");
+  for (const line of ["Voided by credit note SH-2026-11-000009 on 26 November 2026", "Voided by credit note SH-2026-11-000009 on 26 November 2026. No payment is required."]) assert.ok(lines.includes(line), line);
+  for (const line of ["Payment terms: Due immediately", "Bank Info"]) assert.ok(!lines.includes(line), `a credited invoice does not print ${line}`);
 });

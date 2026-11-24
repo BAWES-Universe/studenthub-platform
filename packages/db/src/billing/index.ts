@@ -7,5 +7,7 @@ export { PostgresTransferInvoiceEffects, TRANSFER_INVOICE_SERIES, listTransferIn
 export { PostgresTransferInvoiceReads, type TransferInvoiceDocument, type TransferInvoiceListEntry, type TransferInvoicePage,
   type TransferInvoiceReadDecision, type TransferStatement, type TransferStatementCurrency, type TransferStatementEntry,
   type TransferStatementMember, type TransferStatementTotals } from "./postgres-transfer-invoice-reads.js";
+export { CREDIT_REASON_MAX, PostgresTransferInvoiceVoids, creditReason, type TransferInvoiceCredit, type TransferInvoiceCreditResult }
+  from "./postgres-transfer-invoice-voids.js";
 export { PAY_HISTORY_CALCULATION_VERSION, PAY_HISTORY_PAGE_SIZE, PostgresPayHistoryReads, candidateWorked, type PayHistoryDetail, type PayHistoryEntry,
   type PayHistoryPage } from "./postgres-pay-history-reads.js";

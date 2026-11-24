@@ -21,6 +21,9 @@ export interface InvoicePdfInput {
   readonly lineCount: number;
   readonly status: "unpaid" | "paid";
   readonly paidOn: string | null;
+  /** The credit note that voided this invoice (F4.7), and its date. */
+  readonly creditNumber?: string | null;
+  readonly creditedOn?: string | null;
   readonly periodStart: string;
   readonly periodEnd: string;
 }
@@ -53,6 +56,7 @@ export function invoiceBankInfo(value: string | undefined): InvoiceBankInfo | un
 export function invoicePdf(invoice: InvoicePdfInput, bank?: InvoiceBankInfo): Buffer {
   const { width: w, height: h } = A4_PORTRAIT, left = 56, right = w - 56, inner = right - left;
   const paid = invoice.status === "paid";
+  const credit = invoice.creditNumber ? `Voided by credit note ${invoice.creditNumber}${invoice.creditedOn ? ` on ${longDate(invoice.creditedOn)}` : ""}` : undefined;
   const page = new PdfPage(w, h);
   page.rect(0, 0, w, h, WHITE);
   page.text(left, h - 72, "StudentHub", 26, NAVY, "bold");
@@ -70,7 +74,7 @@ export function invoicePdf(invoice: InvoicePdfInput, bank?: InvoiceBankInfo): Bu
     `Invoice number: ${invoice.invoiceNumber}`,
     `Transfer number: ${invoice.transferId}`,
     paid ? `Payment date: ${longDate(invoice.paidOn ?? invoice.invoiceDate)}` : `Issue date: ${longDate(invoice.invoiceDate)}`,
-    ...(paid ? [] : ["Payment terms: Due immediately"]),
+    ...(credit ? [credit] : paid ? [] : ["Payment terms: Due immediately"]),
     `${paid ? "Amount paid" : "Amount due"} in ${invoice.currencyCode}: ${invoice.total}`,
   ];
   details.forEach((line, i) => { const fit = fitText(line, inner / 2, 10, 7); page.text(col, y - 18 - i * 16, fit.text, fit.size, GREY); });
@@ -85,12 +89,12 @@ export function invoicePdf(invoice: InvoicePdfInput, bank?: InvoiceBankInfo): Bu
   page.rect(left, y - 12, inner, 1, RULE);
 
   y -= 48;
-  page.text(left, y, paid ? "No payment is required. This is a confirmation that we have received the requested amount."
+  page.text(left, y, credit ? `${credit}. No payment is required.` : paid ? "No payment is required. This is a confirmation that we have received the requested amount."
     : "Thank you for your business. It’s a pleasure working with you.", 10, GREY);
   page.text(left, y - 28, "Sincerely yours,", 10, GREY);
   page.text(left, y - 48, "Khalid Al-Mutawa", 11, INK, "bold");
 
-  if (!paid && bank) {
+  if (!paid && !credit && bank) {
     let b = y - 100;
     page.text(left, b, "Bank Info", 12, INK, "bold");
     for (const line of [bank.accountName, bank.bankName, `IBAN: ${bank.iban}`, `Account #: ${bank.accountNumber}`, `Swift: ${bank.swiftCode}`]) {
