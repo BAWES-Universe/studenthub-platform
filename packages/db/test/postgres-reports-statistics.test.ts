@@ -5,6 +5,9 @@ import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
 import { PostgresMorningSummaryStore, PostgresStatisticsStore } from "@studenthub/db/reports";
+import { PostgresTransferInvoiceEffects } from "@studenthub/db/billing";
+import { TransferLifecycleService, type TransferAction } from "../../payroll/src/transfer-lifecycle.js";
+import { PostgresTransferLifecycleStore, type PayLifecyclePolicy } from "../src/payroll/postgres-transfer-lifecycle-store.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 let pool: pg.Pool, authz: PostgresAuthzStore, store: PostgresStatisticsStore;
@@ -55,7 +58,7 @@ const assign = async (start: string, end: string | null) => {
 
 test("REPORTS_STATISTICS_PG answers every available counter, and the shared ones equal the morning summary's in the same snapshot", async () => {
   const raw = await counts();
-  for (const key of ["workLogAppeals", "totalExpiredCards", "assignedExpiredCivilID", "id_need_generated", "activeRequests", "totalMinor", "companyUnderReview", "totalStoreAssignmentRequests", "totalInterviewRequests", "totalInterviewScheduled"])
+  for (const key of ["workLogAppeals", "totalExpiredCards", "assignedExpiredCivilID", "id_need_generated", "activeRequests", "totalMinor", "companyUnderReview", "totalStoreAssignmentRequests", "totalInterviewRequests", "totalInterviewScheduled", "transfersWithNoProfitInProgress"])
     assert.ok(Number.isSafeInteger(raw[key]) && raw[key]! >= 0, key);
   const morning = await new PostgresMorningSummaryStore({ pool }).counts(DAY);
   for (const key of ["activeRequests", "assignedExpiredCivilID", "totalExpiredCards", "id_need_generated"]) assert.equal(raw[key], morning[key], key);
@@ -166,7 +169,7 @@ test("REPORTS_STATISTICS_PG overview: profiles, assignments running on the day, 
   await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Mall',$3,$3)", [usdStore, usd, "a".repeat(64)]);
   await pool.query("INSERT INTO organization_commercial_terms(org_id,field,value) VALUES($1,'currency_code','USD')", [usd]);
   await request("open", usd, usdStore);
-  assert.deepEqual(await diff(), { candidates: 1, assigned: 2, suggested: 2, requests: 5, requestsDelivered: 2 });
+  assert.deepEqual(await diff(), { candidates: 1, assigned: 2, suggested: 2, requests: 5, requestsDelivered: 2, payableCandidates: 0, transfersLocked: 0, transfersPaymentSent: 0 });
   await assert.rejects(store.overviewCounts("nope"), RangeError);
 });
 
@@ -296,4 +299,34 @@ test("REPORTS_STATISTICS_PG emails per day: sent and failed attempts by Kuwait d
   assert.deepEqual(diff("2001-08-02"), { sent: 1, failed: 0 });
   assert.deepEqual(Object.keys(after).sort(), days);
   await assert.rejects(store.emailsByDay([]), RangeError);
+});
+
+// Synthetic transfers moved through the pay lane's own lifecycle; lines are [candidate, company] totals.
+async function transfer(lines: readonly [string, string][], currency = "KWD", ...actions: TransferAction[]): Promise<string> {
+  const id = randomUUID();
+  await pool.query("INSERT INTO pay_transfers(id,company_id,period_start,period_end,currency_code) VALUES($1,$2,'2026-10-01','2026-10-31',$3)", [id, company, currency]);
+  for (const [candidate, company_total] of lines)
+    await pool.query("INSERT INTO pay_transfer_lines(id,transfer_id,person_id,store_id,currency_code,candidate_total,company_total,note,calculation) VALUES($1,$2,$3,$4,$5,$6,$7,'synthetic','{}')",
+      [`line-${randomUUID()}`, id, creator, storeId, currency, candidate, company_total]);
+  const policy: PayLifecyclePolicy = { authorize: async () => true, unassignedPersonIds: async () => [] };
+  const lifecycle = new TransferLifecycleService(new PostgresTransferLifecycleStore(pool, policy, new PostgresTransferInvoiceEffects()), () => new Date("2026-11-20T06:00:00Z"));
+  for (const action of actions) assert.equal((await lifecycle.transition({ principalId: creator, actingAs: false }, id, action)).kind, "changed", action);
+  return id;
+}
+
+test("REPORTS_STATISTICS_PG transfers: payment due, locked, payment sent and no-profit counts are KWD, live, and leave out deleted and cancelled", async () => {
+  const before = await store.overviewCounts(DAY), beforeStaff = await counts();
+  const diff = async () => { const now = await store.overviewCounts(DAY); return { payableCandidates: now.payableCandidates! - before.payableCandidates!, transfersLocked: now.transfersLocked! - before.transfersLocked!, transfersPaymentSent: now.transfersPaymentSent! - before.transfersPaymentSent!, noProfit: (await counts()).transfersWithNoProfitInProgress! - beforeStaff.transfersWithNoProfitInProgress! }; };
+  await transfer([["1.000", "2.000"], ["3.000", "3.000"]]); // a draft with a no-profit line
+  await transfer([["1.000", "2.000"]], "KWD", "lock");
+  await transfer([["5.000", "5.000"], ["5.000", "5.000"]], "KWD", "lock"); // one transfer, counted once
+  await transfer([["1.000", "2.000"]], "KWD", "lock", "payment_sent");
+  const distributing = await transfer([["1.000", "2.000"], ["2.000", "4.000"], ["4.000", "4.000"]], "KWD", "lock", "payment_received");
+  await transfer([["1.000", "1.000"]], "KWD", "cancel");
+  await transfer([["1.000", "1.000"]], "KWD", "delete");
+  await transfer([["1.000", "1.000"]], "USD", "lock");
+  assert.deepEqual(await diff(), { payableCandidates: 3, transfersLocked: 2, transfersPaymentSent: 1, noProfit: 3 });
+  const paid = (await pool.query<{ id: string }>("SELECT id FROM pay_transfer_lines WHERE transfer_id=$1 AND candidate_total = company_total", [distributing])).rows[0]!.id;
+  await pool.query("UPDATE pay_transfer_lines SET paid = true WHERE id = $1", [paid]);
+  assert.deepEqual(await diff(), { payableCandidates: 2, transfersLocked: 2, transfersPaymentSent: 1, noProfit: 2 }, "a paid line is no longer due, and its transfer has no unpaid no-profit line left");
 });

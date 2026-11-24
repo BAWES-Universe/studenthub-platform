@@ -1194,7 +1194,7 @@
       "gates": {
         "built": {
           "state": "done",
-          "evidence": "PR #666 at 967c74e",
+          "evidence": "PR #666 at 703933a",
           "note": "UTM campaigns only; the email-campaign half of A-22 was dropped 2026-10-04. Signups and revenue show as not available (access and pay lanes)."
         },
         "verified": {
@@ -1340,7 +1340,7 @@
       "gates": {
         "built": {
           "state": "done",
-          "evidence": "PR #675 at 48d437c",
+          "evidence": "PR #675 at 179aea7",
           "note": "P-4, live from pay transfer lines, operator admins only. Staff salaries, expenses and net profit show as not available."
         },
         "verified": {

@@ -6,3 +6,7 @@ export { PostgresStoreImportStore } from "./store-import.js";
 export type { BrandLinkImportRefusal, BrandLinkImportRow, StoreImportRefusal, StoreImportResult, StoreImportRow, StoreReconciliation } from "./store-import.js";
 export { PostgresContactImportStore } from "./contact-import.js";
 export type { ContactImportRefusal, ContactImportResult, ContactImportRow } from "./contact-import.js";
+export { PostgresImportedPersonSnapshots, PostgresPersonSnapshotImportStore } from "./person-import.js";
+export type { PersonSnapshotImportRefusal, PersonSnapshotImportResult, PersonSnapshotImportRow } from "./person-import.js";
+export { CANONICAL_CANDIDATE_ID, PERSON_SNAPSHOT_KEYS, isValidPersonSnapshotRow, personSnapshotDigest } from "./person-snapshot-contract.js";
+export type { PersonSnapshot, PersonSnapshotKey } from "./person-snapshot-contract.js";

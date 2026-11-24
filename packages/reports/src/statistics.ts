@@ -23,6 +23,9 @@ import { kuwaitDay } from "./id-cards.js";
  *   interview, on a request that is still open.
  * - Legacy's "invited" tile counted invitations from KWD companies only, while its recruitment
  *   yield divided by every invitation. Here both use every invitation, as hired and retained do.
+ * - "Unpaid transfers with no profit" (slice 8) counts KWD transfers with an unpaid line whose
+ *   company total equals the candidate total, from the pay lane's lines. Legacy also counted
+ *   cancelled and deleted transfers, whose lines are never paid; here they are left out.
  */
 export type StatisticSource = { readonly kind: "available" } | { readonly kind: "missing"; readonly waitsOn: string };
 export interface StatisticCounter { readonly key: string; readonly label: string; readonly source: StatisticSource }
@@ -47,8 +50,8 @@ export const STAFF_STATISTICS_COUNTERS = [
   { key: "companyMoreThen40DaysWithoutPayment", label: "Companies with assigned staff that have not made a payment in 40 days", source: missing("transfers from the pay lane") },
   { key: "last40daysNoRequest", label: "Active clients who have not made a request in over 40 days", source: missing("company start dates and active flags from the importer") },
   { key: "companyUnderReview", label: "Company registrations waiting for review", source: available },
-  { key: "transfersWithNoProfitInProgress", label: "Unpaid transfers with no profit", source: missing("transfers from the pay lane") },
-  { key: "transfersWithSameRateInProgress", label: "Unpaid transfers where the company and candidate rates are the same", source: missing("transfers from the pay lane") },
+  { key: "transfersWithNoProfitInProgress", label: "Unpaid transfers with no profit", source: available },
+  { key: "transfersWithSameRateInProgress", label: "Unpaid transfers where the company and candidate rates are the same", source: missing("hourly rates on transfer lines, which the pay lane keeps only inside each line's calculation") },
   { key: "totalStoreAssignmentRequests", label: "Store assignment requests waiting for an answer", source: available },
   { key: "totalInterviewRequests", label: "Interviews to schedule", source: available },
   { key: "totalInterviewScheduled", label: "Upcoming scheduled interviews", source: available },
@@ -73,6 +76,11 @@ export type StaffStatisticKey = typeof STAFF_STATISTICS_COUNTERS[number]["key"];
  * - Invitations are shown once, with the hiring figures.
  * - "Universities to fix" (an English name missing or equal to the Arabic one) has no
  *   equivalent: the catalogue keeps one name per entry, so there is nothing to fix.
+ * - Transfers (slice 8) are read live from the pay lane's `pay_transfers` and `pay_transfer_lines`,
+ *   KWD like legacy, deleted transfers left out. "Candidates with a payment due" counts the unpaid
+ *   lines of transfers whose salaries are being distributed (legacy `getTotalPayableCandidate`);
+ *   "Transfers locked" and "Transfers with the payment sent" count transfers in that status now.
+ *   Legacy also showed the amount still to pay; it is on the revenue page's reconciliation.
  */
 export type OverviewSource = "store" | "companies" | "staffTime";
 export interface OverviewFigure { readonly key: string; readonly label: string; readonly source: OverviewSource | { readonly kind: "missing"; readonly waitsOn: string } }
@@ -86,9 +94,9 @@ export const STATISTICS_OVERVIEW = [
   { key: "companies", label: "All companies", source: "companies" },
   { key: "requests", label: "Requests", source: "store" },
   { key: "requestsDelivered", label: "Requests delivered", source: "store" },
-  { key: "payableCandidates", label: "Candidates with a payment due", source: { kind: "missing", waitsOn: "transfers from the pay lane" } },
-  { key: "transfersLocked", label: "Transfers locked", source: { kind: "missing", waitsOn: "transfers from the pay lane" } },
-  { key: "transfersPaymentSent", label: "Transfers with the payment sent", source: { kind: "missing", waitsOn: "transfers from the pay lane" } },
+  { key: "payableCandidates", label: "Candidates with a payment due", source: "store" },
+  { key: "transfersLocked", label: "Transfers locked", source: "store" },
+  { key: "transfersPaymentSent", label: "Transfers with the payment sent", source: "store" },
   { key: "staffSalaryPaid", label: "Staff salary paid", source: { kind: "missing", waitsOn: "staff salaries, which no lane holds yet" } },
   { key: "staff", label: "StudentHub staff", source: "staffTime" },
   { key: "staffAttended", label: "Staff who started a work session today", source: "staffTime" },
