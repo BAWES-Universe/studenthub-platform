@@ -16,7 +16,7 @@ const mutations = [
   // Voiding with another reason, or not voiding at all, now fails at commit in the database
   // (TRANSFER_INVOICE_VOID_PAIRED proves that trigger), so the store mutants test what is left to it.
   ["date the credit note on another day", "TRANSFER_INVOICE_VOID_PRESERVES_HISTORY", voids,
-    "invoice.currency_code, transfer.today, invoice.total", "invoice.currency_code, '2026-01-01', invoice.total"],
+    "invoice.currency_code, today, invoice.total", "invoice.currency_code, '2026-01-01', invoice.total"],
   ["credit an invoice a second time", "TRANSFER_INVOICE_VOID_PRESERVES_HISTORY", voids,
     'if (invoice.void_reason === "credited") {', "if (false) {"],
   ["credit a draft's unpaid invoice", "TRANSFER_INVOICE_VOID_REFUSED", voids,

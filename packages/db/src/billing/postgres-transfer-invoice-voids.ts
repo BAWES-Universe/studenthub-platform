@@ -66,8 +66,10 @@ export class PostgresTransferInvoiceVoids {
       const transferId = (await client.query<{ transfer_id: string }>(
         "SELECT transfer_id FROM transfer_invoice WHERE invoice_number = $1", [input.invoiceNumber])).rows[0]?.transfer_id;
       if (!transferId) { await client.query("ROLLBACK"); return { kind: "not_found" }; }
-      const transfer = (await client.query<{ status: string; today: string }>(
-        `SELECT status, (now() AT TIME ZONE 'Asia/Kuwait')::date::text AS today FROM pay_transfers WHERE id = $1 FOR UPDATE`, [transferId])).rows[0]!;
+      const transfer = (await client.query<{ status: string }>("SELECT status FROM pay_transfers WHERE id = $1 FOR UPDATE", [transferId])).rows[0]!;
+      // The issue day is read after the lock: now() is fixed at transaction start, so a wait for the
+      // transfer across Kuwait midnight must not date (or number) the credit note on the day before.
+      const today = (await client.query<{ today: string }>("SELECT (clock_timestamp() AT TIME ZONE 'Asia/Kuwait')::date::text AS today")).rows[0]!.today;
       const invoice = (await client.query<{ org_id: string; currency_code: string; total: string; status: string; deleted: boolean; void_reason: string | null }>(
         "SELECT org_id, currency_code, total::text AS total, status, deleted, void_reason FROM transfer_invoice WHERE invoice_number = $1 FOR UPDATE",
         [input.invoiceNumber])).rows[0]!;
@@ -78,11 +80,11 @@ export class PostgresTransferInvoiceVoids {
       }
       if (invoice.deleted) { await client.query("ROLLBACK"); return { kind: "not_found" }; }
       if (invoice.status !== "paid" && !["locked", "payment_sent"].includes(transfer.status)) { await client.query("ROLLBACK"); return { kind: "not_creditable" }; }
-      const creditNumber = await allocateInvoiceNumber(client, { ...TRANSFER_INVOICE_SERIES, period: transfer.today.slice(0, 7) });
+      const creditNumber = await allocateInvoiceNumber(client, { ...TRANSFER_INVOICE_SERIES, period: today.slice(0, 7) });
       const credit = (await client.query<TransferInvoiceCredit>(
         `INSERT INTO transfer_invoice_credit (credit_number, invoice_number, org_id, currency_code, credit_date, total, reason, actor_id)
          VALUES ($1, $2, $3, $4, $5::date, $6::numeric, $7, $8) RETURNING ${CREDIT}`,
-        [creditNumber, input.invoiceNumber, invoice.org_id, invoice.currency_code, transfer.today, invoice.total, reason, input.actorId])).rows[0]!;
+        [creditNumber, input.invoiceNumber, invoice.org_id, invoice.currency_code, today, invoice.total, reason, input.actorId])).rows[0]!;
       await client.query("UPDATE transfer_invoice SET deleted = true, void_reason = 'credited' WHERE invoice_number = $1", [input.invoiceNumber]);
       await client.query("COMMIT");
       return { kind: "credited", credit };
