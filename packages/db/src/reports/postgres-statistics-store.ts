@@ -13,6 +13,9 @@ export interface StatisticsHiringCounts { readonly hired: number; readonly retai
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+// Transfers keep legacy's KWD filter; a deleted transfer is never counted, and a cancelled one is never paid, so it is not "in progress".
+const LIVE_KWD_TRANSFER = "NOT t.deleted AND t.status <> 'cancelled' AND t.currency_code = 'KWD'";
+
 // $1 is the Asia/Kuwait day, $2 the current instant. Minors are candidates only: a profile with a candidate grant.
 const COUNTS = `SELECT
   (SELECT count(*)::int FROM work_appeals WHERE status = 'submitted') AS "workLogAppeals",
@@ -25,7 +28,9 @@ const COUNTS = `SELECT
      WHERE c.stage = 'interviewing' AND r.status NOT IN ('filled','closed')
        AND NOT EXISTS (SELECT 1 FROM recruit_interviews i WHERE i.card_id = c.id AND i.status IN ('scheduled','completed'))) AS "totalInterviewRequests",
   (SELECT count(*)::int FROM recruit_interviews i JOIN recruit_pipeline_cards c ON c.id = i.card_id JOIN recruit_requests r ON r.id = c.request_id
-     WHERE i.status = 'scheduled' AND i.scheduled_at > $2::timestamptz AND r.status NOT IN ('filled','closed')) AS "totalInterviewScheduled"`;
+     WHERE i.status = 'scheduled' AND i.scheduled_at > $2::timestamptz AND r.status NOT IN ('filled','closed')) AS "totalInterviewScheduled",
+  (SELECT count(DISTINCT l.transfer_id)::int FROM pay_transfer_lines l JOIN pay_transfers t ON t.id = l.transfer_id
+     WHERE NOT l.paid AND l.candidate_total = l.company_total AND ${LIVE_KWD_TRANSFER}) AS "transfersWithNoProfitInProgress"`;
 
 // Retained: the assignment has lasted more than 365 days, counting up to its end date or, while it runs, up to today.
 const HIRING = `SELECT
@@ -67,14 +72,17 @@ const RECRUITER_ACTIVITY = `WITH r AS (SELECT ($2::date::timestamp AT TIME ZONE 
     LEFT JOIN placements ON placements.id = s.id LEFT JOIN requests ON requests.id = s.id LEFT JOIN suggestions ON suggestions.id = s.id
     LEFT JOIN notes ON notes.id = s.id LEFT JOIN invitations ON invitations.id = s.id`;
 
-// $1 is the Asia/Kuwait day. Requests keep legacy's KWD filter (no currency on file means KWD).
+// $1 is the Asia/Kuwait day. Requests keep legacy's KWD filter (no currency on file means KWD), and so do transfers.
 const KWD_REQUESTS = "recruit_requests r LEFT JOIN organization_commercial_terms t ON t.org_id = r.org_id AND t.field = 'currency_code'";
 const OVERVIEW = `SELECT
   (SELECT count(*)::int FROM person_profiles) AS candidates,
   (SELECT count(DISTINCT person_principal_id)::int FROM work_assignments WHERE start_date <= $1::date AND (end_date IS NULL OR end_date >= $1::date)) AS assigned,
   (SELECT count(*)::int FROM recruit_pipeline_cards) AS suggested,
   (SELECT count(*)::int FROM ${KWD_REQUESTS} WHERE r.status <> 'draft' AND COALESCE(t.value, 'KWD') = 'KWD') AS requests,
-  (SELECT count(*)::int FROM ${KWD_REQUESTS} WHERE (r.status = 'filled' OR (r.status = 'closed' AND r.close_reason = 'fulfilled')) AND COALESCE(t.value, 'KWD') = 'KWD') AS "requestsDelivered"`;
+  (SELECT count(*)::int FROM ${KWD_REQUESTS} WHERE (r.status = 'filled' OR (r.status = 'closed' AND r.close_reason = 'fulfilled')) AND COALESCE(t.value, 'KWD') = 'KWD') AS "requestsDelivered",
+  (SELECT count(*)::int FROM pay_transfer_lines l JOIN pay_transfers t ON t.id = l.transfer_id WHERE NOT l.paid AND t.status = 'distributing' AND ${LIVE_KWD_TRANSFER}) AS "payableCandidates",
+  (SELECT count(*)::int FROM pay_transfers t WHERE t.status = 'locked' AND ${LIVE_KWD_TRANSFER}) AS "transfersLocked",
+  (SELECT count(*)::int FROM pay_transfers t WHERE t.status = 'payment_sent' AND ${LIVE_KWD_TRANSFER}) AS "transfersPaymentSent"`;
 
 // $1 operator org ids, $2 first day of the oldest month, $3 the Asia/Kuwait day, $4 the months asked for (only those are counted). Each organization rolls up to its
 // top-level company: the ancestor whose parent is an operator organization (or none). Deleted top-level companies are
