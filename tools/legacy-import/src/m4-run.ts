@@ -9,13 +9,15 @@ import { LEGACY_CATALOGUE_TABLES, mapLegacyCatalogue, type LegacyCatalogueTable 
 import { COMPANY_SNAPSHOT_COLUMNS, mapLegacyCompanies } from "./m4-organizations.js";
 import { mapLegacyBrandLinks, mapLegacyStores } from "./m4-stores.js";
 import { mapLegacyContacts } from "./m4-contacts.js";
+import { M1_MAPPER_REVISION, M1_SOURCES, mapLegacyCandidates } from "./m1-people.js";
 import type { LegacyReader } from "./twin/journey.js";
 
 type Row = Readonly<Record<string, unknown>>;
 
 /** Every legacy table and column M-4 reads. A column outside this list is never selected. */
 export const M4_SOURCES = {
-  country: ["country_id", "country_name_en"],
+  // country_nationality_name_en is read for M-1 (a person's nationality), not for the catalogue.
+  country: ["country_id", "country_name_en", "country_nationality_name_en"],
   currency: ["currency_id", "title", "code", "currency_symbol", "decimal_place", "status", "datetime"],
   bank: ["bank_id", "bank_name", "bank_swift_code", "bank_iban_code", "bank_code_abk", "bank_transfer_type", "deleted"],
   tag: ["tag_id", "tag", "created_at", "updated_at"],
@@ -29,6 +31,8 @@ export const M4_SOURCES = {
   company_contact: ["company_contact_uuid", "contact_uuid", "company_id", "contact_position", "allow_access", "created_at", "updated_at"],
   contact_email: ["email_uuid", "contact_uuid", "email_address", "email_created_datetime"],
   contact_phone: ["phone_uuid", "contact_uuid", "phone_number", "phone_created_datetime"],
+  // M-1 people: the approved profile snapshot columns only (see M1_SOURCES).
+  candidate: M1_SOURCES.candidate,
 } as const satisfies Record<string, readonly string[]>;
 export type M4Table = keyof typeof M4_SOURCES;
 export type M4Sources = Readonly<Record<M4Table, readonly Row[]>>;
@@ -55,16 +59,29 @@ export async function readM4Sources(reader: LegacyReader): Promise<M4Sources> {
   return out;
 }
 
+/** The Kuwait calendar date of an instant (Asia/Kuwait is UTC+3 all year). */
+export function kuwaitDay(instant: string): string {
+  const ms = Date.parse(instant);
+  if (!Number.isFinite(ms)) throw new Error("m4.badNow");
+  return new Date(ms + 3 * 3_600_000).toISOString().slice(0, 10);
+}
+
 const CATALOGUE_TABLES = Object.keys(LEGACY_CATALOGUE_TABLES) as LegacyCatalogueTable[];
 
-/** Every mapping, pure. */
-export function planM4(sources: M4Sources) {
+/**
+ * Every mapping, pure. `today` is the run's Kuwait date (YYYY-MM-DD): M-1's minimum-age rule is
+ * applied as of that day, so the plan identity binds it and a write on another day needs a new plan.
+ */
+export function planM4(sources: M4Sources, today: string) {
   const catalogue = CATALOGUE_TABLES.map((table) => ({ table, ...mapLegacyCatalogue(table, sources[table]) }));
   const companies = mapLegacyCompanies(sources.company);
   const brandLinks = mapLegacyBrandLinks(sources.brand);
   const stores = mapLegacyStores(sources.store, sources.brand);
   const contacts = mapLegacyContacts(sources.company_contact, sources.contact, sources.contact_email, sources.contact_phone);
-  return { catalogue, companies, brandLinks, stores, contacts };
+  const people = mapLegacyCandidates({ candidate: sources.candidate, country: sources.country, university: sources.university, area: sources.area }, today);
+  /** Rows read per legacy table, so a row the mappers set aside still changes the identity. */
+  const sourceRows = Object.fromEntries((Object.keys(M4_SOURCES) as M4Table[]).sort().map((t) => [t, sources[t].length]));
+  return { catalogue, companies, brandLinks, stores, contacts, people, sourceRows };
 }
 export type M4Plan = ReturnType<typeof planM4>;
 
@@ -85,6 +102,7 @@ export interface M4Writers {
   brandLinks(rows: M4Plan["brandLinks"]["links"]): Promise<StepWrite>;
   stores(rows: M4Plan["stores"]["stores"], now: string): Promise<StepWrite>;
   contacts(rows: M4Plan["contacts"]["contacts"], now: string): Promise<StepWrite>;
+  people(rows: M4Plan["people"]["people"]): Promise<StepWrite>;
 }
 
 export interface M4Step {
@@ -148,7 +166,7 @@ function step(name: string, legacy: number, mapped: number, issues: readonly { r
  * stay committed (each is idempotent, so the next run carries on).
  */
 export async function runM4(sources: M4Sources, writers: M4Writers | null, now: string,
-  onStep: (step: M4Step) => void = () => undefined, plan: M4Plan = planM4(sources)): Promise<M4Report> {
+  onStep: (step: M4Step) => void = () => undefined, plan: M4Plan = planM4(sources, kuwaitDay(now))): Promise<M4Report> {
   const steps: M4Step[] = [];
   // A step is reported once its writer returned and its result passed the checks. A failed run
   // therefore lists the confirmed steps; the step after them may have committed in part.
@@ -164,6 +182,8 @@ export async function runM4(sources: M4Sources, writers: M4Writers | null, now: 
     writers ? await writers.stores(plan.stores.stores, now) : undefined));
   add(step("company_contact", sources.company_contact.length, plan.contacts.contacts.length, plan.contacts.issues,
     writers ? await writers.contacts(plan.contacts.contacts, now) : undefined));
+  add(step("candidate", sources.candidate.length, plan.people.people.length, plan.people.issues,
+    writers ? await writers.people(plan.people.people) : undefined));
   const ok = steps.every((s) => !s.write || (s.write.conflicts.length === 0 && Object.keys(s.write.refused).length === 0));
   return { schemaVersion: 1, mode: writers ? "write" : "plan", steps, ok };
 }
@@ -188,27 +208,38 @@ export interface PlanBinding {
   readonly target: string;
   /** The operator organization that top-level companies are written under. */
   readonly operator: string;
+  /** The run's Kuwait date (YYYY-MM-DD), the day M-1's age rule was applied on. */
+  readonly today: string;
 }
 
 /**
  * The identity of a plan: everything it is bound to (revision, built artifact, refresh read,
- * destination database and operator parent) and every mapped row's legacy id and digest, step by
- * step. A write run must find the same identity as the plan that was reviewed, so it imports
+ * destination database, operator parent, Kuwait date and mapper revision), the rows read per
+ * legacy table, and step by step every mapped row's legacy id and digest and every issue's rule,
+ * legacy id and column. A write run must find the same identity as the plan that was reviewed, so it imports
  * exactly what that plan showed, with the same code, into the same place. A sha256, so it carries
  * no row.
  */
 export function planIdentity(plan: M4Plan, binding: PlanBinding): string {
   const rows = (list: readonly { readonly digest: string }[], id: (row: never) => string) => list.map((r) => `${id(r as never)}:${r.digest}`);
+  // The reconciliation evidence a reviewer saw: every issue as rule, legacy table, legacy id ("?"
+  // when it has none, so those count by multiplicity), column name and related legacy id, sorted.
+  // Never a value.
+  type Issue = { readonly rule: string; readonly legacyId: string; readonly legacyTable?: string; readonly field?: string; readonly target?: string };
+  const issues = (list: readonly Issue[]) =>
+    list.map((i) => JSON.stringify([i.rule, i.legacyTable ?? null, i.legacyId, i.field ?? null, i.target ?? null])).sort();
   const steps = [
-    ...plan.catalogue.map((c) => [`catalogue.${c.table}`, rows(c.items, (r: { legacyId: string }) => r.legacyId)]),
-    ["company", rows(plan.companies.organizations, (r: { legacyId: string }) => r.legacyId)],
-    ["brand_company", rows(plan.brandLinks.links, (r: { brandLegacyId: string }) => r.brandLegacyId)],
-    ["store", rows(plan.stores.stores, (r: { legacyId: string }) => r.legacyId)],
-    ["company_contact", rows(plan.contacts.contacts, (r: { legacyId: string }) => r.legacyId)],
+    ...plan.catalogue.map((c) => [`catalogue.${c.table}`, rows(c.items, (r: { legacyId: string }) => r.legacyId), issues(c.issues)]),
+    ["company", rows(plan.companies.organizations, (r: { legacyId: string }) => r.legacyId), issues(plan.companies.issues)],
+    ["brand_company", rows(plan.brandLinks.links, (r: { brandLegacyId: string }) => r.brandLegacyId), issues(plan.brandLinks.issues)],
+    ["store", rows(plan.stores.stores, (r: { legacyId: string }) => r.legacyId), issues(plan.stores.issues)],
+    ["company_contact", rows(plan.contacts.contacts, (r: { legacyId: string }) => r.legacyId), issues(plan.contacts.issues)],
+    ["candidate", rows(plan.people.people, (r: { legacyId: string }) => r.legacyId), issues(plan.people.issues)],
   ];
-  const { revision, artifact, refresh, target, operator } = binding;
+  const { revision, artifact, refresh, target, operator, today } = binding;
   return createHash("sha256").update(JSON.stringify({
-    revision, artifact, refresh: [refresh.startedAt, refresh.finishedAt, refresh.totalRows], target, operator, steps,
+    revision, artifact, refresh: [refresh.startedAt, refresh.finishedAt, refresh.totalRows], target, operator,
+    today, mappers: { people: M1_MAPPER_REVISION }, sourceRows: plan.sourceRows, steps,
   })).digest("hex");
 }
 

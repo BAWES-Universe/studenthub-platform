@@ -6,7 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
-import { main, m4Writers, postgresTarget, WRITER_LOCK_SQL, WRITER_SESSION_LIMITS_SQL, WriterSessionPool, type CliDeps, type M4Receipt } from "../../../tools/legacy-import/src/m4-cli.js";
+import { main, m4Writers, M4_REQUIRED_MIGRATION, postgresTarget, WRITER_LOCK_SQL, WRITER_SESSION_LIMITS_SQL, WriterSessionPool, type CliDeps, type M4Receipt } from "../../../tools/legacy-import/src/m4-cli.js";
 import { M4_SOURCES, runM4, type M4Sources, type M4Table } from "../../../tools/legacy-import/src/m4-run.js";
 import { fixtureIds } from "./legacy-fixture-ids.js";
 
@@ -36,6 +36,7 @@ function legacy(c: number, r: string): M4Sources {
       { store_id: c + 1, company_id: c, brand_uuid: `${r}-b`, mall_uuid: null, store_name: "Store B", deleted: 0 }],
     contact: [{ contact_uuid: `${r}-p`, contact_name: "Person", contact_email: `${r}@example.com`, deleted: 0 }],
     company_contact: [{ company_contact_uuid: `${r}-l`, contact_uuid: `${r}-p`, company_id: c + 1, allow_access: 0 }],
+    candidate: [{ candidate_id: c, deleted: 0, candidate_name: "Test Person", candidate_language_pref: "en" }],
   };
 }
 
@@ -45,7 +46,7 @@ test("a write run imports every step in order through the real stores; a second 
   const first = await runM4(legacy(c, r), writers, NOW);
   assert.equal(first.ok, true);
   const by = new Map(first.steps.map((s) => [s.step, s.write]));
-  assert.deepEqual([by.get("company")!.inserted, by.get("brand_company")!.inserted, by.get("store")!.inserted, by.get("company_contact")!.inserted], [2, 1, 2, 1]);
+  assert.deepEqual([by.get("company")!.inserted, by.get("brand_company")!.inserted, by.get("store")!.inserted, by.get("company_contact")!.inserted, by.get("candidate")!.inserted], [2, 1, 2, 1, 1]);
   const second = await runM4(legacy(c, r), writers, NOW);
   assert.equal(second.ok, true);
   assert.ok(second.steps.every((s) => s.write!.inserted === 0 && s.write!.unchanged === s.mapped));
@@ -83,6 +84,31 @@ test("the write target is staging only when the database's own marker row says s
     assert.equal(await elsewhere.hasOperator(operator), false);
     assert.equal(await elsewhere.claimWriter(), false);
   } finally { await elsewhere.close(); }
+});
+
+test("a write target is schema-ready only once migration 0653 is recorded and its snapshot table exists", async () => {
+  const target = postgresTarget(URL, ACTOR, operator);
+  try { assert.equal(await target.schemaReady(), true); } finally { await target.close(); }
+  // An older target: the 0652 marker era, before the people snapshot table.
+  const name = `m4_schema_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  await pool.query(`CREATE DATABASE ${name}`);
+  const old = new pg.Pool({ connectionString: URL.replace(/\/[^/?]+(\?|$)/, `/${name}$1`) });
+  const older = postgresTarget(URL.replace(/\/[^/?]+(\?|$)/, `/${name}$1`), ACTOR, operator);
+  try {
+    assert.equal(await older.schemaReady(), false, "no ledger at all");
+    await old.query("CREATE TABLE schema_migrations (version text PRIMARY KEY); INSERT INTO schema_migrations VALUES ('0652_legacy_import_target')");
+    assert.equal(await older.schemaReady(), false, "0652 only");
+    await old.query(`INSERT INTO schema_migrations VALUES ('${M4_REQUIRED_MIGRATION}')`);
+    assert.equal(await older.schemaReady(), false, "recorded but the table is missing");
+    await old.query("CREATE TABLE legacy_candidate_snapshots (legacy_candidate_id text PRIMARY KEY)");
+    assert.equal(await older.schemaReady(), true);
+  } finally {
+    await older.close();
+    await old.end();
+    await pool.query(`DROP DATABASE IF EXISTS ${name}`);
+  }
+  const elsewhere = postgresTarget(URL.replace(/\/[^/?]+(\?|$)/, "/no_such_database$1"), ACTOR, operator);
+  try { assert.equal(await elsewhere.schemaReady(), false); } finally { await elsewhere.close(); }
 });
 
 test("the operator parent must exist in the target database", async () => {
@@ -211,7 +237,7 @@ test("a lost lock session mid-write: no later batch runs, the attempt fails with
     assert.deepEqual([receipt.status, receipt.code], ["failed", "m4.writerLost"]);
     assert.equal(receipt.steps.at(-1)!.step, "company");
     assert.equal(receipt.steps.at(-1)!.write!.inserted, 2);
-    assert.deepEqual(receipt.unconfirmed, ["brand_company", "store", "company_contact"]);
+    assert.deepEqual(receipt.unconfirmed, ["brand_company", "store", "company_contact", "candidate"]);
     // The companies committed before the loss; nothing after it was written.
     const mapped = async (table: string, ids: string[]) => (await pool.query("SELECT 1 FROM legacy_id_maps WHERE legacy_table = $1 AND legacy_id = ANY($2::text[])", [table, ids])).rowCount;
     assert.equal(await mapped("company", [String(c), String(c + 1)]), 2);
