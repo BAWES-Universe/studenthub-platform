@@ -735,10 +735,17 @@
     "O-14": {
       "lane": "pay",
       "subject": "`/organization/:orgId/statements`",
+      "served": [
+        {
+          "route": "/organization/:orgId/statements",
+          "test": "apps/gateway/test/billing-invoices-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "not started (audit 2026-11-20): pay lane: statements"
+          "state": "done",
+          "evidence": "page and test on main, proven by checkServed; PR #673 at d275d51d"
         },
         "verified": {
           "state": "open"
