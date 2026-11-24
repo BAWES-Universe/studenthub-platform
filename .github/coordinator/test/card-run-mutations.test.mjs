@@ -496,7 +496,7 @@ const CASES = [
   {
     name: "M74 merge without the handoff",
     file: "service/card-land.mjs",
-    from: "      await writeHandoffReceipt({ terminal, target: head, decision, issueId: issue.id, linearToken, fetchImpl });",
+    from: "      await writeHandoffReceipt({ terminal, target: head, decision, issueId: commentThread.writeId, linearToken, fetchImpl });",
     to: "      // SHU306-M74",
     pattern: "SHU-306 L1:",
   },

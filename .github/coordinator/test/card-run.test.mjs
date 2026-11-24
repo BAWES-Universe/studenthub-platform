@@ -4338,7 +4338,9 @@ const verdictReceipt = (episode, { stage = "COMPLETED", verdict = "PASS", sha = 
     ...(verdict === "BLOCKED" ? { review_findings: { verdict_stage: "BLOCKED", target_sha: sha, summary: "config.json drops a lane\nsee the diff", links: ["config.json@abc:3-9"] } } : {}) }),
   createdAt: "2026-10-09T15:31:07.000Z", user: { id: ACTOR, displayName: "Coordinator" },
 });
-function verdictHost(reason, { receipt = {}, refuse = () => null } = {}) {
+// The review card's thread continues on SHU-711 (config comment_continuations):
+// the receipt is on the card itself unless onContinuation puts it there.
+function verdictHost(reason, { receipt = {}, refuse = () => null, onContinuation = false } = {}) {
   const host = fakeHost({ id: "SHU-304", config: queueConfig(), onTick: verdictTick(reason) });
   for (const id of QUEUE) claimFor(host, REV, id, { outcome: "PASS", ok: true, land: "MERGED" });
   setPulls(host, [queuePull(240)]);
@@ -4348,10 +4350,17 @@ function verdictHost(reason, { receipt = {}, refuse = () => null } = {}) {
   const respond = (status, json) => ({ status, ok: status < 300, headers: { get: () => null }, json: async () => json });
   const api = `https://api.github.com/repos/${COMMITTED.pilot_repo}`;
   host.io = { ...host.io, fetch: async (url, options = {}) => {
+    if (url === "https://api.linear.app/graphql" && JSON.parse(options.body).query.includes("CoordinatorIssueIdentity")) {
+      const { variables } = JSON.parse(options.body);
+      host.api.push(`linear continuation ${variables.issueId}`);
+      return respond(200, { data: { issue: { id: `uuid-${variables.issueId}`, identifier: variables.issueId } } });
+    }
     if (url === "https://api.linear.app/graphql" && JSON.parse(options.body).query.includes("CoordinatorIssueComments")) {
-      host.api.push("linear receipts");
+      const { variables } = JSON.parse(options.body);
+      host.api.push(`linear receipts ${variables.issueId}`);
       const episode = host.armedRecords?.at(-1)?.activation_id;
-      return respond(200, { data: { issue: { comments: { nodes: receipt === null ? [] : [verdictReceipt(episode, receipt)], pageInfo: { hasNextPage: false } } } } });
+      const here = variables.issueId === (onContinuation ? "uuid-SHU-711" : "issue-uuid");
+      return respond(200, { data: { issue: { comments: { nodes: receipt === null || !here ? [] : [verdictReceipt(episode, receipt)], pageInfo: { hasNextPage: false } } } } });
     }
     if (url === `${api}/commits/${PR_HEAD}`) {
       assert.equal(options.headers.Authorization, "Bearer gh-secret-value", "the head's time is read with the read-only token");
@@ -4396,6 +4405,16 @@ test("M18 G1 R1: a box PASS sets pending then success on the exact reviewed head
   assert.equal(host.reports.length, 1);
   assert.match(host.reports[0], /^Review on GitHub \(orchestrator\/review\): status success, comment posted\.$/m);
   assert.match(host.reports[0], /^Reviews: 1 in the last 24 hours, 100% PASS; head to verdict median 11 min, p90 11 min \(1 timed\); 0 dropped with no verdict\.$/m);
+});
+
+test("COMMENT_CONTINUATIONS R1: the review card's terminal receipt on its continuation (SHU-711) still confirms the verdict, read after the card's own thread", async () => {
+  const host = verdictHost(PASS_LINE, { onContinuation: true });
+  const run = await attempt(() => autoRun({ io: host.io, paths: LAND_PATHS }));
+  assert.equal(run.outcome, "REVIEW_PASS", JSON.stringify(run));
+  assert.deepEqual(host.gh.statuses.map((entry) => entry.state), ["pending", "success"]);
+  assert.equal(host.gh.comments.length, 1);
+  const reads = host.api.filter((entry) => /^linear (receipts|continuation) /.test(entry));
+  assert.deepEqual(reads, ["linear continuation SHU-711", "linear receipts issue-uuid", "linear receipts uuid-SHU-711"]);
 });
 
 test("M18 G1 R1b: a PASS ending on the coordinator's generic line is published only when the receipt confirms PASS at the armed head", async () => {
@@ -4448,7 +4467,7 @@ test("M18 G1 R3: a review that ends with no verdict posts no comment and never s
   assert.deepEqual(host.gh.statuses.map((entry) => [entry.sha, entry.state, entry.description]), [
     [PR_HEAD, "pending", "review running"], [PR_HEAD, "error", "no verdict, will retry"]]);
   assert.deepEqual(host.gh.comments, []);
-  assert.equal(host.api.includes("linear receipts"), false, "a HOLD reads no verdict");
+  assert.equal(host.api.some((entry) => entry.startsWith("linear receipts")), false, "a HOLD reads no verdict");
   const [line] = metricLines(host);
   assert.equal(line.verdict, "HOLD");
   assert.equal(line.dropped, true);

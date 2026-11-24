@@ -321,25 +321,26 @@ test("LINEAR BUDGET: a full comment page is followed to the end of the thread; a
 });
 
 test("LINEAR BUDGET: a rate-limited answer HOLDs the tick with the retry Linear stated and exits cleanly", async () => {
-  // The answer the service actually received: a GraphQL error, with the reset
-  // published as a header, NOT an HTTP 429 body the caller can ignore.
+  // The answer the service actually received: a GraphQL error, with the spent
+  // requests bucket and its reset published as headers, NOT an HTTP 429 body
+  // the caller can ignore.
   const reset = Date.now() + 900_000;
   const { code, out, queries } = await runTick(() => ({
     ok: true,
     status: 200,
-    headers: new Headers({ "X-RateLimit-Requests-Reset": String(reset) }),
+    headers: new Headers({ "X-RateLimit-Requests-Remaining": "0", "X-RateLimit-Requests-Reset": String(reset) }),
     json: async () => ({ errors: [{ message: "Rate limit exceeded. Only 2500 requests are allowed per 1 hour." }] }),
   }));
 
   assert.equal(code, 0, "a spent workspace budget is a HOLD, not a failed tick");
-  assert.deepEqual(out, ["HOLD=LINEAR_RATE_LIMITED retry_after=900"]);
+  assert.deepEqual(out, ["HOLD=LINEAR_RATE_LIMITED retry_after=900 source=header status=200"]);
   assert.equal(queries.length, 1, "a rate-limited tick stops reading instead of spending the rest of the budget");
 });
 
 test("LINEAR BUDGET: the reported retry is the one Linear stated, in seconds", () => {
   const withHeaders = (headers, status = 429) => ({ status, headers: new Headers(headers) });
   assert.equal(linearRateLimitSeconds(withHeaders({ "Retry-After": "42" })), 42);
-  assert.equal(linearRateLimitSeconds(withHeaders({ "X-RateLimit-Requests-Reset": String(1_000_000 + 120_000) }), null, 1_000_000), 120);
+  assert.equal(linearRateLimitSeconds(withHeaders({ "X-RateLimit-Requests-Remaining": "0", "X-RateLimit-Requests-Reset": String(1_000_000 + 120_000) }), null, 1_000_000), 120);
   assert.equal(linearRateLimitSeconds({ status: 429 }, { errors: [{ extensions: { retryAfter: 7 } }] }), 7);
   // Nothing stated: hold for the whole budget window Linear enforces.
   assert.equal(linearRateLimitSeconds({ status: 429 }, {}), LINEAR_RATE_LIMIT_FALLBACK_SECONDS);

@@ -47,6 +47,7 @@ import {
   LINEAR_COMMENT_CREATE_MUTATION,
   TERMINAL_STAGES,
   UUID_RE,
+  commentWriteId,
   fetchLinearBoard,
   loadConfig,
   measureBranchHead,
@@ -656,15 +657,19 @@ export async function defaultReadReceipts({ config, env, fetchImpl = fetch, now 
   const { issues, commentsByIssue } = await fetchLinearBoard({
     token: env.LINEAR_API_TOKEN ?? "", repo: config.pilot_repo, team: config.team ?? "SHU",
     repoLabelMap: config.repo_label_map, fetchImpl, readComments: true,
+    commentContinuations: config.comment_continuations,
   });
   const receipts = [];
   const linearIdByAttempt = new Map();
   for (const issue of issues) {
     const read = commentsByIssue.get(issue.linearId ?? issue.id) ?? commentsByIssue.get(issue.id);
     if (!read || read.error) continue;
+    // A card with comment continuations is written on its last one; one whose
+    // continuation cannot be resolved gets no write target here.
+    const writeId = commentWriteId(issue) ?? (Object.hasOwn(issue, "commentIssueId") ? null : issue.id);
     for (const receipt of parseReceiptsFromComments(read.comments, config.linear_receipt_actor_ids)) {
       receipts.push(receipt);
-      if (!linearIdByAttempt.has(receipt.attempt_id)) linearIdByAttempt.set(receipt.attempt_id, issue.linearId ?? issue.id);
+      if (writeId && !linearIdByAttempt.has(receipt.attempt_id)) linearIdByAttempt.set(receipt.attempt_id, writeId);
     }
   }
   return { observed_at: now(), receipts, linearIdByAttempt };
