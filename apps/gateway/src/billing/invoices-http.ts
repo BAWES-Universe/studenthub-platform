@@ -22,8 +22,8 @@ import { invoicePdf, type InvoiceBankInfo } from "./invoice-pdf.js";
  * to today, so its closing figure is the balance owed now. Same readers and the same not found.
  *
  * POST /organization/invoices/<orgId>/<number>/void voids one invoice with a credit note (F4.7), with
- * a `reason` in a JSON or form body. Only StudentHub's finance users and admins void
- * (`transferInvoiceVoidDecision`); the list page shows them a void form per standing invoice. Same-origin
+ * a `reason` in a JSON or form body. Only StudentHub's finance users void
+ * (`transferInvoiceVoidDecision`, decided again by the store inside the credit's transaction); the list page shows them a void form per standing invoice. Same-origin
  * posts only. Voiding twice answers the first credit note.
  */
 export interface TransferInvoiceReads {
@@ -68,7 +68,8 @@ export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">;
     async void(viewer, orgId, invoiceNumber, raw) {
       let reason: string;
       try { reason = creditReason(raw); } catch { return { kind: "invalid_reason" }; }
-      // The void decision decides first: an invoice outside what the viewer may void is not found.
+      // The page's view first: an invoice outside what the viewer may void is not found. The store then
+      // decides again on the invoice's own company, under the credit's locks.
       if (!voids || !await voids.reads.document(viewer, orgId, invoiceNumber)) return { kind: "not_found" };
       return await voids.credit({ actorId: viewer, invoiceNumber, reason });
     },

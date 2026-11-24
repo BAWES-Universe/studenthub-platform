@@ -12,7 +12,7 @@ type Access = ReturnType<typeof wireAccess>["services"];
 
 /**
  * Invoices lane: read-only company invoices and their PDFs (I3), and each person's own pay history (F4.9).
- * BILLING_BANK_INFO (JSON) adds the bank block to unpaid invoices. StudentHub's finance users and admins
+ * BILLING_BANK_INFO (JSON) adds the bank block to unpaid invoices. StudentHub's finance users
  * void invoices with credit notes (F4.7) through same-origin posts from the gateway origin. All share one pool.
  */
 export function wireBilling(settings: WiringSettings, access: Access, env: Readonly<Record<string, string | undefined>>): Wired<{ readonly invoices: InvoicesHttp; readonly payHistory: PayHistoryHttp }> {
@@ -20,9 +20,11 @@ export function wireBilling(settings: WiringSettings, access: Access, env: Reado
   const pool = new pg.Pool({ connectionString: settings.databaseUrl });
   const reads = new PostgresTransferInvoiceReads({ pool,
     decision: (rows, orgId, ancestors) => transferInvoiceReadDecision(rows, orgId, ancestors, DEFAULT_OPERATOR_ORG_IDS) });
-  const voids = new PostgresTransferInvoiceVoids({ pool });
-  const voidReads = new PostgresTransferInvoiceReads({ pool,
-    decision: (rows, orgId, ancestors) => transferInvoiceVoidDecision(rows, orgId, ancestors, DEFAULT_OPERATOR_ORG_IDS) });
+  const voidDecision = (rows: Parameters<typeof transferInvoiceVoidDecision>[0], orgId: string, ancestors: readonly string[]) =>
+    transferInvoiceVoidDecision(rows, orgId, ancestors, DEFAULT_OPERATOR_ORG_IDS);
+  // The page shows the void form through voidReads; the store decides again inside the credit's transaction.
+  const voids = new PostgresTransferInvoiceVoids({ pool, decision: voidDecision });
+  const voidReads = new PostgresTransferInvoiceReads({ pool, decision: voidDecision });
   const origin = settings.callbackUrl ? new URL(settings.callbackUrl).origin : "";
   return {
     services: {

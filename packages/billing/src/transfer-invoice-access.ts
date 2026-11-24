@@ -18,11 +18,12 @@ export const TRANSFER_INVOICE_COMPANY_ROLES: readonly string[] = Object.freeze([
 /** StudentHub's own finance users: a finance grant on an operator organization, which covers the companies below it. */
 export const TRANSFER_INVOICE_OPERATOR_FINANCE_ROLES: readonly string[] = Object.freeze(["finance"]);
 /**
- * Who may void an issued invoice with a credit note (F4.7, Khalid 24 Nov 2026: the finance role, rules
- * refined after cutover): StudentHub's own finance users and admins, through a grant on an operator
- * organization that covers the company. A company's own people never void their own invoices.
+ * Who may void an issued invoice with a credit note (F4.7). Khalid, 24 Nov 2026: "anyone with finance
+ * abilities role", rules refined after cutover. That is StudentHub's own finance users: the finance role
+ * on an operator organization that covers the company. A company's own people never void their own
+ * invoices, and no other role voids.
  */
-export const TRANSFER_INVOICE_VOID_ROLES: readonly string[] = Object.freeze(["finance", "admin"]);
+export const TRANSFER_INVOICE_VOID_ROLE = "finance";
 
 export function transferInvoiceReadDecision(rows: readonly TransferInvoiceGrantRow[], orgId: string, ancestors: readonly string[], operators: readonly string[]): boolean {
   if (operators.includes(orgId)) return false;
@@ -32,10 +33,10 @@ export function transferInvoiceReadDecision(rows: readonly TransferInvoiceGrantR
     || (TRANSFER_INVOICE_OPERATOR_FINANCE_ROLES.includes(row.role) && operators.includes(row.org_id))));
 }
 
-/** Whether the reader may void the company's invoices; same coverage rule as reading, operator grants only. */
+/** Whether the person may void the company's invoices; same coverage rule as reading, operator finance grants only. */
 export function transferInvoiceVoidDecision(rows: readonly TransferInvoiceGrantRow[], orgId: string, ancestors: readonly string[], operators: readonly string[]): boolean {
   if (operators.includes(orgId)) return false;
-  return rows.some(row => TRANSFER_INVOICE_VOID_ROLES.includes(row.role) && operators.includes(row.org_id)
+  return rows.some(row => row.role === TRANSFER_INVOICE_VOID_ROLE && operators.includes(row.org_id)
     && (row.org_id === orgId || (row.scope === "subtree" && ancestors.includes(row.org_id))));
 }
 

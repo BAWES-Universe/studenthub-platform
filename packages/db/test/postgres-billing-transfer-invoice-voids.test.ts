@@ -34,13 +34,13 @@ beforeEach(async () => {
   pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema} -c statement_timeout=8000` });
   await runMigrations(pool);
   await pool.query("INSERT INTO organizations(id,name,parent_org_id) VALUES ('root','StudentHub',NULL),('P','P','root'),('C1','C1','P')");
-  for (const id of [actor.principalId, "worker", "op-admin"]) await pool.query("INSERT INTO principals(id) VALUES($1)", [id]);
-  await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES('op-admin','root','admin','subtree')");
+  for (const id of [actor.principalId, "worker", "op-admin", "op-fin"]) await pool.query("INSERT INTO principals(id) VALUES($1)", [id]);
+  await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES('op-admin','root','admin','subtree'),('op-fin','root','finance','subtree')");
   for (const org of ["P", "C1"]) {
     store[org] = randomUUID();
     await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Synthetic shop',$3,$3)", [store[org], org, "a".repeat(64)]);
   }
-  voids = new PostgresTransferInvoiceVoids({ pool });
+  voids = new PostgresTransferInvoiceVoids({ pool, decision: (rows, orgId, ancestors) => transferInvoiceVoidDecision(rows, orgId, ancestors, ["root"]) });
   reads = new PostgresTransferInvoiceReads({ pool, decision: (rows, orgId, ancestors) => transferInvoiceReadDecision(rows, orgId, ancestors, ["root"]) });
 });
 afterEach(async () => {
@@ -69,16 +69,16 @@ test("TRANSFER_INVOICE_VOID_PRESERVES_HISTORY a void keeps the invoice, its numb
   const id = await transfer([["P", "4.000"], ["C1", "2.500"]]);
   await move(id, "lock");
   const original = (await live(id, "C1"))!;
-  const result = await voids.credit({ actorId: "op-admin", invoiceNumber: original.invoiceNumber, reason: "  Billed the wrong store  " });
+  const result = await voids.credit({ actorId: "op-fin", invoiceNumber: original.invoiceNumber, reason: "  Billed the wrong store  " });
   assert.equal(result.kind, "credited");
   const credit = result.kind === "credited" ? result.credit : assert.fail();
   assert.match(credit.creditNumber, SERIES); assert.notEqual(credit.creditNumber, original.invoiceNumber);
   assert.deepEqual({ ...credit, creditNumber: "" }, { creditNumber: "", invoiceNumber: original.invoiceNumber, orgId: "C1", currencyCode: "KWD",
-    creditDate: await today(), total: "2.500", reason: "Billed the wrong store", actorId: "op-admin" });
+    creditDate: await today(), total: "2.500", reason: "Billed the wrong store", actorId: "op-fin" });
   const after = (await listTransferInvoices(pool, id)).find(i => i.invoiceNumber === original.invoiceNumber);
   assert.deepEqual(after, { ...original, deleted: true, voidReason: "credited" }, "only the void mark changes on the invoice");
   assert.equal((await live(id, "P"))?.deleted, false, "the other company's invoice is untouched");
-  const again = await voids.credit({ actorId: "op-admin", invoiceNumber: original.invoiceNumber, reason: "twice" });
+  const again = await voids.credit({ actorId: "op-fin", invoiceNumber: original.invoiceNumber, reason: "twice" });
   assert.deepEqual(again, { kind: "already_credited", credit }, "a second void answers the first credit note");
   assert.equal((await credits()).length, 1);
   await refused("UPDATE transfer_invoice_credit SET total = 0");
@@ -92,7 +92,7 @@ test("TRANSFER_INVOICE_VOID_REISSUE after a void an unlock and relock issues a n
   const id = await transfer([["P", "4.000"], ["C1", "2.500"]]);
   await move(id, "lock");
   const p = (await live(id, "P"))!, c1 = (await live(id, "C1"))!;
-  assert.equal((await voids.credit({ actorId: "op-admin", invoiceNumber: p.invoiceNumber, reason: "Wrong period" })).kind, "credited");
+  assert.equal((await voids.credit({ actorId: "op-fin", invoiceNumber: p.invoiceNumber, reason: "Wrong period" })).kind, "credited");
   assert.equal(await live(id, "P"), undefined, "a credited invoice no longer bills the company");
   await move(id, "admin_unlock", "lock");
   const reissued = (await live(id, "P"))!;
@@ -104,7 +104,7 @@ test("TRANSFER_INVOICE_VOID_REISSUE after a void an unlock and relock issues a n
 
   const only = await transfer([["P", "1.000"]]);
   await move(only, "lock");
-  await voids.credit({ actorId: "op-admin", invoiceNumber: (await live(only, "P"))!.invoiceNumber, reason: "Wrong period" });
+  await voids.credit({ actorId: "op-fin", invoiceNumber: (await live(only, "P"))!.invoiceNumber, reason: "Wrong period" });
   await assert.rejects(lifecycle().transition(actor, only, "payment_received"), /transfer_invoice_missing/, "no payment is received against a transfer with nothing billed");
 });
 
@@ -112,7 +112,7 @@ test("TRANSFER_INVOICE_VOID_PAID a paid invoice is credited, stays paid, and the
   const id = await transfer([["P", "4.000"]]);
   await move(id, "lock", "payment_received");
   const paid = (await live(id, "P"))!;
-  const result = await voids.credit({ actorId: "op-admin", invoiceNumber: paid.invoiceNumber, reason: "Refund agreed" });
+  const result = await voids.credit({ actorId: "op-fin", invoiceNumber: paid.invoiceNumber, reason: "Refund agreed" });
   const credit = result.kind === "credited" ? result.credit : assert.fail(result.kind);
   const row = (await listTransferInvoices(pool, id))[0]!;
   assert.deepEqual([row.status, row.deleted, row.voidReason], ["paid", true, "credited"]);
@@ -134,7 +134,7 @@ test("TRANSFER_INVOICE_VOID_VISIBLE a credited invoice stays on the company's pa
   const id = await transfer([["P", "4.000"], ["C1", "2.500"]]);
   await move(id, "lock");
   const p = (await live(id, "P"))!;
-  await voids.credit({ actorId: "op-admin", invoiceNumber: p.invoiceNumber, reason: "Wrong period" });
+  await voids.credit({ actorId: "op-fin", invoiceNumber: p.invoiceNumber, reason: "Wrong period" });
   await move(id, "admin_unlock");
   const listed = async () => (await reads.listForOrganization("op-admin", "P"))!.invoices.map(i => i.invoiceNumber);
   assert.deepEqual(await listed(), [p.invoiceNumber], "the draft's unpaid C1 invoice is hidden; the credited one stays");
@@ -146,22 +146,22 @@ test("TRANSFER_INVOICE_VOID_VISIBLE a credited invoice stays on the company's pa
 });
 
 test("TRANSFER_INVOICE_VOID_REFUSED missing and otherwise voided invoices are not found; a draft's unpaid invoice is not creditable; reasons are checked", async () => {
-  assert.deepEqual(await voids.credit({ actorId: "op-admin", invoiceNumber: "SH-2026-11-999999", reason: "x" }), { kind: "not_found" });
+  assert.deepEqual(await voids.credit({ actorId: "op-fin", invoiceNumber: "SH-2026-11-999999", reason: "x" }), { kind: "not_found" });
   const id = await transfer([["P", "4.000"]]);
   await move(id, "lock");
   const first = (await live(id, "P"))!;
   await move(id, "admin_unlock");
   await pool.query("UPDATE pay_transfer_lines SET company_total = '5.000' WHERE transfer_id = $1", [id]);
-  assert.deepEqual(await voids.credit({ actorId: "op-admin", invoiceNumber: first.invoiceNumber, reason: "x" }), { kind: "not_creditable" }, "a draft is not payable");
+  assert.deepEqual(await voids.credit({ actorId: "op-fin", invoiceNumber: first.invoiceNumber, reason: "x" }), { kind: "not_creditable" }, "a draft is not payable");
   await move(id, "lock");
-  assert.deepEqual(await voids.credit({ actorId: "op-admin", invoiceNumber: first.invoiceNumber, reason: "x" }), { kind: "not_found" }, "re-issued");
+  assert.deepEqual(await voids.credit({ actorId: "op-fin", invoiceNumber: first.invoiceNumber, reason: "x" }), { kind: "not_found" }, "re-issued");
   const gone = await transfer([["P", "1.000"]]);
   await move(gone, "lock");
   const deleted = (await live(gone, "P"))!;
   await move(gone, "delete");
-  assert.deepEqual(await voids.credit({ actorId: "op-admin", invoiceNumber: deleted.invoiceNumber, reason: "x" }), { kind: "not_found" }, "transfer deleted");
+  assert.deepEqual(await voids.credit({ actorId: "op-fin", invoiceNumber: deleted.invoiceNumber, reason: "x" }), { kind: "not_found" }, "transfer deleted");
   for (const bad of ["", "   ", "a".repeat(501), "two\nlines", 7]) {
-    await assert.rejects(voids.credit({ actorId: "op-admin", invoiceNumber: (await live(id, "P"))!.invoiceNumber, reason: bad as string }), /invalid_reason/, JSON.stringify(bad));
+    await assert.rejects(voids.credit({ actorId: "op-fin", invoiceNumber: (await live(id, "P"))!.invoiceNumber, reason: bad as string }), /invalid_reason/, JSON.stringify(bad));
   }
   assert.equal(creditReason(` ${"é".repeat(500)} `), "é".repeat(500));
   assert.deepEqual(await credits(), []);
@@ -218,11 +218,11 @@ test("TRANSFER_INVOICE_VOID_PAIRED a credit note commits only together with its 
   await refused("UPDATE transfer_invoice SET deleted = false, void_reason = NULL WHERE invoice_number = $1", [number]);
 });
 
-test("TRANSFER_INVOICE_VOID_WHO StudentHub's finance users and admins may void a company's invoices; company people, staff and self grants may not", async () => {
+test("TRANSFER_INVOICE_VOID_WHO StudentHub's finance users may void a company's invoices; admins, staff, company people and self grants may not", async () => {
   const id = await transfer([["P", "4.000"], ["C1", "2.500"]]);
   await move(id, "lock");
   const c1 = (await live(id, "C1"))!;
-  const people: [string, string, string, string][] = [["op-fin", "root", "finance", "subtree"], ["op-fin-self", "root", "finance", "self"], ["staff", "root", "staff", "subtree"],
+  const people: [string, string, string, string][] = [["op-fin-self", "root", "finance", "self"], ["staff", "root", "staff", "subtree"],
     ["fin-p", "P", "finance", "subtree"], ["owner-p", "P", "org-owner", "subtree"], ["admin-p", "P", "admin", "subtree"]];
   for (const [who, org, role, scope] of people) {
     await pool.query("INSERT INTO principals(id) VALUES($1)", [who]);
@@ -230,11 +230,48 @@ test("TRANSFER_INVOICE_VOID_WHO StudentHub's finance users and admins may void a
   }
   const voiders = new PostgresTransferInvoiceReads({ pool, decision: (rows, orgId, ancestors) => transferInvoiceVoidDecision(rows, orgId, ancestors, ["root"]) });
   const may = async (who: string) => (await voiders.document(who, "P", c1.invoiceNumber)) !== null;
-  for (const who of ["op-fin", "op-admin"]) assert.ok(await may(who), who);
-  for (const who of ["op-fin-self", "staff", "fin-p", "owner-p", "admin-p", "nobody"]) assert.equal(await may(who), false, who);
+  assert.ok(await may("op-fin"), "StudentHub finance");
+  const refusedVoiders = ["op-admin", "op-fin-self", "staff", "fin-p", "owner-p", "admin-p", "nobody"];
+  for (const who of refusedVoiders) assert.equal(await may(who), false, who);
+  // The store decides on its own, on the invoice's company, whatever the caller checked before.
+  for (const who of refusedVoiders) assert.deepEqual(await voids.credit({ actorId: who, invoiceNumber: c1.invoiceNumber, reason: "x" }), { kind: "not_found" }, who);
+  assert.deepEqual(await credits(), [], "no refused voider issued a credit note");
+  assert.equal((await voids.credit({ actorId: "op-fin", invoiceNumber: c1.invoiceNumber, reason: "Wrong hours" })).kind, "credited");
   assert.equal(await voiders.listForOrganization("op-fin", "root"), null, "an operator organization is never billed");
   assert.ok(await reads.document("op-fin", "P", c1.invoiceNumber), "StudentHub finance also reads what it voids");
 });
+
+test("TRANSFER_INVOICE_VOID_REVOKED a finance grant revoked or narrowed while a void waits on its locks refuses that void", async () => {
+  for (const change of ["DELETE FROM grants WHERE principal_id = 'op-fin'", "UPDATE grants SET scope = 'self' WHERE principal_id = 'op-fin'"]) {
+    const id = await transfer([["P", "4.000"]]);
+    await move(id, "lock");
+    const p = (await live(id, "P"))!;
+    const holder = await pool.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT 1 FROM pay_transfers WHERE id = $1 FOR UPDATE", [id]);
+      const pending = voids.credit({ actorId: "op-fin", invoiceNumber: p.invoiceNumber, reason: "Wrong period" });
+      await waitForLockWait();
+      await pool.query(change);
+      await holder.query("COMMIT");
+      assert.deepEqual(await pending, { kind: "not_found" }, change);
+    } finally { holder.release(); }
+    assert.equal((await live(id, "P"))?.invoiceNumber, p.invoiceNumber, "the invoice still stands");
+    await pool.query("DELETE FROM grants WHERE principal_id = 'op-fin'");
+    await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES('op-fin','root','finance','subtree')");
+  }
+  assert.deepEqual(await credits(), []);
+});
+
+/** Until another session of this schema waits on a lock. */
+async function waitForLockWait(): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const waiting = await pool.query("SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database() AND query LIKE '%pay_transfers%'");
+    if (waiting.rowCount) return;
+    await new Promise(r => setTimeout(r, 10));
+  }
+  throw new Error("the void never waited on the transfer lock");
+}
 
 async function inTransaction(work: (client: pg.PoolClient) => Promise<void>): Promise<void> {
   const client = await pool.connect();
