@@ -202,7 +202,8 @@ async function handleVoid(req: IncomingMessage, res: ServerResponse, service: In
     try { orgId = decodeURIComponent(match[1]!); } catch { req.resume(); return notFound(req, res); }
     const number = match[2]!;
     if (!ORG_ID.test(orgId) || !TRANSFER_INVOICE_NUMBER.test(number)) { req.resume(); return notFound(req, res); }
-    const body = await readBody(req, 4096);
+    // 500 characters of up to four UTF-8 bytes, percent-encoded in a form (12 bytes each), fit with room to spare.
+    const body = await readBody(req, 8192);
     if (!body || typeof body.value !== "object" || body.value === null || Array.isArray(body.value)) return reply(req, res, 400, "invalid_request", "Invalid request", "Give a reason for the void.");
     const result = await service.void(viewer, orgId, number, (body.value as Record<string, unknown>).reason);
     if (result.kind === "invalid_reason") return reply(req, res, 400, "invalid_reason", "Reason needed", "Give a reason of 1 to 500 characters, on one line.");

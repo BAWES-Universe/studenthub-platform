@@ -247,15 +247,21 @@ test("TRANSFER_INVOICE_VOID_REVOKED a finance grant revoked or narrowed while a 
     await move(id, "lock");
     const p = (await live(id, "P"))!;
     const holder = await pool.connect();
+    let pending: Promise<unknown> | undefined, committed = false;
     try {
       await holder.query("BEGIN");
       await holder.query("SELECT 1 FROM pay_transfers WHERE id = $1 FOR UPDATE", [id]);
-      const pending = voids.credit({ actorId: "op-fin", invoiceNumber: p.invoiceNumber, reason: "Wrong period" });
+      pending = voids.credit({ actorId: "op-fin", invoiceNumber: p.invoiceNumber, reason: "Wrong period" });
       await waitForLockWait();
       await pool.query(change);
-      await holder.query("COMMIT");
+      await holder.query("COMMIT"); committed = true;
       assert.deepEqual(await pending, { kind: "not_found" }, change);
-    } finally { holder.release(); }
+    } finally {
+      // On an early failure, free the held lock and let the waiting void finish before the pool closes.
+      if (!committed) await holder.query("ROLLBACK").catch(() => undefined);
+      holder.release();
+      await pending?.catch(() => undefined);
+    }
     assert.equal((await live(id, "P"))?.invoiceNumber, p.invoiceNumber, "the invoice still stands");
     await pool.query("DELETE FROM grants WHERE principal_id = 'op-fin'");
     await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES('op-fin','root','finance','subtree')");

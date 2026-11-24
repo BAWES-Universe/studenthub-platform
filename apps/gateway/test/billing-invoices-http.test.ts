@@ -217,7 +217,7 @@ async function voidRig(t: TestContext) {
   const credits: { actorId: string; invoiceNumber: string; reason: string }[] = [], creditedNumbers = new Set<string>();
   // "co" (company finance) reads but never voids; "fin" (StudentHub finance) voids but does not read.
   const list = (orgId: string) => orgId === "P" ? { orgId: "P", name: "Parent", invoices: [PAID, UNPAID] } : null;
-  const doc = (orgId: string, number: string) => orgId === "P" ? [UNPAID, PAID].find(i => i.invoiceNumber === number) ?? null : null;
+  const doc = (orgId: string, number: string) => orgId === "P" ? [UNPAID, PAID, DRAFT].find(i => i.invoiceNumber === number) ?? null : null;
   const reads: TransferInvoiceReads = {
     listForOrganization: async (principal, orgId) => principal === "co" ? list(orgId) : null,
     document: async (principal, orgId, number) => principal === "co" ? doc(orgId, number) : null,
@@ -229,7 +229,7 @@ async function voidRig(t: TestContext) {
   const service = createInvoicesHttp({ sessions: { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [OTHER]: { personId: "co" } } as Record<string, { personId: string }>)[id] as never }, reads,
     voids: { reads: voidReads, origin: ORIGIN, async credit(input) {
       credits.push(input);
-      if (input.invoiceNumber === PAID.invoiceNumber) return { kind: "not_creditable" };
+      if (input.invoiceNumber === DRAFT.invoiceNumber) return { kind: "not_creditable" };
       const kind = creditedNumbers.has(input.invoiceNumber) ? "already_credited" : "credited"; creditedNumbers.add(input.invoiceNumber);
       return { kind, credit: { ...credit, reason: input.reason } };
     } } });
@@ -244,6 +244,8 @@ async function voidRig(t: TestContext) {
   return { post, page, credits, base };
 }
 const VOID_PATH = `/organization/invoices/P/${UNPAID.invoiceNumber}/void`;
+/** An unpaid invoice whose transfer the store finds not payable (a draft or cancelled). */
+const DRAFT: TransferInvoiceDocument = { ...UNPAID, invoiceNumber: "SH-2026-11-000003" };
 
 test("INVOICE_VOID_HTTP StudentHub finance voids with a reason; a second void answers the first credit note; a form post goes back to the list", async (t) => {
   const x = await voidRig(t);
@@ -255,7 +257,13 @@ test("INVOICE_VOID_HTTP StudentHub finance voids with a reason; a second void an
   assert.equal(again.status, 303); assert.equal(again.headers.get("location"), "/organization/invoices/P");
   const json = await x.post(VOID_PATH, JSON.stringify({ reason: "Again" }));
   assert.equal(json.status, 200); assert.equal((await json.json() as { kind: string }).kind, "already_credited");
-  const refused = await x.post(`/organization/invoices/P/${PAID.invoiceNumber}/void`, JSON.stringify({ reason: "x" }));
+  const paid = await x.post(`/organization/invoices/P/${PAID.invoiceNumber}/void`, JSON.stringify({ reason: "Refund agreed" }));
+  assert.equal(paid.status, 201, "a paid invoice is credited too");
+  const wide = "界".repeat(500);
+  const multibyte = await x.post(`/organization/invoices/P/${PAID.invoiceNumber}/void`, `reason=${encodeURIComponent(wide)}`, { type: "application/x-www-form-urlencoded", accept: "text/html" });
+  assert.equal(multibyte.status, 303, "the longest reason in three-byte characters fits the form body limit");
+  assert.equal(x.credits.at(-1)?.reason, wide);
+  const refused = await x.post(`/organization/invoices/P/${DRAFT.invoiceNumber}/void`, JSON.stringify({ reason: "x" }));
   assert.equal(refused.status, 409); assert.deepEqual(await refused.json(), { error: "not_creditable" });
 });
 
