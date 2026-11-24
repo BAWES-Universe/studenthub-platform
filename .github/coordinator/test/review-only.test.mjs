@@ -1102,6 +1102,61 @@ test("SHU71_ENDED_EPISODE_OWNING_SUPERVISOR: the worker that ran the review answ
   assert.equal(settledSupervisorAnswer({ attempt_id: "a", target_sha: "c" }, []), null, "no answer holds");
 });
 
+// SHU-304 holds Linear's 2,000-comment cap (23 Nov), with b760441e's review
+// stuck at LAUNCH_UNKNOWN on it. With SHU-711 listed as its continuation the
+// history stays where it is, the one terminal receipt lands on SHU-711 under
+// SHU-304's own identity, and the next tick sees one lineage and writes nothing.
+test("COMMENT_CONTINUATIONS_FIXTURE: b760441e's history stays on the full SHU-304, one terminal receipt lands on SHU-711, a re-tick writes nothing, and a real 429 still backs off", async () => {
+  const { createEpisodeHarness } = await import("./fixture/episode-harness.mjs");
+  const card = (id, identifier, state) => ({ id, identifier, title: identifier, state: { name: state }, priorityLabel: "Low",
+    labels: { nodes: [{ name: "repo:platform" }] }, assignee: null, delegate: null, parent: null, relations: { nodes: [] } });
+  const h = createEpisodeHarness({
+    configOverrides: { workers: { max: 2 }, dispatch_scope: { issue_ids: ["SHU-140"] }, comment_continuations: { [DESK]: ["SHU-711"] } },
+    threadNodes: [card("uuid-SHU-304", DESK, "Todo"), card("uuid-SHU-711", "SHU-711", "Backlog")],
+  });
+  try {
+    const old = h.threads.get("uuid-SHU-304");
+    const sink = h.threads.get("uuid-SHU-711");
+    const made = createReceipt({ receipt_version: "1.1.0", issue_id: DESK, authorization_ref: DESK, requested_worker: "codex-verifier",
+      role: "review", runtime: "codex-cli", repo: REPO, branch: "feature/reviewed", target_sha: HEAD, workspace_scope: "full", scope_phase: "review",
+      episode_id: "shu-304-run-20260909T230000Z", review_base_sha: BASE, attempt_id: "b760441e-7e3a-4c1f-9d2b-000000000304" });
+    assert.ok(made.ok, JSON.stringify(made.errors));
+    const unknown = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+    old.push({ body: receiptCommentBody(made.receipt), createdAt: made.receipt.last_activity },
+      { body: receiptCommentBody(unknown), createdAt: unknown.last_activity });
+    const history = old.length;
+    const transport = { supervisorTransport: async ({ request }) => supervisorAnswer(request.order, { stage: "FAILED", result: null }) };
+    const lineage = () => parseReceiptsFromComments([...old, ...sink]).filter((r) => r.attempt_id === unknown.attempt_id);
+
+    // 1. The old thread keeps b760441e's history; 2. the new one takes exactly one terminal receipt.
+    const first = await h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET }, io: transport });
+    assert.equal(old.length, history, `nothing more is written to the full thread\n${first.text}`);
+    assert.equal(sink.length, 1, first.text);
+    const [terminal] = parseReceiptsFromComments(sink);
+    assert.equal(terminal.attempt_id, unknown.attempt_id);
+    assert.equal(terminal.issue_id, DESK, "the receipt keeps SHU-304's identity");
+    assert.equal(terminal.stage, "HOLD");
+    assert.doesNotMatch(first.text, /SHU-711/, "the continuation is never a card");
+
+    // 3. A re-tick rebuilds one lineage across both threads and writes nothing.
+    const second = await h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET }, io: transport });
+    assert.equal(old.length, history, second.text);
+    assert.equal(sink.length, 1, `a re-tick writes nothing further\n${second.text}`);
+    assert.deepEqual(lineage().map((r) => r.stage), ["HOLD"], "one lineage, ending at the one terminal receipt");
+    assert.doesNotMatch(second.text, /durable read failed|conflict/);
+    assert.deepEqual(h.pauses, []);
+
+    // 4. A real 429 that states its reset still backs off, and writes nothing.
+    const throttled = await h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET }, io: { ...transport, fetchImpl: async (url, opts) =>
+      String(url).includes("api.linear.app")
+        ? { ok: false, status: 429, headers: new Headers({ "Retry-After": "90" }), json: async () => ({ errors: [{ message: "Rate limit exceeded", extensions: { code: "RATELIMITED" } }] }) }
+        : h.fetchImpl(url, opts) } });
+    assert.equal(throttled.code, 0);
+    assert.equal(throttled.text, "HOLD=LINEAR_RATE_LIMITED retry_after=90 source=header status=429 code=RATELIMITED");
+    assert.equal(old.length + sink.length, history + 1);
+  } finally { h.cleanup(); }
+});
+
 test("SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keeps the gate and nothing is written", async () => {
   for (const [label, answer] of [
     ["bare MISSING_CLAIM (a supervisor that never saw the attempt)", () => ({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" })],

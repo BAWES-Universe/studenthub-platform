@@ -22,6 +22,8 @@ export const INCIDENT_MAX_ATTEMPTS = 3;
 export const INCIDENT_MAX_EPISODE_ATTEMPTS = 8;
 export const INCIDENT_MAX_BODY_BYTES = 12_000;
 export const INCIDENT_CALL_TIMEOUT_MS = 1_500;
+// How many calls' time a continued card's whole comment thread may take.
+export const INCIDENT_THREAD_READ_CALLS = 40;
 export const INCIDENT_BACKOFF_MS = Object.freeze([0, 1_000, 5_000]);
 
 const ISSUE_ID_RE = /^SHU-[0-9]+$/;
@@ -534,6 +536,14 @@ export async function reportCoordinatorIncident({
   event,
   authorized,
   targetLinearId,
+  // comment_continuations: incident markers are read across the card's whole
+  // thread and written on its last continuation. Relations stay on the card.
+  targetCommentReadIds = [targetLinearId],
+  targetCommentWriteId = targetLinearId,
+  // A continued card's complete logical thread (original, then each
+  // continuation, every page, fail closed): it throws rather than return a
+  // partial or conflicting thread. Without it, each read id's last 250.
+  readTargetThread = null,
   config = {},
   token,
   fetchImpl,
@@ -545,12 +555,31 @@ export async function reportCoordinatorIncident({
   timeoutImpl = null,
 } = {}) {
   if (!authorized || !event || !UUID_RE.test(targetLinearId ?? "") || !token || typeof sendLinear !== "function") return { status: "not_authorized" };
+  if (!UUID_RE.test(targetCommentWriteId ?? "") || !Array.isArray(targetCommentReadIds) || targetCommentReadIds.length === 0
+      || targetCommentReadIds.some((id) => !UUID_RE.test(id ?? ""))) return { status: "not_authorized" };
   const options = { timeoutMs, timeoutImpl, commentMutation };
   const log = (status) => stdout(`incident-reporting: ${event.event_id} ${status}`);
   let comments;
   try {
-    const data = await boundedCall(() => sendLinear(LINEAR_INCIDENT_COMMENTS_QUERY, { issueId: targetLinearId }, token, fetchImpl), options);
-    comments = data?.issue?.comments?.nodes ?? [];
+    if (typeof readTargetThread === "function") {
+      // One bound for the whole paged read: a full 2,000-comment original is
+      // 20 pages, plus its continuations.
+      comments = await boundedCall(() => readTargetThread(), { ...options, timeoutMs: options.timeoutMs * INCIDENT_THREAD_READ_CALLS });
+      if (!Array.isArray(comments)) throw new Error("the comment thread was not read");
+    } else {
+      // A continued thread is only ever read whole (readTargetThread): the
+      // per-id last-250 read cannot prove it complete.
+      if (targetCommentReadIds.length > 1) throw new Error("a continued thread needs its complete read");
+      comments = [];
+      for (const issueId of targetCommentReadIds) {
+        const data = await boundedCall(() => sendLinear(LINEAR_INCIDENT_COMMENTS_QUERY, { issueId }, token, fetchImpl), options);
+        // A missing issue or thread is unreadable evidence, never an empty
+        // one: it could make an old event look fresh.
+        const nodes = data?.issue?.comments?.nodes;
+        if (!Array.isArray(nodes)) throw new Error("the comment thread was not read");
+        comments.push(...nodes);
+      }
+    }
   } catch {
     log("state-unreadable; episode remains stopped");
     return { status: "state_unreadable" };
@@ -586,7 +615,7 @@ export async function reportCoordinatorIncident({
   } catch { /* absent and transport failures are handled by the bounded attempt below */ }
   if (incidentDelivered(existing, event)) {
     const confirmed = markerFor(event, { status: "confirmed", attempt: latestAttempt, incidentId: event.issue_uuid, now });
-    await safeMarkerWrite({ sendLinear, issueId: targetLinearId, marker: confirmed, token, fetchImpl, options });
+    await safeMarkerWrite({ sendLinear, issueId: targetCommentWriteId, marker: confirmed, token, fetchImpl, options });
     log("confirmed");
     return { status: "confirmed", event_id: event.event_id, incident_id: event.issue_uuid };
   }
@@ -594,12 +623,12 @@ export async function reportCoordinatorIncident({
   const attempt = Math.min(latestAttempt + 1, INCIDENT_MAX_ATTEMPTS);
   if (latestAttempt >= INCIDENT_MAX_ATTEMPTS) {
     const exhausted = markerFor(event, { status: "exhausted", attempt: INCIDENT_MAX_ATTEMPTS, now });
-    await safeMarkerWrite({ sendLinear, issueId: targetLinearId, marker: exhausted, token, fetchImpl, options });
+    await safeMarkerWrite({ sendLinear, issueId: targetCommentWriteId, marker: exhausted, token, fetchImpl, options });
     log("exhausted; episode remains stopped");
     return { status: "exhausted", event_id: event.event_id };
   }
   const started = markerFor(event, { status: "pending", attempt, retryNotBefore: now, now });
-  await safeMarkerWrite({ sendLinear, issueId: targetLinearId, marker: started, token, fetchImpl, options });
+  await safeMarkerWrite({ sendLinear, issueId: targetCommentWriteId, marker: started, token, fetchImpl, options });
 
   try {
     // A card already created keeps its labels; only a new one reads prior stops.
@@ -650,14 +679,14 @@ export async function reportCoordinatorIncident({
     const delivered = (await boundedCall(() => sendLinear(LINEAR_INCIDENT_LOOKUP_QUERY, { issueId: event.issue_uuid }, token, fetchImpl), options))?.issue ?? null;
     if (!incidentDelivered(delivered, event)) throw new Error("delivery not confirmed");
     const confirmed = markerFor(event, { status: "confirmed", attempt, incidentId: event.issue_uuid, now });
-    await safeMarkerWrite({ sendLinear, issueId: targetLinearId, marker: confirmed, token, fetchImpl, options });
+    await safeMarkerWrite({ sendLinear, issueId: targetCommentWriteId, marker: confirmed, token, fetchImpl, options });
     log("confirmed");
     return { status: "confirmed", event_id: event.event_id, incident_id: event.issue_uuid };
   } catch {
     const exhausted = attempt >= INCIDENT_MAX_ATTEMPTS;
     const retryAt = new Date(new Date(now).getTime() + INCIDENT_BACKOFF_MS[Math.min(attempt, INCIDENT_BACKOFF_MS.length - 1)]);
     const marker = markerFor(event, { status: exhausted ? "exhausted" : "pending", attempt, retryNotBefore: exhausted ? null : retryAt, now });
-    await safeMarkerWrite({ sendLinear, issueId: targetLinearId, marker, token, fetchImpl, options });
+    await safeMarkerWrite({ sendLinear, issueId: targetCommentWriteId, marker, token, fetchImpl, options });
     log(exhausted ? "exhausted; episode remains stopped" : "pending; episode remains stopped");
     return { status: exhausted ? "exhausted" : "pending", event_id: event.event_id };
   }

@@ -10277,5 +10277,10 @@
     "product_label": "box:product-review",
     "label": "coordinator:queue-config",
     "max_heads_per_pr": 3
+  },
+  "comment_continuations": {
+    "SHU-304": [
+      "SHU-711"
+    ]
   }
 }

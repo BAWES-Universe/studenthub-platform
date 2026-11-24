@@ -38,7 +38,7 @@
 // dropped (true for HOLD). The run report summarises the last 24 hours in one
 // line.
 import path from "node:path";
-import { sendLinear, fetchIssueComments, parseReceiptsFromComments } from "../reconcile.mjs";
+import { sendLinear, parseReceiptsFromComments, resolveCommentThread, fetchThreadComments } from "../reconcile.mjs";
 import { boundedFetch, github } from "./card-land.mjs";
 
 export const REVIEW_STATUS_CONTEXT = "orchestrator/review";
@@ -142,12 +142,14 @@ export function isVerdictComment(body, verdict, sha) {
 // The terminal receipt of this run's episode on the review card: its verdict,
 // SHA, the reviewer's summary and evidence, and when it launched. Null when it
 // cannot be read or does not agree with the verdict.
-export async function readReviewTerminal({ fetchImpl, linearToken, actorIds, card, activationId, verdict, sha }) {
+export async function readReviewTerminal({ fetchImpl, linearToken, actorIds, card, activationId, verdict, sha, config = {} }) {
   if (!linearToken || !Array.isArray(actorIds) || actorIds.length === 0) return { terminal: null, warning: "the review card's receipts cannot be read (no Linear token or trusted actors)" };
   try {
     const issue = (await sendLinear(REVIEW_ISSUE_QUERY, { id: card }, linearToken, fetchImpl))?.issue;
     if (!issue?.id || issue.identifier !== card) return { terminal: null, warning: `${card} cannot be read from Linear` };
-    const receipts = parseReceiptsFromComments(await fetchIssueComments({ issueId: issue.id, token: linearToken, fetchImpl }), actorIds);
+    // The card's whole thread, its comment continuations included.
+    const thread = await resolveCommentThread({ identifier: card, linearId: issue.id, config, token: linearToken, fetchImpl });
+    const receipts = parseReceiptsFromComments(await fetchThreadComments({ issueIds: thread.readIds, token: linearToken, fetchImpl }), actorIds);
     const terminal = receipts.filter((r) => r?.issue_id === card && r.episode_id === activationId && ["COMPLETED", "HOLD"].includes(r.stage)
       && ["PASS", "BLOCKED"].includes(r.verdict_stage))
       .sort((a, b) => String(a.last_activity ?? "").localeCompare(String(b.last_activity ?? ""))).at(-1) ?? null;

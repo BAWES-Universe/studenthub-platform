@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   createReceipt,
+  fetchThreadComments,
   LINEAR_COMMENT_CREATE_MUTATION,
   receiptCommentBody,
   sendLinear,
@@ -370,6 +371,113 @@ test("SHU-226 M3: disabled means disabled: zero writes", async () => {
   });
   assert.equal(result.status, "not_authorized");
   assert.equal(calls, 0, "disabled means disabled: zero writes");
+});
+
+// comment_continuations: a continued card's incident markers are read across
+// its complete logical thread (original, then continuation, every page).
+const CONT_ORIGINAL = "11111111-aaaa-4bbb-8ccc-000000000304";
+const CONT_SINK = "11111111-aaaa-4bbb-8ccc-000000000711";
+
+// A Linear double that serves each issue's comments 100 to a page, oldest
+// first, and answers null for an issue it does not know.
+function pagedThreads(threads, { pageInfo = {} } = {}) {
+  const requests = [];
+  const fetchImpl = async (_url, opts) => {
+    const { query, variables } = JSON.parse(opts.body);
+    requests.push(/(?:query|mutation)\s+(\w+)/.exec(query)?.[1] ?? (query.includes("commentCreate") ? "commentCreate" : "?"));
+    const thread = threads[variables.issueId];
+    if (!thread) return { status: 200, ok: true, headers: new Headers(), json: async () => ({ data: { issue: null } }) };
+    const start = variables.after ? Number(variables.after) : 0;
+    const nodes = thread.slice(start, start + 100);
+    const hasNextPage = start + 100 < thread.length;
+    const info = Object.hasOwn(pageInfo, variables.issueId) ? pageInfo[variables.issueId] : { hasNextPage, endCursor: hasNextPage ? String(start + 100) : null };
+    return { status: 200, ok: true, headers: new Headers(), json: async () => ({ data: { issue: { comments: {
+      nodes, ...(info === undefined ? {} : { pageInfo: info }) } } } }) };
+  };
+  return { fetchImpl, requests };
+}
+
+function continuedReport(event, fetchImpl, sendCalls, overrides = {}) {
+  return reportCoordinatorIncident({
+    event,
+    authorized: true,
+    targetLinearId: CONT_ORIGINAL,
+    targetCommentReadIds: [CONT_ORIGINAL, CONT_SINK],
+    targetCommentWriteId: CONT_SINK,
+    readTargetThread: () => fetchThreadComments({ issueIds: [CONT_ORIGINAL, CONT_SINK], token: "tok", fetchImpl }),
+    token: "tok",
+    fetchImpl,
+    sendLinear: async (query, variables) => { sendCalls.push(/(?:query|mutation)\s+(\w+)/.exec(query)?.[1] ?? "?"); return null; },
+    commentMutation: LINEAR_COMMENT_CREATE_MUTATION,
+    now: NOW,
+    timeoutMs: 1_000,
+    ...overrides,
+  });
+}
+
+test("SHU-226 CONTINUATION: a confirmed marker older than the last 250 comments of a long original thread is still found, so nothing is rewritten", async () => {
+  const event = eventFor([receipt()], { ended: true, reason: "attempt x ended HOLD without a coherent verdict" });
+  const confirmed = {
+    version: "1.0.0", event_id: event.event_id, activation_id: ACTIVATION, reason_code: event.reason_code,
+    status: "confirmed", attempt: 1, retry_not_before: null, incident_id: event.issue_uuid, recorded_at: "2026-09-01T00:00:00.000Z",
+  };
+  const filler = (n, day) => Array.from({ length: n }, (_, i) => ({ body: `note ${i}`, createdAt: `2026-09-${day}T00:00:${String(i % 60).padStart(2, "0")}.000Z` }));
+  const original = [{ body: renderIncidentMarker(confirmed), createdAt: "2026-09-01T00:00:00.000Z" }, ...filler(1_999, "02")];
+  const linear = pagedThreads({ [CONT_ORIGINAL]: original, [CONT_SINK]: filler(3, "13") });
+  const sendCalls = [];
+  const result = await continuedReport(event, linear.fetchImpl, sendCalls);
+  assert.equal(result.status, "confirmed", "the old-page marker is found: the incident is already delivered");
+  assert.deepEqual(sendCalls, [], "nothing is looked up, created or rewritten");
+  assert.equal(linear.requests.filter((name) => name === "CoordinatorIssueComments").length, 21, "every page of the original (20) and the continuation (1) is read");
+  assert.equal(linear.requests.includes("commentCreate"), false);
+});
+
+test("SHU-226 CONTINUATION: an unreadable continuation writes nothing and leaves the episode stopped", async () => {
+  const event = eventFor([receipt()], { ended: true, reason: "attempt x ended HOLD without a coherent verdict" });
+  // The continuation is unknown to Linear: a null issue is unreadable, never empty.
+  const linear = pagedThreads({ [CONT_ORIGINAL]: [{ body: "note", createdAt: NOW.toISOString() }] });
+  const sendCalls = [];
+  const logs = [];
+  const result = await continuedReport(event, linear.fetchImpl, sendCalls, { stdout: (line) => logs.push(line) });
+  assert.equal(result.status, "state_unreadable");
+  assert.deepEqual(sendCalls, [], "no marker, card or relation is written");
+  assert.equal(linear.requests.includes("commentCreate"), false);
+  assert.deepEqual(logs, [`incident-reporting: ${event.event_id} state-unreadable; episode remains stopped`]);
+
+  // Without a full-thread reader, a continued thread is unreadable outright.
+  const legacyCalls = [];
+  const legacy = await reportCoordinatorIncident({
+    event,
+    authorized: true,
+    targetLinearId: CONT_ORIGINAL,
+    targetCommentReadIds: [CONT_ORIGINAL, CONT_SINK],
+    targetCommentWriteId: CONT_SINK,
+    token: "tok",
+    sendLinear: async (query, variables) => {
+      legacyCalls.push(/(?:query|mutation)\s+(\w+)/.exec(query)?.[1] ?? "?");
+      return variables?.issueId === CONT_SINK ? { issue: null } : { issue: { comments: { nodes: [] } } };
+    },
+    commentMutation: LINEAR_COMMENT_CREATE_MUTATION,
+    now: NOW,
+    timeoutMs: 1_000,
+  });
+  assert.equal(legacy.status, "state_unreadable");
+  assert.equal(legacyCalls.length, 0, "a continued thread is never read piecemeal: nothing is read or written");
+});
+
+test("SHU-226 CONTINUATION: a continued thread page without pageInfo or a boolean hasNextPage writes no incident marker", async () => {
+  const event = eventFor([receipt()], { ended: true, reason: "attempt x ended HOLD without a coherent verdict" });
+  const threads = { [CONT_ORIGINAL]: [{ body: "note", createdAt: NOW.toISOString() }], [CONT_SINK]: [{ body: "later", createdAt: NOW.toISOString() }] };
+  for (const info of [undefined, { hasNextPage: "false", endCursor: null }, { hasNextPage: null, endCursor: null }]) {
+    for (const bad of [CONT_ORIGINAL, CONT_SINK]) {
+      const linear = pagedThreads(threads, { pageInfo: { [bad]: info } });
+      const sendCalls = [];
+      const result = await continuedReport(event, linear.fetchImpl, sendCalls);
+      assert.equal(result.status, "state_unreadable", `pageInfo ${JSON.stringify(info)} on ${bad}`);
+      assert.deepEqual(sendCalls, [], "no marker, card or relation is written");
+      assert.equal(linear.requests.includes("commentCreate"), false);
+    }
+  }
 });
 
 test("SHU-226 M6: an incident card is filed in Backlog or Done, never pickable", () => {
