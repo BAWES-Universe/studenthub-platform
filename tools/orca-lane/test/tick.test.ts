@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -212,6 +212,35 @@ test("a failed cleanup keeps the reservation in place, even with a same-id setup
   assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner }).status, "removed");
   assert.equal(existsSync(a.dir), false);
   assert.deepEqual(readdirSync(path.join(w.ticks, ".runs", "a")).sort(), ["owner", "removed"]);
+});
+
+test("cleanup finishes a tree that Git already unregistered but could not delete (the Windows \"Directory not empty\" case)", () => {
+  const w = world();
+  const before = shared(w.clone);
+  const a = setupRun({ clone: w.clone, ticks: w.ticks, run: "20261124T060012Z-9c1d" });
+  // Reproduce what Git for Windows left behind: the worktree's admin entry is gone, its files are not.
+  mkdirSync(path.join(a.dir, "node_modules", "deep", "nested"), { recursive: true });
+  writeFileSync(path.join(a.dir, "node_modules", "deep", "nested", "file.js"), "x");
+  rmSync(git(a.dir, "rev-parse", "--absolute-git-dir"), { recursive: true, force: true });
+  assert.equal(git(w.clone, "worktree", "list", "--porcelain").includes(a.dir), false);
+  assert.equal(existsSync(a.dir), true);
+  // A wrong owner still removes nothing.
+  assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run: a.run, owner: "0".repeat(32) }), (e: unknown) => e instanceof TickError && /not the owner/.test(e.message));
+  assert.equal(existsSync(a.dir), true);
+  assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: a.run, owner: a.owner }).status, "removed");
+  assert.equal(existsSync(a.dir), false);
+  assert.deepEqual(readdirSync(path.join(w.ticks, ".runs", a.run)).sort(), ["owner", "removed"]);
+  assert.deepEqual(shared(w.clone), before);
+});
+
+test("cleanup removes a registered tree that holds untracked build output, and leaves no worktree entry", () => {
+  const w = world();
+  const a = setupRun({ clone: w.clone, ticks: w.ticks, run: "build-output" });
+  mkdirSync(path.join(a.dir, "node_modules", "pkg"), { recursive: true });
+  writeFileSync(path.join(a.dir, "node_modules", "pkg", "index.js"), "x");
+  assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: a.run, owner: a.owner }).status, "removed");
+  assert.equal(existsSync(a.dir), false);
+  assert.equal(git(w.clone, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).length, 1);
 });
 
 /** Fills the Part C placeholders for one wake. */

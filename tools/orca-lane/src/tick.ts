@@ -53,7 +53,26 @@ export function redact(text: string): string {
 }
 
 function git(cwd: string, args: readonly string[]): string {
-  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  // core.longpaths lets Git for Windows check out and delete node_modules paths past 260 characters; elsewhere it is a no-op.
+  return execFileSync("git", ["-C", cwd, "-c", "core.longpaths=true", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+/**
+ * Removes a run's own tree. Git for Windows can unregister a worktree and still fail to delete some of its
+ * files ("Directory not empty": long node_modules paths, or a scanner's brief open handle). The caller has
+ * already proved the tree is this run's, so finish the deletion with Node, which retries busy files, then
+ * unregister it if Git still lists it (`worktree remove` accepts a tree that is already gone). Never prunes.
+ */
+function removeTree(clone: string, dir: string): void {
+  let gitError: unknown = null;
+  if (registered(clone, dir)) {
+    try { git(clone, ["worktree", "remove", "--force", dir]); } catch (error) { gitError = error; }
+  }
+  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  if (registered(clone, dir)) {
+    try { git(clone, ["worktree", "remove", "--force", dir]); }
+    catch (error) { throw new Error(`${dir} is still registered: ${failure(error)}${gitError ? `; first attempt: ${failure(gitError)}` : ""}`); }
+  }
 }
 
 function failure(error: unknown): string {
@@ -126,7 +145,7 @@ export function setupRun(options: SetupOptions): SetupResult {
   // From here the run id is ours for good: a reservation is never deleted, so no later run can hold this id
   // and removing its tree on failure can only remove our own. The reservation stays as a spent marker.
   const abandon = (step: TickStep, message: string, ownTree = true): never => {
-    try { if (ownTree && registered(clone, dir)) git(clone, ["worktree", "remove", "--force", dir]); } catch { /* reported below */ }
+    try { if (ownTree) removeTree(clone, dir); } catch { /* reported below */ }
     try { mkdirSync(path.join(reserved, "abandoned")); } catch { /* already marked */ }
     throw new TickError(step, message);
   };
@@ -182,7 +201,7 @@ export function cleanupRun(options: CleanupOptions): CleanupResult {
   }
   try {
     options.afterClaim?.();
-    if (registered(options.clone, dir)) git(options.clone, ["worktree", "remove", "--force", dir]);
+    removeTree(options.clone, dir);
     if (existsSync(dir)) throw new Error(`${dir} is still present after removal`);
     options.afterRemoval?.();
     mkdirSync(path.join(reserved, "removed"));

@@ -216,7 +216,9 @@ function main(): void {
     const decisions = decisionsFor();
     const observe = decisions.filter((d): d is ObserveDecision => d.action === "observe");
     const wouldPick = decisions.find((d): d is WorkDecision => d.action === "resume") ?? decisions.find((d): d is WorkDecision => d.action === "start") ?? null;
-    process.stdout.write(`${JSON.stringify({ mode, bot, at, observe, wouldPick, decisions }, null, 2)}\n`);
+    // Read-only: also shows a held run lock, so a verified-stopped run can be recovered without a work-mode poll.
+    const runLock = readRun(claims, bot);
+    process.stdout.write(`${JSON.stringify({ mode, bot, at, observe, wouldPick, decisions, runLock }, null, 2)}\n`);
     return;
   }
 
