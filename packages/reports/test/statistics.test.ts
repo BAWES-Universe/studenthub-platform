@@ -4,7 +4,7 @@ import { MORNING_SUMMARY_COUNTERS, STAFF_STATISTICS_COUNTERS, STATISTICS_OVERVIE
 
 const AVAILABLE = STAFF_STATISTICS_COUNTERS.filter(c => c.source.kind === "available").map(c => c.key);
 
-const OVERVIEW = { candidates: 100, assigned: 7, suggested: 20, requests: 9, requestsDelivered: 4 };
+const OVERVIEW = { candidates: 100, assigned: 7, suggested: 20, requests: 9, requestsDelivered: 4, payableCandidates: 6, transfersLocked: 2, transfersPaymentSent: 1 };
 function rig(raw: Record<string, number>, hiring = { hired: 8, retained: 3, invitations: 40 }, overview: Record<string, number> = OVERVIEW) {
   const calls: string[] = [];
   const store: StatisticsStore = { async emailsByDay() { return []; }, async invitationsByMonth() { return []; }, async staffCounts(day) { calls.push(`counts ${day}`); return raw; }, async hiring(day) { calls.push(`hiring ${day}`); return hiring; }, async overviewCounts() { return overview; } };
@@ -63,7 +63,8 @@ test("REPORTS_STATISTICS overview: store, company directory and staff time figur
   assert.deepEqual([value("activeClients").value, value("companies").value], [6, 11]);
   assert.deepEqual([value("staff").value, value("staffAttended").value], [3, 1], "someone no longer staff does not count as attending");
   assert.deepEqual(days, ["2026-11-20"]);
-  for (const key of ["unapproved", "payableCandidates", "staffAbsent", "staffNotAttended"]) { assert.equal(value(key).value, null, key); assert.ok(value(key).waitsOn, key); }
+  assert.deepEqual([value("payableCandidates").value, value("transfersLocked").value, value("transfersPaymentSent").value], [6, 2, 1], "transfers come from the store");
+  for (const key of ["unapproved", "staffSalaryPaid", "staffAbsent", "staffNotAttended"]) { assert.equal(value(key).value, null, key); assert.ok(value(key).waitsOn, key); }
   assert.ok(!STATISTICS_OVERVIEW.some(f => (f.key as string) === "universitiesToFix"), "the catalogue keeps one name, so nothing to fix");
   const bare = (await new StatisticsService(store, { isStaff }, now, { companies: { async counts() { return undefined; } } }).page("staff"))!;
   assert.match(bare.overview.find(r => r.key === "companies")!.waitsOn!, /company directory/);
