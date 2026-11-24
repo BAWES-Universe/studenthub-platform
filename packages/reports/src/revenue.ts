@@ -31,10 +31,12 @@ export interface RevenueStatusRow extends RevenueAmounts { readonly currency: st
 export interface RevenueMonthRow extends RevenueAmounts { readonly currency: string; readonly month: string; readonly transfers: number; readonly received: string }
 
 export interface RevenueStore {
-  /** All-time totals per currency and status, deleted transfers left out. */
-  byStatus(): Promise<readonly RevenueStatusRow[]>;
-  /** Per currency and pay-period month in [first, last] (`YYYY-MM`), drafts, cancelled and deleted transfers left out. */
-  byMonth(first: string, last: string): Promise<readonly RevenueMonthRow[]>;
+  /**
+   * Both views from one consistent snapshot, so the received totals and the months never disagree:
+   * `byStatus` is all-time totals per currency and status, deleted transfers left out; `byMonth` is per
+   * currency and pay-period month in [first, last] (`YYYY-MM`), drafts, cancelled and deleted left out.
+   */
+  read(first: string, last: string): Promise<{ readonly byStatus: readonly RevenueStatusRow[]; readonly byMonth: readonly RevenueMonthRow[] }>;
 }
 
 export interface RevenueCurrency extends RevenueAmounts { readonly currency: string; readonly transfers: number; readonly lines: number }
@@ -88,7 +90,7 @@ export class RevenueService {
   async page(viewer: string): Promise<RevenuePage | undefined> {
     if (!(await this.#authority.isOperatorAdmin(viewer))) return undefined;
     const day = kuwaitDay(this.#now()), months = invitationMonths(day);
-    const [reconciliation, raw] = await Promise.all([this.#store.byStatus(), this.#store.byMonth(months[0]!, months[months.length - 1]!)]);
+    const { byStatus: reconciliation, byMonth: raw } = await this.#store.read(months[0]!, months[months.length - 1]!);
     const currencies = [...new Set([...reconciliation.map(r => r.currency), ...raw.map(r => r.currency)])];
     return { day, months, received: receivedTotals(reconciliation), monthly: monthlyRows(months, currencies, raw), reconciliation, missing: REVENUE_MISSING };
   }

@@ -54,7 +54,7 @@ test("REPORTS_REVENUE by status: every transfer once per currency and status, su
   const gone = await transfer("2026-10", [["5.000", "6.000"]]);
   await move(gone, "delete");
   await transfer("2026-10", [["7.000", "8.000"]], "USD");
-  const rows = await store.byStatus();
+  const rows = (await store.read("2026-09", "2026-10")).byStatus;
   assert.deepEqual(rows.map(r => [r.currency, r.status, r.transfers, r.lines, r.companyTotal, r.candidateTotal, r.grossProfit]), [
     ["KWD", "draft", 1, 1, "2.000", "1.000", "1.000"],
     ["KWD", "payment_sent", 1, 1, "12.500", "10.000", "2.500"],
@@ -73,11 +73,43 @@ test("REPORTS_REVENUE by month: by pay period, drafts and cancelled left out, re
   await transfer("2026-10", [["4.000", "4.500"]]); // a draft
   const early = await transfer("2026-08", [["1.000", "1.000"]]);
   await move(early, "lock");
-  const rows = await store.byMonth("2026-09", "2026-10");
+  const rows = (await store.read("2026-09", "2026-10")).byMonth;
   assert.deepEqual(rows.map(r => [r.currency, r.month, r.transfers, r.companyTotal, r.candidateTotal, r.grossProfit, r.received]), [
     ["KWD", "2026-09", 1, "3.000", "1.000", "2.000", "0.000"],
     ["KWD", "2026-10", 1, "6.500", "3.000", "3.500", "6.500"],
   ]);
-  await assert.rejects(store.byMonth("2026-10", "2026-09"), /invalid month range/);
-  await assert.rejects(store.byMonth("2026-13", "2026-12"), /invalid month range/);
+  await assert.rejects(store.read("2026-10", "2026-09"), /invalid month range/);
+  await assert.rejects(store.read("2026-13", "2026-12"), /invalid month range/);
+});
+
+test("REPORTS_REVENUE one snapshot: a payment recorded while the page is read shows in neither view or both", async () => {
+  const oct = await transfer("2026-10", [["2.000", "5.000"]]);
+  await move(oct, "lock");
+  let statements = 0;
+  // A pool whose client records the payment on another connection right after the reconciliation is read.
+  const racing = { connect: async () => {
+    const client = await pool.connect(), query = client.query.bind(client) as (...a: unknown[]) => Promise<unknown>;
+    (client as unknown as { query: unknown }).query = async (...a: unknown[]) => { const r = await query(...a); if (++statements === 2) await move(oct, "payment_received"); return r; };
+    return client;
+  } } as unknown as pg.Pool;
+  const page = await new PostgresRevenueStore({ pool: racing }).read("2026-10", "2026-10");
+  assert.ok(statements >= 3, "the payment committed between the two reads");
+  assert.deepEqual(page.byStatus.map(r => r.status), ["locked"]);
+  assert.deepEqual(page.byMonth.map(r => r.received), ["0.000"], "the months agree with the reconciliation, not with the later payment");
+  const after = await store.read("2026-10", "2026-10");
+  assert.deepEqual([after.byStatus.map(r => r.status), after.byMonth.map(r => r.received)], [["distributing"], ["5.000"]]);
+});
+
+test("REPORTS_REVENUE amounts: exact scale-3 text, zero as 0.000, no integer ceiling", async () => {
+  await pool.query("INSERT INTO pay_transfers(id,company_id,period_start,period_end,currency_code) VALUES($1,'A','2026-10-01','2026-10-31','KWD')", [randomUUID()]); // a draft with no lines
+  await transfer("2026-10", [["999999999.999", "999999999.999"], ["999999999.999", "999999999.999"]], "USD");
+  // Widen the scratch column so one sum passes the old 15-digit picture; the store must not care.
+  await pool.query("ALTER TABLE pay_transfer_lines ALTER COLUMN company_total TYPE numeric, ALTER COLUMN candidate_total TYPE numeric");
+  await transfer("2026-10", [["1.000", "123456789012345678.001"], ["0.500", "999999999999999999.999"]], "EUR");
+  const rows = (await store.read("2026-10", "2026-10")).byStatus;
+  assert.deepEqual(rows.map(r => [r.currency, r.lines, r.companyTotal, r.candidateTotal, r.grossProfit]), [
+    ["EUR", 2, "1123456789012345678.000", "1.500", "1123456789012345676.500"],
+    ["KWD", 0, "0.000", "0.000", "0.000"],
+    ["USD", 2, "1999999999.998", "1999999999.998", "0.000"],
+  ]);
 });

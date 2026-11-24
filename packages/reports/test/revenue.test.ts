@@ -26,8 +26,7 @@ test("REVENUE_MONTHLY every currency gets every month, oldest first, zeros where
 test("REVENUE_PAGE operator admins get the 12 whole months before this Kuwait month; nobody else reads anything", async () => {
   const calls: string[] = [];
   const store: RevenueStore = {
-    async byStatus() { calls.push("status"); return [row("KWD", "complete", "3.000", "2.000")]; },
-    async byMonth(first, last) { calls.push(`month ${first} ${last}`); return []; },
+    async read(first, last) { calls.push(`read ${first} ${last}`); return { byStatus: [row("KWD", "complete", "3.000", "2.000")], byMonth: [] }; },
   };
   // 1 Nov 2026 00:30 in Kuwait is still 31 Oct in UTC: the Kuwait month decides.
   const service = new RevenueService(store, { isOperatorAdmin: async id => id === "boss" }, () => new Date("2026-10-31T21:30:00Z"));
@@ -36,7 +35,7 @@ test("REVENUE_PAGE operator admins get the 12 whole months before this Kuwait mo
   const page = (await service.page("boss"))!;
   assert.equal(page.day, "2026-11-01");
   assert.deepEqual([page.months[0], page.months.at(-1), page.months.length], ["2025-11", "2026-10", 12]);
-  assert.deepEqual(calls.sort(), ["month 2025-11 2026-10", "status"]);
+  assert.deepEqual(calls, ["read 2025-11 2026-10"], "one read: both views from one snapshot");
   assert.equal(page.monthly.length, 12, "the currency from the reconciliation gets its 12 months even with no monthly rows");
   assert.equal(page.received[0]!.grossProfit, "1.000");
   assert.deepEqual(page.missing, REVENUE_MISSING);

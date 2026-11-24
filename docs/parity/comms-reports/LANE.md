@@ -352,5 +352,6 @@ Changes from legacy, by the rule that legacy prod is the benchmark and best prac
 - Legacy summed amounts across currencies; here every figure is per currency.
 - Legacy's graph grouped by the month a transfer was created and included drafts; here a month is the pay period and drafts and cancelled transfers are left out.
 - Legacy's stored revenue columns (`company_stats`, `candidate_stats`) were incremented by a job and drifted (RP-F2, the `update-company-stats` double count); here nothing is stored and every figure is one live query. Amounts stay exact (`numeric` in the database, fils as integers in TypeScript).
+- The reconciliation and the months are read in one read-only repeatable-read transaction, so a payment recorded while the page loads shows in both views or neither. Amounts leave the database as exact scale-3 numeric text with no integer width limit.
 
 Files: `packages/reports/src/revenue.ts`, `packages/db/src/reports/postgres-revenue-store.ts`, `apps/gateway/src/reports/revenue-http.ts`; one dispatch line in `id-cards-http.ts`, the service in `comms/wiring.ts`, the `./reports` subpath assertion. No migration.

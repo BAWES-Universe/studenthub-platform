@@ -4,8 +4,8 @@ import { databaseUrl } from "../connection.js";
 /**
  * Revenue's Postgres side (contract P-4, screen A-31). Read-only over the pay lane's
  * `pay_transfers` and `pay_transfer_lines`: nothing is stored or incremented, so every figure is
- * one live query and cannot drift from the lines. Amounts stay `numeric` and are returned as text
- * with three decimals. Deleted transfers are never counted.
+ * one live query and cannot drift from the lines. Amounts stay `numeric` and are returned as exact
+ * text with three decimals and no integer ceiling. Both views come from one snapshot. Deleted transfers are never counted.
  *
  * The row types mirror `RevenueStore` in `packages/reports` structurally (db does not depend on reports).
  */
@@ -21,6 +21,18 @@ const PER_TRANSFER = `SELECT t.id, t.currency_code, t.status, t.period_end, coun
   FROM pay_transfers t LEFT JOIN pay_transfer_lines l ON l.transfer_id = t.id AND l.currency_code = t.currency_code
   WHERE NOT t.deleted GROUP BY t.id`;
 
+/** Exact scale-3 numeric text with no integer ceiling: "0.000", "-2.500", "1234567890123456789.001". */
+const money = (expr: string) => `round(${expr}, 3)::text`;
+const BY_STATUS = `SELECT currency_code AS currency, status, count(*)::int AS transfers, sum(lines)::int AS lines,
+    ${money("sum(company_total)")} AS company, ${money("sum(candidate_total)")} AS candidate, ${money("sum(company_total - candidate_total)")} AS profit
+  FROM (${PER_TRANSFER}) x GROUP BY currency_code, status ORDER BY currency_code, array_position($1::text[], status)`;
+const BY_MONTH = `SELECT currency_code AS currency, to_char(period_end, 'YYYY-MM') AS month, count(*)::int AS transfers,
+    ${money("sum(company_total)")} AS company, ${money("sum(candidate_total)")} AS candidate, ${money("sum(company_total - candidate_total)")} AS profit,
+    ${money("COALESCE(sum(company_total) FILTER (WHERE status IN ('payment_sent','distributing','complete')), 0)")} AS received
+  FROM (${PER_TRANSFER}) x
+  WHERE status NOT IN ('draft','cancelled') AND to_char(period_end, 'YYYY-MM') BETWEEN $1 AND $2
+  GROUP BY currency_code, month ORDER BY currency_code, month`;
+
 export class PostgresRevenueStore {
   readonly #pool: pg.Pool; readonly #owns: boolean;
   constructor(options: { connectionString?: string; pool?: pg.Pool } = {}) {
@@ -29,25 +41,22 @@ export class PostgresRevenueStore {
   }
   async close(): Promise<void> { if (this.#owns) await this.#pool.end(); }
 
-  async byStatus(): Promise<readonly RevenueStatusRow[]> {
-    const r = await this.#pool.query<{ currency: string; status: Status; transfers: number; lines: number; company: string; candidate: string; profit: string }>(
-      `SELECT currency_code AS currency, status, count(*)::int AS transfers, sum(lines)::int AS lines,
-              to_char(sum(company_total), 'FM999999999999990.000') AS company, to_char(sum(candidate_total), 'FM999999999999990.000') AS candidate,
-              to_char(sum(company_total - candidate_total), 'FM999999999999990.000') AS profit
-         FROM (${PER_TRANSFER}) x GROUP BY currency_code, status ORDER BY currency_code, array_position($1::text[], status)`, [STATUSES]);
-    return r.rows.map(x => ({ currency: x.currency, status: x.status, transfers: x.transfers, lines: x.lines, companyTotal: x.company, candidateTotal: x.candidate, grossProfit: x.profit }));
-  }
-
-  async byMonth(first: string, last: string): Promise<readonly RevenueMonthRow[]> {
+  /**
+   * The reconciliation and the months in [first, last] from one read-only repeatable-read snapshot,
+   * so a transfer that changes status while the page is read is counted the same way in both.
+   */
+  async read(first: string, last: string): Promise<{ readonly byStatus: readonly RevenueStatusRow[]; readonly byMonth: readonly RevenueMonthRow[] }> {
     if (!MONTH.test(first) || !MONTH.test(last) || first > last) throw new RangeError("invalid month range");
-    const r = await this.#pool.query<{ currency: string; month: string; transfers: number; company: string; candidate: string; profit: string; received: string }>(
-      `SELECT currency_code AS currency, to_char(period_end, 'YYYY-MM') AS month, count(*)::int AS transfers,
-              to_char(sum(company_total), 'FM999999999999990.000') AS company, to_char(sum(candidate_total), 'FM999999999999990.000') AS candidate,
-              to_char(sum(company_total - candidate_total), 'FM999999999999990.000') AS profit,
-              to_char(COALESCE(sum(company_total) FILTER (WHERE status IN ('payment_sent','distributing','complete')), 0), 'FM999999999999990.000') AS received
-         FROM (${PER_TRANSFER}) x
-        WHERE status NOT IN ('draft','cancelled') AND to_char(period_end, 'YYYY-MM') BETWEEN $1 AND $2
-        GROUP BY currency_code, month ORDER BY currency_code, month`, [first, last]);
-    return r.rows.map(x => ({ currency: x.currency, month: x.month, transfers: x.transfers, companyTotal: x.company, candidateTotal: x.candidate, grossProfit: x.profit, received: x.received }));
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const s = await client.query<{ currency: string; status: Status; transfers: number; lines: number; company: string; candidate: string; profit: string }>(BY_STATUS, [STATUSES]);
+      const m = await client.query<{ currency: string; month: string; transfers: number; company: string; candidate: string; profit: string; received: string }>(BY_MONTH, [first, last]);
+      await client.query("COMMIT");
+      return {
+        byStatus: s.rows.map(x => ({ currency: x.currency, status: x.status, transfers: x.transfers, lines: x.lines, companyTotal: x.company, candidateTotal: x.candidate, grossProfit: x.profit })),
+        byMonth: m.rows.map(x => ({ currency: x.currency, month: x.month, transfers: x.transfers, companyTotal: x.company, candidateTotal: x.candidate, grossProfit: x.profit, received: x.received })),
+      };
+    } catch (e) { await client.query("ROLLBACK").catch(() => undefined); throw e; } finally { client.release(); }
   }
 }

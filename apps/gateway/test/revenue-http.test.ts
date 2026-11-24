@@ -8,11 +8,10 @@ import { handleIdCards, type IdCardsHttpService } from "../src/reports/id-cards-
 async function rig(t: TestContext) {
   const reads: string[] = [];
   const store: RevenueStore = {
-    async byStatus() { reads.push("status"); return [
+    async read() { reads.push("read"); return { byStatus: [
       { currency: "KWD", status: "draft", transfers: 1, lines: 1, companyTotal: "2.000", candidateTotal: "1.000", grossProfit: "1.000" },
       { currency: "KWD", status: "complete", transfers: 2, lines: 3, companyTotal: "300.500", candidateTotal: "200.250", grossProfit: "100.250" },
-    ]; },
-    async byMonth() { reads.push("month"); return [{ currency: "KWD", month: "2026-10", transfers: 2, companyTotal: "300.500", candidateTotal: "200.250", grossProfit: "100.250", received: "300.500" }]; },
+    ], byMonth: [{ currency: "KWD", month: "2026-10", transfers: 2, companyTotal: "300.500", candidateTotal: "200.250", grossProfit: "100.250", received: "300.500" }] }; },
   };
   const isOperatorAdmin = async (id: string) => id === "boss";
   const revenue = new RevenueService(store, { isOperatorAdmin }, () => new Date("2026-11-23T09:00:00Z"));
