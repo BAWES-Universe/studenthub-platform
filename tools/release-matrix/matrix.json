@@ -2959,7 +2959,8 @@
       "subject": "requirement r1",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "catalogue PR #578 at aa54b257, organizations PR #586 at 0e876b1c, stores and brand links PR #620 at 1d8f57e0, contacts PR #626 at a1dc5f13, whole-run CLI PR #659 at 0c8a612c, staging-bound protected launch PR #662 at 64359c41"
         },
         "dryRun": {
           "state": "open"
