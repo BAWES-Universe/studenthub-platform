@@ -79,7 +79,9 @@ export function planM4(sources: M4Sources, today: string) {
   const stores = mapLegacyStores(sources.store, sources.brand);
   const contacts = mapLegacyContacts(sources.company_contact, sources.contact, sources.contact_email, sources.contact_phone);
   const people = mapLegacyCandidates({ candidate: sources.candidate, country: sources.country, university: sources.university, area: sources.area }, today);
-  return { catalogue, companies, brandLinks, stores, contacts, people };
+  /** Rows read per legacy table, so a row the mappers set aside still changes the identity. */
+  const sourceRows = Object.fromEntries((Object.keys(M4_SOURCES) as M4Table[]).sort().map((t) => [t, sources[t].length]));
+  return { catalogue, companies, brandLinks, stores, contacts, people, sourceRows };
 }
 export type M4Plan = ReturnType<typeof planM4>;
 
@@ -212,25 +214,32 @@ export interface PlanBinding {
 
 /**
  * The identity of a plan: everything it is bound to (revision, built artifact, refresh read,
- * destination database and operator parent) and every mapped row's legacy id and digest, step by
- * step. A write run must find the same identity as the plan that was reviewed, so it imports
+ * destination database, operator parent, Kuwait date and mapper revision), the rows read per
+ * legacy table, and step by step every mapped row's legacy id and digest and every issue's rule,
+ * legacy id and column. A write run must find the same identity as the plan that was reviewed, so it imports
  * exactly what that plan showed, with the same code, into the same place. A sha256, so it carries
  * no row.
  */
 export function planIdentity(plan: M4Plan, binding: PlanBinding): string {
   const rows = (list: readonly { readonly digest: string }[], id: (row: never) => string) => list.map((r) => `${id(r as never)}:${r.digest}`);
+  // The reconciliation evidence a reviewer saw: every issue as rule, legacy table, legacy id ("?"
+  // when it has none, so those count by multiplicity), column name and related legacy id, sorted.
+  // Never a value.
+  type Issue = { readonly rule: string; readonly legacyId: string; readonly legacyTable?: string; readonly field?: string; readonly target?: string };
+  const issues = (list: readonly Issue[]) =>
+    list.map((i) => JSON.stringify([i.rule, i.legacyTable ?? null, i.legacyId, i.field ?? null, i.target ?? null])).sort();
   const steps = [
-    ...plan.catalogue.map((c) => [`catalogue.${c.table}`, rows(c.items, (r: { legacyId: string }) => r.legacyId)]),
-    ["company", rows(plan.companies.organizations, (r: { legacyId: string }) => r.legacyId)],
-    ["brand_company", rows(plan.brandLinks.links, (r: { brandLegacyId: string }) => r.brandLegacyId)],
-    ["store", rows(plan.stores.stores, (r: { legacyId: string }) => r.legacyId)],
-    ["company_contact", rows(plan.contacts.contacts, (r: { legacyId: string }) => r.legacyId)],
-    ["candidate", rows(plan.people.people, (r: { legacyId: string }) => r.legacyId)],
+    ...plan.catalogue.map((c) => [`catalogue.${c.table}`, rows(c.items, (r: { legacyId: string }) => r.legacyId), issues(c.issues)]),
+    ["company", rows(plan.companies.organizations, (r: { legacyId: string }) => r.legacyId), issues(plan.companies.issues)],
+    ["brand_company", rows(plan.brandLinks.links, (r: { brandLegacyId: string }) => r.brandLegacyId), issues(plan.brandLinks.issues)],
+    ["store", rows(plan.stores.stores, (r: { legacyId: string }) => r.legacyId), issues(plan.stores.issues)],
+    ["company_contact", rows(plan.contacts.contacts, (r: { legacyId: string }) => r.legacyId), issues(plan.contacts.issues)],
+    ["candidate", rows(plan.people.people, (r: { legacyId: string }) => r.legacyId), issues(plan.people.issues)],
   ];
   const { revision, artifact, refresh, target, operator, today } = binding;
   return createHash("sha256").update(JSON.stringify({
     revision, artifact, refresh: [refresh.startedAt, refresh.finishedAt, refresh.totalRows], target, operator,
-    today, mappers: { people: M1_MAPPER_REVISION }, steps,
+    today, mappers: { people: M1_MAPPER_REVISION }, sourceRows: plan.sourceRows, steps,
   })).digest("hex");
 }
 

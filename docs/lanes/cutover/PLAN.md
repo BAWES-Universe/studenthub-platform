@@ -114,17 +114,21 @@ Two active rows of one kind whose names normalize the same become one item: the 
   - the runtime digest the launcher verified (the whole checkout outside `.git`, with platform and Node major version);
   - the refresh identity;
   - the destination as supplied: `M4_TARGET_ID` and `M4_OPERATOR_ORG_ID` (the operator parent that top-level organizations are written under). `plan` does not connect to the platform database, so it binds the target id it is given without checking it; `write` checks the observed `legacy_import_target` marker and the operator organization against these values before any write;
-  - every mapped row's legacy id and digest.
+  - the run's Kuwait date and `M1_MAPPER_REVISION`;
+  - the number of rows read from each legacy table;
+  - every mapped row's legacy id and digest;
+  - the reconciliation: every issue's rule, legacy table, legacy id (`?` when it has none, counted by multiplicity), column and related legacy id, as a sorted list. Never a value.
 
-  A change to any bound field (revision, runtime digest, refresh identity, target, operator) or to the ordered list of mapped rows' legacy ids and digests gives a new identity. Rows a mapper excludes, and issue counts, are not hashed: they are in the plan receipt and the private report, which the reviewer reads before approving the plan.
+  A change to any bound field (revision, runtime digest, refresh identity, target, operator, date), to a table's row count, to the ordered list of mapped rows' legacy ids and digests, or to the issue list gives a new identity. So a row the mappers set aside, or a value that newly fails a rule, cannot change what the reviewer approved while every mapped digest stays the same.
 - **`plan`.** Maps every table and writes nothing to the platform. Its receipt shows the plan identity and everything it binds.
 - **`write`.** Refuses before any write unless:
   - `M4_EXPECTED_PLAN` equals the identity it computes now (`planMismatch`);
   - the database's `legacy_import_target` row says `staging` with `target_id` equal to `M4_TARGET_ID` (`target`, migration 0652);
   - the operator organization exists there (`operator`);
+  - migration 0653 is recorded there and its `legacy_candidate_snapshots` table exists (`schema`), so an older target refuses before any step instead of failing at people after the others committed;
   - no other writer holds the database (`writerBusy`).
 
-  Then it publishes `started` and imports in dependency order: catalogues, companies, brand links, stores, contacts. Each step is idempotent.
+  Then it publishes `started` and imports in dependency order: catalogues, companies, brand links, stores, contacts, people. Each step is idempotent.
 - **Receipts.** Counts and rule codes only, never a legacy id or value. Each file is written whole (temporary file, then rename) with mode 600. The status is one of:
   - `started`;
   - `ok`;
@@ -134,7 +138,7 @@ Two active rows of one kind whose names normalize the same become one item: the 
 
   A `failed` receipt lists the confirmed steps (written, and their results checked) and the unconfirmed ones. The first unconfirmed step may have committed in part.
 - **Report.** Private, mode 600, never attached to a pull request. Per step it holds legacy and mapped counts, issue counts and legacy ids by rule, and the write results. `receiptSafe` re-checks every field before the file is written. Errors print fixed codes only.
-- **Refusal codes.** Launcher: `startup`, `provenance`. Importer: `usage`, `invocation`, `invocationUsed`, `revision`, `destination`, `writeConfig`, `provenance`, `locked`, `refreshNotOk`, `planMismatch`, `target`, `operator`, `writerBusy`.
+- **Refusal codes.** Launcher: `startup`, `provenance`. Importer: `usage`, `invocation`, `invocationUsed`, `revision`, `destination`, `writeConfig`, `provenance`, `locked`, `refreshNotOk`, `planMismatch`, `target`, `operator`, `schema`, `writerBusy`.
 - **Exit codes.**
   - 0: ok.
   - 3: a write step refused rows or found conflicts.

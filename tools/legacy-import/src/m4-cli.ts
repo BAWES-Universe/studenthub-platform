@@ -40,13 +40,15 @@
  *   plan   Reads the legacy copy and maps every table. Writes nothing to the platform. Publishes
  *          the plan identity: a sha256 over the stated revision, the runtime digest,
  *          the refresh read, the destination (M4_TARGET_ID, M4_OPERATOR_ORG_ID), the run's
- *          Kuwait date with the M-1 mapper revision, and every mapped row's legacy id and digest.
+ *          Kuwait date with the M-1 mapper revision, the rows read per legacy table, and every
+ *          mapped row's legacy id and digest and every issue's rule, legacy id and column, so the
+ *          reconciliation a reviewer saw is part of what the write must match.
  *          The date is part of the identity because M-1's minimum-age rule is applied on it, so a
  *          write on another Kuwait day is refused as planMismatch and needs a fresh plan.
  *   write  Refuses unless M4_EXPECTED_PLAN equals the identity it computes now, the target
  *          database's legacy_import_target row says staging with target_id = M4_TARGET_ID
- *          (migration 0652), the operator organization exists there, and no other writer holds
- *          the target. Then it publishes `started`, imports in order (catalogues, companies,
+ *          (migration 0652), the operator organization exists there, migration 0653 (the
+ *          people snapshot table) is applied there, and no other writer holds the target. Then it publishes `started`, imports in order (catalogues, companies,
  *          brand links, stores, contacts, people) and publishes the outcome. A failure lists the steps
  *          whose results were confirmed and the ones that were not; the first unconfirmed step
  *          may have committed in part.
@@ -209,6 +211,8 @@ export interface WriteTarget {
   marker(): Promise<{ readonly environment: string; readonly targetId: string } | null>;
   /** Whether the operator organization exists in this database. */
   hasOperator(orgId: string): Promise<boolean>;
+  /** Whether every table the write needs is migrated (M4_REQUIRED_MIGRATION applied, its table present). */
+  schemaReady(): Promise<boolean>;
   /** Takes the one-writer lock for this database without waiting; held until close. */
   claimWriter(): Promise<boolean>;
   /** Writers bound to the lock-holding session; only after claimWriter. */
@@ -220,6 +224,15 @@ export interface WriteTarget {
   /** Releases the writer lock and the connections. */
   close(): Promise<void>;
 }
+
+/**
+ * The newest migration a write needs: the people step's snapshot table. Checked before `started`,
+ * so a target that lacks it refuses before any step instead of failing at people after the others
+ * committed.
+ */
+export const M4_REQUIRED_MIGRATION = "0653_legacy_candidate_snapshots";
+export const SCHEMA_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '${M4_REQUIRED_MIGRATION}')
+  AND to_regclass('public.legacy_candidate_snapshots') IS NOT NULL AS ready`;
 
 /** One writer per target database, across every batch and the terminal receipt. */
 export const WRITER_LOCK_KEY = "hashtextextended('legacy-import:m4-writer', 0)";
@@ -308,6 +321,9 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
     },
     hasOperator: async (orgId) => {
       try { return (await pool.query("SELECT 1 FROM organizations WHERE id = $1", [orgId])).rowCount === 1; } catch { return false; }
+    },
+    schemaReady: async () => {
+      try { return (await pool.query<{ ready: boolean }>(SCHEMA_READY_SQL)).rows[0]?.ready === true; } catch { return false; }
     },
     claimWriter: async () => {
       if (writer) return !writer.lost;
@@ -443,6 +459,7 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     const marker = await target.marker();
     if (marker?.environment !== "staging" || marker.targetId !== targetId) refuse("target");
     if (!await target.hasOperator(operator)) refuse("operator");
+    if (!await target.schemaReady()) refuse("schema");
     if (!await target.claimWriter()) refuse("writerBusy");
     order = planned.steps.map((s) => s.step);
     publish("started");

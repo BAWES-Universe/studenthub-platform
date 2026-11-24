@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { M4_SOURCES, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
+import { M4_SOURCES, planM4, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
 import { acceptWrite, acquireSharedLock, main, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
 
 // Synthetic legacy rows only. SECRET marks every value that must never reach a receipt or a log.
@@ -39,11 +39,13 @@ const ok = (n: number) => ({ inserted: n, unchanged: 0, conflicts: [], refused: 
 interface FakeDb {
   marker: { environment: string; targetId: string } | null;
   operators: Set<string>;
+  /** Whether migration 0653 (the people snapshot table) is applied. */
+  schemaReady: boolean;
   writer: object | null;
   /** Set when the lock-holding session is lost: the lock is gone and that session is dead. */
   sessionLost: boolean;
 }
-const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), writer: null, sessionLost: false });
+const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -91,6 +93,7 @@ function harness(opts: HarnessOptions = {}): Harness {
   const target: WriteTarget = {
     marker: async () => db.marker,
     hasOperator: async (id) => db.operators.has(id),
+    schemaReady: async () => db.schemaReady,
     claimWriter: async () => { if (db.writer && db.writer !== me) return false; db.writer = me; return true; },
     writers: () => {
       assert.equal(db.writer, me, "writers are used only by the lock holder");
@@ -219,6 +222,38 @@ test("the plan binds the Kuwait run date: a write on the next Kuwait day is refu
   } finally { cleanup(late); }
   const same = harness({ env: { M4_EXPECTED_PLAN: expected }, now: "2026-11-23T20:59:30.000Z" });
   try { assert.equal(await main(["write"], same.deps), 0); } finally { cleanup(same); }
+});
+
+test("the plan binds the reconciliation: same mapped rows and digests with other issue evidence is refused before any write", async () => {
+  const expected = await planId();
+  const base = sources();
+  const gone = base.candidate[1]!;
+  const variants: [string, M4Sources][] = [
+    // One more row the mapper sets aside: source count and issues change, mapped rows do not.
+    ["extra excluded row", { ...base, candidate: [...base.candidate, { candidate_id: 33, deleted: 1, candidate_name: `${SECRET} Gone too` }] }],
+    // Same source count, same mapped rows: the excluded row now fails another rule.
+    ["other rule, same count", { ...base, candidate: [base.candidate[0]!, { ...gone, candidate_id: "not-an-id" }] }],
+    // Same count, same rule: the excluded row is another legacy id.
+    ["other excluded id", { ...base, candidate: [base.candidate[0]!, { ...gone, candidate_id: 34 }] }],
+    // A lookup row the mapped candidates never reference.
+    ["unreferenced lookup row", { ...base, country: [{ country_id: 9, country_nationality_name_en: `${SECRET}ian` }] }],
+  ];
+  const mapped = (rows: M4Sources) => { const p = planM4(rows, "2026-11-23"); return [p.people.people, p.catalogue.map((c) => c.items), p.companies.organizations, p.brandLinks.links, p.stores.stores, p.contacts.contacts]; };
+  for (const [label, rows] of variants) {
+    assert.deepEqual(mapped(rows), mapped(base), `${label}: every mapped row and digest is the same`);
+    const h = harness({ env: { M4_EXPECTED_PLAN: expected }, rows });
+    try {
+      assert.equal(await main(["write"], h.deps), 2, label);
+      assert.deepEqual(h.err, ["m4: refused.planMismatch"], label);
+      assert.deepEqual(h.calls, [], label);
+      const r = h.receipt("write");
+      assert.deepEqual([r.status, r.code], ["refused", "planMismatch"], label);
+      assert.ok(!JSON.stringify(r).includes(SECRET), label);
+    } finally { cleanup(h); }
+  }
+  // The same candidate row mapped the same way in both: the people step itself is unchanged.
+  const h = harness({ env: { M4_EXPECTED_PLAN: expected } });
+  try { assert.equal(await main(["write"], h.deps), 0); } finally { cleanup(h); }
 });
 
 test("write imports in order under the writer lock and its own receipt passes acceptWrite with exit 0", async () => {
@@ -413,6 +448,7 @@ test("every refusal exits 2 before any write; after the name is claimed it publi
     { name: "target", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, db: { ...fakeDb(), marker: { environment: "production", targetId: TARGET } } }, receipt: true, reads: true },
     { name: "target", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, db: { ...fakeDb(), marker: { environment: "staging", targetId: "33333333-3333-4333-8333-333333333333" } } }, receipt: true, reads: true },
     { name: "operator", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, db: { ...fakeDb(), operators: new Set(["someone-else"]) } }, receipt: true, reads: true },
+    { name: "schema", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, db: { ...fakeDb(), schemaReady: false } }, receipt: true, reads: true },
     { name: "writerBusy", argv: ["write"], opts: { env: { M4_EXPECTED_PLAN: expected }, db: { ...fakeDb(), writer: {} } }, receipt: true, reads: true },
   ];
   for (const c of cases) {
