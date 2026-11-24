@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { creditReason, type TransferInvoiceCreditResult, type TransferInvoiceDocument, type TransferInvoicePage, type TransferStatement } from "@studenthub/db/billing";
+import { creditReason, type TransferInvoiceCreditResult, type TransferInvoiceDocument, type TransferInvoiceListEntry, type TransferInvoicePage, type TransferStatement } from "@studenthub/db/billing";
 import { TRANSFER_INVOICE_NUMBER } from "../../../../packages/billing/src/transfer-invoice-access.js";
 import { longDate } from "../../../../packages/reports/src/id-card-pdf.js";
 import { readBody, sameOrigin } from "../recruit/http-common.js";
@@ -42,9 +42,20 @@ export interface InvoicesHttp {
   today(): string;
   /** The gateway origin a void post must come from; voids are refused without one. */
   readonly origin: string | undefined;
-  /** The company's invoices as one who may void them sees them; null when the viewer may not void. */
-  voidList(viewer: string, orgId: string): Promise<TransferInvoicePage | null>;
+  /** The company's invoices as one who may void them sees them (`InvoiceVoidEntry` only); null when the viewer may not void. */
+  voidList(viewer: string, orgId: string): Promise<InvoiceVoidPage | null>;
   void(viewer: string, orgId: string, invoiceNumber: string, reason: unknown): Promise<InvoiceVoidResult>;
+}
+/**
+ * What one who may void sees of an invoice: enough to pick it and void it. Anything else a reader
+ * sees (line count, payment and credit dates, the PDF) stays behind the read decision. A field
+ * added to the reads is not shown here until it is added to this list.
+ */
+export const INVOICE_VOID_FIELDS = Object.freeze(["invoiceNumber", "transferId", "orgId", "companyName", "currencyCode", "invoiceDate", "total", "status", "creditNumber"] as const);
+export type InvoiceVoidEntry = Pick<TransferInvoiceListEntry, typeof INVOICE_VOID_FIELDS[number]>;
+export interface InvoiceVoidPage { readonly orgId: string; readonly name: string; readonly invoices: readonly InvoiceVoidEntry[] }
+function voidEntry(entry: TransferInvoiceListEntry): InvoiceVoidEntry {
+  return Object.fromEntries(INVOICE_VOID_FIELDS.map(key => [key, entry[key]])) as unknown as InvoiceVoidEntry;
 }
 export type InvoiceVoidResult = TransferInvoiceCreditResult | { readonly kind: "invalid_reason" };
 /** The invoices one who may void sees (the read side with the void decision), and the credit note store. */
@@ -66,7 +77,10 @@ export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">;
     statement: (viewer, orgId, from, to) => ports.reads.statement(viewer, orgId, from, to),
     today: () => new Date((ports.now?.() ?? new Date()).getTime() + 3 * 3600_000).toISOString().slice(0, 10),
     origin: voids?.origin || undefined,
-    async voidList(viewer, orgId) { return voids ? await voids.reads.listForOrganization(viewer, orgId) : null; },
+    async voidList(viewer, orgId) {
+      const page = voids ? await voids.reads.listForOrganization(viewer, orgId) : null;
+      return page ? { orgId: page.orgId, name: page.name, invoices: page.invoices.map(voidEntry) } : null;
+    },
     async void(viewer, orgId, invoiceNumber, raw) {
       let reason: string;
       try { reason = creditReason(raw); } catch { return { kind: "invalid_reason" }; }
@@ -105,9 +119,11 @@ function reply(req: IncomingMessage, res: ServerResponse, status: number, error:
 const notFound = (req: IncomingMessage, res: ServerResponse) => reply(req, res, 404, "not_found", "Not found", "The page could not be found.");
 
 /** The invoice list; `documents` false for one who may only void (no PDF links), `canVoid` adds the void forms. */
-function listHtml(page: TransferInvoicePage, canVoid: boolean, documents: boolean): string {
+function listHtml(page: TransferInvoicePage | InvoiceVoidPage, canVoid: boolean, documents: boolean): string {
   const base = `${INVOICES_PATH}/${encodeURIComponent(page.orgId)}`;
-  const rows = page.invoices.map(i => `<tr><td>${esc(i.invoiceNumber)}</td><td>${esc(i.companyName)}</td><td>${esc(i.transferId)}</td><td>${esc(longDate(i.invoiceDate))}</td>`
+  // A void-only entry carries no payment or credit dates; a reader's entry does.
+  const dated = (i: TransferInvoiceListEntry | InvoiceVoidEntry) => "paidOn" in i ? i : { ...i, paidOn: null, creditedOn: null };
+  const rows = page.invoices.map(dated).map(i => `<tr><td>${esc(i.invoiceNumber)}</td><td>${esc(i.companyName)}</td><td>${esc(i.transferId)}</td><td>${esc(longDate(i.invoiceDate))}</td>`
     + `<td>${esc(i.currencyCode)} ${esc(i.total)}</td><td>${i.status === "paid" ? `Paid${i.paidOn ? ` on ${esc(longDate(i.paidOn))}` : ""}` : "Unpaid"}`
     + `${i.creditNumber ? `, voided by credit note ${esc(i.creditNumber)}${i.creditedOn ? ` on ${esc(longDate(i.creditedOn))}` : ""}` : ""}</td>`
     + (documents ? `<td><a href="${esc(`${base}/${i.invoiceNumber}.pdf`)}">${i.status === "paid" ? "Receipt" : "Invoice"} (PDF)</a></td>` : "")

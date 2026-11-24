@@ -275,6 +275,15 @@ test("INVOICE_VOID_HTTP only StudentHub finance voids, and sees only the void li
   assert.ok(!fin.includes(".pdf") && !fin.includes("<th>Document</th>"), "voiding does not open the invoice documents");
   assert.equal((await x.page(FIN, `/organization/invoices/P/${UNPAID.invoiceNumber}.pdf`, "application/json")).status, 404, "nor a PDF");
   assert.equal((await x.page(FIN, "/organization/P/statements", "application/json")).status, 404, "nor the statement");
+  // The void list shows exactly the void view, in JSON as on the page: no line count, payment or credit dates.
+  const voidJson = await (await x.page(FIN, "/organization/invoices/P", "application/json")).json();
+  const view = (i: TransferInvoiceDocument) => ({ invoiceNumber: i.invoiceNumber, transferId: i.transferId, orgId: i.orgId, companyName: i.companyName, currencyCode: i.currencyCode,
+    invoiceDate: i.invoiceDate, total: i.total, status: i.status, creditNumber: i.creditNumber });
+  assert.deepEqual(voidJson, { orgId: "P", name: "Parent", invoices: [view(PAID), view(UNPAID)] });
+  assert.ok(!fin.includes(" on 25 November 2026"), "the page shows no payment date either");
+  const readerJson = await (await x.page(OTHER, "/organization/invoices/P", "application/json")).json() as { invoices: Record<string, unknown>[] };
+  assert.equal(readerJson.invoices[0]!.lineCount, PAID.lineCount, "a reader's list is unchanged");
+  assert.equal(readerJson.invoices[0]!.paidOn, PAID.paidOn);
   assert.equal((await x.page(OTHER, "/organization/P/statements", "application/json")).status, 200, "the company still reads its statement");
   assert.ok(!company.includes("/void") && !company.includes("<th>Void</th>"), "a company's own finance user reads but sees no void");
   assert.ok(company.includes(`${UNPAID.invoiceNumber}.pdf`), "and keeps its PDF links");
