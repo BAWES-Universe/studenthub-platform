@@ -243,8 +243,24 @@ test("a path the run did not create is never deleted by cleanup, even by the res
   const reserved = path.join(w.ticks, ".runs", run);
   assert.deepEqual(readdirSync(reserved).sort(), ["abandoned", "owner"]);
   const owner = readFileSync(path.join(reserved, "owner"), "utf8");
-  assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run, owner }), (e: unknown) => e instanceof TickError && e.step === "cleanup" && /still present/.test(e.message));
+  assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run, owner }), (e: unknown) => e instanceof TickError && e.step === "cleanup" && /never recorded a tree/.test(e.message));
   assert.equal(readFileSync(path.join(foreign, "keep", "data.txt"), "utf8"), "not the run's");
+  assert.deepEqual(readdirSync(reserved).sort(), ["abandoned", "owner"]);
+});
+
+test("a registered tree already at the run's path is never removed, by Git or otherwise, by that run's abandonment or cleanup", () => {
+  const w = world();
+  const run = "20261124T063012Z-4b8e";
+  const existing = runDir(w.ticks, run);
+  mkdirSync(w.ticks, { recursive: true });
+  git(w.clone, "worktree", "add", "--quiet", "--detach", existing, w.first);
+  writeFileSync(path.join(existing, "work-in-progress.txt"), "someone else's");
+  assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run }), (e: unknown) => e instanceof TickError && e.step === "reserve");
+  const reserved = path.join(w.ticks, ".runs", run);
+  const owner = readFileSync(path.join(reserved, "owner"), "utf8");
+  assert.throws(() => cleanupRun({ clone: w.clone, ticks: w.ticks, run, owner }), (e: unknown) => e instanceof TickError && /never recorded a tree/.test(e.message));
+  assert.equal(readFileSync(path.join(existing, "work-in-progress.txt"), "utf8"), "someone else's");
+  assert.equal(git(w.clone, "worktree", "list", "--porcelain").includes(existing), true);
   assert.deepEqual(readdirSync(reserved).sort(), ["abandoned", "owner"]);
 });
 

@@ -422,21 +422,36 @@ export function runFingerprint(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
 
-/** What diagnostics may print about a held run lock: never the token, only its fingerprint. */
-export interface RunLockView { readonly key: string; readonly since: string; readonly fingerprint: string }
+/**
+ * What diagnostics may print about a held run lock: its key, start, a fingerprint of its token (identity
+ * only, never authority) and the local file that holds the token. The token itself is never printed.
+ */
+export interface RunLockView { readonly key: string; readonly since: string; readonly fingerprint: string; readonly ownerFile: string }
 
 export function viewRun(dir: string, bot: string): RunLockView | null {
-  const owner = readRun(dir, bot);
-  return owner ? { key: owner.key, since: owner.since, fingerprint: runFingerprint(owner.token) } : null;
+  const latest = slots(dir, bot).at(-1);
+  if (!latest || latest.released) return null;
+  const { key, since, token } = latest.owner;
+  return { key, since, fingerprint: runFingerprint(token), ownerFile: path.join(slotsDir(dir, bot), String(latest.n), "owner.json") };
+}
+
+/** The run token stored in a lock slot's owner file on this machine, or null if the file is not a lock owner record. */
+export function readOwnerToken(file: string): string | null {
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { token?: unknown };
+    return typeof parsed.token === "string" && parsed.token.length > 0 ? parsed.token : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Recovery by the fingerprint a diagnostic printed. Still bound to the exact run: a successor (or the same
- * generation run again) holds a different token, so its fingerprint differs and nothing is freed.
+ * Recovery with identity and authority kept apart. The key and fingerprint a diagnostic printed say which run
+ * the operator verified stopped; the token, read on this machine from that run's owner file, is the authority.
+ * All three must match the current holder, and the release itself is the token-fenced `releaseRun`, so a
+ * successor (or the same generation run again with a new token) is never freed.
  */
-export function recoverRunByFingerprint(dir: string, bot: string, key: string, fingerprint: string): "recovered" | "not-owner" {
-  if (!/^[0-9a-f]{16}$/.test(fingerprint)) return "not-owner";
-  const owner = readRun(dir, bot);
-  if (!owner || owner.key !== key || runFingerprint(owner.token) !== fingerprint) return "not-owner";
-  return recoverRun(dir, bot, key, owner.token);
+export function recoverRunWithIdentity(dir: string, bot: string, key: string, fingerprint: string, token: string): "recovered" | "not-owner" {
+  if (!/^[0-9a-f]{16}$/.test(fingerprint) || runFingerprint(token) !== fingerprint) return "not-owner";
+  return recoverRun(dir, bot, key, token);
 }
