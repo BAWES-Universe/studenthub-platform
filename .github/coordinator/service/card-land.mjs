@@ -1132,7 +1132,10 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     const lines = [];
     const consumed = await consumeMergeReadiness({
       receipts,
-      issues: [{ id: card, linearId: issue.id, ...(commentThread.continuations.length ? { commentIssueId: commentThread.writeId } : {}) }],
+      // Identity and reads from the card and its whole thread; merge records
+      // written on its last comment continuation, if it has one.
+      issues: [{ id: card, linearId: issue.id, ...(commentThread.continuations.length
+        ? { commentIssueId: commentThread.writeId, commentThreadIds: commentThread.readIds } : {}) }],
       linearToken,
       githubToken: landToken,
       config: { ...config, routine_merge_authority: { ...config.routine_merge_authority, enabled: true } },

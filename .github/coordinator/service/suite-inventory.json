@@ -4988,7 +4988,8 @@
     "COMMENT_CONTINUATIONS tick: a malformed comment_continuations refuses the tick before any read",
     "LINEAR_HOLD_LINE: the hold line keeps retry_after first and adds source, status and code; card-run reads every form",
     "LINEAR_QUOTA_CLASSIFICATION: a reset-less quota refusal is the comment cap only on a comment write with a cap code; anything else is unclassified, and no message carries Linear's words",
-    "LINEAR_COMMENT_CAP tick: a reset-less refusal of a write to a thread this tick read at Linear's cap is named the comment cap, by alias"
+    "LINEAR_COMMENT_CAP tick: a reset-less refusal of a write to a thread this tick read at Linear's cap is named the comment cap, by alias",
+    "COMMENT_CONTINUATIONS merge readiness: a card with a continuation binds its own identifier, finds the PASS on its own thread, records its attempt on the continuation, and lands once"
   ],
   "requirements": [
     {
@@ -35485,6 +35486,10 @@
     },
     {
       "name": "LINEAR_COMMENT_CAP tick: a reset-less refusal of a write to a thread this tick read at Linear's cap is named the comment cap, by alias",
+      "capabilities": []
+    },
+    {
+      "name": "COMMENT_CONTINUATIONS merge readiness: a card with a continuation binds its own identifier, finds the PASS on its own thread, records its attempt on the continuation, and lands once",
       "capabilities": []
     }
   ],

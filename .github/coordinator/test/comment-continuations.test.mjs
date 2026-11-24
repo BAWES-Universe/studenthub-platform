@@ -389,3 +389,103 @@ test("LINEAR_COMMENT_CAP tick: a reset-less refusal of a write to a thread this 
   });
   assert.equal(wa.calls(), 0, "the reservation was refused: nothing launched");
 });
+
+// ---------------------------------------------------------------------------
+// Merge readiness: identity and reads from the card, records on its continuation
+// ---------------------------------------------------------------------------
+
+async function mergeFixture({ continuation = "resolved" } = {}) {
+  const { consumeMergeReadiness, parseMergeAttemptsFromComments } = await import("../merge-readiness.mjs");
+  const { createReceipt, validateReceipt } = await import("../reconcile.mjs");
+  const ACTOR = "trusted-linear-actor";
+  const [HEAD, BASE, TREE, MERGE] = ["a", "c", "d", "f"].map((c) => c.repeat(40));
+  const writerMade = createReceipt({ issue_id: "SHU-900", authorization_ref: "SHU-900", requested_worker: "codex-builder",
+    repo: "example/repo", branch: "feat/routine", target_sha: BASE, attempt_id: "00000000-0000-4000-8000-000000000001" });
+  const writer = { ...writerMade.receipt, stage: "COMPLETED", verdict_stage: "BUILD_READY", result_sha: HEAD, external_run_id: "codexrun_writer",
+    worker_identity: "codex-author", adapter_status: "completed", evidence_links: ["https://example.test/build"], last_activity: "2026-09-14T00:01:00.000Z",
+    timestamps: { ...writerMade.receipt.timestamps, launch: "2026-09-14T00:00:10.000Z", terminal: "2026-09-14T00:01:00.000Z" } };
+  const reviewMade = createReceipt({ issue_id: "SHU-900", authorization_ref: "SHU-900", requested_worker: "claude-verifier", repo: "example/repo",
+    branch: "feat/routine", target_sha: HEAD, role: "review", runtime: "claude-code", attempt_id: "00000000-0000-4000-8000-000000000002" });
+  const review = { ...reviewMade.receipt, stage: "COMPLETED", verdict_stage: "PASS", result_sha: null, external_run_id: "clauderun_review",
+    worker_identity: "claude-reviewer", adapter_status: "completed", evidence_links: ["https://example.test/verdict"], last_activity: "2026-09-14T00:02:00.000Z",
+    timestamps: { ...reviewMade.receipt.timestamps, launch: "2026-09-14T00:01:10.000Z", terminal: "2026-09-14T00:02:00.000Z" },
+    handoff: { source_attempt_id: reviewMade.receipt.attempt_id, target_sha: HEAD, verdict_stage: "PASS", action: "merge-readiness", hold_code: "MISSING_AUTHORITY" } };
+  assert.equal(validateReceipt(review).valid, true);
+  // The PASS and its writer live on the card's own (full) thread; the continuation starts empty.
+  const threads = new Map([
+    ["linear-900", [writer, review].map((receipt, i) => ({ body: receiptCommentBody(receipt), createdAt: `2026-09-14T00:0${i + 1}:00.000Z`, user: { id: ACTOR } }))],
+    ["linear-901", []],
+  ]);
+  const issues = new Map([["linear-900", "SHU-900"], ["linear-901", "SHU-901"]]);
+  const writes = [];
+  let merged = false, mergeCalls = 0;
+  const fetchImpl = async (url, request = {}) => {
+    if (url === "https://api.linear.app/graphql") {
+      const { query, variables } = JSON.parse(request.body);
+      const thread = threads.get(variables.issueId);
+      let data;
+      if (query.includes("CoordinatorMergeIssue")) data = { issue: thread ? { id: variables.issueId, identifier: issues.get(variables.issueId), title: "Routine change",
+        state: { name: "In Progress", type: "started" }, labels: { nodes: [] }, relations: { nodes: [] }, comments: { nodes: structuredClone(thread) } } : null };
+      else if (query.includes("CoordinatorIssueComments")) data = { issue: { comments: { nodes: structuredClone(thread ?? []), pageInfo: { hasNextPage: false } } } };
+      else if (query.includes("commentCreate")) {
+        writes.push(variables.issueId);
+        thread.push({ body: variables.body, createdAt: `2026-09-14T00:10:${String(writes.length).padStart(2, "0")}.000Z`, user: { id: ACTOR } });
+        data = { commentCreate: { success: true, comment: { id: `c${writes.length}` } } };
+      } else throw new Error(`unexpected Linear query ${query.slice(0, 60)}`);
+      return { ok: true, status: 200, json: async () => ({ data }) };
+    }
+    if (url === "https://api.github.com/graphql") {
+      return { ok: true, status: 200, json: async () => ({ data: { repository: { pullRequest: { reviewThreads: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } } }) };
+    }
+    const pathname = String(url).slice("https://api.github.com/repos/example/repo".length);
+    if (request.method === "PUT" && pathname === "/pulls/7/merge") { mergeCalls++; merged = true; return { ok: true, status: 200, json: async () => ({ merged: true, sha: MERGE }) }; }
+    let body;
+    if (pathname.startsWith("/pulls?")) body = [{ number: 7, state: merged ? "closed" : "open", merged_at: merged ? "2026-09-14T00:20:00Z" : null, head: { sha: HEAD } }];
+    else if (pathname === "/pulls/7") body = { number: 7, state: merged ? "closed" : "open", merged, merged_at: merged ? "2026-09-14T00:20:00Z" : null,
+      merge_commit_sha: merged ? MERGE : null, draft: false, mergeable: true, mergeable_state: "clean",
+      head: { ref: "feat/routine", sha: HEAD, repo: { full_name: "example/repo" } }, base: { ref: "main", sha: BASE }, labels: [] };
+    else if (pathname === `/commits/${HEAD}` || pathname === `/commits/${MERGE}`) body = { commit: { tree: { sha: TREE } } };
+    else if (pathname === "/branches/main") body = { protected: true, commit: { sha: BASE } };
+    else if (pathname === "/branches/main/protection") body = { required_status_checks: { strict: true, contexts: [], checks: [{ context: "CI", app_id: 1 }] } };
+    else if (pathname.startsWith("/compare/")) body = { status: "ahead", base_commit: { sha: BASE } };
+    else if (pathname === `/commits/${HEAD}/status?per_page=100`) body = { statuses: [] };
+    else if (pathname === `/commits/${HEAD}/check-runs?filter=latest&per_page=100`) body = { total_count: 1, check_runs: [{ name: "CI", status: "completed", conclusion: "success", app: { id: 1 } }] };
+    else throw new Error(`unexpected GitHub path ${pathname}`);
+    return { ok: true, status: 200, json: async () => structuredClone(body) };
+  };
+  const card = continuation === "resolved"
+    ? { id: "SHU-900", linearId: "linear-900", commentIssueId: "linear-901", commentIssueIdentifier: "SHU-901", commentThreadIds: ["linear-900", "linear-901"] }
+    : { id: "SHU-900", linearId: "linear-900", commentIssueId: null, commentIssueIdentifier: "SHU-901", commentThreadIds: null };
+  const out = [];
+  const consume = () => consumeMergeReadiness({ receipts: [writer, review], issues: [card], linearToken: "linear", githubToken: "github",
+    config: { routine_merge_authority: { enabled: true, authority_ref: "SHU-259", repo: "example/repo", merge_method: "squash", max_per_tick: 1 }, linear_receipt_actor_ids: [ACTOR] },
+    env: { ENABLE_ROUTINE_MERGE: "true" }, fetchImpl, now: () => new Date("2026-09-14T00:30:00.000Z"), stdout: (line) => out.push(line) });
+  const attempts = () => parseMergeAttemptsFromComments([...threads.get("linear-900"), ...threads.get("linear-901")], [ACTOR]).records;
+  return { consume, threads, writes, out, attempts, mergeCalls: () => mergeCalls };
+}
+
+test("COMMENT_CONTINUATIONS merge readiness: a card with a continuation binds its own identifier, finds the PASS on its own thread, records its attempt on the continuation, and lands once", async () => {
+  const m = await mergeFixture();
+  const first = await m.consume();
+  assert.equal(first.merges, 1, m.out.join("\n"));
+  assert.equal(m.mergeCalls(), 1);
+  assert.ok(m.writes.length > 0);
+  assert.deepEqual([...new Set(m.writes)], ["linear-901"], "every merge record is written on the continuation");
+  assert.equal(m.threads.get("linear-900").length, 2, "the card's own thread is untouched");
+  assert.equal(m.attempts().at(-1)?.state, "COMPLETED");
+  assert.equal(m.attempts().at(-1)?.issue_id, "SHU-900", "the record keeps the card's identity");
+  // A re-tick reads the COMPLETED record across the thread and does nothing.
+  const written = m.writes.length;
+  const again = await m.consume();
+  assert.equal(again.merges, 0);
+  assert.equal(m.mergeCalls(), 1, "no second merge");
+  assert.equal(m.writes.length, written, "no second write");
+
+  // An unresolved continuation holds with nothing written and nothing merged.
+  const held = await mergeFixture({ continuation: "unresolved" });
+  const result = await held.consume();
+  assert.equal(result.merges, 0);
+  assert.equal(held.mergeCalls(), 0);
+  assert.deepEqual(held.writes, []);
+  assert.match(held.out.join("\n"), /SHU-900 HOLD=EXPLICIT_HOLD — comment continuation unresolved/);
+});

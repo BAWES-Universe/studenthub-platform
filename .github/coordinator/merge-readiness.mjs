@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { requireHoldCode } from './intended-work.mjs';
 import { reviewVerdictProvenanceValid } from './review-routing.mjs';
 import { LINEAR_COMMENT_CREATE_MUTATION, parseReceiptCommentBody, parseReceiptsFromComments,
-  receiptCommentBody, sendLinear, validateReceipt, commentWriteId } from './reconcile.mjs';
+  receiptCommentBody, sendLinear, validateReceipt, commentWriteId, fetchThreadComments } from './reconcile.mjs';
 import { validHandoff } from './durable-handoff.mjs';
 import { holdsRun, holdsStatus, holdsThread } from './service/external-checks.mjs';
 
@@ -280,6 +280,23 @@ async function fetchMergeIssue({ issueId, token, fetchImpl }) {
   return data?.issue ?? null;
 }
 
+// readMergeAuthority — the card's merge authority: the ORIGINAL issue (its
+// identity, state, labels and relations) and its comment thread. A card with
+// comment continuations (config comment_continuations) is identified by its
+// own issue, never by the continuation its records are written to, and its
+// thread is the original's comments then each continuation's, every page,
+// through the same fail-closed merge the board read uses (a conflicting copy
+// or an unreadable continuation throws, and the caller holds).
+async function readMergeAuthority({ source, card, token, fetchImpl }) {
+  const issue = await fetchMergeIssue({ issueId: card?.linearId ?? source.issue_id, token, fetchImpl });
+  const threadIds = card && Object.hasOwn(card, 'commentThreadIds') ? card.commentThreadIds : null;
+  if (!threadIds) return { issue, comments: issue?.comments?.nodes ?? [] };
+  if (!Array.isArray(threadIds) || threadIds.length < 2 || !issue?.id || threadIds[0] !== issue.id) {
+    throw new Error('the comment thread does not start at the card');
+  }
+  return { issue, comments: await fetchThreadComments({ issueIds: threadIds, token, fetchImpl }) };
+}
+
 function makeRecord({ source, snapshot, authorityRef, state = 'PREPARED', code = null, reason = null, now = new Date(), head = source.handoff.target_sha }) {
   return {
     version: '1.0.0',
@@ -359,15 +376,15 @@ function snapshotPolicy(snapshot, requireAllChecks = false) {
   return { ok: true };
 }
 
-async function authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks = false, external = null,
+async function authorityNow({ source, card, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks = false, external = null,
   head = source.handoff.target_sha }) {
-  let issue;
-  try { issue = await fetchMergeIssue({ issueId: linearIssueId, token: linearToken, fetchImpl }); }
+  let issue, comments;
+  try { ({ issue, comments } = await readMergeAuthority({ source, card, token: linearToken, fetchImpl })); }
   catch { return { ok: false, code: 'EXPLICIT_HOLD', reason: 'Linear merge authority could not be re-fetched' }; }
   if (issue?.identifier !== source.issue_id) return { ok: false, code: 'EXPLICIT_HOLD', reason: 'Linear merge authority did not bind the expected issue' };
   const policy = issuePolicy(issue);
   if (!policy.ok) return policy;
-  const receipts = trustedReceipts(issue.comments?.nodes ?? [], allowedActorIds);
+  const receipts = trustedReceipts(comments, allowedActorIds);
   const verdict = mergeVerdict(receipts, source.attempt_id, source.handoff.target_sha, source.issue_id, source.repo, source.branch);
   if (!verdict.ok) return { ok: false, code: 'INELIGIBLE_VERDICT', reason: verdict.reason };
   const snapshot = await fetchGitHubMergeSnapshot({ repo: source.repo, branch: source.branch,
@@ -417,17 +434,19 @@ export async function consumeMergeReadiness({
     const card = issueMap.get(source.issue_id);
     const linearIssueId = card ? (commentWriteId(card) ?? (Object.hasOwn(card, 'commentIssueId') ? null : source.issue_id)) : source.issue_id;
     if (!linearIssueId) { stdout(`merge-readiness: ${source.issue_id} HOLD=EXPLICIT_HOLD — comment continuation unresolved`); continue; }
-    let issue;
-    try { issue = await fetchMergeIssue({ issueId: linearIssueId, token: linearToken, fetchImpl }); }
+    // Merge attempts are read across the card's whole thread; they are
+    // written (appendRecord) to linearIssueId, its last continuation.
+    let thread;
+    try { thread = await readMergeAuthority({ source, card, token: linearToken, fetchImpl }); }
     catch { stdout(`merge-readiness: ${source.issue_id} HOLD=EXPLICIT_HOLD — Linear authority unavailable`); continue; }
-    const parsedAttempts = parseMergeAttemptsFromComments(issue?.comments?.nodes ?? [], allowedActorIds);
+    const parsedAttempts = parseMergeAttemptsFromComments(thread.comments, allowedActorIds);
     const head = mergeHead ?? source.handoff.target_sha;
     const attemptId = uuidFor(source.attempt_id, head);
     if (parsedAttempts.conflicts.has(attemptId)) { stdout(`merge-readiness: ${source.issue_id} HOLD=EXPLICIT_HOLD — durable merge-attempt conflict`); continue; }
     let existing = parsedAttempts.records.find(record => record.attempt_id === attemptId);
     if (existing?.state === 'COMPLETED' || existing?.state === 'HOLD') continue;
 
-    let authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy, head });
+    let authorityCheck = await authorityNow({ source, card, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy, head });
     if (!authorityCheck.ok) {
       const held = existing ? holdFrom(existing, authorityCheck.code, authorityCheck.reason, now()) : initialHoldRecord({ source, authorityRef: authority.authority_ref,
         code: authorityCheck.code, reason: authorityCheck.reason, snapshot: authorityCheck.snapshot, now: now(), head });
@@ -460,7 +479,7 @@ export async function consumeMergeReadiness({
 
     // Immediate pre-merge re-fetch. No value from the earlier preflight is
     // authoritative here except the immutable values in the durable intent.
-    authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy, head });
+    authorityCheck = await authorityNow({ source, card, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy, head });
     if (!authorityCheck.ok) {
       const held = holdFrom(existing, authorityCheck.code, authorityCheck.reason, now());
       await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });
