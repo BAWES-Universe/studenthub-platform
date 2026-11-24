@@ -12,6 +12,7 @@ const postgres = "dist/packages/db/test/postgres-billing-transfer-invoice-voids.
 const voids = "packages/db/dist/billing/postgres-transfer-invoice-voids.js";
 const reads = "packages/db/dist/billing/postgres-transfer-invoice-reads.js";
 const migration = "packages/db/migrations/0594_transfer_invoice_credit.sql";
+const decision = "dist/packages/billing/src/transfer-invoice-access.js";
 const mutations = [
   // Voiding with another reason, or not voiding at all, now fails at commit in the database
   // (TRANSFER_INVOICE_VOID_PAIRED proves that trigger), so the store mutants test what is left to it.
@@ -23,6 +24,14 @@ const mutations = [
     'if (invoice.status !== "paid" && !["locked", "payment_sent"].includes(transfer.status))', "if (false)"],
   ["accept an over-long reason", "TRANSFER_INVOICE_VOID_REFUSED", voids,
     "[...value].length > CREDIT_REASON_MAX", "[...value].length > 2 * CREDIT_REASON_MAX"],
+  ["let company people void their own invoices", "TRANSFER_INVOICE_VOID_WHO", decision,
+    "TRANSFER_INVOICE_VOID_ROLES.includes(row.role) && operators.includes(row.org_id)", "TRANSFER_INVOICE_VOID_ROLES.includes(row.role)"],
+  ["let StudentHub staff void", "TRANSFER_INVOICE_VOID_WHO", decision,
+    'Object.freeze(["finance", "admin"])', 'Object.freeze(["finance", "admin", "staff"])'],
+  ["treat a self void grant as subtree", "TRANSFER_INVOICE_VOID_WHO", decision,
+    '(row.scope === "subtree" && ancestors.includes(row.org_id))))', "ancestors.includes(row.org_id)))"],
+  ["void an operator organization's invoices", "TRANSFER_INVOICE_VOID_WHO", decision,
+    "transferInvoiceVoidDecision(rows, orgId, ancestors, operators) {\n    if (operators.includes(orgId))\n        return false;", "transferInvoiceVoidDecision(rows, orgId, ancestors, operators) {"],
   ["let a credit note differ from its invoice's total", "TRANSFER_INVOICE_VOID_GUARDED", migration,
     "AND i.total = NEW.total", ""],
   ["let a credit note bill another company", "TRANSFER_INVOICE_VOID_GUARDED", migration,

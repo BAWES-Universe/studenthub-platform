@@ -4,7 +4,7 @@ import { after, afterEach, before, beforeEach, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
 import { PostgresTransferInvoiceEffects, PostgresTransferInvoiceReads, PostgresTransferInvoiceVoids, creditReason, listTransferInvoices } from "@studenthub/db/billing";
-import { transferInvoiceReadDecision } from "../../billing/src/transfer-invoice-access.js";
+import { transferInvoiceReadDecision, transferInvoiceVoidDecision } from "../../billing/src/transfer-invoice-access.js";
 import { TransferLifecycleService, type TransferAction } from "../../payroll/src/transfer-lifecycle.js";
 import { PostgresTransferLifecycleStore, type PayLifecyclePolicy } from "../src/payroll/postgres-transfer-lifecycle-store.js";
 
@@ -216,6 +216,24 @@ test("TRANSFER_INVOICE_VOID_PAIRED a credit note commits only together with its 
   assert.equal(await live(id, "P"), undefined);
   await refused("UPDATE transfer_invoice_credit SET reason = 'changed'");
   await refused("UPDATE transfer_invoice SET deleted = false, void_reason = NULL WHERE invoice_number = $1", [number]);
+});
+
+test("TRANSFER_INVOICE_VOID_WHO StudentHub's finance users and admins may void a company's invoices; company people, staff and self grants may not", async () => {
+  const id = await transfer([["P", "4.000"], ["C1", "2.500"]]);
+  await move(id, "lock");
+  const c1 = (await live(id, "C1"))!;
+  const people: [string, string, string, string][] = [["op-fin", "root", "finance", "subtree"], ["op-fin-self", "root", "finance", "self"], ["staff", "root", "staff", "subtree"],
+    ["fin-p", "P", "finance", "subtree"], ["owner-p", "P", "org-owner", "subtree"], ["admin-p", "P", "admin", "subtree"]];
+  for (const [who, org, role, scope] of people) {
+    await pool.query("INSERT INTO principals(id) VALUES($1)", [who]);
+    await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES($1,$2,$3,$4)", [who, org, role, scope]);
+  }
+  const voiders = new PostgresTransferInvoiceReads({ pool, decision: (rows, orgId, ancestors) => transferInvoiceVoidDecision(rows, orgId, ancestors, ["root"]) });
+  const may = async (who: string) => (await voiders.document(who, "P", c1.invoiceNumber)) !== null;
+  for (const who of ["op-fin", "op-admin"]) assert.ok(await may(who), who);
+  for (const who of ["op-fin-self", "staff", "fin-p", "owner-p", "admin-p", "nobody"]) assert.equal(await may(who), false, who);
+  assert.equal(await voiders.listForOrganization("op-fin", "root"), null, "an operator organization is never billed");
+  assert.ok(await reads.document("op-fin", "P", c1.invoiceNumber), "StudentHub finance also reads what it voids");
 });
 
 async function inTransaction(work: (client: pg.PoolClient) => Promise<void>): Promise<void> {

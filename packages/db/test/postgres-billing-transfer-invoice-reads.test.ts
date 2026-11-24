@@ -34,7 +34,7 @@ beforeEach(async () => {
   // The operator org "root" sits above every company: P with sub-companies C1 and C2, and X.
   await pool.query("INSERT INTO organizations(id,name,parent_org_id) VALUES ('root','StudentHub',NULL),('P','P legal',  'root'),('C1','C1','P'),('C2','C2','P'),('X','X','root')");
   await pool.query("INSERT INTO organization_profiles(org_id,name_en) VALUES ('P','Parent Trading Co'),('C1','  ')");
-  for (const id of [actor.principalId, "worker", "fin-p", "owner-p", "fin-c1", "self-p", "staff", "recruiter", "candidate", "fin-x", "op-fin", "op-admin"]) await pool.query("INSERT INTO principals(id) VALUES($1)", [id]);
+  for (const id of [actor.principalId, "worker", "fin-p", "owner-p", "fin-c1", "self-p", "staff", "recruiter", "candidate", "fin-x", "op-fin", "op-admin", "op-owner"]) await pool.query("INSERT INTO principals(id) VALUES($1)", [id]);
   for (const org of ["P", "C1", "C2", "X"]) {
     store[org] = randomUUID();
     await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Synthetic shop',$3,$3)", [store[org], org, "a".repeat(64)]);
@@ -92,19 +92,22 @@ test("TRANSFER_INVOICE_READS_SCOPE a self grant covers only its organization; a 
   assert.equal((await reads.listForOrganization("staff", "P"))?.invoices.length, 2, "StudentHub staff reach every company through root");
 });
 
-test("TRANSFER_INVOICE_READS_REFUSED recruiters, candidates, operator-level finance, operator orgs, missing and deleted companies all answer null", async () => {
+test("TRANSFER_INVOICE_READS_REFUSED recruiters, candidates, operator-level owners, operator orgs, missing and deleted companies all answer null", async () => {
   const group = await transfer([["P", "4.000"]], "P");
   await move(group, "lock");
   const number = await numberOf(group, "P");
   await grant("recruiter", "P", "recruiter", "subtree"); await grant("candidate", "P", "candidate");
   await grant("staff", "root", "staff", "subtree"); await grant("fin-x", "X", "finance");
   await grant("op-fin", "root", "finance", "subtree"); await grant("op-admin", "root", "admin", "subtree");
-  for (const who of ["recruiter", "candidate", "fin-x", "op-fin", "nobody"]) {
+  await grant("op-owner", "root", "org-owner", "subtree");
+  for (const who of ["recruiter", "candidate", "fin-x", "op-owner", "nobody"]) {
     assert.equal(await reads.listForOrganization(who, "P"), null, who);
     assert.equal(await reads.document(who, "P", number), null, who);
   }
   assert.equal((await reads.listForOrganization("op-admin", "P"))?.invoices.length, 1, "StudentHub admins read through root");
   assert.equal((await reads.document("op-admin", "P", number))?.invoiceNumber, number);
+  assert.equal((await reads.listForOrganization("op-fin", "P"))?.invoices.length, 1, "StudentHub's finance users read through root");
+  assert.equal((await reads.document("op-fin", "P", number))?.invoiceNumber, number);
   assert.equal(await reads.listForOrganization("staff", "root"), null, "an operator organization is never billed");
   assert.equal(await reads.listForOrganization("staff", "missing"), null);
   await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES('P',$1)", ["b".repeat(64)]);
@@ -246,7 +249,9 @@ test("TRANSFER_STATEMENT_SCOPE a statement never widens access: a self grant sho
   assert.deepEqual(figures(own), [["KWD", "0.000", "4.000", "0.000", "4.000", [["P", "0.000", "4.000", "0.000", "4.000"]]]], "the sub-company's subtotal is not shown");
   assert.deepEqual(own?.entries.map(e => e.orgId), ["P"]);
   assert.deepEqual(figures(await reads.statement("fin-c1", "C1", "2026-10-01", "2026-10-31")), [["KWD", "0.000", "2.500", "0.000", "2.500", [["C1", "0.000", "2.500", "0.000", "2.500"]]]]);
-  for (const who of ["fin-c1", "recruiter", "op-fin", "nobody"]) assert.equal(await reads.statement(who, "P", "2026-10-01", "2026-10-31"), null, who);
+  await grant("op-owner", "root", "org-owner", "subtree");
+  assert.equal((await reads.statement("op-fin", "P", "2026-10-01", "2026-10-31"))?.entries.length, 2, "StudentHub's finance users see the whole company");
+  for (const who of ["fin-c1", "recruiter", "op-owner", "nobody"]) assert.equal(await reads.statement(who, "P", "2026-10-01", "2026-10-31"), null, who);
   assert.equal(await reads.statement("self-p", "root", "2026-10-01", "2026-10-31"), null, "an operator organization has no statement");
 });
 

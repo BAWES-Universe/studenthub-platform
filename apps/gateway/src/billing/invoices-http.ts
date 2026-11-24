@@ -1,8 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import type { TransferInvoiceDocument, TransferInvoicePage, TransferStatement } from "@studenthub/db/billing";
+import { creditReason, type TransferInvoiceCreditResult, type TransferInvoiceDocument, type TransferInvoicePage, type TransferStatement } from "@studenthub/db/billing";
 import { TRANSFER_INVOICE_NUMBER } from "../../../../packages/billing/src/transfer-invoice-access.js";
 import { longDate } from "../../../../packages/reports/src/id-card-pdf.js";
+import { readBody, sameOrigin } from "../recruit/http-common.js";
 import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 import { invoicePdf, type InvoiceBankInfo } from "./invoice-pdf.js";
 
@@ -12,13 +13,18 @@ import { invoicePdf, type InvoiceBankInfo } from "./invoice-pdf.js";
  * GET /organization/invoices/<orgId> lists the live invoices of the company and its
  * sub-companies, as a page or JSON. GET /organization/invoices/<orgId>/<number>.pdf is one of
  * them: an "Invoice" while unpaid, a "Receipt" once paid. Readers are the company's owners and
- * finance users and StudentHub staff and admins (`transferInvoiceReadDecision`). A reader who may
+ * finance users and StudentHub staff, admins and finance users (`transferInvoiceReadDecision`). A reader who may
  * not see the company, a missing company and an invoice outside it all get the same not found.
  *
  * GET /organization/<orgId>/statements is the company's account statement (F4.8): opening balance,
  * invoices issued, payments received and credit notes issued in a window, and closing balance, per currency with a
  * line per company. `?from=YYYY-MM-DD&to=YYYY-MM-DD` (Kuwait dates); by default the current month
  * to today, so its closing figure is the balance owed now. Same readers and the same not found.
+ *
+ * POST /organization/invoices/<orgId>/<number>/void voids one invoice with a credit note (F4.7), with
+ * a `reason` in a JSON or form body. Only StudentHub's finance users and admins void
+ * (`transferInvoiceVoidDecision`); the list page shows them a void form per standing invoice. Same-origin
+ * posts only. Voiding twice answers the first credit note.
  */
 export interface TransferInvoiceReads {
   listForOrganization(principalId: string, orgId: string): Promise<TransferInvoicePage | null>;
@@ -32,9 +38,22 @@ export interface InvoicesHttp {
   statement(viewer: string, orgId: string, from: string, to: string): Promise<TransferStatement | null>;
   /** Today's date in Kuwait, YYYY-MM-DD. */
   today(): string;
+  /** The gateway origin a void post must come from; voids are refused without one. */
+  readonly origin: string | undefined;
+  /** Whether the viewer may void this company's invoices. */
+  canVoid(viewer: string, orgId: string): Promise<boolean>;
+  void(viewer: string, orgId: string, invoiceNumber: string, reason: unknown): Promise<InvoiceVoidResult>;
+}
+export type InvoiceVoidResult = TransferInvoiceCreditResult | { readonly kind: "invalid_reason" };
+/** The invoices one who may void sees (the read side with the void decision), and the credit note store. */
+export interface InvoiceVoidPorts {
+  readonly reads: Pick<TransferInvoiceReads, "listForOrganization" | "document">;
+  credit(input: { actorId: string; invoiceNumber: string; reason: string }): Promise<TransferInvoiceCreditResult>;
+  readonly origin: string;
 }
 
-export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">; reads: TransferInvoiceReads; bank?: InvoiceBankInfo; now?: () => Date }): InvoicesHttp {
+export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">; reads: TransferInvoiceReads; bank?: InvoiceBankInfo; now?: () => Date; voids?: InvoiceVoidPorts }): InvoicesHttp {
+  const voids = ports.voids;
   return {
     async viewer(sessionId) { return sessionId ? (await ports.sessions.get(sessionId))?.personId : undefined; },
     list: (viewer, orgId) => ports.reads.listForOrganization(viewer, orgId),
@@ -44,12 +63,22 @@ export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">;
     },
     statement: (viewer, orgId, from, to) => ports.reads.statement(viewer, orgId, from, to),
     today: () => new Date((ports.now?.() ?? new Date()).getTime() + 3 * 3600_000).toISOString().slice(0, 10),
+    origin: voids?.origin || undefined,
+    async canVoid(viewer, orgId) { return voids ? (await voids.reads.listForOrganization(viewer, orgId)) !== null : false; },
+    async void(viewer, orgId, invoiceNumber, raw) {
+      let reason: string;
+      try { reason = creditReason(raw); } catch { return { kind: "invalid_reason" }; }
+      // The void decision decides first: an invoice outside what the viewer may void is not found.
+      if (!voids || !await voids.reads.document(viewer, orgId, invoiceNumber)) return { kind: "not_found" };
+      return await voids.credit({ actorId: viewer, invoiceNumber, reason });
+    },
   };
 }
 
 export const INVOICES_PATH = "/organization/invoices";
 const LIST = /^\/organization\/invoices\/([^/]+)$/, PDF = /^\/organization\/invoices\/([^/]+)\/([^/]+)\.pdf$/;
 const STATEMENT = /^\/organization\/([^/]+)\/statements$/;
+const VOID = /^\/organization\/invoices\/([^/]+)\/([^/]+)\/void$/;
 /** Longest statement window, in days; a year and a leap day of slack. */
 const STATEMENT_DAYS = 366;
 const ORG_ID = /^[A-Za-z0-9._:-]{1,256}$/;
@@ -72,14 +101,16 @@ function reply(req: IncomingMessage, res: ServerResponse, status: number, error:
 }
 const notFound = (req: IncomingMessage, res: ServerResponse) => reply(req, res, 404, "not_found", "Not found", "The page could not be found.");
 
-function listHtml(page: TransferInvoicePage): string {
+function listHtml(page: TransferInvoicePage, canVoid: boolean): string {
   const base = `${INVOICES_PATH}/${encodeURIComponent(page.orgId)}`;
   const rows = page.invoices.map(i => `<tr><td>${esc(i.invoiceNumber)}</td><td>${esc(i.companyName)}</td><td>${esc(i.transferId)}</td><td>${esc(longDate(i.invoiceDate))}</td>`
     + `<td>${esc(i.currencyCode)} ${esc(i.total)}</td><td>${i.status === "paid" ? `Paid${i.paidOn ? ` on ${esc(longDate(i.paidOn))}` : ""}` : "Unpaid"}`
     + `${i.creditNumber ? `, voided by credit note ${esc(i.creditNumber)}${i.creditedOn ? ` on ${esc(longDate(i.creditedOn))}` : ""}` : ""}</td>`
-    + `<td><a href="${esc(`${base}/${i.invoiceNumber}.pdf`)}">${i.status === "paid" ? "Receipt" : "Invoice"} (PDF)</a></td></tr>`).join("");
+    + `<td><a href="${esc(`${base}/${i.invoiceNumber}.pdf`)}">${i.status === "paid" ? "Receipt" : "Invoice"} (PDF)</a></td>`
+    + (canVoid ? `<td>${i.creditNumber ? "" : `<form method="post" action="${esc(`${base}/${i.invoiceNumber}/void`)}"><label>Reason <input name="reason" required maxlength="500"></label> <button>Void with a credit note</button></form>`}</td>` : "")
+    + "</tr>").join("");
   return `<main><h1>Invoices</h1><p>${esc(page.name)}: invoices for its transfers and its sub-companies' transfers, newest first.</p>${page.invoices.length
-    ? `<table><thead><tr><th>Invoice number</th><th>Billed to</th><th>Transfer</th><th>Issue date</th><th>Amount</th><th>Status</th><th>Document</th></tr></thead><tbody>${rows}</tbody></table>`
+    ? `<table><thead><tr><th>Invoice number</th><th>Billed to</th><th>Transfer</th><th>Issue date</th><th>Amount</th><th>Status</th><th>Document</th>${canVoid ? "<th>Void</th>" : ""}</tr></thead><tbody>${rows}</tbody></table>`
     : "<p>There are no invoices yet. An invoice is issued when a transfer is locked.</p>"}</main>`;
 }
 
@@ -110,9 +141,11 @@ export async function handleInvoices(req: IncomingMessage, res: ServerResponse, 
   const url = new URL(req.url ?? "/", "http://gateway.invalid"), path = url.pathname;
   // Exactly one route per path. `/organization/invoices/<x>` is always the invoice list of <x>, never the
   // statement of an organization called "invoices", so the statement only matches when the others do not.
-  const list = LIST.exec(path), pdf = list ? null : PDF.exec(path), statement = list || pdf ? null : STATEMENT.exec(path);
-  const matched = list ?? pdf ?? statement;
+  const list = LIST.exec(path), pdf = list ? null : PDF.exec(path), voiding = list || pdf ? null : VOID.exec(path);
+  const statement = list || pdf || voiding ? null : STATEMENT.exec(path);
+  const matched = list ?? pdf ?? voiding ?? statement;
   if (!matched) return false;
+  if (voiding) return await handleVoid(req, res, service, voiding);
   req.resume();
   try {
     if (!service) return reply(req, res, 503, "invoices_unavailable", "Invoices unavailable", "Invoices are not available right now.");
@@ -143,8 +176,34 @@ export async function handleInvoices(req: IncomingMessage, res: ServerResponse, 
     const page = await service.list(viewer, orgId);
     if (!page) return notFound(req, res);
     if (!wantsHtml(req.headers.accept)) return json(res, 200, { orgId: page.orgId, name: page.name, invoices: page.invoices });
-    writeHtml(res, 200, pageDocument("Invoices", listHtml(page)), { "cache-control": "no-store" });
+    writeHtml(res, 200, pageDocument("Invoices", listHtml(page, await service.canVoid(viewer, orgId))), { "cache-control": "no-store" });
     return true;
+  } catch {
+    if (!res.headersSent) return reply(req, res, 503, "invoices_unavailable", "Invoices unavailable", "Invoices are not available right now.");
+    res.destroy(); return true;
+  }
+}
+
+/** POST .../<number>/void: the origin is checked before the body is read; a form post goes back to the list. */
+async function handleVoid(req: IncomingMessage, res: ServerResponse, service: InvoicesHttp | undefined, match: RegExpExecArray): Promise<true> {
+  try {
+    if (!service) { req.resume(); return reply(req, res, 503, "invoices_unavailable", "Invoices unavailable", "Invoices are not available right now."); }
+    if (req.method !== "POST") { req.resume(); res.writeHead(405, { allow: "POST" }); res.end(); return true; }
+    if (!service.origin || !sameOrigin(req, service.origin)) { req.resume(); return reply(req, res, 403, "forbidden", "Not allowed", "This request was not sent from StudentHub."); }
+    const viewer = await service.viewer(cookie(req.headers.cookie));
+    if (!viewer) { req.resume(); return reply(req, res, 401, "unauthorized", "Sign in", "Sign in to void an invoice."); }
+    let orgId: string;
+    try { orgId = decodeURIComponent(match[1]!); } catch { req.resume(); return notFound(req, res); }
+    const number = match[2]!;
+    if (!ORG_ID.test(orgId) || !TRANSFER_INVOICE_NUMBER.test(number)) { req.resume(); return notFound(req, res); }
+    const body = await readBody(req, 4096);
+    if (!body || typeof body.value !== "object" || body.value === null || Array.isArray(body.value)) return reply(req, res, 400, "invalid_request", "Invalid request", "Give a reason for the void.");
+    const result = await service.void(viewer, orgId, number, (body.value as Record<string, unknown>).reason);
+    if (result.kind === "invalid_reason") return reply(req, res, 400, "invalid_reason", "Reason needed", "Give a reason of 1 to 500 characters, on one line.");
+    if (result.kind === "not_found") return notFound(req, res);
+    if (result.kind === "not_creditable") return reply(req, res, 409, "not_creditable", "Not voided", "Only an issued invoice that is due or paid can be voided.");
+    if (body.form) { res.writeHead(303, { location: `${INVOICES_PATH}/${encodeURIComponent(orgId)}`, "cache-control": "no-store" }); res.end(); return true; }
+    return json(res, result.kind === "credited" ? 201 : 200, result);
   } catch {
     if (!res.headersSent) return reply(req, res, 503, "invoices_unavailable", "Invoices unavailable", "Invoices are not available right now.");
     res.destroy(); return true;
