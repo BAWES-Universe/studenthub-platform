@@ -8,7 +8,7 @@ import { createInvoicesHttp, handleInvoices, type TransferInvoiceReads } from ".
 import { invoiceBankInfo, invoicePdf } from "../src/billing/invoice-pdf.js";
 
 // Synthetic companies and amounts only.
-const FIN = "f".repeat(43), OTHER = "o".repeat(43);
+const FIN = "f".repeat(43), OTHER = "o".repeat(43), BOTH = "b".repeat(43);
 const UNPAID: TransferInvoiceDocument = { invoiceNumber: "SH-2026-11-000001", transferId: "t-1", orgId: "C1", companyName: "Sultan <Center>", currencyCode: "KWD",
   invoiceDate: "2026-11-22", total: "12.500", lineCount: 3, status: "unpaid", paidOn: null, creditNumber: null, creditedOn: null, periodStart: "2026-10-01", periodEnd: "2026-10-31" };
 const PAID: TransferInvoiceDocument = { ...UNPAID, invoiceNumber: "SH-2026-11-000002", orgId: "P", companyName: "Parent", status: "paid", paidOn: "2026-11-25", lineCount: 1 };
@@ -210,4 +210,131 @@ test("CREDIT_NOTES_HTTP a credited invoice says so on the list, the statement an
   for (const line of ["Voided by credit note SH-2026-11-000009 on 26 November 2026", "Voided by credit note SH-2026-11-000009 on 26 November 2026. No payment is required."]) assert.ok(lines.includes(line), line);
   for (const line of ["Amount invoiced in KWD: 12.500", "Amount invoiced for 3 interns"]) assert.ok(lines.includes(line), line);
   for (const line of ["Payment terms: Due immediately", "Bank Info", "Amount due in KWD: 12.500", "Amount Due for 3 interns"]) assert.ok(!lines.includes(line), `a credited invoice does not print ${line}`);
+});
+
+async function voidRig(t: TestContext) {
+  const ORIGIN = "https://studenthub.example";
+  const credits: { actorId: string; invoiceNumber: string; reason: string }[] = [], creditedNumbers = new Set<string>();
+  // "co" (company finance) reads but never voids; "fin" (StudentHub finance) voids but does not read;
+  // "both" reads the parent's own invoice only (a self grant) and voids all of them.
+  const list = (orgId: string) => orgId === "P" ? { orgId: "P", name: "Parent", invoices: [PAID, UNPAID] } : null;
+  const doc = (orgId: string, number: string) => orgId === "P" ? [UNPAID, PAID, DRAFT].find(i => i.invoiceNumber === number) ?? null : null;
+  const reads: TransferInvoiceReads = {
+    listForOrganization: async (principal, orgId) => principal === "co" ? list(orgId) : principal === "both" && orgId === "P" ? { orgId: "P", name: "Parent", invoices: [PAID] } : null,
+    document: async (principal, orgId, number) => principal === "co" ? doc(orgId, number) : principal === "both" && number === PAID.invoiceNumber ? doc(orgId, number) : null,
+    statement: async (principal, orgId, from, to) => principal === "co" && orgId === "P" ? STATEMENT(from, to) : null,
+  };
+  const voidReads = { listForOrganization: async (p: string, o: string) => p === "fin" || p === "both" ? list(o) : null,
+    document: async (p: string, o: string, n: string) => p === "fin" || p === "both" ? doc(o, n) : null };
+  const credit = { creditNumber: "SH-2026-11-000009", invoiceNumber: UNPAID.invoiceNumber, orgId: "C1", currencyCode: "KWD", creditDate: "2026-11-26", total: "12.500", reason: "Wrong hours", actorId: "fin" };
+  const service = createInvoicesHttp({ sessions: { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [OTHER]: { personId: "co" }, [BOTH]: { personId: "both" } } as Record<string, { personId: string }>)[id] as never }, reads,
+    voids: { reads: voidReads, origin: ORIGIN, async credit(input) {
+      credits.push(input);
+      if (input.invoiceNumber === DRAFT.invoiceNumber) return { kind: "not_creditable" };
+      const kind = creditedNumbers.has(input.invoiceNumber) ? "already_credited" : "credited"; creditedNumbers.add(input.invoiceNumber);
+      return { kind, credit: { ...credit, reason: input.reason } };
+    } } });
+  const server = createServer(async (req, res) => { if (!await handleInvoices(req, res, service)) { res.writeHead(418); res.end(); } });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>(r => server.close(() => r())));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const post = (path: string, body: string, opts: { session?: string; origin?: string | null; type?: string; accept?: string; site?: string } = {}) => fetch(base + path, { method: "POST", redirect: "manual", body,
+    headers: { "content-type": opts.type ?? "application/json", accept: opts.accept ?? "application/json", ...(opts.session === undefined ? { cookie: `__Host-studenthub_session=${FIN}` } : opts.session ? { cookie: `__Host-studenthub_session=${opts.session}` } : {}),
+      ...(opts.origin === null ? {} : { origin: opts.origin ?? ORIGIN }), ...(opts.site ? { "sec-fetch-site": opts.site } : {}) } });
+  const page = (session: string, path = "/organization/invoices/P", accept = "text/html") => fetch(`${base}${path}`, { headers: { cookie: `__Host-studenthub_session=${session}`, accept } });
+  return { post, page, credits, base };
+}
+const VOID_PATH = `/organization/invoices/P/${UNPAID.invoiceNumber}/void`;
+/** An unpaid invoice whose transfer the store finds not payable (a draft or cancelled). */
+const DRAFT: TransferInvoiceDocument = { ...UNPAID, invoiceNumber: "SH-2026-11-000003" };
+
+test("INVOICE_VOID_HTTP StudentHub finance voids with a reason; a second void answers the first credit note; a form post goes back to the list", async (t) => {
+  const x = await voidRig(t);
+  const first = await x.post(VOID_PATH, JSON.stringify({ reason: "  Wrong hours " }));
+  assert.equal(first.status, 201);
+  assert.deepEqual(await first.json(), { kind: "credited", creditNumber: "SH-2026-11-000009" }, "the receipt carries no actor or reason");
+  assert.deepEqual(x.credits, [{ actorId: "fin", invoiceNumber: UNPAID.invoiceNumber, reason: "Wrong hours" }], "the reason is stored trimmed, the actor is the signed-in person");
+  const again = await x.post(VOID_PATH, "reason=Again", { type: "application/x-www-form-urlencoded", accept: "text/html" });
+  assert.equal(again.status, 303); assert.equal(again.headers.get("location"), "/organization/invoices/P");
+  const json = await x.post(VOID_PATH, JSON.stringify({ reason: "Again" }));
+  assert.equal(json.status, 200); assert.deepEqual(await json.json(), { kind: "already_credited", creditNumber: "SH-2026-11-000009" }, "nor does a repeat");
+  const paid = await x.post(`/organization/invoices/P/${PAID.invoiceNumber}/void`, JSON.stringify({ reason: "Refund agreed" }));
+  assert.equal(paid.status, 201, "a paid invoice is credited too");
+  const wide = "界".repeat(500);
+  const multibyte = await x.post(`/organization/invoices/P/${PAID.invoiceNumber}/void`, `reason=${encodeURIComponent(wide)}`, { type: "application/x-www-form-urlencoded", accept: "text/html" });
+  assert.equal(multibyte.status, 303, "the longest reason in three-byte characters fits the form body limit");
+  assert.equal(x.credits.at(-1)?.reason, wide);
+  const refused = await x.post(`/organization/invoices/P/${DRAFT.invoiceNumber}/void`, JSON.stringify({ reason: "x" }));
+  assert.equal(refused.status, 409); assert.deepEqual(await refused.json(), { error: "not_creditable" });
+});
+
+test("INVOICE_VOID_HTTP only StudentHub finance voids, and sees only the void list; company readers, strangers and cross-site posts are refused before the store", async (t) => {
+  const x = await voidRig(t);
+  const fin = await (await x.page(FIN)).text(), company = await (await x.page(OTHER)).text();
+  assert.ok(fin.includes(`<form method="post" action="${VOID_PATH}">`), "StudentHub finance sees a void form per standing invoice");
+  assert.ok(fin.includes("<th>Void</th>"));
+  assert.ok(!fin.includes(".pdf") && !fin.includes("<th>Document</th>"), "voiding does not open the invoice documents");
+  assert.equal((await x.page(FIN, `/organization/invoices/P/${UNPAID.invoiceNumber}.pdf`, "application/json")).status, 404, "nor a PDF");
+  assert.equal((await x.page(FIN, "/organization/P/statements", "application/json")).status, 404, "nor the statement");
+  // The void list shows exactly the void view, in JSON as on the page: no line count, payment or credit dates.
+  const voidJson = await (await x.page(FIN, "/organization/invoices/P", "application/json")).json();
+  const view = (i: TransferInvoiceDocument) => ({ invoiceNumber: i.invoiceNumber, transferId: i.transferId, orgId: i.orgId, companyName: i.companyName, currencyCode: i.currencyCode,
+    invoiceDate: i.invoiceDate, total: i.total, status: i.status, creditNumber: i.creditNumber });
+  assert.deepEqual(voidJson, { orgId: "P", name: "Parent", invoices: [view(PAID), view(UNPAID)] });
+  assert.ok(!fin.includes(" on 25 November 2026"), "the page shows no payment date either");
+  const readerJson = await (await x.page(OTHER, "/organization/invoices/P", "application/json")).json() as { invoices: Record<string, unknown>[] };
+  assert.equal(readerJson.invoices[0]!.lineCount, PAID.lineCount, "a reader's list is unchanged");
+  assert.equal(readerJson.invoices[0]!.paidOn, PAID.paidOn);
+  assert.equal((await x.page(OTHER, "/organization/P/statements", "application/json")).status, 200, "the company still reads its statement");
+  assert.ok(!company.includes("/void") && !company.includes("<th>Void</th>"), "a company's own finance user reads but sees no void");
+  assert.ok(company.includes(`${UNPAID.invoiceNumber}.pdf`), "and keeps its PDF links");
+  const cases: [string, Parameters<typeof x.post>[2], number, string][] = [
+    ["company finance", { session: OTHER }, 404, "not_found"],
+    ["signed out", { session: "" }, 401, "unauthorized"],
+    ["another origin", { origin: "https://evil.example" }, 403, "forbidden"],
+    ["no origin", { origin: null }, 403, "forbidden"],
+    ["cross-site fetch", { site: "cross-site" }, 403, "forbidden"],
+    ["a text body", { type: "text/plain" }, 400, "invalid_request"],
+  ];
+  for (const [label, opts, status, error] of cases) {
+    const res = await x.post(VOID_PATH, JSON.stringify({ reason: "Wrong hours" }), opts);
+    assert.equal(res.status, status, label); assert.deepEqual(await res.json(), { error }, label);
+  }
+  for (const reason of ["", "   ", "a".repeat(501), "two\nlines", 7]) {
+    const res = await x.post(VOID_PATH, JSON.stringify({ reason }));
+    assert.equal(res.status, 400, String(reason).slice(0, 10)); assert.deepEqual(await res.json(), { error: "invalid_reason" });
+  }
+  assert.equal((await x.post("/organization/invoices/P/INV-1/void", JSON.stringify({ reason: "x" }))).status, 404, "not an invoice number");
+  assert.equal((await x.post("/organization/invoices/Q/" + UNPAID.invoiceNumber + "/void", JSON.stringify({ reason: "x" }))).status, 404, "outside what the voider sees");
+  const get = await fetch(x.base + VOID_PATH);
+  assert.equal(get.status, 405); assert.equal(get.headers.get("allow"), "POST");
+  assert.deepEqual(x.credits, [], "nothing refused reached the credit note store");
+});
+
+test("INVOICE_VOID_HTTP one who reads some invoices and may void more sees both, with PDF links only on those they read", async (t) => {
+  const x = await voidRig(t);
+  const json = await (await x.page(BOTH, "/organization/invoices/P", "application/json")).json() as { invoices: Record<string, unknown>[] };
+  assert.deepEqual(json.invoices.map(i => i.invoiceNumber), [PAID.invoiceNumber, UNPAID.invoiceNumber], "the void-only invoice is not dropped");
+  assert.equal(json.invoices[0]!.lineCount, PAID.lineCount, "the read invoice keeps its full fields");
+  assert.ok(!("lineCount" in json.invoices[1]!) && !("paidOn" in json.invoices[1]!), "the void-only invoice shows the void view alone");
+  const html = await (await x.page(BOTH)).text();
+  assert.ok(html.includes(`${PAID.invoiceNumber}.pdf`), "a PDF link for the invoice they read");
+  assert.ok(!html.includes(`${UNPAID.invoiceNumber}.pdf`), "none for the one they may only void");
+  for (const n of [PAID.invoiceNumber, UNPAID.invoiceNumber]) assert.ok(html.includes(`action="/organization/invoices/P/${n}/void"`), n);
+  assert.equal((await x.page(BOTH, `/organization/invoices/P/${UNPAID.invoiceNumber}.pdf`, "application/json")).status, 404, "nor its PDF");
+  assert.equal((await x.post(VOID_PATH, JSON.stringify({ reason: "Wrong hours" }), { session: BOTH })).status, 201);
+});
+
+test("INVOICE_VOID_HTTP without a gateway origin or a void store nobody voids", async (t) => {
+  const reads: TransferInvoiceReads = { listForOrganization: async () => ({ orgId: "P", name: "Parent", invoices: [UNPAID] }), document: async () => UNPAID, statement: async () => null };
+  for (const voids of [undefined, { reads, origin: "", credit: async () => { throw new Error("never"); } }]) {
+    const service = createInvoicesHttp({ sessions: { get: async () => ({ personId: "fin" }) as never }, reads, ...(voids ? { voids } : {}) });
+    assert.equal((await service.voidList("fin", "P")) !== null, voids !== undefined);
+    const server = createServer(async (req, res) => { await handleInvoices(req, res, service); });
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+    t.after(() => new Promise<void>(r => server.close(() => r())));
+    const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}${VOID_PATH}`, { method: "POST", body: JSON.stringify({ reason: "x" }),
+      headers: { "content-type": "application/json", accept: "application/json", origin: "", cookie: `__Host-studenthub_session=${FIN}` } });
+    assert.equal(res.status, 403);
+  }
 });
