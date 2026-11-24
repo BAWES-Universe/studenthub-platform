@@ -148,6 +148,31 @@ test("while a cleanup holds its run id, a second cleanup and a new same-id setup
   assert.equal(existsSync(again.dir), true);
 });
 
+test("a delayed cleanup from an earlier reservation cannot touch a later same-id run's tree", () => {
+  const w = world();
+  const first = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });
+  let second: ReturnType<typeof setupRun> | undefined;
+  assert.throws(
+    () => cleanupRun({
+      clone: w.clone, ticks: w.ticks, run: "a", owner: first.owner,
+      // Between the old cleanup's owner read and its claim, the first run is cleaned up and the id is reused.
+      beforeClaim: () => {
+        assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: first.owner }).status, "removed");
+        second = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });
+      },
+    }),
+    (e: unknown) => e instanceof TickError && e.step === "cleanup" && /not the owner/.test(e.message),
+  );
+  assert.ok(second);
+  assert.notEqual(second.owner, first.owner);
+  assert.equal(existsSync(second.dir), true);
+  assert.equal(git(second.dir, "rev-parse", "HEAD"), w.first);
+  assert.deepEqual(readdirSync(path.join(w.ticks, ".runs", "a")), ["owner"]);
+  assert.equal(readFileSync(path.join(w.ticks, ".runs", "a", "owner"), "utf8"), second.owner);
+  assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: second.owner }).status, "removed");
+  assert.equal(existsSync(second.dir), false);
+});
+
 test("a failed cleanup keeps the reservation in place, even with a same-id setup overlapping it, so the same owner can retry", () => {
   const w = world();
   const a = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });

@@ -142,6 +142,8 @@ export interface CleanupOptions {
   readonly ticks: string;
   readonly run: string;
   readonly owner: string;
+  /** Test seam: runs after the first owner read and before the claim (for example, to finish and reuse the id). */
+  readonly beforeClaim?: () => void;
   /** Test seam: runs while cleanup holds the run id, before the tree is removed; a throw counts as a failed removal. */
   readonly afterClaim?: () => void;
 }
@@ -158,10 +160,15 @@ export function cleanupRun(options: CleanupOptions): CleanupResult {
   const reserved = reservation(options.ticks, options.run);
   const claim = path.join(reserved, "cleaning");
   const refuse = (why: string): never => { throw new TickError("cleanup", `${why}; nothing removed`); };
-  let recorded = "";
-  try { recorded = readFileSync(path.join(reserved, "owner"), "utf8"); } catch { /* no reservation */ }
-  if (!OWNER.test(options.owner) || recorded !== options.owner) refuse(`not the owner of run ${options.run}`);
+  const recorded = (): string => { try { return readFileSync(path.join(reserved, "owner"), "utf8"); } catch { return ""; } };
+  if (!OWNER.test(options.owner) || recorded() !== options.owner) refuse(`not the owner of run ${options.run}`);
+  options.beforeClaim?.();
   try { mkdirSync(claim); } catch { refuse(`run ${options.run} is already being cleaned up`); }
+  // The read above may belong to an earlier reservation of this id; only the owner read under the claim counts.
+  if (recorded() !== options.owner) {
+    rmSync(claim, { recursive: true, force: true });
+    refuse(`not the owner of run ${options.run}`);
+  }
   try {
     options.afterClaim?.();
     if (registered(options.clone, dir)) git(options.clone, ["worktree", "remove", "--force", dir]);
