@@ -173,6 +173,21 @@ test("an abandoned setup never frees its id; a cleanup held during abandonment k
   assert.equal(existsSync(orphan), true);
 });
 
+test("a cleanup that fails after the tree is gone but before its marker can be retried by the same owner", () => {
+  const w = world();
+  const a = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });
+  const reserved = path.join(w.ticks, ".runs", "a");
+  assert.throws(
+    () => cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner, afterRemoval: () => { throw new Error("marker write failed"); } }),
+    (e: unknown) => e instanceof TickError && e.step === "cleanup" && /marker write failed/.test(e.message) && /retry/.test(e.message),
+  );
+  assert.equal(existsSync(a.dir), false);
+  assert.deepEqual(readdirSync(reserved), ["owner"]);
+  assert.equal(cleanupRun({ clone: w.clone, ticks: w.ticks, run: "a", owner: a.owner }).status, "removed");
+  assert.deepEqual(readdirSync(reserved).sort(), ["owner", "removed"]);
+  assert.throws(() => setupRun({ clone: w.clone, ticks: w.ticks, run: "a" }), (e: unknown) => e instanceof TickError && e.step === "reserve");
+});
+
 test("a failed cleanup keeps the reservation in place, even with a same-id setup overlapping it, so the same owner can retry", () => {
   const w = world();
   const a = setupRun({ clone: w.clone, ticks: w.ticks, run: "a" });

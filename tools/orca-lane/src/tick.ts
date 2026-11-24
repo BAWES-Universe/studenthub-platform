@@ -145,6 +145,8 @@ export interface CleanupOptions {
   readonly owner: string;
   /** Test seam: runs while cleanup holds the run id, before the tree is removed; a throw counts as a failed removal. */
   readonly afterClaim?: () => void;
+  /** Test seam: runs after the tree is gone and before the `removed` marker; a throw counts as a failed cleanup. */
+  readonly afterRemoval?: () => void;
 }
 
 /**
@@ -172,11 +174,12 @@ export function cleanupRun(options: CleanupOptions): CleanupResult {
     options.afterClaim?.();
     if (registered(options.clone, dir)) git(options.clone, ["worktree", "remove", "--force", dir]);
     if (existsSync(dir)) throw new Error(`${dir} is still present after removal`);
+    options.afterRemoval?.();
+    mkdirSync(path.join(reserved, "removed"));
   } catch (error) {
     rmSync(claim, { recursive: true, force: true });
     throw new TickError("cleanup", `${failure(error)}; the reservation is kept, retry this cleanup with the same owner value`);
   }
-  mkdirSync(path.join(reserved, "removed"));
   rmSync(claim, { recursive: true, force: true });
   return { status: "removed", run: options.run, dir };
 }
