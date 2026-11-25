@@ -110,21 +110,21 @@ test("COMMS_PERSON_REMINDERS_PG every delivery attempt rechecks: a renewed civil
 });
 
 test("COMMS_PERSON_REMINDERS_PG the email delivery job queues what is due from 13:30 Kuwait time, once a day, then delivers", async () => {
-  const day = "2031-09-15"; for (const k of ["birthday", "civil_id_expired", "civil_id_expiring"]) await fresh(k, day);
+  const day = "2031-09-15"; for (const k of ["birthday", "civil_id_expired", "civil_id_expiring", "bank_details_missing"]) await fresh(k, day);
   const person = await principal("job"); await profile(person, "Job Person", "2001-09-15");
   let delivered = 0; const deliver = async () => ++delivered;
   await queuePersonRemindersThenDeliver(store, deliver, () => new Date("2031-09-15T10:29:00Z"));
   assert.deepEqual(await queued("person.birthday", day, [person]), [], "13:29 in Kuwait: not yet");
   await queuePersonRemindersThenDeliver(store, deliver, () => new Date("2031-09-15T10:30:00Z"));
   assert.equal((await queued("person.birthday", day, [person])).length, 1);
-  assert.equal(Number((await pool.query("SELECT count(*) n FROM person_reminder_runs WHERE day=$1", [day])).rows[0].n), 3, "the 15th: all three kinds ran");
+  assert.equal(Number((await pool.query("SELECT count(*) n FROM person_reminder_runs WHERE day=$1", [day])).rows[0].n), 4, "the 15th: all four kinds ran");
   await queuePersonRemindersThenDeliver(store, deliver, () => new Date("2031-09-15T18:00:00Z"));
   assert.equal((await queued("person.birthday", day, [person])).length, 1, "and only once");
   assert.equal(delivered, 3, "every run delivers");
 });
 
 test("COMMS_PERSON_REMINDERS_PG the worker queues reminders only when it can deliver, so a day is never spent on emails marked not sent", async () => {
-  const day = "2031-10-01"; for (const k of ["birthday", "civil_id_expired", "civil_id_expiring"]) await fresh(k, day);
+  const day = "2031-10-01"; for (const k of ["birthday", "civil_id_expired", "civil_id_expiring", "bank_details_missing"]) await fresh(k, day);
   const person = await principal("worker"); await profile(person, "Worker Person", "1990-10-01");
   const run = (production: boolean, port: FakeEmailPort) => {
     const emailStore = new PostgresEmailOutboxStore({ pool });
@@ -140,4 +140,43 @@ test("COMMS_PERSON_REMINDERS_PG the worker queues reminders only when it can del
   assert.equal((await queued("person.birthday", day, [person]))[0]?.state, "sent");
   assert.equal(port.sent.filter(m => m.to === `${person}@example.invalid`).length, 1);
   assert.equal(Number((await pool.query("SELECT count(*) n FROM person_reminder_runs WHERE day=$1", [day])).rows[0].n), 2, "birthday and expired today; not the 15th or 28th");
+});
+
+async function bankDetails(id: string): Promise<void> {
+  const bank = randomUUID();
+  await pool.query(`INSERT INTO catalogue_items (id, catalogue_type, name, normalized_name, status, created_by_ref, updated_by_ref, created_at, updated_at)
+    VALUES ($1, 'bank', $2, $2, 'active', $3, $3, now(), now())`, [bank, `Synthetic bank ${bank.slice(0, 8)}`, "a".repeat(64)]);
+  await pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, 'KW81CBKU0000000000001234560101', 'Synthetic Beneficiary')", [id, bank]);
+}
+
+test("COMMS_PERSON_REMINDERS_PG missing bank details: people placed on the day with no bank details, once, by first name", async () => {
+  const day = "2031-11-15"; await fresh("bank_details_missing", day);
+  const missing = await principal("bank-missing"), withBank = await principal("bank-has"), future = await principal("bank-future"), ended = await principal("bank-ended");
+  const unplaced = await principal("bank-unplaced"), paused = await principal("bank-paused"), noEmail = await principal("bank-noemail", false);
+  await profile(missing, "Huda Al-Sabah", null);
+  for (const id of [missing, withBank, paused, noEmail]) await assign(id, "2031-10-01", null);
+  await assign(future, "2031-11-16", null); await assign(ended, "2031-09-01", "2031-11-14");
+  await bankDetails(withBank); await pause(paused);
+  const ids = [missing, withBank, future, ended, unplaced, paused, noEmail];
+  assert.ok((await store.sendDay("bank_details_missing", day, new Date())) as number >= 1);
+  assert.deepEqual((await queued("person.bank_details_missing", day, ids)).map(r => [r.recipient_principal_id, r.template_parameters]), [[missing, { name: "Huda" }]]);
+  assert.equal(await store.sendDay("bank_details_missing", day, new Date()), null, "a day is queued once");
+});
+
+test("COMMS_PERSON_REMINDERS_PG every delivery attempt rechecks the bank reminder: details added, a placement ended or a pause after queueing sends nothing", async () => {
+  await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
+  const day = "2031-12-28"; await fresh("bank_details_missing", day);
+  const adds = await principal("bank-adds"), leaves = await principal("bank-leaves"), rests = await principal("bank-rests"), stays = await principal("bank-stays");
+  for (const id of [adds, leaves, rests, stays]) await assign(id, "2031-01-01", null);
+  await store.sendDay("bank_details_missing", day, new Date());
+  await bankDetails(adds);
+  await pool.query("UPDATE work_assignments SET end_date='2031-12-20' WHERE person_principal_id=$1", [leaves]);
+  await pause(rests);
+  const port = new FakeEmailPort();
+  await new EmailOutboxService(new PostgresEmailOutboxStore({ pool }), port, true, true).processDue(100, new Date());
+  const states = Object.fromEntries((await queued("person.bank_details_missing", day, [adds, leaves, rests, stays])).map(r => [r.recipient_principal_id, r.state]));
+  assert.deepEqual(states, { [adds]: "suppressed", [leaves]: "suppressed", [rests]: "suppressed", [stays]: "sent" });
+  const mail = port.sent.find(m => m.to === `${stays}@example.invalid`)!;
+  assert.equal(mail.subject, "Bank information is missing");
+  assert.equal(port.sent.filter(m => [adds, leaves, rests].some(id => m.to === `${id}@example.invalid`)).length, 0);
 });

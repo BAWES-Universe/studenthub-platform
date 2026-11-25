@@ -14,8 +14,8 @@
  * - the receipt is a SHU-59 ledger row carrying references and the field name only.
  *
  * This module is the only reader of `candidate_bank_details`; the
- * non-finance projection test keeps it that way. Reports ask it only how many
- * people have no row (`countWithoutDetails`), never for a value.
+ * non-finance projection test keeps it that way. Reports and reminders ask it only
+ * who has no row (`countWithoutDetails`, `principalsWithoutDetails`), never for a value.
  */
 import { createHash } from "node:crypto";
 import pg from "pg";
@@ -80,6 +80,23 @@ export class PostgresBankDetailsStore {
       `SELECT count(*)::int AS n FROM unnest($1::text[]) AS u(id)
         WHERE NOT EXISTS (SELECT 1 FROM candidate_bank_details d WHERE d.principal_id = u.id)`, [ids]);
     return result.rows[0]!.n;
+  }
+
+  /**
+   * Which of the given principals have no bank details on file, in input order without repeats.
+   * Presence only, like `countWithoutDetails`: the missing bank details reminder needs the people,
+   * not a number. A caller in a transaction passes its client so the answer shares that snapshot.
+   */
+  async principalsWithoutDetails(principalIds: readonly string[], client: Pick<pg.Pool, "query"> = this.#pool): Promise<string[]> {
+    if (!Array.isArray(principalIds) || principalIds.some((id) => typeof id !== "string" || id.length === 0)) {
+      throw new TypeError("principal ids required");
+    }
+    const ids = [...new Set(principalIds)];
+    if (ids.length === 0) return [];
+    const result = await client.query<{ id: string }>(
+      `SELECT u.id FROM unnest($1::text[]) WITH ORDINALITY AS u(id, n)
+        WHERE NOT EXISTS (SELECT 1 FROM candidate_bank_details d WHERE d.principal_id = u.id) ORDER BY u.n`, [ids]);
+    return result.rows.map((row) => row.id);
   }
 
   /** The port for one signed-in principal; it can reach that person's own row only. */

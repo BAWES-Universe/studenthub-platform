@@ -4,7 +4,7 @@
  * 0354) says the same for every class; a db test compares the two.
  */
 import{MORNING_SUMMARY_COUNTERS,MORNING_SUMMARY_HIDDEN_AT_ZERO,MORNING_SUMMARY_KEYS,type MorningSummaryCounts}from"../../reports/src/morning-summary-counters.js";
-export const EMAIL_CLASSES=["account.notice","civil_id.result","staff.morning_summary","staff.firing_spike","recruit.invitation","person.birthday","person.civil_id_expired","person.civil_id_expiring"] as const;
+export const EMAIL_CLASSES=["account.notice","civil_id.result","staff.morning_summary","staff.firing_spike","recruit.invitation","person.birthday","person.civil_id_expired","person.civil_id_expiring","person.bank_details_missing"] as const;
 export type EmailClass=typeof EMAIL_CLASSES[number];
 export interface EmailTemplateParameters {
   readonly "account.notice":{readonly heading:string;readonly message:string};
@@ -20,6 +20,8 @@ export interface EmailTemplateParameters {
   readonly "person.civil_id_expired":{readonly name:string};
   /** Legacy `candidate/civil-id-expiring` (the 15th and 28th): a placed person's civil ID expires within 25 days, or already has. */
   readonly "person.civil_id_expiring":{readonly name:string;readonly expiry:string;readonly status:"expiring"|"expired"};
+  /** Legacy `candidate/request-bank-information` (the 15th and 28th): a placed person has no bank details on file. */
+  readonly "person.bank_details_missing":{readonly name:string};
 }
 export interface RenderedEmail{readonly subject:string;readonly body:string}
 export interface EmailTemplate<C extends EmailClass=EmailClass>{readonly required:boolean;render(parameters:EmailTemplateParameters[C]):RenderedEmail}
@@ -75,7 +77,7 @@ export function validateTemplateParameters<C extends EmailClass>(emailClass:C,va
   if(emailClass==="staff.morning_summary"&&morningSummary(value))return value as EmailTemplateParameters[C];
   if(emailClass==="staff.firing_spike"&&firingSpike(value))return value as EmailTemplateParameters[C];
   if(emailClass==="recruit.invitation"&&recruitInvitation(value))return value as EmailTemplateParameters[C];
-  if((emailClass==="person.birthday"||emailClass==="person.civil_id_expired")&&personName(value))return value as EmailTemplateParameters[C];
+  if((emailClass==="person.birthday"||emailClass==="person.civil_id_expired"||emailClass==="person.bank_details_missing")&&personName(value))return value as EmailTemplateParameters[C];
   if(emailClass==="person.civil_id_expiring"&&civilIdExpiring(value))return value as EmailTemplateParameters[C];
   throw new TypeError("invalid closed email template parameters");
 }
@@ -90,4 +92,5 @@ export const EMAIL_TEMPLATES:{readonly [C in EmailClass]:EmailTemplate<C>}={
   "person.birthday":{required:false,render:p=>({subject:"Happy Birthday from StudentHub",body:`Happy Birthday${p.name?`, ${p.name}`:""}!\n\nFrom all of us at StudentHub, we wish you the happiest birthday. New dreams, new hopes, new experiences and new joys, we wish you all the best!`})},
   "person.civil_id_expired":{required:false,render:p=>({subject:"Please update your civil ID",body:`${dear(p.name)}\n\nThe civil ID on file in your StudentHub account expired today. Please add your new civil ID from your profile to keep your account up to date.`})},
   "person.civil_id_expiring":{required:false,render:p=>({subject:"Civil ID is expiring",body:`${dear(p.name)}\n\nThe civil ID on file in your StudentHub account ${p.status==="expired"?"expired on":"expires on"} ${longDay(p.expiry)}. Please add your new civil ID from your profile to keep your account up to date.`})},
+  "person.bank_details_missing":{required:false,render:p=>({subject:"Bank information is missing",body:`${dear(p.name)}\n\nYour StudentHub account has no bank details on file. Please add your bank details from your profile so your pay can reach you.`})},
 };

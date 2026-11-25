@@ -194,7 +194,7 @@ test("SHU182_BANK_PG_STALE a value changed after the preview is not overwritten"
   assert.equal((await stored(id)).iban, "GB82WEST12345698765432");
 });
 
-test("SHU182_BANK_PG_PRESENCE countWithoutDetails counts each principal with no row once", async () => {
+test("SHU182_BANK_PG_PRESENCE countWithoutDetails counts, and principalsWithoutDetails lists, each principal with no row once", async () => {
   const [withRow, without, other] = [await person(), await person(), await person()];
   const nobody = `shu182-nobody-${randomUUID()}`;
   await pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, $3, $4)",
@@ -203,6 +203,10 @@ test("SHU182_BANK_PG_PRESENCE countWithoutDetails counts each principal with no 
   assert.equal(await store.countWithoutDetails([withRow, withRow]), 0);
   assert.equal(await store.countWithoutDetails([]), 0);
   await assert.rejects(store.countWithoutDetails([""]), TypeError);
+  assert.deepEqual(await store.principalsWithoutDetails([other, withRow, without, other, nobody, without]), [other, without, nobody]);
+  assert.deepEqual(await store.principalsWithoutDetails([withRow]), []);
+  assert.deepEqual(await store.principalsWithoutDetails([]), []);
+  await assert.rejects(store.principalsWithoutDetails([""]), TypeError);
 });
 
 test("SHU182_BANK_PG_SCHEMA the table and the ledger refuse malformed rows from any writer", async () => {
@@ -377,7 +381,9 @@ test("SHU182_BANK_NOT_PROJECTED only the bank-details path can reach the table o
   assert.deepEqual(await namers(/\b(PostgresBankDetailsStore|parseBankDetailsValue|maskBankDetails|createBankDetails|BankDetailsStore)\b/), [
     "apps/gateway/src/bank-details.ts",
     "apps/gateway/src/wiring/profile.ts",
+    "packages/db/src/comms/postgres-person-reminders-store.ts",
     "packages/db/src/postgres-bank-details-store.ts",
+    "packages/db/src/postgres-email-outbox-store.ts",
     "packages/db/src/profile/index.ts",
     "packages/db/src/reports/postgres-morning-summary-store.ts",
     "packages/pay-contracts/src/bank-write.ts",
