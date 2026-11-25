@@ -31,7 +31,7 @@ async function person(): Promise<string> {
   return id;
 }
 
-test("SHU457_RECORD migration 0404 adds the reference and the three times to login_sessions and nothing else", async () => {
+test("SHU457_RECORD migration 0404 adds the reference and the three times to login_sessions and nothing else (0409 then adds created_at)", async () => {
   const { rows } = await pool.query<{ column_name: string; is_nullable: string; data_type: string }>(
     `SELECT column_name, is_nullable, data_type FROM information_schema.columns
       WHERE table_schema = current_schema() AND table_name = 'login_sessions' ORDER BY ordinal_position`,
@@ -40,6 +40,8 @@ test("SHU457_RECORD migration 0404 adds the reference and the three times to log
     ["id", "NO", "text"], ["person_id", "NO", "text"], ["expires_at", "NO", "timestamp with time zone"],
     ["upstream_session_ref", "YES", "text"], ["last_confirmed_at", "YES", "timestamp with time zone"], ["last_checked_at", "YES", "timestamp with time zone"],
     ["last_settled_at", "YES", "timestamp with time zone"],
+    // Access lane U-03 (0409): when a session started, for the person's own account page; NULL for older sessions.
+    ["created_at", "YES", "timestamp with time zone"],
   ]);
 });
 
