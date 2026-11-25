@@ -81,9 +81,7 @@ export class PostgresLoginStore {
       bindStableId: (issuer, subject, stableUserId) =>
         this.#bindStableId(issuer, subject, stableUserId),
       recordEmailVerification: (personId, email, verified) => this.#recordEmailVerification(personId, email, verified),
-      forgetEmailVerification: async (personId) => {
-        await this.#pool.query("DELETE FROM principal_email_verifications WHERE principal_id = $1::text", [personId]);
-      },
+      vetoEmailVerification: (personId) => this.#vetoEmailVerification(personId),
       // Deliberately unavailable: mutable donor/profile fields are never an
       // authentication binding mechanism.
       findLegacyMatch: async () => undefined,
@@ -241,6 +239,22 @@ export class PostgresLoginStore {
        ON CONFLICT (principal_id, email)
        DO UPDATE SET verified = EXCLUDED.verified, source = 'oidc', recorded_at = EXCLUDED.recorded_at`,
       [personId, email, verified],
+    );
+  }
+
+  // Failure recovery: an address-scoped issuer veto for the current address
+  // (verified false, source oidc). Kept, never deleted, so a legacy import that
+  // only inserts can never turn it into "verified". Locked like the write above.
+  async #vetoEmailVerification(personId: string): Promise<void> {
+    await this.#pool.query(
+      `INSERT INTO principal_email_verifications (principal_id, email, verified, source, recorded_at)
+       SELECT p.id, lower(btrim(p.email)), false, 'oidc', now()
+         FROM principals p
+        WHERE p.id = $1::text AND p.email IS NOT NULL AND btrim(p.email) <> ''
+       FOR SHARE OF p
+       ON CONFLICT (principal_id, email)
+       DO UPDATE SET verified = false, source = 'oidc', recorded_at = EXCLUDED.recorded_at`,
+      [personId],
     );
   }
 

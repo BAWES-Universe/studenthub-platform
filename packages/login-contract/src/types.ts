@@ -145,11 +145,12 @@ export interface IdentityStore {
    */
   recordEmailVerification?(personId: string, email: string, verified: boolean): Promise<void>;
   /**
-   * Forgets every recorded email verification for the person, so their address
-   * reads as not verified. Sign-in calls it when recording the issuer's answer
+   * Records an issuer veto for the person's current address: verified false,
+   * source oidc, replacing any earlier answer and kept so a later legacy import
+   * can never promote it. Sign-in calls it when recording the issuer's answer
    * failed, so a stale "verified" can never outlive a newer answer it missed.
    */
-  forgetEmailVerification?(personId: string): Promise<void>;
+  vetoEmailVerification?(personId: string): Promise<void>;
 }
 
 export interface AuthorizationStore {

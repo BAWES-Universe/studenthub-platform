@@ -361,16 +361,16 @@ test("EMAIL_VERIFIED_RECORD sign-in records the issuer's email_verified answer f
   assert.equal((await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize({ emailVerified: true } as never) })).status, 302);
 });
 
-test("EMAIL_VERIFIED_BEST_EFFORT a failed verification write forgets the person's recorded answers and the sign-in still succeeds; if the forget fails too, no session is created", async () => {
+test("EMAIL_VERIFIED_BEST_EFFORT a failed verification write vetoes the current address and the sign-in still succeeds; if the veto fails too, no session is created", async () => {
   const warn = console.warn;
-  for (const forgetFails of [false, true]) {
+  for (const vetoFails of [false, true]) {
     const rig = createSyntheticLoginRig(createLoginApplication);
-    const forgotten: string[] = [];
+    const vetoed: string[] = [];
     Object.assign(rig.identities as object, {
       recordEmailVerification: async () => { throw Object.assign(new Error("connection lost"), { code: "08006" }); },
-      forgetEmailVerification: async (personId: string) => {
-        if (forgetFails) throw new Error("still down");
-        forgotten.push(personId);
+      vetoEmailVerification: async (personId: string) => {
+        if (vetoFails) throw new Error("still down");
+        vetoed.push(personId);
       },
     });
     const warned: unknown[] = [];
@@ -379,14 +379,14 @@ test("EMAIL_VERIFIED_BEST_EFFORT a failed verification write forgets the person'
       await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
       const authorization = rig.provider.authorizationRequests.at(-1)!;
       const response = await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize({ profile: { email: "person@universe.invalid" }, emailVerified: false } as never) });
-      assert.equal(response.status, forgetFails ? 400 : 302, `forgetFails=${forgetFails}`);
-      assert.equal(rig.sessions.records.size, forgetFails ? 0 : 1, "a session exists only when no stale answer can remain");
+      assert.equal(response.status, vetoFails ? 400 : 302, `vetoFails=${vetoFails}`);
+      assert.equal(rig.sessions.records.size, vetoFails ? 0 : 1, "a session exists only when no stale answer can remain");
     } finally {
       console.warn = warn;
     }
-    if (!forgetFails) assert.deepEqual(forgotten, [[...rig.sessions.records.values()][0]!.personId], "a failed write forgets what was recorded (fail closed)");
-    else assert.deepEqual(forgotten, []);
+    if (!vetoFails) assert.deepEqual(vetoed, [[...rig.sessions.records.values()][0]!.personId], "a failed write vetoes the current address (fail closed)");
+    else assert.deepEqual(vetoed, []);
     assert.deepEqual(warned, [JSON.stringify({ event: "email_verification_not_recorded" }),
-      ...(forgetFails ? [JSON.stringify({ event: "email_verification_not_forgotten" })] : [])], "log lines carry no address or person");
+      ...(vetoFails ? [JSON.stringify({ event: "email_verification_not_vetoed" })] : [])], "log lines carry no address or person");
   }
 });

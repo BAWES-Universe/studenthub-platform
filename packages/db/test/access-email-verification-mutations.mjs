@@ -19,8 +19,13 @@ const mutations = [
     "AND pev.verified AND", "AND"],
   ["read the principal without locking it", loginStore, "EV_SERIAL_CHANGE_FIRST",
     "        FOR SHARE OF p\n", ""],
-  ["forget nothing", loginStore, "EV_FORGET",
-    "DELETE FROM principal_email_verifications WHERE principal_id = $1::text", "DELETE FROM principal_email_verifications WHERE false AND principal_id = $1::text"],
+  ["recover by deleting the answers instead of vetoing", loginStore, "EV_VETO_LEGACY",
+    "DO UPDATE SET verified = false, source = 'oidc', recorded_at = EXCLUDED.recorded_at`, [personId]);",
+    "DO NOTHING`, [personId]);\n        await this.#pool.query(\"DELETE FROM principal_email_verifications WHERE principal_id = $1::text\", [personId]);"],
+  ["veto with a true answer", loginStore, "EV_VETO",
+    "SELECT p.id, lower(btrim(p.email)), false, 'oidc', now()", "SELECT p.id, lower(btrim(p.email)), true, 'oidc', now()"],
+  ["keep an earlier true when vetoing", loginStore, "EV_VETO",
+    "DO UPDATE SET verified = false, source", "DO UPDATE SET source"],
 ];
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-concurrency=1",
   ...(pattern ? [`--test-name-pattern=^${pattern} `] : []), suite], { encoding: "utf8", timeout: 120_000 });

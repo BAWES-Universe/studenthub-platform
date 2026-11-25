@@ -21,10 +21,10 @@ try {
     ["never record the answer", "EMAIL_VERIFIED_RECORD", "await dependencies.identities.recordEmailVerification(identity.personId, claims.email, claims.email_verified === true);", ""],
     ["let a failed write reject the sign-in", "EMAIL_VERIFIED_BEST_EFFORT",
       'console.warn(JSON.stringify({ event: "email_verification_not_recorded" }));', "throw new Error(\"not recorded\");"],
-    ["sign in although the stale answer could not be forgotten", "EMAIL_VERIFIED_BEST_EFFORT",
-      "throw forgetError;", ""],
+    ["sign in although the stale answer could not be vetoed", "EMAIL_VERIFIED_BEST_EFFORT",
+      "throw vetoError;", ""],
     ["keep the old answer when the write fails", "EMAIL_VERIFIED_BEST_EFFORT",
-      "await dependencies.identities.forgetEmailVerification?.(identity.personId);", ""],
+      "await dependencies.identities.vetoEmailVerification?.(identity.personId);", ""],
   ];
   const original = readFileSync(gatewayFile, "utf8");
   for (const [name, token, from, to] of mutants) {

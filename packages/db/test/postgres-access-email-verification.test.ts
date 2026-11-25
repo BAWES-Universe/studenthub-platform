@@ -132,24 +132,44 @@ test("EV_CURRENT_ONLY any writer, the legacy import included, is refused for an 
   assert.deepEqual(await rows(id), [{ email: "current@example.com", verified: true, source: "oidc" }]);
 });
 
-test("EV_FORGET forgetting drops every recorded answer, so the address reads as not verified", async () => {
-  const id = await person("forget@example.com");
-  await record(id, "forget@example.com", true);
+test("EV_VETO the recovery veto replaces any answer for the current address with a kept issuer negative", async () => {
+  const id = await person("Veto@Example.com");
+  await record(id, "veto@example.com", true);
   assert.equal(await verified(id), true);
-  await login.identities.forgetEmailVerification!(id);
-  assert.deepEqual(await rows(id), []);
+  await login.identities.vetoEmailVerification!(id);
+  assert.deepEqual(await rows(id), [{ email: "veto@example.com", verified: false, source: "oidc" }]);
   assert.equal(await verified(id), false);
+  const fresh = await person("veto-fresh@example.com");
+  await login.identities.vetoEmailVerification!(fresh);
+  assert.deepEqual(await rows(fresh), [{ email: "veto-fresh@example.com", verified: false, source: "oidc" }], "a veto is recorded even with no earlier answer");
+  const none = await person(null);
+  await assert.doesNotReject(login.identities.vetoEmailVerification!(none), "no address, nothing to veto");
+  assert.deepEqual(await rows(none), []);
 });
 
-test("EV_STALE_TRUE_FAILED_FALSE a true answer followed by a failed false write reads as not verified once sign-in forgets", async () => {
+test("EV_VETO_LEGACY a negative, then recovery, then a legacy promotion attempt stays not verified", async () => {
+  for (const before of ["negative", "nothing"] as const) {
+    const id = await person(`veto-legacy-${before}@example.com`);
+    if (before === "negative") await record(id, `veto-legacy-${before}@example.com`, false);
+    // Recovery after a failed write of the issuer's answer.
+    await login.identities.vetoEmailVerification!(id);
+    await legacy(id, `veto-legacy-${before}@example.com`);
+    assert.equal(await verified(id), false, `${before}: legacy cannot promote a vetoed address`);
+    assert.deepEqual(await rows(id), [{ email: `veto-legacy-${before}@example.com`, verified: false, source: "oidc" }]);
+  }
+});
+
+test("EV_STALE_TRUE_FAILED_FALSE a true answer followed by a failed false write reads as not verified once sign-in vetoes", async () => {
   const id = await person("stale@example.com");
   await record(id, "stale@example.com", true);
   assert.equal(await verified(id), true);
-  // Sign-in's failure path: the false write fails, then the person's answers are forgotten.
+  // Sign-in's failure path: the false write fails, then the person's answers are vetoed.
   await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, 'stale@example.com', false, 'nope')", [id]), /check constraint/);
   assert.equal(await verified(id), true, "the failed write alone leaves the stale true");
-  await login.identities.forgetEmailVerification!(id);
-  assert.equal(await verified(id), false, "forgetting makes the address read as not verified");
+  await login.identities.vetoEmailVerification!(id);
+  assert.equal(await verified(id), false, "the veto makes the address read as not verified");
+  await legacy(id, "stale@example.com");
+  assert.equal(await verified(id), false, "and a later legacy import cannot promote it");
 });
 
 test("EV_SHAPE the table refuses unnormalised addresses and unknown sources, and needs a real principal", async () => {
