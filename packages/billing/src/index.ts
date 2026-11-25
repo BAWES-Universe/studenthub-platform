@@ -6,3 +6,4 @@ export * from "./numbering-rules.js";
 export * from "./fixtures.js";
 export * from "./legacy-invoices.js";
 export * from "./transfer-invoice-access.js";
+export * from "./bank-results.js";

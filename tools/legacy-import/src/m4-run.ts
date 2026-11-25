@@ -1,5 +1,7 @@
 // M-4 end to end: reads the refreshed legacy copy, maps every M-4 table, and (in write mode)
-// imports them in dependency order: catalogues, companies, brand links, stores, contacts. Each
+// imports them in dependency order: catalogues, companies, brand links, stores, contacts, then
+// M-1's people snapshots and their staged contact values (phone, handle, civil ID, verified
+// address HMAC). Each
 // step uses its own import store, so the M-4 contract holds per step (id map, digest conflicts,
 // savepoints, batch lock). The report carries table names, legacy ids, rule codes, counts and
 // digests only: no names, emails, phones or other legacy values. Read-only against legacy.
@@ -10,6 +12,7 @@ import { COMPANY_SNAPSHOT_COLUMNS, mapLegacyCompanies } from "./m4-organizations
 import { mapLegacyBrandLinks, mapLegacyStores } from "./m4-stores.js";
 import { mapLegacyContacts } from "./m4-contacts.js";
 import { M1_MAPPER_REVISION, M1_SOURCES, mapLegacyCandidates } from "./m1-people.js";
+import { M1_CONTACT_MAPPER_REVISION, M1_CONTACT_SOURCES, mapLegacyPersonContacts, type PersonContactRow } from "./m1-contact.js";
 import type { LegacyReader } from "./twin/journey.js";
 
 type Row = Readonly<Record<string, unknown>>;
@@ -31,8 +34,9 @@ export const M4_SOURCES = {
   company_contact: ["company_contact_uuid", "contact_uuid", "company_id", "contact_position", "allow_access", "created_at", "updated_at"],
   contact_email: ["email_uuid", "contact_uuid", "email_address", "email_created_datetime"],
   contact_phone: ["phone_uuid", "contact_uuid", "phone_number", "phone_created_datetime"],
-  // M-1 people: the approved profile snapshot columns only (see M1_SOURCES).
-  candidate: M1_SOURCES.candidate,
+  // M-1 people: the approved profile snapshot columns (M1_SOURCES) and the contact slice's
+  // columns (M1_CONTACT_SOURCES: phone, handle, civil ID and its flag, the verified address).
+  candidate: [...new Set<string>([...M1_SOURCES.candidate, ...M1_CONTACT_SOURCES.candidate])],
 } as const satisfies Record<string, readonly string[]>;
 export type M4Table = keyof typeof M4_SOURCES;
 export type M4Sources = Readonly<Record<M4Table, readonly Row[]>>;
@@ -79,9 +83,11 @@ export function planM4(sources: M4Sources, today: string) {
   const stores = mapLegacyStores(sources.store, sources.brand);
   const contacts = mapLegacyContacts(sources.company_contact, sources.contact, sources.contact_email, sources.contact_phone);
   const people = mapLegacyCandidates({ candidate: sources.candidate, country: sources.country, university: sources.university, area: sources.area }, today);
+  // Only the candidates M-1 imports, from the same rows.
+  const personContacts = mapLegacyPersonContacts(sources.candidate, people.people);
   /** Rows read per legacy table, so a row the mappers set aside still changes the identity. */
   const sourceRows = Object.fromEntries((Object.keys(M4_SOURCES) as M4Table[]).sort().map((t) => [t, sources[t].length]));
-  return { catalogue, companies, brandLinks, stores, contacts, people, sourceRows };
+  return { catalogue, companies, brandLinks, stores, contacts, people, personContacts, sourceRows };
 }
 export type M4Plan = ReturnType<typeof planM4>;
 
@@ -103,6 +109,7 @@ export interface M4Writers {
   stores(rows: M4Plan["stores"]["stores"], now: string): Promise<StepWrite>;
   contacts(rows: M4Plan["contacts"]["contacts"], now: string): Promise<StepWrite>;
   people(rows: M4Plan["people"]["people"]): Promise<StepWrite>;
+  personContacts(rows: M4Plan["personContacts"]["contacts"]): Promise<StepWrite>;
 }
 
 export interface M4Step {
@@ -184,6 +191,8 @@ export async function runM4(sources: M4Sources, writers: M4Writers | null, now: 
     writers ? await writers.contacts(plan.contacts.contacts, now) : undefined));
   add(step("candidate", sources.candidate.length, plan.people.people.length, plan.people.issues,
     writers ? await writers.people(plan.people.people) : undefined));
+  add(step("candidate_contact", sources.candidate.length, plan.personContacts.contacts.length, plan.personContacts.issues,
+    writers ? await writers.personContacts(plan.personContacts.contacts) : undefined));
   const ok = steps.every((s) => !s.write || (s.write.conflicts.length === 0 && Object.keys(s.write.refused).length === 0));
   return { schemaVersion: 1, mode: writers ? "write" : "plan", steps, ok };
 }
@@ -213,6 +222,13 @@ export interface PlanBinding {
 }
 
 /**
+ * The keyed digest of a staged contact row (personContactDigest in @studenthub/db under the
+ * operator's digest key). A contact row holds low-entropy personal values, so a plain hash of it
+ * could be used to guess them: the identity binds only this HMAC.
+ */
+export type ContactDigest = (row: PersonContactRow) => string;
+
+/**
  * The identity of a plan: everything it is bound to (revision, built artifact, refresh read,
  * destination database, operator parent, Kuwait date and mapper revision), the rows read per
  * legacy table, and step by step every mapped row's legacy id and digest and every issue's rule,
@@ -220,7 +236,7 @@ export interface PlanBinding {
  * exactly what that plan showed, with the same code, into the same place. A sha256, so it carries
  * no row.
  */
-export function planIdentity(plan: M4Plan, binding: PlanBinding): string {
+export function planIdentity(plan: M4Plan, binding: PlanBinding, contactDigest: ContactDigest): string {
   const rows = (list: readonly { readonly digest: string }[], id: (row: never) => string) => list.map((r) => `${id(r as never)}:${r.digest}`);
   // The reconciliation evidence a reviewer saw: every issue as rule, legacy table, legacy id ("?"
   // when it has none, so those count by multiplicity), column name and related legacy id, sorted.
@@ -235,11 +251,12 @@ export function planIdentity(plan: M4Plan, binding: PlanBinding): string {
     ["store", rows(plan.stores.stores, (r: { legacyId: string }) => r.legacyId), issues(plan.stores.issues)],
     ["company_contact", rows(plan.contacts.contacts, (r: { legacyId: string }) => r.legacyId), issues(plan.contacts.issues)],
     ["candidate", rows(plan.people.people, (r: { legacyId: string }) => r.legacyId), issues(plan.people.issues)],
+    ["candidate_contact", plan.personContacts.contacts.map((r) => `${r.legacyId}:${contactDigest(r)}`), issues(plan.personContacts.issues)],
   ];
   const { revision, artifact, refresh, target, operator, today } = binding;
   return createHash("sha256").update(JSON.stringify({
     revision, artifact, refresh: [refresh.startedAt, refresh.finishedAt, refresh.totalRows], target, operator,
-    today, mappers: { people: M1_MAPPER_REVISION }, sourceRows: plan.sourceRows, steps,
+    today, mappers: { people: M1_MAPPER_REVISION, contacts: M1_CONTACT_MAPPER_REVISION }, sourceRows: plan.sourceRows, steps,
   })).digest("hex");
 }
 
