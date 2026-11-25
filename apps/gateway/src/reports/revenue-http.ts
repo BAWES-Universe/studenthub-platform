@@ -3,10 +3,11 @@ import type { RevenuePage } from "../../../../packages/reports/src/revenue.js";
 import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 
 /**
- * GET /reports/revenue: revenue per currency (contract P-4, screen A-31), for operator admins only.
- * Everyone else, staff included, gets the same not found whatever the method. Read only.
+ * GET /reports/revenue: revenue per currency (contract P-4, screen A-31), for whoever the access lane lets read
+ * finance reports (operator admins and operator finance, subtree). Everyone else, staff included, gets the same
+ * not found whatever the method. Read only.
  */
-export interface RevenueHttpService { isOperatorAdmin(viewer: string): Promise<boolean>; page(viewer: string): Promise<RevenuePage | undefined> }
+export interface RevenueHttpService { mayViewRevenue(viewer: string): Promise<boolean>; page(viewer: string): Promise<RevenuePage | undefined> }
 
 export const REVENUE_PATH = "/reports/revenue";
 const OPERATIONS_PATH = "/reports/operations";
@@ -21,7 +22,7 @@ function notFound(req: IncomingMessage, res: ServerResponse): true {
   res.end(JSON.stringify({ status: "not_found" })); return true;
 }
 
-function revenueHtml(page: RevenuePage): string {
+function revenueHtml(page: RevenuePage, staff: boolean): string {
   const received = page.received.length ? `<table><thead><tr><th scope="col">Currency</th><th scope="col">Paid by companies</th><th scope="col">Belonging to candidates</th><th scope="col">Gross profit</th><th scope="col">Transfers</th><th scope="col">Candidate lines</th></tr></thead><tbody>`
     + page.received.map(r => `<tr><th scope="row">${esc(r.currency)}</th><td>${esc(r.companyTotal)}</td><td>${esc(r.candidateTotal)}</td><td>${esc(r.grossProfit)}</td><td>${r.transfers}</td><td>${r.lines}</td></tr>`).join("")
     + `</tbody></table>` : `<p>No payments received yet.</p>`;
@@ -37,16 +38,18 @@ function revenueHtml(page: RevenuePage): string {
     + `<p>Not available yet:</p><ul>${page.missing.map(m => `<li>${esc(m.label)}: Not available <small>(waits on ${esc(m.waitsOn)})</small></li>`).join("")}</ul>`
     + `<h2>By month</h2><p>The last 12 whole months, by the month each transfer's pay period ends, oldest first. Drafts and cancelled transfers are left out.</p>${monthly || "<p>No transfers yet.</p>"}`
     + `<h2>Reconciliation</h2><p>Every transfer by status, with the sums of its candidate lines. The payment received figures above are the payment sent, payment received and complete rows.</p>${recon}`
-    + `<p><a href="${OPERATIONS_PATH}">Back to operations</a></p></main>`;
+    // Operations is a staff page: a finance-only viewer gets no link to a page that would answer not found.
+    + (staff ? `<p><a href="${OPERATIONS_PATH}">Back to operations</a></p>` : "") + `</main>`;
 }
 
 /** Handles the revenue path; false for any other path. `viewer` is the signed-in person, if any. */
-export async function handleRevenue(req: IncomingMessage, res: ServerResponse, service: RevenueHttpService | undefined, path: string, viewer: () => Promise<string | undefined>): Promise<boolean> {
+export async function handleRevenue(req: IncomingMessage, res: ServerResponse, service: RevenueHttpService | undefined, path: string, viewer: () => Promise<string | undefined>,
+  isStaff: (viewer: string) => Promise<boolean> = async () => false): Promise<boolean> {
   if (path !== REVENUE_PATH) return false;
   req.resume();
   const person = service ? await viewer() : undefined;
-  // Authorization first: everyone who is not an operator admin gets the same not found, whatever the method.
-  let allowed = false; if (service && person) try { allowed = await service.isOperatorAdmin(person); } catch { /* treated as not an admin */ }
+  // Authorization first: everyone who may not read finance reports gets the same not found, whatever the method.
+  let allowed = false; if (service && person) try { allowed = await service.mayViewRevenue(person); } catch { /* treated as not allowed */ }
   if (!service || !person || !allowed) return notFound(req, res);
   if (req.method !== "GET") { res.writeHead(405, { allow: "GET" }); res.end(); return true; }
   const page = await service.page(person);
@@ -55,6 +58,7 @@ export async function handleRevenue(req: IncomingMessage, res: ServerResponse, s
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", vary: "Accept", "x-content-type-options": "nosniff" });
     res.end(JSON.stringify({ status: "ok", ...page })); return true;
   }
-  writeHtml(res, 200, pageDocument("Revenue", revenueHtml(page)), { "cache-control": "no-store" });
+  let staff = false; try { staff = await isStaff(person); } catch { /* treated as not staff: the link is left out */ }
+  writeHtml(res, 200, pageDocument("Revenue", revenueHtml(page, staff)), { "cache-control": "no-store" });
   return true;
 }

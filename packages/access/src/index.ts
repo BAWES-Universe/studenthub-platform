@@ -11,3 +11,4 @@ export * from "./abuse.js";
 export * from "./staff-view.js";
 export * from "./company-registration.js";
 export * from "./account-sessions.js";
+export * from "./report-access.js";

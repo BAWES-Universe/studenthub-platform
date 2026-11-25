@@ -268,7 +268,7 @@ export async function handleIdCards(req: IncomingMessage, res: ServerResponse, s
   if (await handleCertificates(req, res, service?.certificates, path, signedIn, viewer => service!.isStaff(viewer))) return true;
   if (await handleStatistics(req, res, service?.statistics, path, signedIn, viewer => service!.isStaff(viewer), origin)) return true;
   if (await handleCampaigns(req, res, service?.campaigns, path, signedIn, viewer => service!.isStaff(viewer), origin)) return true;
-  if (await handleRevenue(req, res, service?.revenue, path, signedIn)) return true;
+  if (await handleRevenue(req, res, service?.revenue, path, signedIn, viewer => service!.isStaff(viewer))) return true;
   if (path !== ID_CARDS_PATH && path !== PRINT_PATH && path !== OWN_ID_CARD_PATH && path !== OWN_PDF_PATH) return false;
   const session = cookie(req.headers.cookie), viewer = service && session ? await authorize(session).catch(() => undefined) : undefined;
   if (path === OWN_ID_CARD_PATH || path === OWN_PDF_PATH) { if (!service) { req.resume(); return notFound(req, res); } return path === OWN_PDF_PATH ? ownPdf(req, res, service, viewer, origin) : ownPage(req, res, service, viewer); }
