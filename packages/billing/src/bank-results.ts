@@ -128,12 +128,21 @@ export interface BankCandidateLine {
   readonly paidAmount: DecimalString;
   readonly currency: string;
   readonly beneficiaryAccount: string | null;
-  readonly confirmationId: string | null;
 }
 
 export type BankHoldReason =
   | "rejected_row" | "unmatched" | "ambiguous" | "amount_mismatch" | "currency_mismatch"
-  | "already_paid" | "line_listed_twice";
+  | "already_paid" | "line_listed_twice" | "reference_conflict";
+
+/** A bank confirmation already recorded on a paid line, from ANY earlier file or
+ * transfer. Looked up by reference only; never a candidate to apply. */
+export interface BankRecordedPayment {
+  readonly lineId: string;
+  readonly reference: string;
+  readonly account: string | null;
+  readonly amount: DecimalString;
+  readonly currency: string;
+}
 
 export type BankRowDecision =
   | { readonly kind: "pay"; readonly rowNumber: number; readonly lineId: string; readonly transferId: string; readonly reference: string | null }
@@ -150,36 +159,59 @@ export interface BankResultPlan {
 const hold = (rowNumber: number, reason: BankHoldReason, lineIds: readonly string[] = []): BankRowDecision =>
   ({ kind: "hold", rowNumber, reason, lineIds: [...lineIds].sort() });
 
-/** Decide every row against the candidate lines. Pure; same input, same plan. */
-export function planBankResult(sheet: Extract<BankSheetResult, { kind: "read" }>, lines: readonly BankCandidateLine[]): BankResultPlan {
+/** Decide every row. `lines` are the candidates a row may apply to; `recorded`
+ * is the separate history of confirmations already applied, so a replayed row is
+ * recognised before any unpaid fallback can claim a different line. Pure; same
+ * input, same plan. */
+export function planBankResult(
+  sheet: Extract<BankSheetResult, { kind: "read" }>,
+  lines: readonly BankCandidateLine[],
+  recorded: readonly BankRecordedPayment[],
+): BankResultPlan {
   const byId = new Map<string, BankCandidateLine>();
   for (const line of lines) {
     if (byId.has(line.lineId)) throw new TypeError("duplicate candidate line");
     byId.set(line.lineId, line);
   }
   const claimed = new Set<string>();
+  const references = new Set<string>();
   const decisions: BankRowDecision[] = sheet.rejected.map((r) => hold(r.rowNumber, "rejected_row"));
 
   for (const row of sheet.rows) {
+    // A success row's reference is the bank's confirmation: resolve its provenance first.
+    const prior = row.outcome === "success" && row.reference !== null
+      ? recorded.filter((r) => r.reference === row.reference) : [];
+    if (row.outcome === "success" && row.reference !== null) {
+      if (references.has(row.reference)) { decisions.push(hold(row.rowNumber, "reference_conflict", prior.map((r) => r.lineId))); continue; }
+      references.add(row.reference);
+    }
     let line: BankCandidateLine | undefined;
     if (row.lineRef !== null) {
       line = byId.get(row.lineRef);
-      if (!line) { decisions.push(hold(row.rowNumber, "unmatched")); continue; }
+      if (!line) { decisions.push(hold(row.rowNumber, prior.length ? "reference_conflict" : "unmatched", prior.map((r) => r.lineId))); continue; }
       if (row.currency !== null && row.currency !== line.currency) { decisions.push(hold(row.rowNumber, "currency_mismatch", [line.lineId])); continue; }
       if (row.amount !== null && row.amount !== line.paidAmount) { decisions.push(hold(row.rowNumber, "amount_mismatch", [line.lineId])); continue; }
+      if (prior.length) {
+        const replay = prior.length === 1 && prior[0]!.lineId === line.lineId && line.paid;
+        decisions.push(replay ? { kind: "duplicate", rowNumber: row.rowNumber, lineId: line.lineId }
+          : hold(row.rowNumber, "reference_conflict", [...new Set([line.lineId, ...prior.map((r) => r.lineId)])]));
+        continue;
+      }
     } else {
       if (row.outcome === "fail") { decisions.push(hold(row.rowNumber, "unmatched")); continue; }
+      if (prior.length) {
+        const p = prior[0]!;
+        const replay = prior.length === 1 && p.account === row.account && p.amount === row.amount && p.currency === row.currency;
+        decisions.push(replay ? { kind: "duplicate", rowNumber: row.rowNumber, lineId: p.lineId }
+          : hold(row.rowNumber, "reference_conflict", prior.map((r) => r.lineId)));
+        continue;
+      }
       const same = (l: BankCandidateLine) => l.beneficiaryAccount === row.account && l.paidAmount === row.amount && l.currency === row.currency;
       const unpaid = lines.filter((l) => !l.paid && same(l));
       const open = unpaid.filter((l) => !claimed.has(l.lineId));
       if (open.length > 1) { decisions.push(hold(row.rowNumber, "ambiguous", open.map((l) => l.lineId))); continue; }
       if (open.length === 0 && unpaid.length > 0) { decisions.push(hold(row.rowNumber, "line_listed_twice", unpaid.map((l) => l.lineId))); continue; }
-      if (open.length === 0) {
-        const done = row.reference === null ? [] : lines.filter((l) => l.paid && same(l) && l.confirmationId === row.reference);
-        if (done.length === 1) decisions.push({ kind: "duplicate", rowNumber: row.rowNumber, lineId: done[0]!.lineId });
-        else decisions.push(hold(row.rowNumber, done.length > 1 ? "ambiguous" : "unmatched", done.map((l) => l.lineId)));
-        continue;
-      }
+      if (open.length === 0) { decisions.push(hold(row.rowNumber, "unmatched")); continue; }
       line = open[0]!;
     }
     if (claimed.has(line.lineId)) { decisions.push(hold(row.rowNumber, "line_listed_twice", [line.lineId])); continue; }
@@ -187,9 +219,7 @@ export function planBankResult(sheet: Extract<BankSheetResult, { kind: "read" }>
     if (row.outcome === "fail") {
       decisions.push({ kind: "unpay", rowNumber: row.rowNumber, lineId: line.lineId, transferId: line.transferId, wasPaid: line.paid });
     } else if (line.paid) {
-      decisions.push(row.reference !== null && line.confirmationId === row.reference
-        ? { kind: "duplicate", rowNumber: row.rowNumber, lineId: line.lineId }
-        : hold(row.rowNumber, "already_paid", [line.lineId]));
+      decisions.push(hold(row.rowNumber, "already_paid", [line.lineId]));
     } else {
       decisions.push({ kind: "pay", rowNumber: row.rowNumber, lineId: line.lineId, transferId: line.transferId, reference: row.reference });
     }
