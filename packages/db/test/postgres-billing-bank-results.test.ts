@@ -104,6 +104,7 @@ test("BANK_STORE_ONCE the same file content is refused as a duplicate, and an ap
   assert.equal((await results().apply(actor, fileId)).kind, "applied");
   assert.deepEqual(await results().apply(actor, fileId), { kind: "refused", code: "already_applied" });
   assert.deepEqual(await results().apply(actor, randomUUID()), { kind: "refused", code: "not_found" });
+  assert.deepEqual(await results().apply(actor, "-".repeat(36)), { kind: "refused", code: "not_found" });
   await assert.rejects(pool.query("UPDATE bank_result_files SET status='pending'"), /applied once/);
   await assert.rejects(pool.query("DELETE FROM bank_result_rows"), /append-only/);
   await assert.rejects(pool.query("DELETE FROM bank_result_confirmations"), /append-only/);

@@ -49,7 +49,7 @@ export class PostgresBankResultStore {
 
   async apply(actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> {
     if (actor.actingAs !== false || !actor.principalId?.trim()) return { kind: "refused", code: "forbidden" };
-    if (!/^[0-9a-f-]{36}$/u.test(fileId)) return { kind: "refused", code: "not_found" };
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(fileId)) return { kind: "refused", code: "not_found" };
     const client = await this.pool.connect(); let broken = false;
     try {
       await client.query("BEGIN");
