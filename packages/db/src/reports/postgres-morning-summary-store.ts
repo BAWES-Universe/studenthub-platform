@@ -14,8 +14,26 @@ export interface MorningSummarySendResult { readonly day: string; readonly recip
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const KUWAIT_DAY = (p: string) => `scheduled_at >= (${p}::date::timestamp AT TIME ZONE 'Asia/Kuwait') AND scheduled_at < ((${p}::date + 1)::timestamp AT TIME ZONE 'Asia/Kuwait')`;
 
-// One statement, so every counter reads the same snapshot.
-const COUNTS = `SELECT
+// One statement, so every counter reads the same snapshot. $1 is the Asia/Kuwait day, $2 the operator
+// organizations: they are not companies, and each organization rolls up to its top-level company under them.
+const COUNTS = `WITH RECURSIVE up(org_id, at, parent, depth) AS (
+    SELECT id, id, parent_org_id, 0 FROM organizations WHERE NOT (id = ANY($2::text[]))
+    UNION ALL SELECT up.org_id, o.id, o.parent_org_id, up.depth + 1 FROM up JOIN organizations o ON o.id = up.parent
+      WHERE NOT (o.id = ANY($2::text[])) AND up.depth < 32),
+  top AS (SELECT org_id, at AS company_id FROM up WHERE parent IS NULL OR parent = ANY($2::text[]))
+SELECT
+  (SELECT count(*)::int FROM organizations c LEFT JOIN organization_commercial_terms ct ON ct.org_id = c.id AND ct.field = 'currency_code'
+     WHERE c.id IN (SELECT company_id FROM top) AND COALESCE(ct.value, 'KWD') = 'KWD'
+       AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = c.id)
+       AND EXISTS (SELECT 1 FROM work_assignments a JOIN top t ON t.org_id = a.org_id
+         WHERE t.company_id = c.id AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = t.org_id) AND a.start_date <= $1::date - 40 AND (a.end_date IS NULL OR a.end_date >= $1::date))
+       AND NOT EXISTS (SELECT 1 FROM pay_transfers p JOIN top t ON t.org_id = p.company_id
+         WHERE t.company_id = c.id AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = t.org_id) AND NOT p.deleted AND p.payment_received_on > $1::date - 40 AND p.payment_received_on <= $1::date)) AS "companyMoreThen40DaysWithoutPayment",
+  (SELECT count(DISTINCT a.person_principal_id)::int FROM work_assignments a
+     WHERE a.start_date < ($1::date - interval '2 months')::date AND (a.end_date IS NULL OR a.end_date >= $1::date)
+       AND NOT EXISTS (SELECT 1 FROM pay_transfer_lines l JOIN pay_transfers p ON p.id = l.transfer_id
+         WHERE l.person_id = a.person_principal_id AND l.paid AND NOT p.deleted AND p.status <> 'cancelled'
+           AND p.period_end >= ($1::date - interval '2 months')::date AND p.period_end <= $1::date)) AS "assignedIdleCandidates",
   (SELECT count(*)::int FROM recruit_interviews i JOIN recruit_pipeline_cards c ON c.id = i.card_id JOIN recruit_requests r ON r.id = c.request_id
      WHERE i.status = 'scheduled' AND i.${KUWAIT_DAY("$1")} AND r.status NOT IN ('filled','closed')) AS "interviewScheduledToday",
   (SELECT count(*)::int FROM recruit_requests r LEFT JOIN organization_commercial_terms t ON t.org_id = r.org_id AND t.field = 'currency_code'
@@ -48,7 +66,7 @@ export class PostgresMorningSummaryStore {
   /** The counters this store can read for one Asia/Kuwait day. */
   async counts(day: string, client: Pick<pg.Pool, "query"> = this.#pool): Promise<MorningSummaryRawCounts> {
     if (!DAY.test(day)) throw new RangeError("invalid day");
-    return (await client.query<Record<string, number>>(COUNTS, [day])).rows[0]!;
+    return (await client.query<Record<string, number>>(COUNTS, [day, this.#operatorOrgIds])).rows[0]!;
   }
 
   /**
