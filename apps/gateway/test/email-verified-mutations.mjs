@@ -16,19 +16,21 @@ try {
     { encoding: "utf8", timeout: 60_000 });
   assert.equal(run().status, 0, "email verified mutation baseline");
   const mutants = [
-    ["count any truthy claim as verified", "claims.email_verified === true", "Boolean(claims.email_verified)"],
-    ["record a blank address", 'claims.email.trim() !== "" && ', ""],
-    ["never record the answer", "await dependencies.identities.recordEmailVerification(identity.personId, claims.email, claims.email_verified === true);", ""],
+    ["count any truthy claim as verified", "EMAIL_VERIFIED_RECORD", "claims.email_verified === true", "Boolean(claims.email_verified)"],
+    ["record a blank address", "EMAIL_VERIFIED_RECORD", 'claims.email.trim() !== "" && ', ""],
+    ["never record the answer", "EMAIL_VERIFIED_RECORD", "await dependencies.identities.recordEmailVerification(identity.personId, claims.email, claims.email_verified === true);", ""],
+    ["let a failed write reject the sign-in", "EMAIL_VERIFIED_BEST_EFFORT",
+      'console.warn(JSON.stringify({ event: "email_verification_not_recorded" }));', "throw new Error(\"not recorded\");"],
   ];
   const original = readFileSync(gatewayFile, "utf8");
-  for (const [name, from, to] of mutants) {
+  for (const [name, token, from, to] of mutants) {
     assert.equal(original.split(from).length - 1, 1, `${name}: unique compiled anchor`);
     writeFileSync(gatewayFile, original.replace(from, to));
     const result = run();
     assert.equal(result.error, undefined, `${name}: mutant must execute`);
     assert.equal(result.status, 1, `${name}: mutant survived\n${result.stdout}${result.stderr}`);
-    assert.ok(result.stdout.split("\n").some((line) => line.startsWith("not ok ") && line.includes("EMAIL_VERIFIED_RECORD")),
-      `${name}: EMAIL_VERIFIED_RECORD did not fail\n${result.stdout}${result.stderr}`);
+    assert.ok(result.stdout.split("\n").some((line) => line.startsWith("not ok ") && line.includes(token)),
+      `${name}: ${token} did not fail\n${result.stdout}${result.stderr}`);
     assert.ok(result.stdout.includes("ERR_ASSERTION"), `${name}: failure was not an assertion\n${result.stdout}${result.stderr}`);
     writeFileSync(gatewayFile, original);
     console.log(`KILLED: ${name}`);

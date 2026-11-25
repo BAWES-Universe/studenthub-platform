@@ -379,8 +379,14 @@ export const createLoginApplication: LoginApplicationFactory = (
         return { status: 403, body: { error: "access_paused" } };
       }
       // The issuer's answer for the address it signed: only a boolean true counts as verified.
+      // Best effort: a failed write leaves the fact unrecorded (read as not verified) and never
+      // turns a valid sign-in into a rejection.
       if (typeof claims.email === "string" && claims.email.trim() !== "" && dependencies.identities.recordEmailVerification) {
-        await dependencies.identities.recordEmailVerification(identity.personId, claims.email, claims.email_verified === true);
+        try {
+          await dependencies.identities.recordEmailVerification(identity.personId, claims.email, claims.email_verified === true);
+        } catch {
+          console.warn(JSON.stringify({ event: "email_verification_not_recorded" }));
+        }
       }
       const sessionId = opaqueToken(dependencies);
       const reference = upstream ? upstreamReferenceFrom(claims) : undefined;
