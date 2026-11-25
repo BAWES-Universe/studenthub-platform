@@ -108,20 +108,22 @@ export class PostgresMorningSummaryStore {
   }
 
   /**
-   * Sends one day's summary, once. In one transaction it takes the day's lock, stops if the
-   * day already ran, reads the counters, lets `build` turn them into the email's closed
+   * Sends one day's summary, once. It first reads the counters in their own repeatable-read
+   * snapshot and releases that connection, so it never holds two at once. Then, in one read
+   * committed transaction, it takes the day's lock, stops if the day already ran (the lock and
+   * this check see the latest runs), lets `build` turn the counters into the email's closed
    * parameters (it throws to send nothing), queues one email per current recipient and
    * records the run. Returns null when the day already ran.
    */
   async sendDay(day: string, at: Date, build: (counts: MorningSummaryRawCounts) => unknown): Promise<MorningSummarySendResult | null> {
     if (!DAY.test(day)) throw new RangeError("invalid day");
+    const counts = await this.counts(day);
     const c = await this.#pool.connect();
     try {
       await c.query("BEGIN");
       await c.query("SELECT pg_advisory_xact_lock(hashtextextended('morning_summary:' || $1, 0))", [day]);
       if ((await c.query("SELECT 1 FROM morning_summary_runs WHERE day = $1::date", [day])).rowCount) { await c.query("ROLLBACK"); return null; }
-      // Its own repeatable-read snapshot: this transaction stays read committed so the day lock and the run check see the latest runs.
-      const parameters = build(await this.counts(day));
+      const parameters = build(counts);
       const queued = await c.query(`INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key)
         SELECT 'staff.morning_summary', r.principal_id, $2::jsonb, 'staff.morning_summary:' || $1 || ':' || r.principal_id FROM (${RECIPIENTS("$3")}) r
         ON CONFLICT (idempotency_key) DO NOTHING`, [day, JSON.stringify(parameters), this.#operatorOrgIds]);

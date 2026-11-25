@@ -308,3 +308,26 @@ test("REPORTS_MORNING_SUMMARY_PG missing bank info reads the candidates and thei
   assert.equal(armed, false, "the race ran");
   assert.equal((await store.counts(day)).missingBankInfo!, before - 1, "the committed details count from the next read");
 });
+
+test("REPORTS_MORNING_SUMMARY_PG sendDay needs only one connection at a time, and still sends a day once", async () => {
+  const name = `ms-single-${randomUUID()}`;
+  const single = new pg.Pool({ connectionString: URL, max: 1, application_name: name });
+  single.on("error", () => undefined); // a terminated idle connection below is expected
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const one = new PostgresMorningSummaryStore({ pool: single, operatorOrgIds: [OPS] });
+    const day = await freshDay(), at = new Date(`${day}T05:00:00Z`);
+    const build = (raw: Readonly<Record<string, number>>) => MorningSummaryService.parameters(day, raw);
+    const within = <T>(work: Promise<T>) => Promise.race([work, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("sendDay waited for a second connection")), 10_000); })]);
+    const [first, second] = await within(Promise.all([one.sendDay(day, at, build), one.sendDay(day, at, build)]));
+    assert.equal([first, second].filter(r => r === null).length, 1, "one of two concurrent sends finds the day already ran");
+    assert.equal((await pool.query("SELECT count(*)::int n FROM morning_summary_runs WHERE day = $1::date", [day])).rows[0].n, 1);
+    const sent = (first ?? second)!;
+    assert.equal((await pool.query("SELECT count(*)::int n FROM email_outbox WHERE idempotency_key LIKE $1", [`staff.morning_summary:${day}:%`])).rows[0].n, sent.recipients);
+  } finally {
+    clearTimeout(timer);
+    // A send stuck waiting for a second connection still holds the only one: end it so the pool can close.
+    await pool.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = $1", [name]);
+    await single.end().catch(() => undefined);
+  }
+});
