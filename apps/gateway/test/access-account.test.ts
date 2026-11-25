@@ -7,7 +7,7 @@ import type { AccountSession, AccountSessionsStore } from "../../../packages/acc
 const ORIGIN = "https://studenthub.example.invalid";
 const DANA = "d".repeat(43), DANA_PHONE = "p".repeat(43), OMAR = "o".repeat(43);
 
-function world() {
+function world(extraLive = 0) {
   // Cookie -> person, and each session's start (null = before the record).
   const live = new Map<string, { personId: string; signedInAt: string | null }>([
     [DANA, { personId: "dana", signedInAt: "2026-11-24T06:00:00.000Z" }],
@@ -17,9 +17,11 @@ function world() {
   const ended: string[] = [];
   const account: AccountSessionsStore = {
     async list(personId, current) {
-      return [...live].filter(([, row]) => row.personId === personId)
+      const sessions = [...live].filter(([, row]) => row.personId === personId)
         .map(([token, row]): AccountSession => ({ current: token === current, signedInAt: row.signedInAt, expiresAt: "2026-12-01T06:00:00.000Z" }))
         .sort((a, b) => Number(b.current) - Number(a.current));
+      // extraLive: live sessions beyond the store's cap, counted but not listed.
+      return { sessions, live: sessions.length + (personId === "dana" ? extraLive : 0) };
     },
     async endAll(personId) {
       ended.push(personId);
@@ -71,6 +73,15 @@ test("U03_PAGE a signed-in person sees where they are signed in, this browser fi
   assert.doesNotMatch(html, /20 Nov 2026/, "another person's session is never listed");
   assert.match(await (await http.get("/account", OMAR)).text(), /signed in to StudentHub only in this browser\./);
   assert.match(await (await http.get("/profile/access", DANA)).text(), /<a class="nav-item" href="\/account">Account<\/a>/, "Your access links to the account page");
+  assert.doesNotMatch(html, /Showing the latest/, "under the cap nothing is left out");
+});
+
+test("U03_OVER_LIMIT past the store's cap the page counts every live sign-in, not just the listed ones", async (t) => {
+  const { ports } = world(58);
+  const http = await serve(t, ports);
+  const html = await (await http.get("/account", DANA)).text();
+  assert.match(html, /You are signed in to StudentHub in this browser and 59 others\./);
+  assert.match(html, /Showing the latest 2 of your 60 sign-ins\. Signing out everywhere ends all 60\./);
 });
 
 test("U03_SIGNED_OUT signed out, an unknown session and other methods get the unknown-path 404", async (t) => {

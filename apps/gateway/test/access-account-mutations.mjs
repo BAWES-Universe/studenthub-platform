@@ -18,6 +18,8 @@ const mutations = [
   ["keep the cookie", "U03_EVERYWHERE", "admin-access.js",
     'res.writeHead(303, { location: "/signed-out", "set-cookie": SIGNED_OUT_COOKIE, "cache-control": "no-store" });',
     'res.writeHead(303, { location: "/signed-out", "cache-control": "no-store" });'],
+  ["count others from the capped list", "U03_OVER_LIMIT", "admin-access.js",
+    "list.live - (sessions.some((item) => item.current) ? 1 : 0)", "sessions.length - (sessions.some((item) => item.current) ? 1 : 0)"],
   ["mark another session as this browser", "U03_PAGE", "admin-access.js",
     '${item.current ? "This browser" : "Another browser or device"}', '${"This browser"}'],
 ];

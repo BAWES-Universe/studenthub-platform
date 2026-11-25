@@ -10,6 +10,7 @@ const suite = fileURLToPath(new URL("../../../dist/packages/db/test/postgres-acc
 const mutations = [
   ["list everyone's sessions", "U03_LIST", "WHERE person_id = $1 AND expires_at > now()", "WHERE ($1::text IS NOT NULL) AND expires_at > now()"],
   ["list expired sessions", "U03_LIST", "WHERE person_id = $1 AND expires_at > now()", "WHERE person_id = $1"],
+  ["count only the listed sessions", "U03_OVER_LIMIT", "count(*) OVER () AS live", "$3::int AS live"],
   ["end only the current browser", "U03_END", 'DELETE FROM login_sessions WHERE person_id = $1"', 'DELETE FROM login_sessions WHERE person_id = $1 AND false"'],
 ];
 const original = await readFile(store, "utf8");

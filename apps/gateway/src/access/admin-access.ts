@@ -13,7 +13,7 @@ import {
   parsePeopleQuery,
   parsePauseRequest,
   type AccountPause,
-  type AccountSession,
+  type AccountSessionList,
   type AccountSessionsStore,
   type AccountPauseService,
   type AccountPauseStore,
@@ -302,16 +302,20 @@ const timeText = (value: string): string =>
   new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kuwait" }).format(new Date(value));
 
 /** U-03: where the person is signed in, and the sign-out-everywhere form. */
-export function renderAccount(sessions: readonly AccountSession[], notice = ""): string {
+export function renderAccount(list: AccountSessionList, notice = ""): string {
   const e = escapeHtml;
+  const sessions = list.sessions;
   const rows = sessions.map((item) =>
     `<tr><th scope="row">${item.current ? "This browser" : "Another browser or device"}</th><td>${item.signedInAt ? e(timeText(item.signedInAt)) : "Not recorded"}</td><td>${e(timeText(item.expiresAt))}</td></tr>`).join("");
-  const others = sessions.filter((item) => !item.current).length;
+  // The real number of live sessions, not the capped list: it is what signing out everywhere ends.
+  const others = Math.max(0, list.live - (sessions.some((item) => item.current) ? 1 : 0));
+  const capped = list.live > sessions.length
+    ? `<p>Showing the latest ${sessions.length} of your ${list.live} sign-ins. Signing out everywhere ends all ${list.live}.</p>` : "";
   const summary = others === 0
     ? `<p role="status">You are signed in to StudentHub only in this browser.</p>`
     : `<p role="status">You are signed in to StudentHub in this browser and ${others} other${others === 1 ? "" : "s"}.</p>`;
   return layout(`<div class="profile-heading"><h1>Account<span class="accent">.</span></h1></div>${notice}`
-    + `<section><h2>Where you are signed in</h2>${summary}<div class="directory-table"><table><caption>Your StudentHub sign-ins (Kuwait time)</caption><thead><tr><th scope="col">Where</th><th scope="col">Signed in</th><th scope="col">Ends by itself</th></tr></thead><tbody>${rows}</tbody></table></div></section>`
+    + `<section><h2>Where you are signed in</h2>${summary}<div class="directory-table"><table><caption>Your StudentHub sign-ins (Kuwait time)</caption><thead><tr><th scope="col">Where</th><th scope="col">Signed in</th><th scope="col">Ends by itself</th></tr></thead><tbody>${rows}</tbody></table></div>${capped}</section>`
     + `<section><h2>Sign out everywhere</h2><p>This signs you out of StudentHub in every browser and device, this one included. Your Universe sign-in is not changed; sign in again to come back.</p>`
     + `<form action="/account/sign-out-everywhere" method="post"><button type="submit">Sign out everywhere</button></form></section>`, "account");
 }

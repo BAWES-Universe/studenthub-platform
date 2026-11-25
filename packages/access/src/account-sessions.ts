@@ -15,9 +15,16 @@ export interface AccountSession {
   readonly expiresAt: string;
 }
 
+/** The person's live sessions, newest first and capped, with the real number of live sessions. */
+export interface AccountSessionList {
+  readonly sessions: readonly AccountSession[];
+  /** Every live session of the person, uncapped: what signing out everywhere ends. */
+  readonly live: number;
+}
+
 export interface AccountSessionsStore {
   /** The person's live sessions; `currentSessionToken` is the caller's own cookie value. */
-  list(personId: string, currentSessionToken: string): Promise<readonly AccountSession[]>;
+  list(personId: string, currentSessionToken: string): Promise<AccountSessionList>;
   /** Ends every session of the person; answers how many. */
   endAll(personId: string): Promise<number>;
 }

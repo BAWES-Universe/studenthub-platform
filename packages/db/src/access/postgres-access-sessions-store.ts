@@ -32,16 +32,22 @@ export class PostgresAccessSessionsStore {
     if (this.#ownsPool) await this.#pool.end();
   }
 
-  /** The person's live sessions, newest first (unknown start times last), at most ACCOUNT_SESSIONS_LIMIT. One query. */
+  /**
+   * The person's live sessions, this one first then newest (unknown start times last), at most
+   * ACCOUNT_SESSIONS_LIMIT, with the uncapped number of live sessions. One query.
+   */
   async list(personId: string, currentSessionToken: string) {
-    const { rows } = await this.#pool.query<{ current: boolean; created_at: Date | null; expires_at: Date }>(
-      `SELECT id = $2 AS current, created_at, expires_at
+    const { rows } = await this.#pool.query<{ current: boolean; created_at: Date | null; expires_at: Date; live: string }>(
+      `SELECT id = $2 AS current, created_at, expires_at, count(*) OVER () AS live
          FROM login_sessions
         WHERE person_id = $1 AND expires_at > now()
         ORDER BY id = $2 DESC, created_at DESC NULLS LAST, expires_at DESC
         LIMIT $3`,
       [personId, storedToken(currentSessionToken), ACCOUNT_SESSIONS_LIMIT]);
-    return rows.map((row) => ({ current: row.current, signedInAt: row.created_at ? iso(row.created_at) : null, expiresAt: iso(row.expires_at) }));
+    return {
+      sessions: rows.map((row) => ({ current: row.current, signedInAt: row.created_at ? iso(row.created_at) : null, expiresAt: iso(row.expires_at) })),
+      live: rows.length === 0 ? 0 : Number(rows[0]!.live),
+    };
   }
 
   /** Ends every session of the person, this one included. Answers how many were ended. One statement. */
