@@ -17,9 +17,9 @@ before(async () => {
 });
 after(async () => pool.end());
 
-async function person(email: string | undefined = `ev-${randomUUID()}@example.com`) {
+async function person(email: string | null = `ev-${randomUUID()}@example.com`) {
   const id = `ev-person-${randomUUID()}`;
-  await authz.registerPrincipal(createPrincipal({ id, pbuuids: [], displayName: `Person ${id}`, ...(email === undefined ? {} : { email }) }));
+  await authz.registerPrincipal(createPrincipal({ id, pbuuids: [], displayName: `Person ${id}`, ...(email === null ? {} : { email }) }));
   return id;
 }
 const record = (id: string, email: string, verified: boolean) => login.identities.recordEmailVerification!(id, email, verified);
@@ -46,7 +46,8 @@ test("EV_OTHER_ADDRESS nothing is recorded for an address that is not the person
   await assert.doesNotReject(record(id, "someone-else@example.com", true), "another address is skipped, not an error");
   await assert.doesNotReject(record(id, "   ", true));
   assert.deepEqual(await rows(id), []);
-  const none = await person(undefined);
+  const none = await person(null);
+  assert.equal((await pool.query("SELECT email FROM principals WHERE id = $1", [none])).rows[0].email, null, "this person really has no address");
   await assert.doesNotReject(record(none, "any@example.com", true));
   assert.deepEqual(await rows(none), [], "a person without an address records nothing");
   assert.equal(await verified(none), false);
@@ -90,10 +91,10 @@ test("EV_SERIAL_CHANGE_FIRST a write racing an address change waits for it and i
   try {
     await change.query("BEGIN");
     await change.query("UPDATE principals SET email = 'race-b@example.com' WHERE id = $1", [id]);
-    const write = record(id, "race-a@example.com", true).then(() => "recorded", (error: Error) => error.message);
+    const write = record(id, "race-a@example.com", true);
     await new Promise((resolve) => setTimeout(resolve, 200));
     await change.query("COMMIT");
-    assert.match(await write, /current address/, "the write saw the change and was refused");
+    await assert.doesNotReject(write, "the write waited for the change, saw the new address and skipped");
   } finally {
     change.release();
   }
@@ -138,6 +139,17 @@ test("EV_FORGET forgetting drops every recorded answer, so the address reads as 
   await login.identities.forgetEmailVerification!(id);
   assert.deepEqual(await rows(id), []);
   assert.equal(await verified(id), false);
+});
+
+test("EV_STALE_TRUE_FAILED_FALSE a true answer followed by a failed false write reads as not verified once sign-in forgets", async () => {
+  const id = await person("stale@example.com");
+  await record(id, "stale@example.com", true);
+  assert.equal(await verified(id), true);
+  // Sign-in's failure path: the false write fails, then the person's answers are forgotten.
+  await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, 'stale@example.com', false, 'nope')", [id]), /check constraint/);
+  assert.equal(await verified(id), true, "the failed write alone leaves the stale true");
+  await login.identities.forgetEmailVerification!(id);
+  assert.equal(await verified(id), false, "forgetting makes the address read as not verified");
 });
 
 test("EV_SHAPE the table refuses unnormalised addresses and unknown sources, and needs a real principal", async () => {

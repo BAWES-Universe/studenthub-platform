@@ -17,6 +17,8 @@ const mutations = [
     "DO UPDATE SET verified = EXCLUDED.verified,", "DO UPDATE SET verified = principal_email_verifications.verified,"],
   ["count an address recorded as not verified", predicate, "EV_RECORD",
     "AND pev.verified AND", "AND"],
+  ["read the principal without locking it", loginStore, "EV_SERIAL_CHANGE_FIRST",
+    "        FOR SHARE OF p\n", ""],
   ["forget nothing", loginStore, "EV_FORGET",
     "DELETE FROM principal_email_verifications WHERE principal_id = $1::text", "DELETE FROM principal_email_verifications WHERE false AND principal_id = $1::text"],
 ];

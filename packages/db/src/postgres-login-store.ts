@@ -228,8 +228,8 @@ export class PostgresLoginStore {
   // Access lane (migration 0410): the issuer's answer is kept only for the person's
   // current address, normalised, and always replaces what was recorded for it
   // (a legacy import only ever inserts). One statement; nothing for another address.
-  // The table's trigger locks the principal row and rechecks the address, so a
-  // write racing an address change is refused rather than left stale.
+  // FOR SHARE OF p makes an address change wait for this write (or this write wait
+  // for the change and then skip); the table's trigger enforces the same for any writer.
   async #recordEmailVerification(personId: string, email: string, verified: boolean): Promise<void> {
     await this.#pool.query(
       `INSERT INTO principal_email_verifications (principal_id, email, verified, source, recorded_at)
@@ -237,6 +237,7 @@ export class PostgresLoginStore {
          FROM principals p
         WHERE p.id = $1::text AND p.email IS NOT NULL AND lower(btrim(p.email)) = lower(btrim($2::text))
            AND btrim($2::text) <> ''
+        FOR SHARE OF p
        ON CONFLICT (principal_id, email)
        DO UPDATE SET verified = EXCLUDED.verified, source = 'oidc', recorded_at = EXCLUDED.recorded_at`,
       [personId, email, verified],
