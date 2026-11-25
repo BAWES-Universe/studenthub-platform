@@ -15,6 +15,11 @@ const ACTOR = "c".repeat(64);
 const TARGET = "11111111-1111-4111-8111-111111111111";
 const OPERATOR = "operator-org";
 const ARTIFACT = "e".repeat(64);
+// Synthetic keys: the contact digest key and a different civil ID key, canonical base64.
+const DIGEST_KEY = Buffer.alloc(32, 1).toString("base64");
+const CIVIL_KEY = Buffer.alloc(32, 2).toString("base64");
+// The contact values candidate 31 holds; none may reach a receipt, report or log.
+const CONTACT_VALUES = ["+96550001234", "96550001234", "50001234", "secret.handle", "290010112345", "secret.person", "Secret.Person"];
 const REFRESH = { ok: true, startedAt: "2026-11-23T01:00:00.000Z", finishedAt: "2026-11-23T01:05:00.000Z", totalRows: 42 };
 
 function sources(): M4Sources {
@@ -28,7 +33,9 @@ function sources(): M4Sources {
     contact: [{ contact_uuid: "p-1", contact_name: `${SECRET} Person`, contact_email: "secret@example.com", deleted: 0 }],
     company_contact: [{ company_contact_uuid: "l-1", contact_uuid: "p-1", company_id: 7, allow_access: 0 },
       { company_contact_uuid: "l-2", contact_uuid: "p-1", company_id: 7, allow_access: 1 }],
-    candidate: [{ candidate_id: 31, deleted: 0, candidate_name: `${SECRET} Person`, candidate_birth_date: "2010-11-23" },
+    candidate: [{ candidate_id: 31, deleted: 0, candidate_name: `${SECRET} Person`, candidate_birth_date: "2010-11-23",
+      candidate_phone: "+96550001234", profile_url: "secret.handle", candidate_civil_id: "290010112345", candidate_civil_need_verification: 0,
+      candidate_email: "Secret.Person@example.invalid", candidate_email_verification: 1 },
       { candidate_id: 32, deleted: 1, candidate_name: `${SECRET} Gone` }],
   };
 }
@@ -44,8 +51,10 @@ interface FakeDb {
   writer: object | null;
   /** Set when the lock-holding session is lost: the lock is gone and that session is dead. */
   sessionLost: boolean;
+  /** The civil ID key the target's check value was provisioned under (base64), or null. */
+  civilKeyCheck: string | null;
 }
-const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false });
+const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -88,12 +97,20 @@ function harness(opts: HarnessOptions = {}): Harness {
     stores: async (r) => { calls.push("store"); return ok(r.length); },
     contacts: async (r) => { calls.push("company_contact"); return ok(r.length); },
     people: async (r) => { calls.push("candidate"); return ok(r.length); },
+    personContacts: async (r) => { calls.push("candidate_contact"); return ok(r.length); },
     ...opts.writers,
   };
   const target: WriteTarget = {
     marker: async () => db.marker,
     hasOperator: async (id) => db.operators.has(id),
     schemaReady: async () => db.schemaReady,
+    civilKey: async (key) => (db.civilKeyCheck === null ? "missing" : key.toString("base64") === db.civilKeyCheck ? "ok" : "mismatch"),
+    provisionCivilKeyCheck: async (key, targetId) => {
+      calls.push("keycheck");
+      if (db.marker?.targetId !== targetId) return "mismatch";
+      if (db.civilKeyCheck === null) { db.civilKeyCheck = key.toString("base64"); return "set"; }
+      return key.toString("base64") === db.civilKeyCheck ? "ok" : "mismatch";
+    },
     claimWriter: async () => { if (db.writer && db.writer !== me) return false; db.writer = me; return true; },
     writers: () => {
       assert.equal(db.writer, me, "writers are used only by the lock holder");
@@ -102,7 +119,7 @@ function harness(opts: HarnessOptions = {}): Harness {
         if (db.sessionLost || db.writer !== me) throw new Error("m4.writerLost");
         return f(...a);
       };
-      return { catalogue: fenced(writers.catalogue), companies: fenced(writers.companies), brandLinks: fenced(writers.brandLinks), stores: fenced(writers.stores), contacts: fenced(writers.contacts), people: fenced(writers.people) };
+      return { catalogue: fenced(writers.catalogue), companies: fenced(writers.companies), brandLinks: fenced(writers.brandLinks), stores: fenced(writers.stores), contacts: fenced(writers.contacts), people: fenced(writers.people), personContacts: fenced(writers.personContacts) };
     },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
@@ -122,6 +139,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       M4_REVISION: REVISION, M4_ARTIFACT_DIGEST: ARTIFACT, M4_TARGET_ID: TARGET, M4_OPERATOR_ORG_ID: OPERATOR,
       LEGACY_REFRESH_REPORT: file("refresh.json"), LEGACY_REFRESH_LOCK: file("lock"),
       M4_IMPORT_ACTOR: ACTOR, M4_DATABASE_URL: "postgres://unused/x",
+      M4_CONTACT_DIGEST_KEY: DIGEST_KEY, M4_CIVIL_ID_ENCRYPTION_KEY: CIVIL_KEY,
       ...opts.env,
     },
     lock: async () => {
@@ -169,10 +187,12 @@ test("plan publishes its own counts-only receipt bound to the invocation, revisi
       [2, "plan", "ok", h.invocation, REVISION, ARTIFACT, TARGET, OPERATOR]);
     assert.deepEqual(r.refresh, { startedAt: REFRESH.startedAt, finishedAt: REFRESH.finishedAt, totalRows: 42 });
     assert.match(r.plan!, /^[0-9a-f]{64}$/);
-    assert.equal(r.steps.length, 13);
+    assert.equal(r.steps.length, 14);
     assert.equal(r.today, "2026-11-23");
     // M-1 on the run date: exactly 16 that day, and an archived candidate reported by rule only.
-    assert.deepEqual(r.steps.at(-1), { step: "candidate", legacy: 2, mapped: 1, rules: { "candidate.archived": 1 } });
+    assert.deepEqual(r.steps.at(-2), { step: "candidate", legacy: 2, mapped: 1, rules: { "candidate.archived": 1 } });
+    // Its contact values are staged for the imported candidate only; the archived one is not read.
+    assert.deepEqual(r.steps.at(-1), { step: "candidate_contact", legacy: 2, mapped: 1, rules: {} });
     assert.deepEqual(r.steps.find((s) => s.step === "company_contact")!.rules, { "contact.access": 1 });
     assert.deepEqual(h.calls, []);
     const out = h.file("out");
@@ -182,9 +202,10 @@ test("plan publishes its own counts-only receipt bound to the invocation, revisi
     // The invocation is a random UUID, which can itself contain a fixture id such as "b-1"; it is
     // checked exactly above, so it is removed before searching for leaked ids.
     const shared = (readFileSync(path.join(out, `${h.invocation}.plan.receipt.json`), "utf8") + h.out.join("\n")).replaceAll(h.invocation, "<invocation>");
-    for (const id of ["l-1", "l-2", "p-1", "b-1", "m-1", SECRET, "example.com"]) assert.ok(!shared.includes(id), id);
+    for (const id of ["l-1", "l-2", "p-1", "b-1", "m-1", SECRET, "example.com", DIGEST_KEY, CIVIL_KEY, ...CONTACT_VALUES]) assert.ok(!shared.includes(id), id);
     const report = readFileSync(path.join(out, `${h.invocation}.plan.report.json`), "utf8");
     assert.ok(report.includes("l-2") && !report.includes(SECRET));
+    for (const value of [DIGEST_KEY, CIVIL_KEY, "example.invalid", ...CONTACT_VALUES]) assert.ok(!report.includes(value), value);
     assert.ok(h.out.includes(`m4 plan ok invocation=${h.invocation} plan=${r.plan}`));
     assert.equal(h.state.released, 1);
   } finally { cleanup(h); }
@@ -199,6 +220,10 @@ test("the plan identity follows the revision, the artifact, the refresh, the des
     { env: { M4_TARGET_ID: "22222222-2222-4222-8222-222222222222" } },
     { env: { M4_OPERATOR_ORG_ID: "another-operator" } },
     { rows: { ...sources(), company: [{ company_id: 7, parent_company_id: null, company_name: `${SECRET} Co renamed`, deleted: 0 }] } },
+    // A staged contact value, and the key its HMAC is taken under.
+    { rows: { ...sources(), candidate: sources().candidate.map((c) => (c.candidate_id === 31 ? { ...c, candidate_phone: "+96550001235" } : c)) } },
+    { rows: { ...sources(), candidate: sources().candidate.map((c) => (c.candidate_id === 31 ? { ...c, candidate_email_verification: 0 } : c)) } },
+    { env: { M4_CONTACT_DIGEST_KEY: Buffer.alloc(32, 3).toString("base64") } },
   ];
   for (const v of variants) assert.notEqual(await planId(v), base, JSON.stringify(v.env ?? "rows"));
   const h = harness();
@@ -238,7 +263,7 @@ test("the plan binds the reconciliation: same mapped rows and digests with other
     // A lookup row the mapped candidates never reference.
     ["unreferenced lookup row", { ...base, country: [{ country_id: 9, country_nationality_name_en: `${SECRET}ian` }] }],
   ];
-  const mapped = (rows: M4Sources) => { const p = planM4(rows, "2026-11-23"); return [p.people.people, p.catalogue.map((c) => c.items), p.companies.organizations, p.brandLinks.links, p.stores.stores, p.contacts.contacts]; };
+  const mapped = (rows: M4Sources) => { const p = planM4(rows, "2026-11-23"); return [p.people.people, p.personContacts.contacts, p.catalogue.map((c) => c.items), p.companies.organizations, p.brandLinks.links, p.stores.stores, p.contacts.contacts]; };
   for (const [label, rows] of variants) {
     assert.deepEqual(mapped(rows), mapped(base), `${label}: every mapped row and digest is the same`);
     const h = harness({ env: { M4_EXPECTED_PLAN: expected }, rows });
@@ -263,8 +288,8 @@ test("write imports in order under the writer lock and its own receipt passes ac
   try {
     const code = await main(["write"], h.deps);
     assert.equal(code, 0);
-    assert.equal(h.calls.length, 13);
-    assert.equal(h.calls.at(-1), "candidate");
+    assert.equal(h.calls.length, 14);
+    assert.equal(h.calls.at(-1), "candidate_contact");
     const r = h.receipt("write");
     assert.deepEqual([r.kind, r.status, r.plan, r.invocation, r.code, r.unconfirmed], ["write", "ok", expected, h.invocation, undefined, undefined]);
     assert.deepEqual(r.steps.map((s) => s.step), h.calls);
@@ -392,7 +417,7 @@ test("a late failure ends failed, listing the confirmed steps and the unconfirme
     const r = h.receipt("write");
     assert.deepEqual([r.status, r.code, r.plan], ["failed", "m4.failed", expected]);
     assert.deepEqual(r.steps.map((s) => s.step), h.calls); // the failing stores writer records no call
-    assert.deepEqual(r.unconfirmed, ["store", "company_contact", "candidate"]);
+    assert.deepEqual(r.unconfirmed, ["store", "company_contact", "candidate", "candidate_contact"]);
     assert.deepEqual(h.err, ["m4: m4.failed"]);
     assert.ok(!acceptWrite(r, h.invocation, expected, 1));
     const shared = readFileSync(path.join(h.file("out"), `${h.invocation}.write.receipt.json`), "utf8") + h.err.join("\n") + h.out.join("\n");
@@ -412,7 +437,7 @@ test("a step whose writer committed but whose result fails the checks is not cou
     assert.equal(r.status, "failed");
     assert.equal(r.code, "m4.report.unsafeRefusal");
     assert.equal(r.steps.at(-1)!.step, "company");
-    assert.deepEqual(r.unconfirmed, ["brand_company", "store", "company_contact", "candidate"]);
+    assert.deepEqual(r.unconfirmed, ["brand_company", "store", "company_contact", "candidate", "candidate_contact"]);
     assert.ok(!JSON.stringify(r).includes(SECRET));
   } finally { cleanup(h); }
 });
@@ -485,7 +510,7 @@ test("losing the lock session mid-write stops further writes, fails the attempt 
     const r = h.receipt("write");
     assert.deepEqual([r.status, r.code], ["failed", "m4.writerLost"]);
     assert.equal(r.steps.at(-1)!.step, "company");
-    assert.deepEqual(r.unconfirmed, ["brand_company", "store", "company_contact", "candidate"]);
+    assert.deepEqual(r.unconfirmed, ["brand_company", "store", "company_contact", "candidate", "candidate_contact"]);
     assert.ok(!h.calls.includes("store") && !h.calls.includes("company_contact"));
     assert.ok(!acceptWrite(r, h.invocation, expected, code));
   } finally { cleanup(h); }
@@ -495,13 +520,13 @@ test("a lock lost after the last batch still fails the attempt: exclusivity is r
   const expected = await planId();
   const db = fakeDb();
   const h = harness({ env: { M4_EXPECTED_PLAN: expected }, db, writers: {
-    people: async (rows) => { h.calls.push("candidate"); db.sessionLost = true; return ok(rows.length); },
+    personContacts: async (rows) => { h.calls.push("candidate_contact"); db.sessionLost = true; return ok(rows.length); },
   } });
   try {
     const code = await main(["write"], h.deps);
     assert.equal(code, 1);
     const r = h.receipt("write");
-    assert.deepEqual([r.status, r.code, r.steps.length, r.unconfirmed], ["failed", "m4.writerLost", 13, []]);
+    assert.deepEqual([r.status, r.code, r.steps.length, r.unconfirmed], ["failed", "m4.writerLost", 14, []]);
     assert.ok(!acceptWrite(r, h.invocation, expected, code));
   } finally { cleanup(h); }
 });
@@ -531,4 +556,77 @@ test("the shared lock is refused while another process holds the refresh lock ex
       assert.equal((await acquireSharedLock(lockPath)).held, false);
     } finally { holder.kill(); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("the contact keys come from the environment only: a missing, malformed or shared key is refused before any read", async () => {
+  const cases: [string, "plan" | "write", Record<string, string | undefined>][] = [
+    ["no digest key", "plan", { M4_CONTACT_DIGEST_KEY: undefined }],
+    ["short digest key", "plan", { M4_CONTACT_DIGEST_KEY: Buffer.alloc(31, 1).toString("base64") }],
+    ["non-canonical base64", "plan", { M4_CONTACT_DIGEST_KEY: `${DIGEST_KEY}\n` }],
+    ["no civil ID key for a write", "write", { M4_CIVIL_ID_ENCRYPTION_KEY: undefined, M4_EXPECTED_PLAN: "d".repeat(64) }],
+    ["the same key twice", "write", { M4_CIVIL_ID_ENCRYPTION_KEY: DIGEST_KEY, M4_EXPECTED_PLAN: "d".repeat(64) }],
+  ];
+  for (const [label, mode, env] of cases) {
+    const h = harness({ env });
+    try {
+      assert.equal(await main([mode], h.deps), 2, label);
+      assert.deepEqual(h.err, ["m4: refused.contactKeys"], label);
+      assert.deepEqual([h.calls, h.state.reads, h.state.locked], [[], 0, false], label);
+      const r = h.receipt(mode);
+      assert.deepEqual([r.status, r.code], ["refused", "contactKeys"], label);
+      assert.ok(![DIGEST_KEY, CIVIL_KEY].some((k) => JSON.stringify(r).includes(k)), label);
+    } finally { cleanup(h); }
+  }
+  // A plan needs only the digest key: the civil ID key is a write setting.
+  const h = harness({ env: { M4_CIVIL_ID_ENCRYPTION_KEY: undefined } });
+  try { assert.equal(await main(["plan"], h.deps), 0); } finally { cleanup(h); }
+});
+
+test("a write refuses before any step unless the civil ID key opens the target's provisioned check", async () => {
+  const expected = await planId();
+  const wrongKey = Buffer.alloc(32, 9).toString("base64");
+  for (const [label, db, env] of [
+    ["no check provisioned", { ...fakeDb(), civilKeyCheck: null }, {}],
+    ["a well-formed wrong key", fakeDb(), { M4_CIVIL_ID_ENCRYPTION_KEY: wrongKey }],
+  ] as [string, FakeDb, Record<string, string>][]) {
+    const h = harness({ env: { M4_EXPECTED_PLAN: expected, ...env }, db });
+    try {
+      assert.equal(await main(["write"], h.deps), 2, label);
+      assert.deepEqual(h.err, ["m4: refused.civilKey"], label);
+      assert.deepEqual(h.calls, [], label);
+      assert.equal(db.writer, null, label);
+      const r = h.receipt("write");
+      assert.deepEqual([r.status, r.code, r.steps], ["refused", "civilKey", []], label);
+      assert.ok(![wrongKey, CIVIL_KEY, DIGEST_KEY].some((k) => JSON.stringify(r).includes(k)), label);
+    } finally { cleanup(h); }
+  }
+});
+
+test("keycheck provisions the target's check once, confirms the same key, and refuses another; it reads no legacy data", async () => {
+  const db = { ...fakeDb(), civilKeyCheck: null };
+  const run = async (env: Record<string, string | undefined>) => {
+    const h = harness({ env, db });
+    try {
+      const code = await main(["keycheck"], h.deps);
+      const r = h.receipt("keycheck" as "plan");
+      assert.equal(h.state.reads, 0);
+      assert.ok(![CIVIL_KEY, DIGEST_KEY, Buffer.alloc(32, 9).toString("base64")].some((k) => JSON.stringify(r).includes(k) || h.out.join().includes(k)));
+      return { code, status: r.status, rcode: r.code, out: h.out, err: h.err };
+    } finally { cleanup(h); }
+  };
+  const first = await run({});
+  assert.deepEqual([first.code, first.status], [0, "ok"]);
+  assert.ok(first.out.some((l) => l.endsWith("check=set")));
+  assert.equal(db.civilKeyCheck, CIVIL_KEY);
+  const again = await run({});
+  assert.deepEqual([again.code, again.status], [0, "ok"]);
+  assert.ok(again.out.some((l) => l.endsWith("check=matched")));
+  const other = await run({ M4_CIVIL_ID_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64") });
+  assert.deepEqual([other.code, other.status, other.rcode, other.err], [2, "refused", "civilKey", ["m4: refused.civilKey"]]);
+  assert.equal(db.civilKeyCheck, CIVIL_KEY, "never replaced");
+  // Not staging, or another target: refused before any check is set.
+  const elsewhere = await run({ M4_TARGET_ID: "22222222-2222-4222-8222-222222222222" });
+  assert.deepEqual([elsewhere.code, elsewhere.rcode], [2, "target"]);
+  const noKey = await run({ M4_CIVIL_ID_ENCRYPTION_KEY: undefined });
+  assert.deepEqual([noKey.code, noKey.rcode], [2, "contactKeys"]);
 });
