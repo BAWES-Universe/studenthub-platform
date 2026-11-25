@@ -10,3 +10,4 @@ export * from "./account-pause.js";
 export * from "./abuse.js";
 export * from "./staff-view.js";
 export * from "./company-registration.js";
+export * from "./report-access.js";

@@ -3,10 +3,11 @@ import type { RevenuePage } from "../../../../packages/reports/src/revenue.js";
 import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 
 /**
- * GET /reports/revenue: revenue per currency (contract P-4, screen A-31), for operator admins only.
- * Everyone else, staff included, gets the same not found whatever the method. Read only.
+ * GET /reports/revenue: revenue per currency (contract P-4, screen A-31), for whoever the access lane lets read
+ * finance reports (operator admins and operator finance, subtree). Everyone else, staff included, gets the same
+ * not found whatever the method. Read only.
  */
-export interface RevenueHttpService { isOperatorAdmin(viewer: string): Promise<boolean>; page(viewer: string): Promise<RevenuePage | undefined> }
+export interface RevenueHttpService { mayViewRevenue(viewer: string): Promise<boolean>; page(viewer: string): Promise<RevenuePage | undefined> }
 
 export const REVENUE_PATH = "/reports/revenue";
 const OPERATIONS_PATH = "/reports/operations";
@@ -45,8 +46,8 @@ export async function handleRevenue(req: IncomingMessage, res: ServerResponse, s
   if (path !== REVENUE_PATH) return false;
   req.resume();
   const person = service ? await viewer() : undefined;
-  // Authorization first: everyone who is not an operator admin gets the same not found, whatever the method.
-  let allowed = false; if (service && person) try { allowed = await service.isOperatorAdmin(person); } catch { /* treated as not an admin */ }
+  // Authorization first: everyone who may not read finance reports gets the same not found, whatever the method.
+  let allowed = false; if (service && person) try { allowed = await service.mayViewRevenue(person); } catch { /* treated as not allowed */ }
   if (!service || !person || !allowed) return notFound(req, res);
   if (req.method !== "GET") { res.writeHead(405, { allow: "GET" }); res.end(); return true; }
   const page = await service.page(person);

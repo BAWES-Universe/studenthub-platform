@@ -9,7 +9,7 @@ import { DEFAULT_OPERATOR_ORG_IDS, type OrganizationDirectory } from "@studenthu
 import { CampaignsService, RevenueService, CertificatesService, IdCardsService, IdCardVerifier, MorningSummaryService, OperationsService, RecruiterActivityService, StatisticsService, FiringHitMapService, type IdCardPhotoSource, type StatisticsCompanies, type IdCardPublicPhotoSource } from "../../../../packages/reports/src/index.js";
 import { openPersonalPhotoSourceFromEnv } from "../../../../packages/private-documents/src/personal-photo-source.js";
 import { StaffMessagesService } from "../../../../packages/comms/src/staff-messages.js";
-import { blockListOf, parseTrustedProxies } from "../../../../packages/access/src/index.js";
+import { blockListOf, mayViewFinanceReports, parseTrustedProxies } from "../../../../packages/access/src/index.js";
 import { hasOperatorStaffGrant } from "../wiring/profile.js";
 import { isOperatorAdmin } from "../../../../packages/work/src/staff-time.js";
 import { publicCheckLimit } from "../reports/id-cards-http.js";
@@ -87,9 +87,10 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
     isOperatorAdmin: async viewer => isOperatorAdmin(await options.authzStore.listGrantsForPrincipal(viewer)), team: (viewer, day) => recruiters.page(viewer, { from: day, to: day }) }, authority);
   const firings = new FiringHitMapService(statisticsStore, authority, undefined, new PostgresFiringSpikeStore({ pool, operatorOrgIds: DEFAULT_OPERATOR_ORG_IDS }));
   const campaigns = new CampaignsService(new PostgresCampaignsStore({ pool }), authority);
-  // Revenue is for operator admins only (the work lane's check); it reads the pay lane's transfer lines, never writes.
-  const admin = { async isOperatorAdmin(principalId: string) { return isOperatorAdmin(await options.authzStore.listGrantsForPrincipal(principalId)); } };
-  const revenue = new RevenueService(new PostgresRevenueStore({ pool }), admin);
+  // Revenue is for whoever the access lane lets read finance reports (operator admins and operator finance, subtree);
+  // it reads the pay lane's transfer lines, never writes.
+  const finance = { async mayViewRevenue(principalId: string) { return mayViewFinanceReports(await options.authzStore.listGrantsForPrincipal(principalId), DEFAULT_OPERATOR_ORG_IDS); } };
+  const revenue = new RevenueService(new PostgresRevenueStore({ pool }), finance);
   return { http: { isStaff: authority.isStaff, send: (sender, input) => service.send(sender, input),
     deliveryLog: (person, offset, limit) => emails.deliveryLog(person, offset, limit),
     morningSummary: { today: viewer => summary.today(viewer), subscribe: (viewer, on) => summary.subscribe(viewer, on) },
@@ -100,7 +101,7 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
         recruiters: (viewer, range) => recruiters.page(viewer, range), operations: viewer => operations.page(viewer) },
       campaigns: { campaignsPage: viewer => campaigns.page(viewer), campaignCreate: (viewer, input) => campaigns.create(viewer, input),
         campaignUpdate: (viewer, id, input) => campaigns.update(viewer, id, input), campaignRetire: (viewer, id) => campaigns.retire(viewer, id) },
-      revenue: { isOperatorAdmin: viewer => admin.isOperatorAdmin(viewer), page: viewer => revenue.page(viewer) }, publicPhoto: (token, key, client) => idCards.publicPhoto(token, key, client),
+      revenue: { mayViewRevenue: viewer => finance.mayViewRevenue(viewer), page: viewer => revenue.page(viewer) }, publicPhoto: (token, key, client) => idCards.publicPhoto(token, key, client),
       // The public check is limited per client address, read behind the same trusted proxies as the abuse gate.
       publicLimit: options.idCardVerifyKey && env ? publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies(env.GATEWAY_TRUSTED_PROXIES)),
         // A key derived from the verification key, so the recorded client hash is the same across gateway processes and restarts.

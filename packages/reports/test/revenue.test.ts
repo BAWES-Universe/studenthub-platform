@@ -29,7 +29,7 @@ test("REVENUE_PAGE operator admins get the 12 whole months before this Kuwait mo
     async read(first, last) { calls.push(`read ${first} ${last}`); return { byStatus: [row("KWD", "complete", "3.000", "2.000")], byMonth: [] }; },
   };
   // 1 Nov 2026 00:30 in Kuwait is still 31 Oct in UTC: the Kuwait month decides.
-  const service = new RevenueService(store, { isOperatorAdmin: async id => id === "boss" }, () => new Date("2026-10-31T21:30:00Z"));
+  const service = new RevenueService(store, { mayViewRevenue: async id => id === "boss" }, () => new Date("2026-10-31T21:30:00Z"));
   assert.equal(await service.page("staff"), undefined);
   assert.deepEqual(calls, []);
   const page = (await service.page("boss"))!;
