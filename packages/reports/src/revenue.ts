@@ -82,13 +82,13 @@ export function monthlyRows(months: readonly string[], currencies: readonly stri
 }
 
 export class RevenueService {
-  readonly #store: RevenueStore; readonly #authority: { isOperatorAdmin(principalId: string): Promise<boolean> }; readonly #now: () => Date;
-  constructor(store: RevenueStore, authority: { isOperatorAdmin(principalId: string): Promise<boolean> }, now: () => Date = () => new Date()) {
+  readonly #store: RevenueStore; readonly #authority: { mayViewRevenue(principalId: string): Promise<boolean> }; readonly #now: () => Date;
+  constructor(store: RevenueStore, authority: { mayViewRevenue(principalId: string): Promise<boolean> }, now: () => Date = () => new Date()) {
     this.#store = store; this.#authority = authority; this.#now = now;
   }
-  /** The page for an operator admin; undefined for anyone else, before anything is read. */
+  /** The page for someone who may read finance reports; undefined for anyone else, before anything is read. */
   async page(viewer: string): Promise<RevenuePage | undefined> {
-    if (!(await this.#authority.isOperatorAdmin(viewer))) return undefined;
+    if (!(await this.#authority.mayViewRevenue(viewer))) return undefined;
     const day = kuwaitDay(this.#now()), months = invitationMonths(day);
     const { byStatus: reconciliation, byMonth: raw } = await this.#store.read(months[0]!, months[months.length - 1]!);
     const currencies = [...new Set([...reconciliation.map(r => r.currency), ...raw.map(r => r.currency)])];
