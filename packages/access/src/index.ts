@@ -1,4 +1,5 @@
 export * from "./grant-catalogue.js";
+export * from "./grant-catalogue-view.js";
 export * from "./grant-change.js";
 export * from "./grant-service.js";
 export * from "./invitations.js";

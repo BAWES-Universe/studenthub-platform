@@ -145,6 +145,29 @@ test("A1_READ_SITES a signed-out visitor, a non-admin and an unknown person all 
   assert.equal(events.length, 0);
 });
 
+test("G01_CATALOGUE_PAGE operator admins and subtree staff read the grant catalogue; everyone else gets the unknown-path 404", async (t) => {
+  const { ports, grants } = world();
+  const http = await serve(t, ports);
+  for (const principalId of [undefined, "candidate-1", "owner-1", "staff-self"]) {
+    await sameAsUnknown(await http.get("/admin/access/catalogue", principalId), await http.get("/definitely-unknown", principalId), `${principalId ?? "signed out"} catalogue`);
+  }
+  // The same staff member, now at subtree scope, may open the Access pages.
+  grants.find((grant) => grant.principalId === "staff-self")!.scope = "subtree";
+  for (const principalId of ["admin-1", "staff-self"]) {
+    const page = await http.get("/admin/access/catalogue", principalId);
+    assert.equal(page.status, 200, principalId);
+    const html = await page.text();
+    assert.match(html, /CATALOGUE VERSION 1/);
+    assert.match(html, /<caption>Roles on StudentHub itself<\/caption>/);
+    assert.match(html, /<caption>Roles on a company<\/caption>/);
+    assert.match(html, /<th scope="row">Finance<\/th><td>This organization and its sub-companies<\/td><td>StudentHub administrators<\/td><td><ul><li>Finance reports<\/li><li>See company contacts<\/li><\/ul><\/td>/);
+    assert.match(html, /<th scope="row">Recruiter<\/th><td>This organization only<\/td><td>StudentHub staff and administrators<\/td><td><ul><li>See company contacts<\/li><\/ul><\/td>/);
+  }
+  assert.match(await (await http.get("/admin/access", "admin-1")).text(), /href="\/admin\/access\/catalogue"/);
+  const post = await http.post("/admin/access/catalogue", "admin-1", {});
+  await sameAsUnknown(post, await http.get("/definitely-unknown", "admin-1"), "POST catalogue");
+});
+
 test("A1_READ_SITES each person reads their own roles on Your access, with no granter or reason", async (t) => {
   const { ports } = world();
   const http = await serve(t, ports);
