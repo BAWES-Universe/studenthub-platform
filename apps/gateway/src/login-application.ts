@@ -388,8 +388,12 @@ export const createLoginApplication: LoginApplicationFactory = (
           await dependencies.identities.recordEmailVerification(identity.personId, claims.email, claims.email_verified === true);
         } catch {
           console.warn(JSON.stringify({ event: "email_verification_not_recorded" }));
+          // Record and veto come as a pair: a store that records but cannot veto
+          // must not leave a session beside an answer it failed to replace.
+          const veto = dependencies.identities.vetoEmailVerification;
           try {
-            await dependencies.identities.vetoEmailVerification?.(identity.personId);
+            if (!veto) throw new Error("email verification recorded without a veto");
+            await veto.call(dependencies.identities, identity.personId);
           } catch (vetoError) {
             console.warn(JSON.stringify({ event: "email_verification_not_vetoed" }));
             throw vetoError;
