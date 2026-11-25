@@ -20,6 +20,8 @@ export interface PersonContactImportRow {
   readonly handle: string | null;
   readonly civilId: { readonly country: "KW" | "BH"; readonly number: string } | null;
   readonly civilIdNeedsReview: boolean | null;
+  /** Normalised address legacy marked verified; stored only as its HMAC (verified_email_hmac). */
+  readonly verifiedEmail: string | null;
 }
 
 /** What the store needs from CivilIdVault (packages/profile); structural, so db does not depend on profile. */
@@ -38,7 +40,23 @@ export interface PersonContactImportResult {
   readonly refused: readonly { readonly legacyId: string; readonly code: PersonContactImportRefusal }[];
 }
 
-const KEYS = ["civilId", "civilIdNeedsReview", "handle", "legacyId", "phone"];
+const KEYS = ["civilId", "civilIdNeedsReview", "handle", "legacyId", "phone", "verifiedEmail"];
+/** A plain printable ASCII address with no upper case: what normaliseVerifiedEmail produces. */
+const EMAIL = /^[\x21-\x3f\x41-\x7e]+@[\x21-\x3f\x41-\x7e]+$/;
+const isNormalisedEmail = (v: unknown) => typeof v === "string" && v.length <= 254 && EMAIL.test(v) && !/[A-Z]/.test(v);
+
+/**
+ * The one address normalisation the verified-address fact uses, the same rule as the mapper's
+ * normaliseEmail: outer spaces trimmed, the trimmed input must be plain printable ASCII before any
+ * case change (so no non-ASCII spelling folds into an ASCII address), then only A-Z lowered, which
+ * is locale-invariant. null when the address is outside that form. The cutover compare runs this
+ * in JavaScript on principals.email, never a collation-dependent SQL lower().
+ */
+export function normaliseVerifiedEmail(raw: string): string | null {
+  const trimmed = raw.replace(/^ +| +$/g, "");
+  if (trimmed.length > 254 || !EMAIL.test(trimmed)) return null;
+  return trimmed.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+}
 const PHONE = /^\+[0-9]{8,15}$/;
 const HANDLE = /^[a-z][a-z0-9._-]{2,29}$/;
 const CIVIL = { KW: /^[0-9]{12}$/, BH: /^[0-9]{9}$/ } as const;
@@ -62,7 +80,8 @@ export function isValidPersonContactRow(row: unknown): row is PersonContactImpor
     if ((c.country !== "KW" && c.country !== "BH") || typeof c.number !== "string" || !CIVIL[c.country].test(c.number)) return false;
     if (r.civilIdNeedsReview !== null && typeof r.civilIdNeedsReview !== "boolean") return false;
   }
-  return r.phone !== null || r.handle !== null || r.civilId !== null;
+  if (r.verifiedEmail !== null && !isNormalisedEmail(r.verifiedEmail)) return false;
+  return r.phone !== null || r.handle !== null || r.civilId !== null || r.verifiedEmail !== null;
 }
 
 /**
@@ -101,11 +120,30 @@ export class PostgresPersonContactImportStore {
 
   async close(): Promise<void> { if (this.#owns) await this.#pool.end(); }
 
+  /**
+   * The HMAC a verified address is staged as. Takes an address already in normaliseVerifiedEmail
+   * form and refuses anything else; no address is stored.
+   */
+  emailDigest(normalisedEmail: string): Buffer {
+    if (!isNormalisedEmail(normalisedEmail)) throw new TypeError("not a normalised address");
+    return createHmac("sha256", this.#digestKey).update(JSON.stringify(["m1-verified-email-v1", normalisedEmail])).digest();
+  }
+
+  /**
+   * For the cutover compare: normalises a linked person's current principals.email with
+   * normaliseVerifiedEmail and returns its HMAC, or null when the address is outside that form
+   * (then no verified fact is added).
+   */
+  currentEmailDigest(rawEmail: string): Buffer | null {
+    const normalised = normaliseVerifiedEmail(rawEmail);
+    return normalised === null ? null : this.emailDigest(normalised);
+  }
+
   /** HMAC over the row's id and values; never a value-revealing hash. */
   digest(row: PersonContactImportRow): string {
     const civil = row.civilId ? [row.civilId.country, row.civilId.number] : null;
     return createHmac("sha256", this.#digestKey)
-      .update(JSON.stringify(["m1-contact-v1", row.legacyId, row.phone, row.handle, civil, row.civilIdNeedsReview]))
+      .update(JSON.stringify(["m1-contact-v2", row.legacyId, row.phone, row.handle, civil, row.civilIdNeedsReview, row.verifiedEmail]))
       .digest("hex");
   }
 
@@ -159,9 +197,10 @@ export class PostgresPersonContactImportStore {
     const sealed = row.civilId ? this.#sealer.seal(legacyCivilIdRef(row.legacyId), row.civilId.country, row.civilId.number) : null;
     await client.query(
       `INSERT INTO legacy_candidate_contacts (legacy_candidate_id, phone, profile_handle, civil_country, civil_number_ciphertext,
-         civil_number_hash, civil_key_version, civil_needs_review, digest) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         civil_number_hash, civil_key_version, civil_needs_review, verified_email_hmac, digest) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [row.legacyId, row.phone, row.handle, row.civilId?.country ?? null, sealed?.ciphertext ?? null, sealed?.hash ?? null,
-        sealed?.keyVersion ?? null, row.civilId ? row.civilIdNeedsReview : null, digest]);
+        sealed?.keyVersion ?? null, row.civilId ? row.civilIdNeedsReview : null,
+        row.verifiedEmail === null ? null : this.emailDigest(row.verifiedEmail), digest]);
     return "inserted";
   }
 
