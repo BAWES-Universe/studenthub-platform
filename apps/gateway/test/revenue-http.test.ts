@@ -40,6 +40,10 @@ test("REVENUE_HTTP operator finance reads the page too, read only", async (t) =>
   assert.equal(r.status, 200);
   assert.deepEqual((await r.json() as { received: { currency: string }[] }).received.map(c => c.currency), ["KWD"]);
   assert.equal((await x.call("s-fin", "application/json", "POST")).status, 405);
+  const html = await (await x.call("s-fin", "text/html")).text();
+  assert.match(html, /<h1>Revenue<\/h1>/);
+  assert.doesNotMatch(html, /Back to operations/, "operations is a staff page, so finance gets no link to it");
+  assert.match(await (await x.call("s-boss", "text/html")).text(), /<a href="\/reports\/operations">Back to operations<\/a>/, "staff and admins keep the link");
 });
 
 test("REVENUE_HTTP operator admins see received totals, the months and the reconciliation", async (t) => {

@@ -22,7 +22,7 @@ function notFound(req: IncomingMessage, res: ServerResponse): true {
   res.end(JSON.stringify({ status: "not_found" })); return true;
 }
 
-function revenueHtml(page: RevenuePage): string {
+function revenueHtml(page: RevenuePage, staff: boolean): string {
   const received = page.received.length ? `<table><thead><tr><th scope="col">Currency</th><th scope="col">Paid by companies</th><th scope="col">Belonging to candidates</th><th scope="col">Gross profit</th><th scope="col">Transfers</th><th scope="col">Candidate lines</th></tr></thead><tbody>`
     + page.received.map(r => `<tr><th scope="row">${esc(r.currency)}</th><td>${esc(r.companyTotal)}</td><td>${esc(r.candidateTotal)}</td><td>${esc(r.grossProfit)}</td><td>${r.transfers}</td><td>${r.lines}</td></tr>`).join("")
     + `</tbody></table>` : `<p>No payments received yet.</p>`;
@@ -38,11 +38,13 @@ function revenueHtml(page: RevenuePage): string {
     + `<p>Not available yet:</p><ul>${page.missing.map(m => `<li>${esc(m.label)}: Not available <small>(waits on ${esc(m.waitsOn)})</small></li>`).join("")}</ul>`
     + `<h2>By month</h2><p>The last 12 whole months, by the month each transfer's pay period ends, oldest first. Drafts and cancelled transfers are left out.</p>${monthly || "<p>No transfers yet.</p>"}`
     + `<h2>Reconciliation</h2><p>Every transfer by status, with the sums of its candidate lines. The payment received figures above are the payment sent, payment received and complete rows.</p>${recon}`
-    + `<p><a href="${OPERATIONS_PATH}">Back to operations</a></p></main>`;
+    // Operations is a staff page: a finance-only viewer gets no link to a page that would answer not found.
+    + (staff ? `<p><a href="${OPERATIONS_PATH}">Back to operations</a></p>` : "") + `</main>`;
 }
 
 /** Handles the revenue path; false for any other path. `viewer` is the signed-in person, if any. */
-export async function handleRevenue(req: IncomingMessage, res: ServerResponse, service: RevenueHttpService | undefined, path: string, viewer: () => Promise<string | undefined>): Promise<boolean> {
+export async function handleRevenue(req: IncomingMessage, res: ServerResponse, service: RevenueHttpService | undefined, path: string, viewer: () => Promise<string | undefined>,
+  isStaff: (viewer: string) => Promise<boolean> = async () => false): Promise<boolean> {
   if (path !== REVENUE_PATH) return false;
   req.resume();
   const person = service ? await viewer() : undefined;
@@ -56,6 +58,7 @@ export async function handleRevenue(req: IncomingMessage, res: ServerResponse, s
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", vary: "Accept", "x-content-type-options": "nosniff" });
     res.end(JSON.stringify({ status: "ok", ...page })); return true;
   }
-  writeHtml(res, 200, pageDocument("Revenue", revenueHtml(page)), { "cache-control": "no-store" });
+  let staff = false; try { staff = await isStaff(person); } catch { /* treated as not staff: the link is left out */ }
+  writeHtml(res, 200, pageDocument("Revenue", revenueHtml(page, staff)), { "cache-control": "no-store" });
   return true;
 }
