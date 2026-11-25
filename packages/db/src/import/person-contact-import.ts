@@ -103,6 +103,19 @@ const refusalOf = (e: unknown): PersonContactImportRefusal | null => {
   return ["23514", "22P02"].includes(code) ? "invalid" : null;
 };
 
+/**
+ * The row digest the store keeps, as a plain function so a plan can bind it without a database:
+ * an HMAC under the 32-byte digest key over the row's id and values. Without the key it cannot be
+ * used to guess a phone, handle, civil ID or address.
+ */
+export function personContactDigest(digestKey: Buffer, row: PersonContactImportRow): string {
+  if (!Buffer.isBuffer(digestKey) || digestKey.length !== 32) throw new TypeError("digestKey must be 32 bytes");
+  const civil = row.civilId ? [row.civilId.country, row.civilId.number] : null;
+  return createHmac("sha256", digestKey)
+    .update(JSON.stringify(["m1-contact-v2", row.legacyId, row.phone, row.handle, civil, row.civilIdNeedsReview, row.verifiedEmail]))
+    .digest("hex");
+}
+
 export class PostgresPersonContactImportStore {
   readonly #pool: PgPool;
   readonly #owns: boolean;
@@ -141,10 +154,7 @@ export class PostgresPersonContactImportStore {
 
   /** HMAC over the row's id and values; never a value-revealing hash. */
   digest(row: PersonContactImportRow): string {
-    const civil = row.civilId ? [row.civilId.country, row.civilId.number] : null;
-    return createHmac("sha256", this.#digestKey)
-      .update(JSON.stringify(["m1-contact-v2", row.legacyId, row.phone, row.handle, civil, row.civilIdNeedsReview, row.verifiedEmail]))
-      .digest("hex");
+    return personContactDigest(this.#digestKey, row);
   }
 
   async importContacts(rows: readonly PersonContactImportRow[]): Promise<PersonContactImportResult> {

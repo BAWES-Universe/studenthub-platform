@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
@@ -15,6 +15,9 @@ import { fixtureIds } from "./legacy-fixture-ids.js";
 const URL = process.env.DATABASE_URL ?? "";
 const ACTOR = createHash("sha256").update("legacy-import:test").digest("hex");
 const NOW = "2026-11-23T00:00:00.000Z";
+// Synthetic keys, fresh per run: the civil ID key and the separate digest key.
+const KEYS = { digest: randomBytes(32), civilId: randomBytes(32) };
+const KEY_ENV = { M4_CONTACT_DIGEST_KEY: KEYS.digest.toString("base64"), M4_CIVIL_ID_ENCRYPTION_KEY: KEYS.civilId.toString("base64") };
 let pool: pg.Pool, operator: string;
 before(async () => {
   if (!URL) throw Error("DATABASE_URL is required to run the db suite");
@@ -36,17 +39,22 @@ function legacy(c: number, r: string): M4Sources {
       { store_id: c + 1, company_id: c, brand_uuid: `${r}-b`, mall_uuid: null, store_name: "Store B", deleted: 0 }],
     contact: [{ contact_uuid: `${r}-p`, contact_name: "Person", contact_email: `${r}@example.com`, deleted: 0 }],
     company_contact: [{ company_contact_uuid: `${r}-l`, contact_uuid: `${r}-p`, company_id: c + 1, allow_access: 0 }],
-    candidate: [{ candidate_id: c, deleted: 0, candidate_name: "Test Person", candidate_language_pref: "en" }],
+    candidate: [{ candidate_id: c, deleted: 0, candidate_name: "Test Person", candidate_language_pref: "en", candidate_phone: `+96${c}`, profile_url: `m4-${c}`,
+      candidate_email: `m4-${c}@example.invalid`, candidate_email_verification: 1 }],
   };
 }
 
 test("a write run imports every step in order through the real stores; a second run finds everything unchanged", async () => {
   const c = await fixtureIds(pool), r = randomUUID().slice(0, 8);
-  const writers = m4Writers(pool, ACTOR, operator);
+  const writers = m4Writers(pool, ACTOR, operator, KEYS);
   const first = await runM4(legacy(c, r), writers, NOW);
   assert.equal(first.ok, true);
   const by = new Map(first.steps.map((s) => [s.step, s.write]));
-  assert.deepEqual([by.get("company")!.inserted, by.get("brand_company")!.inserted, by.get("store")!.inserted, by.get("company_contact")!.inserted, by.get("candidate")!.inserted], [2, 1, 2, 1, 1]);
+  assert.deepEqual([by.get("company")!.inserted, by.get("brand_company")!.inserted, by.get("store")!.inserted, by.get("company_contact")!.inserted, by.get("candidate")!.inserted, by.get("candidate_contact")!.inserted], [2, 1, 2, 1, 1, 1]);
+  // The contact step staged the candidate's values: the address only as its keyed HMAC.
+  const { rows: [staged] } = await pool.query("SELECT phone, profile_handle, verified_email_hmac FROM legacy_candidate_contacts WHERE legacy_candidate_id = $1", [String(c)]);
+  assert.deepEqual([staged.phone, staged.profile_handle], [`+96${c}`, `m4-${c}`]);
+  assert.equal(staged.verified_email_hmac.length, 32);
   const second = await runM4(legacy(c, r), writers, NOW);
   assert.equal(second.ok, true);
   assert.ok(second.steps.every((s) => s.write!.inserted === 0 && s.write!.unchanged === s.mapped));
@@ -61,7 +69,7 @@ test("a write run imports every step in order through the real stores; a second 
 
 test("the write target is staging only when the database's own marker row says so, and names its target id", async () => {
   // The one test that touches the singleton marker; it leaves the table empty as it found it.
-  const target = postgresTarget(URL, ACTOR, operator);
+  const target = postgresTarget(URL, ACTOR, operator, KEYS);
   try {
     await pool.query("DELETE FROM legacy_import_target");
     assert.equal(await target.marker(), null);
@@ -78,7 +86,7 @@ test("the write target is staging only when the database's own marker row says s
     await target.close();
   }
   // A database the importer cannot read the marker from is no target either.
-  const elsewhere = postgresTarget(URL.replace(/\/[^/?]+(\?|$)/, "/no_such_database$1"), ACTOR, operator);
+  const elsewhere = postgresTarget(URL.replace(/\/[^/?]+(\?|$)/, "/no_such_database$1"), ACTOR, operator, KEYS);
   try {
     assert.equal(await elsewhere.marker(), null);
     assert.equal(await elsewhere.hasOperator(operator), false);
@@ -86,33 +94,39 @@ test("the write target is staging only when the database's own marker row says s
   } finally { await elsewhere.close(); }
 });
 
-test("a write target is schema-ready only once migration 0653 is recorded and its snapshot table exists", async () => {
-  const target = postgresTarget(URL, ACTOR, operator);
+test("a write target is schema-ready only once migration 0655 is recorded and the snapshot and contact tables exist", async () => {
+  const target = postgresTarget(URL, ACTOR, operator, KEYS);
   try { assert.equal(await target.schemaReady(), true); } finally { await target.close(); }
   // An older target: the 0652 marker era, before the people snapshot table.
   const name = `m4_schema_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   await pool.query(`CREATE DATABASE ${name}`);
   const old = new pg.Pool({ connectionString: URL.replace(/\/[^/?]+(\?|$)/, `/${name}$1`) });
-  const older = postgresTarget(URL.replace(/\/[^/?]+(\?|$)/, `/${name}$1`), ACTOR, operator);
+  const older = postgresTarget(URL.replace(/\/[^/?]+(\?|$)/, `/${name}$1`), ACTOR, operator, KEYS);
   try {
     assert.equal(await older.schemaReady(), false, "no ledger at all");
     await old.query("CREATE TABLE schema_migrations (version text PRIMARY KEY); INSERT INTO schema_migrations VALUES ('0652_legacy_import_target')");
     assert.equal(await older.schemaReady(), false, "0652 only");
+    await old.query("INSERT INTO schema_migrations VALUES ('0653_legacy_candidate_snapshots'), ('0654_legacy_candidate_contacts')");
+    await old.query("CREATE TABLE legacy_candidate_snapshots (legacy_candidate_id text PRIMARY KEY); CREATE TABLE legacy_candidate_contacts (legacy_candidate_id text PRIMARY KEY)");
+    assert.equal(await older.schemaReady(), false, "0653 and 0654 without 0655");
+    await old.query("DROP TABLE legacy_candidate_snapshots, legacy_candidate_contacts");
     await old.query(`INSERT INTO schema_migrations VALUES ('${M4_REQUIRED_MIGRATION}')`);
     assert.equal(await older.schemaReady(), false, "recorded but the table is missing");
     await old.query("CREATE TABLE legacy_candidate_snapshots (legacy_candidate_id text PRIMARY KEY)");
+    assert.equal(await older.schemaReady(), false, "the contact table is missing");
+    await old.query("CREATE TABLE legacy_candidate_contacts (legacy_candidate_id text PRIMARY KEY)");
     assert.equal(await older.schemaReady(), true);
   } finally {
     await older.close();
     await old.end();
     await pool.query(`DROP DATABASE IF EXISTS ${name}`);
   }
-  const elsewhere = postgresTarget(URL.replace(/\/[^/?]+(\?|$)/, "/no_such_database$1"), ACTOR, operator);
+  const elsewhere = postgresTarget(URL.replace(/\/[^/?]+(\?|$)/, "/no_such_database$1"), ACTOR, operator, KEYS);
   try { assert.equal(await elsewhere.schemaReady(), false); } finally { await elsewhere.close(); }
 });
 
 test("the operator parent must exist in the target database", async () => {
-  const target = postgresTarget(URL, ACTOR, operator);
+  const target = postgresTarget(URL, ACTOR, operator, KEYS);
   try {
     assert.equal(await target.hasOperator(operator), true);
     assert.equal(await target.hasOperator(`absent-${randomUUID()}`), false);
@@ -126,7 +140,7 @@ const WRITER_PID_SQL = `SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND
 
 test("every checkout of the writer session pool is the lock-holding session, fenced, and a broken release ends it", async () => {
   const c = await fixtureIds(pool), r = randomUUID().slice(0, 8);
-  const target = postgresTarget(URL, ACTOR, operator);
+  const target = postgresTarget(URL, ACTOR, operator, KEYS);
   try {
     assert.equal(await target.claimWriter(), true);
     const { rows: [holder] } = await pool.query<{ pid: number }>(WRITER_PID_SQL);
@@ -166,7 +180,7 @@ test("every checkout of the writer session pool is the lock-holding session, fen
     try { session.release(true); } catch { /* already released */ }
     await side.end();
   }
-  const next = postgresTarget(URL, ACTOR, operator);
+  const next = postgresTarget(URL, ACTOR, operator, KEYS);
   try { assert.equal(await next.claimWriter(), true); } finally { await next.close(); }
 });
 
@@ -201,7 +215,7 @@ test("a lost lock session mid-write: no later batch runs, the attempt fails with
   const env = {
     M4_OUTPUT_DIR: path.join(dir, "out"), M4_REVISION: revision, M4_ARTIFACT_DIGEST: artifact, M4_TARGET_ID: marker!.target_id, M4_OPERATOR_ORG_ID: operator,
     LEGACY_REFRESH_REPORT: path.join(dir, "refresh.json"), LEGACY_REFRESH_LOCK: path.join(dir, "lock"),
-    M4_IMPORT_ACTOR: ACTOR, M4_DATABASE_URL: URL,
+    M4_IMPORT_ACTOR: ACTOR, M4_DATABASE_URL: URL, ...KEY_ENV,
   };
   let killed: number | undefined;
   const deps = (invocation: string, extra: Record<string, string> = {}): CliDeps => ({
@@ -209,7 +223,7 @@ test("a lost lock session mid-write: no later batch runs, the attempt fails with
     lock: async () => ({ held: true, release: () => undefined }),
     reader: () => ({ rows: async (sql) => sources[/FROM `([a-z_]+)`$/.exec(sql)![1] as M4Table] }),
     target: (e) => {
-      const real = postgresTarget(e.M4_DATABASE_URL!, ACTOR, operator);
+      const real = postgresTarget(e.M4_DATABASE_URL!, ACTOR, operator, KEYS);
       return { ...real, writers: () => {
         const w = real.writers();
         // After the (non-empty) companies batch commits, the lock session is terminated.
@@ -237,7 +251,7 @@ test("a lost lock session mid-write: no later batch runs, the attempt fails with
     assert.deepEqual([receipt.status, receipt.code], ["failed", "m4.writerLost"]);
     assert.equal(receipt.steps.at(-1)!.step, "company");
     assert.equal(receipt.steps.at(-1)!.write!.inserted, 2);
-    assert.deepEqual(receipt.unconfirmed, ["brand_company", "store", "company_contact", "candidate"]);
+    assert.deepEqual(receipt.unconfirmed, ["brand_company", "store", "company_contact", "candidate", "candidate_contact"]);
     // The companies committed before the loss; nothing after it was written.
     const mapped = async (table: string, ids: string[]) => (await pool.query("SELECT 1 FROM legacy_id_maps WHERE legacy_table = $1 AND legacy_id = ANY($2::text[])", [table, ids])).rowCount;
     assert.equal(await mapped("company", [String(c), String(c + 1)]), 2);
@@ -245,7 +259,7 @@ test("a lost lock session mid-write: no later batch runs, the attempt fails with
     assert.equal(await mapped("store", [String(c), String(c + 1)]), 0);
     assert.equal(await mapped("company_contact", [`${r}-l`]), 0);
     // The server released the lock with the session: a new writer can take it.
-    const next = postgresTarget(URL, ACTOR, operator);
+    const next = postgresTarget(URL, ACTOR, operator, KEYS);
     try { assert.equal(await next.claimWriter(), true); } finally { await next.close(); }
   } finally {
     await pool.query("DELETE FROM legacy_import_target");
@@ -254,7 +268,7 @@ test("a lost lock session mid-write: no later batch runs, the attempt fails with
 });
 
 test("one writer per target database: a second writer is refused until the first has closed", async () => {
-  const first = postgresTarget(URL, ACTOR, operator), second = postgresTarget(URL, ACTOR, operator);
+  const first = postgresTarget(URL, ACTOR, operator, KEYS), second = postgresTarget(URL, ACTOR, operator, KEYS);
   try {
     assert.equal(await first.claimWriter(), true);
     assert.equal(await first.claimWriter(), true);
@@ -274,7 +288,7 @@ test("waits on the writer session are bounded: a batch blocked by another transa
   assert.match(WRITER_SESSION_LIMITS_SQL, /lock_timeout = '60s'.*statement_timeout = '15min'.*idle_in_transaction_session_timeout = '15min'/);
   const c = await fixtureIds(pool), r = randomUUID().slice(0, 8);
   // The same limits statement, with a lock wait short enough for a test.
-  const target = postgresTarget(URL, ACTOR, operator, WRITER_SESSION_LIMITS_SQL.replace("'60s'", "'300ms'"));
+  const target = postgresTarget(URL, ACTOR, operator, KEYS, WRITER_SESSION_LIMITS_SQL.replace("'60s'", "'300ms'"));
   const blocker = await pool.connect();
   try {
     assert.equal(await target.claimWriter(), true);
