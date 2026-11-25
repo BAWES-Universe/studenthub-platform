@@ -233,7 +233,7 @@ Migration 0356 adds three optional email classes and `person_reminder_runs`.
 | `person.birthday` | everyone whose profile birth date is D's month and day (29 February on the 28th in other years) | "Happy Birthday from StudentHub", greeting by first name |
 | `person.civil_id_expired` | placed people whose civil ID (not released) expires on D | "Please update your civil ID" |
 | `person.civil_id_expiring` | on the 15th and 28th: placed people whose civil ID expires before D + 25, already expired included, as legacy | "Civil ID is expiring", with the date, "expires on" or "expired on" |
-| `person.bank_details_missing` (migration 0358, 2026-11-25) | on the 15th and 28th: people placed on D (an assignment that started by D and has not ended) with no bank details on file, legacy `Candidate::notifyMissingBankInfo` | "Bank information is missing", asking them to add details from their profile; no bank value |
+| `person.bank_details_missing` (migration 0358, 2026-11-25) | on the 15th and 28th: people with a **verified** address, placed on D (an assignment that started by D and has not ended), with no bank details on file, legacy `Candidate::notifyMissingBankInfo`. **Fails closed today**: no verified-address fact exists yet, so nothing is queued | "Bank information is missing", asking them to add details from their profile; no bank value |
 
 - "Placed" is legacy's `store_id > 0`: a work assignment that has not ended by D, the morning
   summary's rule. Legacy's "verified email" is an address on the account; a paused account gets
@@ -247,10 +247,19 @@ Migration 0356 adds three optional email classes and `person_reminder_runs`.
 - Every delivery attempt rechecks the person for the key's day, like the morning summary: a
   renewed or released civil ID, an ended placement, a pause or a corrected birth date after
   queueing suppresses the email, and each class can be switched off.
+- A verified address is not the same as an address on the account. The three reminders above go
+  to an address on the account (the address the sign-in gave, since the platform records no
+  verification). The bank reminder discloses that bank details are missing, so it goes only to a
+  verified address, as legacy did (`candidate_email_verification = 1`). The platform records no
+  verification of a current address yet (login keeps the sign-in claim's address and never reads
+  `email_verified`; the importer carries no flag), so the class fails closed at the queue and at the
+  claim until access and import record that fact; then only its `verifiedEmail` predicate changes.
 - The bank reminder asks the bank-details store, the only reader of that table, which eligible people
   have no row (`principalsWithoutDetails`, presence only), when queueing and again in the outbox
   claim's transaction; details added after queueing suppress the email. No SQL outside that store
   names the table, and no bank, IBAN or name reaches the email.
+- Its claim recheck uses the attempt's Kuwait day, not the day in its key (which stays the
+  idempotency key): a retry on a later day after the placement ended is suppressed.
 - Legacy's emails linked to the candidate app; these point to the profile in words, as the other
   emails do, and carry no tracking.
 

@@ -5,6 +5,8 @@ import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
 import { PostgresPersonRemindersStore, type PersonReminderKind as StoredKind } from "@studenthub/db/comms";
+import { PostgresBankDetailsStore } from "@studenthub/db";
+import { bankReminderEligible } from "../src/comms/postgres-person-reminders-store.js";
 import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { EmailOutboxService, FakeEmailPort } from "../../notifications/src/index.js";
 import { queuePersonRemindersThenDeliver, type PersonReminderKind } from "../../comms/src/person-reminders.js";
@@ -142,55 +144,33 @@ test("COMMS_PERSON_REMINDERS_PG the worker queues reminders only when it can del
   assert.equal(Number((await pool.query("SELECT count(*) n FROM person_reminder_runs WHERE day=$1", [day])).rows[0].n), 2, "birthday and expired today; not the 15th or 28th");
 });
 
-async function bankDetails(id: string): Promise<void> {
-  const bank = randomUUID();
-  await pool.query(`INSERT INTO catalogue_items (id, catalogue_type, name, normalized_name, status, created_by_ref, updated_by_ref, created_at, updated_at)
-    VALUES ($1, 'bank', $2, $2, 'active', $3, $3, now(), now())`, [bank, `Synthetic bank ${bank.slice(0, 8)}`, "a".repeat(64)]);
-  await pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, 'KW81CBKU0000000000001234560101', 'Synthetic Beneficiary')", [id, bank]);
-}
 
-test("COMMS_PERSON_REMINDERS_PG missing bank details: people placed on the day with no bank details, once, by first name", async () => {
+test("COMMS_PERSON_REMINDERS_PG missing bank details fails closed until a verified address exists: nothing is queued, and the day is still recorded once", async () => {
   const day = "2031-11-15"; await fresh("bank_details_missing", day);
-  const missing = await principal("bank-missing"), withBank = await principal("bank-has"), future = await principal("bank-future"), ended = await principal("bank-ended");
-  const unplaced = await principal("bank-unplaced"), paused = await principal("bank-paused"), noEmail = await principal("bank-noemail", false);
-  await profile(missing, "Huda Al-Sabah", null);
-  for (const id of [missing, withBank, paused, noEmail]) await assign(id, "2031-10-01", null);
-  await assign(future, "2031-11-16", null); await assign(ended, "2031-09-01", "2031-11-14");
-  await bankDetails(withBank); await pause(paused);
-  const ids = [missing, withBank, future, ended, unplaced, paused, noEmail];
-  assert.ok((await store.sendDay("bank_details_missing", day, new Date())) as number >= 1);
-  assert.deepEqual((await queued("person.bank_details_missing", day, ids)).map(r => [r.recipient_principal_id, r.template_parameters]), [[missing, { name: "Huda" }]]);
+  const missing = await principal("bank-missing"); await profile(missing, "Huda Al-Sabah", null); await assign(missing, "2031-10-01", null);
+  assert.equal(await store.sendDay("bank_details_missing", day, new Date()), 0);
+  assert.deepEqual(await queued("person.bank_details_missing", day, [missing]), [], "an address on the account is not a verified address");
   assert.equal(await store.sendDay("bank_details_missing", day, new Date()), null, "a day is queued once");
 });
 
-test("COMMS_PERSON_REMINDERS_PG a bank reminder retried on a later day rechecks the placement for the attempt's Kuwait day", async () => {
+test("COMMS_PERSON_REMINDERS_PG a queued bank reminder is suppressed at the claim while no address is verified", async () => {
   await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
-  const day = "2032-01-15"; await fresh("bank_details_missing", day);
-  const endsToday = await principal("bank-ends"), continues = await principal("bank-continues");
-  await assign(endsToday, "2031-06-01", "2032-01-15"); await assign(continues, "2031-06-01", null);
-  await store.sendDay("bank_details_missing", day, new Date("2032-01-15T10:30:00Z"));
-  assert.equal((await queued("person.bank_details_missing", day, [endsToday, continues])).length, 2, "both placed on the 15th");
-  const port = new FakeEmailPort();
-  // The first attempt is on 16 January in Kuwait: the placement that ended on the 15th no longer counts.
-  await new EmailOutboxService(new PostgresEmailOutboxStore({ pool }), port, true, true).processDue(100, new Date("2032-01-16T06:00:00Z"));
-  const states = Object.fromEntries((await queued("person.bank_details_missing", day, [endsToday, continues])).map(r => [r.recipient_principal_id, r.state]));
-  assert.deepEqual(states, { [endsToday]: "suppressed", [continues]: "sent" });
-});
-
-test("COMMS_PERSON_REMINDERS_PG every delivery attempt rechecks the bank reminder: details added, a placement ended or a pause after queueing sends nothing", async () => {
-  await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
-  const day = "2031-12-28"; await fresh("bank_details_missing", day);
-  const adds = await principal("bank-adds"), leaves = await principal("bank-leaves"), rests = await principal("bank-rests"), stays = await principal("bank-stays");
-  for (const id of [adds, leaves, rests, stays]) await assign(id, "2031-01-01", null);
-  await store.sendDay("bank_details_missing", day, new Date());
-  await bankDetails(adds);
-  await pool.query("UPDATE work_assignments SET end_date='2031-12-20' WHERE person_principal_id=$1", [leaves]);
-  await pause(rests);
+  const day = "2031-12-28", person = await principal("bank-queued"); await assign(person, "2031-01-01", null);
+  await pool.query(`INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key) VALUES('person.bank_details_missing', $1, '{"name":""}', $2)`,
+    [person, `person.bank_details_missing:${day}:${person}`]);
   const port = new FakeEmailPort();
   await new EmailOutboxService(new PostgresEmailOutboxStore({ pool }), port, true, true).processDue(100, new Date("2031-12-28T11:00:00Z"));
-  const states = Object.fromEntries((await queued("person.bank_details_missing", day, [adds, leaves, rests, stays])).map(r => [r.recipient_principal_id, r.state]));
-  assert.deepEqual(states, { [adds]: "suppressed", [leaves]: "suppressed", [rests]: "suppressed", [stays]: "sent" });
-  const mail = port.sent.find(m => m.to === `${stays}@example.invalid`)!;
-  assert.equal(mail.subject, "Bank information is missing");
-  assert.equal(port.sent.filter(m => [adds, leaves, rests].some(id => m.to === `${id}@example.invalid`)).length, 0);
+  assert.equal((await queued("person.bank_details_missing", day, [person]))[0]!.state, "suppressed");
+  assert.equal(port.sent.filter(m => m.to === `${person}@example.invalid`).length, 0);
+});
+
+test("COMMS_PERSON_REMINDERS_PG with a verified address, the bank rule is placed on the attempt's day and not paused; details are asked of the bank store", async () => {
+  const rule = bankReminderEligible(() => "true");
+  const placed = await principal("rule-placed"), future = await principal("rule-future"), ended = await principal("rule-ended"), paused = await principal("rule-paused"), unplaced = await principal("rule-unplaced");
+  await assign(placed, "2032-01-01", "2032-01-15"); await assign(future, "2032-01-16", null); await assign(ended, "2031-06-01", "2032-01-14"); await assign(paused, "2031-06-01", null); await pause(paused);
+  const ids = [placed, future, ended, paused, unplaced];
+  const on = async (day: string) => (await pool.query<{ id: string }>(`SELECT q.id FROM principals q WHERE q.id = ANY($1) AND ${rule("q.id", "$2::date")} ORDER BY q.id`, [ids, day])).rows.map(r => r.id);
+  assert.deepEqual(await on("2032-01-15"), [placed], "the queue day");
+  assert.deepEqual(await on("2032-01-16"), [future].sort(), "an attempt on the next day: the placement that ended on the 15th no longer counts");
+  assert.equal(await new PostgresBankDetailsStore({ pool }).countWithoutDetails([placed]), 1);
 });

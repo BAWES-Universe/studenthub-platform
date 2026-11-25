@@ -21,6 +21,17 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const notPaused = (p: string) => `NOT EXISTS (SELECT 1 FROM account_pauses ap WHERE ap.principal_id = ${p} AND ap.resumed_at IS NULL)`;
 /** Legacy sent the civil ID reminders only to people placed at a store; here, a work assignment that has not ended by the day. */
 const assigned = (p: string, d: string) => `EXISTS (SELECT 1 FROM work_assignments wa WHERE wa.person_principal_id = ${p} AND (wa.end_date IS NULL OR wa.end_date >= ${d}))`;
+/**
+ * Legacy sent the bank reminder only to a verified address (`candidate_email_verification = 1`). The
+ * platform records no verification of a person's current address yet (the login stores the address
+ * from the sign-in claim; nothing records `email_verified`, and the importer carries no flag), and an
+ * address that is merely on the account must not learn that bank details are missing. Until that fact
+ * exists the class fails closed: nothing is queued and a queued row is suppressed at the claim. When it
+ * lands, this predicate becomes "the current address is verified" and nothing else changes.
+ */
+const verifiedEmail = (_p: string) => "false";
+/** The bank reminder's SQL eligibility, given the verified-address predicate; exported so the rest of the rule can be tested while that predicate fails closed. */
+export const bankReminderEligible = (verified: (p: string) => string) => (p: string, d: string) => `(${verified(p)} AND ${placedOn(p, d)} AND ${notPaused(p)})`;
 /** Legacy sent the bank reminder to people placed at a store (`store_id > 0`); here, a work assignment running on the day. */
 const placedOn = (p: string, d: string) => `EXISTS (SELECT 1 FROM work_assignments wa WHERE wa.person_principal_id = ${p} AND wa.start_date <= ${d} AND (wa.end_date IS NULL OR wa.end_date >= ${d}))`;
 // A 29 February birthday is wished on 28 February in other years.
@@ -31,14 +42,14 @@ const birthdayOn = (birth: string, d: string) => `(to_char(${birth}, 'MM-DD') = 
  * Who a reminder of each kind is for on day `d`. Used when the emails are queued and again by the
  * outbox claim on every delivery attempt, so a pause, a released or renewed civil ID, an ended
  * assignment or a corrected birth date after queueing stops the send. The bank reminder's SQL part
- * is the placement and the pause; whether details are still missing is asked of the bank-details
- * store, when queueing and again at the claim.
+ * is a verified address (none yet, so it fails closed), the placement and the pause; whether details
+ * are still missing is asked of the bank-details store, when queueing and again at the claim.
  */
 export const personReminderEligible: { readonly [K in PersonReminderKind]: (p: string, d: string) => string } = {
   birthday: (p, d) => `(EXISTS (SELECT 1 FROM person_profiles pp WHERE pp.principal_id = ${p} AND pp.birth_date IS NOT NULL AND ${birthdayOn("pp.birth_date", d)}) AND ${notPaused(p)})`,
   civil_id_expired: (p, d) => `(EXISTS (SELECT 1 FROM person_civil_ids ci WHERE ci.principal_id = ${p} AND ci.released_at IS NULL AND ci.expiry_date = ${d}) AND ${assigned(p, d)} AND ${notPaused(p)})`,
   civil_id_expiring: (p, d) => `(EXISTS (SELECT 1 FROM person_civil_ids ci WHERE ci.principal_id = ${p} AND ci.released_at IS NULL AND ci.expiry_date < ${d} + ${CIVIL_ID_EXPIRING_DAYS}) AND ${assigned(p, d)} AND ${notPaused(p)})`,
-  bank_details_missing: (p, d) => `(${placedOn(p, d)} AND ${notPaused(p)})`,
+  bank_details_missing: bankReminderEligible(verifiedEmail),
 };
 
 // The first word of the person's name (legacy's greeting), with no control characters and at most 255 characters; empty when there is none.
