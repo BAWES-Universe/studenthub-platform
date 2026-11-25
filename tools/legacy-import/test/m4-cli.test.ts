@@ -51,8 +51,10 @@ interface FakeDb {
   writer: object | null;
   /** Set when the lock-holding session is lost: the lock is gone and that session is dead. */
   sessionLost: boolean;
+  /** The civil ID key the target's check value was provisioned under (base64), or null. */
+  civilKeyCheck: string | null;
 }
-const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false });
+const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -102,6 +104,13 @@ function harness(opts: HarnessOptions = {}): Harness {
     marker: async () => db.marker,
     hasOperator: async (id) => db.operators.has(id),
     schemaReady: async () => db.schemaReady,
+    civilKey: async (key) => (db.civilKeyCheck === null ? "missing" : key.toString("base64") === db.civilKeyCheck ? "ok" : "mismatch"),
+    provisionCivilKeyCheck: async (key, targetId) => {
+      calls.push("keycheck");
+      if (db.marker?.targetId !== targetId) return "mismatch";
+      if (db.civilKeyCheck === null) { db.civilKeyCheck = key.toString("base64"); return "set"; }
+      return key.toString("base64") === db.civilKeyCheck ? "ok" : "mismatch";
+    },
     claimWriter: async () => { if (db.writer && db.writer !== me) return false; db.writer = me; return true; },
     writers: () => {
       assert.equal(db.writer, me, "writers are used only by the lock holder");
@@ -571,4 +580,53 @@ test("the contact keys come from the environment only: a missing, malformed or s
   // A plan needs only the digest key: the civil ID key is a write setting.
   const h = harness({ env: { M4_CIVIL_ID_ENCRYPTION_KEY: undefined } });
   try { assert.equal(await main(["plan"], h.deps), 0); } finally { cleanup(h); }
+});
+
+test("a write refuses before any step unless the civil ID key opens the target's provisioned check", async () => {
+  const expected = await planId();
+  const wrongKey = Buffer.alloc(32, 9).toString("base64");
+  for (const [label, db, env] of [
+    ["no check provisioned", { ...fakeDb(), civilKeyCheck: null }, {}],
+    ["a well-formed wrong key", fakeDb(), { M4_CIVIL_ID_ENCRYPTION_KEY: wrongKey }],
+  ] as [string, FakeDb, Record<string, string>][]) {
+    const h = harness({ env: { M4_EXPECTED_PLAN: expected, ...env }, db });
+    try {
+      assert.equal(await main(["write"], h.deps), 2, label);
+      assert.deepEqual(h.err, ["m4: refused.civilKey"], label);
+      assert.deepEqual(h.calls, [], label);
+      assert.equal(db.writer, null, label);
+      const r = h.receipt("write");
+      assert.deepEqual([r.status, r.code, r.steps], ["refused", "civilKey", []], label);
+      assert.ok(![wrongKey, CIVIL_KEY, DIGEST_KEY].some((k) => JSON.stringify(r).includes(k)), label);
+    } finally { cleanup(h); }
+  }
+});
+
+test("keycheck provisions the target's check once, confirms the same key, and refuses another; it reads no legacy data", async () => {
+  const db = { ...fakeDb(), civilKeyCheck: null };
+  const run = async (env: Record<string, string | undefined>) => {
+    const h = harness({ env, db });
+    try {
+      const code = await main(["keycheck"], h.deps);
+      const r = h.receipt("keycheck" as "plan");
+      assert.equal(h.state.reads, 0);
+      assert.ok(![CIVIL_KEY, DIGEST_KEY, Buffer.alloc(32, 9).toString("base64")].some((k) => JSON.stringify(r).includes(k) || h.out.join().includes(k)));
+      return { code, status: r.status, rcode: r.code, out: h.out, err: h.err };
+    } finally { cleanup(h); }
+  };
+  const first = await run({});
+  assert.deepEqual([first.code, first.status], [0, "ok"]);
+  assert.ok(first.out.some((l) => l.endsWith("check=set")));
+  assert.equal(db.civilKeyCheck, CIVIL_KEY);
+  const again = await run({});
+  assert.deepEqual([again.code, again.status], [0, "ok"]);
+  assert.ok(again.out.some((l) => l.endsWith("check=matched")));
+  const other = await run({ M4_CIVIL_ID_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64") });
+  assert.deepEqual([other.code, other.status, other.rcode, other.err], [2, "refused", "civilKey", ["m4: refused.civilKey"]]);
+  assert.equal(db.civilKeyCheck, CIVIL_KEY, "never replaced");
+  // Not staging, or another target: refused before any check is set.
+  const elsewhere = await run({ M4_TARGET_ID: "22222222-2222-4222-8222-222222222222" });
+  assert.deepEqual([elsewhere.code, elsewhere.rcode], [2, "target"]);
+  const noKey = await run({ M4_CIVIL_ID_ENCRYPTION_KEY: undefined });
+  assert.deepEqual([noKey.code, noKey.rcode], [2, "contactKeys"]);
 });

@@ -28,10 +28,27 @@ export interface PersonContactImportRow {
 export interface CivilIdSealer {
   readonly keyVersion: number;
   seal(ref: string, country: "KW" | "BH", number: string): { readonly ciphertext: Buffer; readonly hash: Buffer; readonly keyVersion: number };
+  /** Opens a sealed number; throws when the key or the binding is wrong. */
+  open(ref: string, country: "KW" | "BH", ciphertext: Buffer): string;
 }
 
-/** invalid: off the contract. duplicate: another staged candidate already holds the phone, handle or civil ID. */
-export type PersonContactImportRefusal = "invalid" | "duplicate";
+/**
+ * The target's civil ID key verifier (legacy_import_target.civil_key_check, migration 0656): a
+ * fixed, non-personal number sealed under the platform's key, bound to its own reference.
+ */
+export const CIVIL_KEY_CHECK = { ref: "legacy-import:civil-key-check", country: "KW", number: "000000000000" } as const;
+
+/** Whether this sealer's key opens the target's check value. Never throws. */
+export function civilKeyOpens(sealer: CivilIdSealer, check: Buffer): boolean {
+  try { return sealer.open(CIVIL_KEY_CHECK.ref, CIVIL_KEY_CHECK.country, check) === CIVIL_KEY_CHECK.number; } catch { return false; }
+}
+
+/**
+ * invalid: off the contract. duplicate: another staged candidate already holds the phone, handle
+ * or civil ID. undecryptable: the row is staged with the same digest, but its sealed civil ID does
+ * not open to the row's number with this key; it is never overwritten.
+ */
+export type PersonContactImportRefusal = "invalid" | "duplicate" | "undecryptable";
 
 export interface PersonContactImportResult {
   readonly inserted: number;
@@ -179,6 +196,7 @@ export class PostgresPersonContactImportStore {
           const outcome = await this.#importOne(client, row);
           if (outcome === "inserted") inserted++;
           else if (outcome === "unchanged") unchanged++;
+          else if (outcome === "undecryptable") refused.push({ legacyId: row.legacyId, code: "undecryptable" });
           else conflicts.push({ legacyId: row.legacyId });
           await client.query("RELEASE SAVEPOINT contact_import");
         } catch (error) {
@@ -199,11 +217,22 @@ export class PostgresPersonContactImportStore {
     }
   }
 
-  async #importOne(client: PoolClient, row: PersonContactImportRow): Promise<"inserted" | "unchanged" | "conflict"> {
+  #opens(row: PersonContactImportRow, country: "KW" | "BH" | null, ciphertext: Buffer | null): boolean {
+    if (!row.civilId || country !== row.civilId.country || !ciphertext) return false;
+    try { return this.#sealer.open(legacyCivilIdRef(row.legacyId), country, ciphertext) === row.civilId.number; } catch { return false; }
+  }
+
+  async #importOne(client: PoolClient, row: PersonContactImportRow): Promise<"inserted" | "unchanged" | "conflict" | "undecryptable"> {
     const digest = this.digest(row);
-    const { rows: held } = await client.query<{ digest: string }>(
-      "SELECT digest FROM legacy_candidate_contacts WHERE legacy_candidate_id = $1 FOR UPDATE", [row.legacyId]);
-    if (held[0]) return held[0].digest === digest ? "unchanged" : "conflict";
+    const { rows: held } = await client.query<{ digest: string; civil_country: "KW" | "BH" | null; civil_number_ciphertext: Buffer | null }>(
+      "SELECT digest, civil_country, civil_number_ciphertext FROM legacy_candidate_contacts WHERE legacy_candidate_id = $1 FOR UPDATE", [row.legacyId]);
+    if (held[0]) {
+      if (held[0].digest !== digest) return "conflict";
+      // A matching digest proves the values, not the ciphertext: the staged civil ID must still
+      // open to the row's number under this key, or the replay is refused (never overwritten).
+      if (row.civilId && !this.#opens(row, held[0].civil_country, held[0].civil_number_ciphertext)) return "undecryptable";
+      return "unchanged";
+    }
     const sealed = row.civilId ? this.#sealer.seal(legacyCivilIdRef(row.legacyId), row.civilId.country, row.civilId.number) : null;
     await client.query(
       `INSERT INTO legacy_candidate_contacts (legacy_candidate_id, phone, profile_handle, civil_country, civil_number_ciphertext,

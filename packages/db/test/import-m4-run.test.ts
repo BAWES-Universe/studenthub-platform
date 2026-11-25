@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -7,6 +7,8 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
 import { main, m4Writers, M4_REQUIRED_MIGRATION, postgresTarget, WRITER_LOCK_SQL, WRITER_SESSION_LIMITS_SQL, WriterSessionPool, type CliDeps, type M4Receipt } from "../../../tools/legacy-import/src/m4-cli.js";
+import { CivilIdVault } from "../../profile/src/index.js";
+import { legacyCivilIdRef } from "@studenthub/db/import";
 import { M4_SOURCES, runM4, type M4Sources, type M4Table } from "../../../tools/legacy-import/src/m4-run.js";
 import { fixtureIds } from "./legacy-fixture-ids.js";
 
@@ -39,7 +41,7 @@ function legacy(c: number, r: string): M4Sources {
       { store_id: c + 1, company_id: c, brand_uuid: `${r}-b`, mall_uuid: null, store_name: "Store B", deleted: 0 }],
     contact: [{ contact_uuid: `${r}-p`, contact_name: "Person", contact_email: `${r}@example.com`, deleted: 0 }],
     company_contact: [{ company_contact_uuid: `${r}-l`, contact_uuid: `${r}-p`, company_id: c + 1, allow_access: 0 }],
-    candidate: [{ candidate_id: c, deleted: 0, candidate_name: "Test Person", candidate_language_pref: "en", candidate_phone: `+96${c}`, profile_url: `m4-${c}`,
+    candidate: [{ candidate_id: c, deleted: 0, candidate_name: "Test Person", candidate_language_pref: "en", candidate_phone: `+96${c}`, profile_url: `m4-${c}`, candidate_civil_id: String(c), candidate_civil_need_verification: 0,
       candidate_email: `m4-${c}@example.invalid`, candidate_email_verification: 1 }],
   };
 }
@@ -52,8 +54,9 @@ test("a write run imports every step in order through the real stores; a second 
   const by = new Map(first.steps.map((s) => [s.step, s.write]));
   assert.deepEqual([by.get("company")!.inserted, by.get("brand_company")!.inserted, by.get("store")!.inserted, by.get("company_contact")!.inserted, by.get("candidate")!.inserted, by.get("candidate_contact")!.inserted], [2, 1, 2, 1, 1, 1]);
   // The contact step staged the candidate's values: the address only as its keyed HMAC.
-  const { rows: [staged] } = await pool.query("SELECT phone, profile_handle, verified_email_hmac FROM legacy_candidate_contacts WHERE legacy_candidate_id = $1", [String(c)]);
-  assert.deepEqual([staged.phone, staged.profile_handle], [`+96${c}`, `m4-${c}`]);
+  const { rows: [staged] } = await pool.query("SELECT phone, profile_handle, civil_country, civil_number_ciphertext, verified_email_hmac FROM legacy_candidate_contacts WHERE legacy_candidate_id = $1", [String(c)]);
+  assert.deepEqual([staged.phone, staged.profile_handle, staged.civil_country], [`+96${c}`, `m4-${c}`, "KW"]);
+  assert.equal(new CivilIdVault(KEYS.civilId).open(legacyCivilIdRef(String(c)), "KW", staged.civil_number_ciphertext), String(c), "the civil ID opens under the run's key");
   assert.equal(staged.verified_email_hmac.length, 32);
   const second = await runM4(legacy(c, r), writers, NOW);
   assert.equal(second.ok, true);
@@ -94,7 +97,7 @@ test("the write target is staging only when the database's own marker row says s
   } finally { await elsewhere.close(); }
 });
 
-test("a write target is schema-ready only once migration 0655 is recorded and the snapshot and contact tables exist", async () => {
+test("a write target is schema-ready only once migration 0656 is recorded and the snapshot and contact tables exist", async () => {
   const target = postgresTarget(URL, ACTOR, operator, KEYS);
   try { assert.equal(await target.schemaReady(), true); } finally { await target.close(); }
   // An older target: the 0652 marker era, before the people snapshot table.
@@ -108,7 +111,7 @@ test("a write target is schema-ready only once migration 0655 is recorded and th
     assert.equal(await older.schemaReady(), false, "0652 only");
     await old.query("INSERT INTO schema_migrations VALUES ('0653_legacy_candidate_snapshots'), ('0654_legacy_candidate_contacts')");
     await old.query("CREATE TABLE legacy_candidate_snapshots (legacy_candidate_id text PRIMARY KEY); CREATE TABLE legacy_candidate_contacts (legacy_candidate_id text PRIMARY KEY)");
-    assert.equal(await older.schemaReady(), false, "0653 and 0654 without 0655");
+    assert.equal(await older.schemaReady(), false, "0653 and 0654 without the required migration");
     await old.query("DROP TABLE legacy_candidate_snapshots, legacy_candidate_contacts");
     await old.query(`INSERT INTO schema_migrations VALUES ('${M4_REQUIRED_MIGRATION}')`);
     assert.equal(await older.schemaReady(), false, "recorded but the table is missing");
@@ -241,6 +244,7 @@ test("a lost lock session mid-write: no later batch runs, the attempt fails with
     error: () => undefined,
   });
   try {
+    assert.equal(await main(["keycheck"], deps(randomUUID())), 0);
     const planInvocation = randomUUID();
     assert.equal(await main(["plan"], deps(planInvocation)), 0);
     const plan = (JSON.parse(readFileSync(path.join(dir, "out", `${planInvocation}.plan.receipt.json`), "utf8")) as M4Receipt).plan!;
@@ -306,5 +310,71 @@ test("waits on the writer session are bounded: a batch blocked by another transa
     await blocker.query("ROLLBACK").catch(() => undefined);
     blocker.release();
     await target.close();
+  }
+});
+
+test("civil ID key: keycheck provisions the target once; a well-formed wrong key writes nothing; the right key stages, replays and opens", async () => {
+  const c = await fixtureIds(pool), r = randomUUID().slice(0, 8);
+  const dir = mkdtempSync(path.join(tmpdir(), "m4-key-"));
+  const sources = legacy(c, r);
+  await pool.query("DELETE FROM legacy_import_target");
+  const { rows: [marker] } = await pool.query<{ target_id: string }>("INSERT INTO legacy_import_target (environment) VALUES ('staging') RETURNING target_id::text");
+  writeFileSync(path.join(dir, "refresh.json"), JSON.stringify({ ok: true, startedAt: "2026-11-23T01:00:00.000Z", finishedAt: "2026-11-23T01:05:00.000Z", totalRows: 1 }));
+  const revision = "a".repeat(40), artifact = "e".repeat(64);
+  const wrongKey = randomBytes(32).toString("base64");
+  const env = {
+    M4_OUTPUT_DIR: path.join(dir, "out"), M4_REVISION: revision, M4_ARTIFACT_DIGEST: artifact, M4_TARGET_ID: marker!.target_id, M4_OPERATOR_ORG_ID: operator,
+    LEGACY_REFRESH_REPORT: path.join(dir, "refresh.json"), LEGACY_REFRESH_LOCK: path.join(dir, "lock"),
+    M4_IMPORT_ACTOR: ACTOR, M4_DATABASE_URL: URL, ...KEY_ENV,
+  };
+  const deps = (extra: Record<string, string> = {}): CliDeps => ({
+    env: { ...env, ...extra, M4_INVOCATION: randomUUID() },
+    lock: async () => ({ held: true, release: () => undefined }),
+    reader: () => ({ rows: async (sql) => sources[/FROM `([a-z_]+)`$/.exec(sql)![1] as M4Table] }),
+    target: (e) => postgresTarget(e.M4_DATABASE_URL!, ACTOR, operator, { digest: KEYS.digest, civilId: Buffer.from(e.M4_CIVIL_ID_ENCRYPTION_KEY!, "base64") }),
+    provenance: () => ({ head: revision, clean: true, artifact }),
+    now: () => new Date(NOW),
+    log: () => undefined,
+    error: () => undefined,
+  });
+  const receipt = (d: CliDeps, kind: string) => JSON.parse(readFileSync(path.join(dir, "out", `${d.env.M4_INVOCATION}.${kind}.receipt.json`), "utf8")) as M4Receipt;
+  const staged = async () => (await pool.query("SELECT 1 FROM legacy_id_maps WHERE legacy_table = 'company' AND legacy_id = $1", [String(c)])).rowCount;
+  try {
+    // Before provisioning, no write; then provisioned once under the right key.
+    const p = deps();
+    assert.equal(await main(["plan"], p), 0);
+    const plan = receipt(p, "plan").plan!;
+    const early = deps({ M4_EXPECTED_PLAN: plan });
+    assert.equal(await main(["write"], early), 2);
+    assert.deepEqual([receipt(early, "write").code, await staged()], ["civilKey", 0]);
+    assert.equal(await main(["keycheck"], deps()), 0);
+    const { rows: [set] } = await pool.query("SELECT civil_key_check, civil_key_check_version FROM legacy_import_target");
+    assert.ok(set.civil_key_check.length > 32);
+    assert.equal(await main(["keycheck"], deps()), 0, "the same key is confirmed");
+    const other = deps({ M4_CIVIL_ID_ENCRYPTION_KEY: wrongKey });
+    assert.equal(await main(["keycheck"], other), 2);
+    assert.equal(receipt(other, "keycheck").code, "civilKey");
+    assert.deepEqual((await pool.query("SELECT civil_key_check FROM legacy_import_target")).rows[0].civil_key_check, set.civil_key_check, "never replaced");
+    await assert.rejects(pool.query("UPDATE legacy_import_target SET civil_key_check = NULL, civil_key_check_version = NULL, civil_key_check_set_at = NULL"), (e: { code?: string }) => e.code === "23514");
+    // A well-formed wrong key: refused before any step, nothing written.
+    const wrong = deps({ M4_EXPECTED_PLAN: plan, M4_CIVIL_ID_ENCRYPTION_KEY: wrongKey });
+    assert.equal(await main(["write"], wrong), 2);
+    assert.deepEqual([receipt(wrong, "write").code, receipt(wrong, "write").steps.length, await staged()], ["civilKey", 0, 0]);
+    // The right key: every step written, the civil ID opens, and a replay is unchanged.
+    assert.equal(await main(["write"], deps({ M4_EXPECTED_PLAN: plan })), 0);
+    const { rows: [row] } = await pool.query("SELECT civil_number_ciphertext FROM legacy_candidate_contacts WHERE legacy_candidate_id = $1", [String(c)]);
+    assert.equal(new CivilIdVault(KEYS.civilId).open(legacyCivilIdRef(String(c)), "KW", row.civil_number_ciphertext), String(c));
+    const replay = deps({ M4_EXPECTED_PLAN: plan });
+    assert.equal(await main(["write"], replay), 0);
+    assert.ok(receipt(replay, "write").steps.every((s) => s.write!.inserted === 0));
+    for (const file of readdirSync(path.join(dir, "out"))) {
+      const text = readFileSync(path.join(dir, "out", file), "utf8");
+      assert.ok(![wrongKey, KEY_ENV.M4_CIVIL_ID_ENCRYPTION_KEY, KEY_ENV.M4_CONTACT_DIGEST_KEY, `+96${c}`].some((v) => text.includes(v)), file);
+    }
+  } finally {
+    await pool.query("ALTER TABLE legacy_import_target DISABLE TRIGGER legacy_import_target_civil_key_check_once");
+    await pool.query("DELETE FROM legacy_import_target");
+    await pool.query("ALTER TABLE legacy_import_target ENABLE TRIGGER legacy_import_target_civil_key_check_once");
+    rmSync(dir, { recursive: true, force: true });
   }
 });
