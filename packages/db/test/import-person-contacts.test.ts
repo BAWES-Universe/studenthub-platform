@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
-import { PostgresPersonContactImportStore, legacyCivilIdRef, type PersonContactImportRow } from "@studenthub/db/import";
+import { PersonContactImportError, PostgresPersonContactImportStore, legacyCivilIdRef, type PersonContactImportRow } from "@studenthub/db/import";
 import { CivilIdVault } from "../../profile/src/index.js";
 import { mapLegacyPersonContacts } from "../../../tools/legacy-import/src/m1-contact.js";
 import { mapLegacyCandidates } from "../../../tools/legacy-import/src/m1-people.js";
@@ -126,6 +126,28 @@ test("a phone, handle or civil ID another staged candidate holds is refused as d
     inserted: 1, unchanged: 0, conflicts: [],
     refused: [{ legacyId: String(b), code: "duplicate" }, { legacyId: String(c), code: "duplicate" }, { legacyId: String(d), code: "duplicate" }],
   });
+});
+
+test("an unexpected failure rolls the batch back and throws only a fixed error: no message detail, no cause", async () => {
+  const a = await fixtureIds(pool), b = a + 1;
+  const SENTINEL = `Zz${kw(b)}Secret`;
+  const leaky = { keyVersion: 1, seal: () => { const e = new Error(`sealing ${SENTINEL} failed`) as Error & { detail?: string }; e.detail = SENTINEL; throw e; } };
+  const failing = new PostgresPersonContactImportStore(pool, leaky, randomBytes(32));
+  const rows = contacts([{ candidate_id: a, candidate_phone: `+96${a}` }, { candidate_id: b, candidate_civil_id: kw(b) }]);
+  await assert.rejects(failing.importContacts(rows), (error: unknown) => {
+    assert.ok(error instanceof PersonContactImportError);
+    assert.equal(error.message, "m1.contact.importFailed");
+    assert.equal(error.code, "m1.contact.importFailed");
+    assert.equal((error as Error & { cause?: unknown }).cause, undefined);
+    const shown = JSON.stringify({ ...error, message: error.message, stack: error.stack, string: String(error) });
+    assert.ok(!shown.includes(SENTINEL) && !shown.includes(kw(b)) && !shown.includes(`+96${a}`), shown);
+    return true;
+  });
+  assert.equal(await read(a), undefined, "the row before the failure rolled back with the batch");
+  // A database that cannot be reached fails the same way.
+  const nowhere = new PostgresPersonContactImportStore({ connectionString: URL.replace(/\/[^/?]+(\?|$)/, "/no_such_database$1") }, vault, randomBytes(32));
+  try { await assert.rejects(nowhere.importContacts(rows), (e: unknown) => e instanceof PersonContactImportError && e.message === "m1.contact.importFailed"); }
+  finally { await nowhere.close(); }
 });
 
 test("the table refuses a malformed id, value or half-recorded civil ID", async () => {

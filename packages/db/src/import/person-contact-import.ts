@@ -65,6 +65,19 @@ export function isValidPersonContactRow(row: unknown): row is PersonContactImpor
   return r.phone !== null || r.handle !== null || r.civilId !== null;
 }
 
+/**
+ * The only error importContacts throws. A database or sealer error can carry a row's values in
+ * its message, detail or cause, so it is never passed on: the batch rolls back and this fixed
+ * error, with no message detail and no cause, is all a caller (or its log) ever sees.
+ */
+export class PersonContactImportError extends Error {
+  readonly code = "m1.contact.importFailed" as const;
+  constructor() {
+    super("m1.contact.importFailed");
+    this.name = "PersonContactImportError";
+  }
+}
+
 const refusalOf = (e: unknown): PersonContactImportRefusal | null => {
   const code = (e as { code?: string }).code ?? "";
   if (code === "23505") return "duplicate";
@@ -100,7 +113,8 @@ export class PostgresPersonContactImportStore {
     let inserted = 0, unchanged = 0;
     const conflicts: { legacyId: string }[] = [];
     const refused: { legacyId: string; code: PersonContactImportRefusal }[] = [];
-    const client = await this.#pool.connect();
+    let client: PoolClient;
+    try { client = await this.#pool.connect(); } catch { throw new PersonContactImportError(); }
     let broken = false;
     try {
       await client.query("BEGIN");
@@ -129,9 +143,9 @@ export class PostgresPersonContactImportStore {
       }
       await client.query("COMMIT");
       return Object.freeze({ inserted, unchanged, conflicts: Object.freeze(conflicts), refused: Object.freeze(refused) });
-    } catch (error) {
+    } catch {
       try { await client.query("ROLLBACK"); } catch { broken = true; }
-      throw error;
+      throw new PersonContactImportError();
     } finally {
       client.release(broken);
     }
@@ -151,7 +165,11 @@ export class PostgresPersonContactImportStore {
     return "inserted";
   }
 
-  /** Legacy candidate ids with values against the staged rows; reported skips listed apart from unexplained gaps. */
+  /**
+   * Id coverage only: legacy candidate ids with values against the staged rows, reported skips
+   * listed apart from unexplained gaps. It is not proof of an import on its own: the run must also
+   * require no conflicts and no unexplained refusals from importContacts.
+   */
   async reconcile(legacyIds: readonly string[], reportedIds: readonly string[] = []) {
     const { rows } = await this.#pool.query<{ legacy_candidate_id: string }>("SELECT legacy_candidate_id FROM legacy_candidate_contacts");
     const staged = new Set(rows.map((r) => r.legacy_candidate_id));
