@@ -13,6 +13,10 @@ const module = "dist/packages/billing/src/bank-results.js";
 const mutations = [
   ["round a fourth decimal away", "BANK_AMOUNT",
     "(?:\\.(\\d{1,3}))?$/u", "(?:\\.(\\d{1,3})\\d*)?$/u"],
+  ["read a decimal comma as a thousands separator", "BANK_AMOUNT",
+    'if (raw.includes(",") && !', 'if (false && !'],
+  ["treat an id replay on a closed transfer as a conflict", "BANK_PLAN_PROVENANCE",
+    "if (prior.length === 1 && prior[0].lineId === row.lineRef)", "if (false)"],
   ["take an unknown status as success", "BANK_SHEET_AUB",
     'rejected.push({ rowNumber, problem: "unknown_status" });\n                continue;', ""],
   ["ignore a different amount on an echoed id", "BANK_PLAN_CHECKS",

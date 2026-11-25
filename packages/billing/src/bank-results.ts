@@ -73,6 +73,9 @@ function text(cell: BankCell): string | null {
 export function bankAmount(cell: BankCell): DecimalString | null {
   const raw = text(cell);
   if (raw === null) return null;
+  // Commas are accepted only as whole thousands groups ("1,250"), never as a
+  // decimal mark ("120,50" would otherwise read as 12050).
+  if (raw.includes(",") && !/^[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?$/u.test(raw)) throw new TypeError("invalid bank amount");
   const plain = raw.replaceAll(",", "");
   const match = /^(0|[1-9]\d{0,11})(?:\.(\d{1,3}))?$/u.exec(plain);
   if (!match) throw new TypeError("invalid bank amount");
@@ -192,7 +195,12 @@ export function planBankResult(
     let line: BankCandidateLine | undefined;
     if (row.lineRef !== null) {
       line = byId.get(row.lineRef);
-      if (!line) { decisions.push(hold(row.rowNumber, prior.length ? "reference_conflict" : "unmatched", prior.map((r) => r.lineId))); continue; }
+      if (!line) {
+        // The recorded line may sit on a closed transfer outside the candidates: same line, same reference is a replay.
+        if (prior.length === 1 && prior[0]!.lineId === row.lineRef) decisions.push({ kind: "duplicate", rowNumber: row.rowNumber, lineId: row.lineRef });
+        else decisions.push(hold(row.rowNumber, prior.length ? "reference_conflict" : "unmatched", prior.map((r) => r.lineId)));
+        continue;
+      }
       if (row.currency !== null && row.currency !== line.currency) { decisions.push(hold(row.rowNumber, "currency_mismatch", [line.lineId])); continue; }
       if (row.amount !== null && row.amount !== line.paidAmount) { decisions.push(hold(row.rowNumber, "amount_mismatch", [line.lineId])); continue; }
       if (prior.length) {

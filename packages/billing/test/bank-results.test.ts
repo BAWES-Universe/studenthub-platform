@@ -30,7 +30,8 @@ test("BANK_AMOUNT keeps exact three places and refuses what it would have to rou
   assert.equal(bankAmount("1,250"), "1250.000");
   assert.equal(bankAmount(""), null);
   assert.equal(bankAmount(null), null);
-  for (const bad of ["1.2345", "-1", "abc", "1e3", "01"]) assert.throws(() => bankAmount(bad), TypeError);
+  assert.equal(bankAmount("1,250,000.5"), "1250000.500");
+  for (const bad of ["1.2345", "-1", "abc", "1e3", "01", "120,50", "1,25", ",250", "1,2500", "0,250", "1,250.5,0"]) assert.throws(() => bankAmount(bad), TypeError);
 });
 
 test("BANK_SHEET_AUB reads legacy row 2 headers, statuses and the echoed line id", () => {
@@ -173,6 +174,9 @@ test("BANK_PLAN_PROVENANCE contradictory or non-unique references are held", () 
   const paid = [line({ lineId: "L2", transferId: "T2", paid: true })];
   assert.deepEqual(reason(planBankResult(byId, paid, [rec("L2", "R1")])), ["duplicate"]);
   assert.deepEqual(reason(planBankResult(byId, paid, [])), ["already_paid:L2"]);
+  // By id, the recorded line on a closed transfer (not a candidate): a replay, not a conflict.
+  assert.deepEqual(reason(planBankResult(byId, [], [rec("L2", "R1")])), ["duplicate"]);
+  assert.deepEqual(reason(planBankResult(byId, [], [rec("L9", "R1")])), ["reference_conflict:L9"]);
 });
 
 test("BANK_PLAN_NO_REFERENCE an account match without a bank reference is held, never paid", () => {
