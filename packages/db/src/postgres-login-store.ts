@@ -81,6 +81,9 @@ export class PostgresLoginStore {
       bindStableId: (issuer, subject, stableUserId) =>
         this.#bindStableId(issuer, subject, stableUserId),
       recordEmailVerification: (personId, email, verified) => this.#recordEmailVerification(personId, email, verified),
+      forgetEmailVerification: async (personId) => {
+        await this.#pool.query("DELETE FROM principal_email_verifications WHERE principal_id = $1::text", [personId]);
+      },
       // Deliberately unavailable: mutable donor/profile fields are never an
       // authentication binding mechanism.
       findLegacyMatch: async () => undefined,
@@ -225,6 +228,8 @@ export class PostgresLoginStore {
   // Access lane (migration 0410): the issuer's answer is kept only for the person's
   // current address, normalised, and always replaces what was recorded for it
   // (a legacy import only ever inserts). One statement; nothing for another address.
+  // The table's trigger locks the principal row and rechecks the address, so a
+  // write racing an address change is refused rather than left stale.
   async #recordEmailVerification(personId: string, email: string, verified: boolean): Promise<void> {
     await this.#pool.query(
       `INSERT INTO principal_email_verifications (principal_id, email, verified, source, recorded_at)

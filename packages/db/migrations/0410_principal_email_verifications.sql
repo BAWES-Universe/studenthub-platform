@@ -32,3 +32,27 @@ CREATE TRIGGER principal_email_verifications_follow_address
   FOR EACH ROW
   WHEN (OLD.email IS DISTINCT FROM NEW.email)
   EXECUTE FUNCTION principal_email_verifications_follow_address();
+
+-- Every write (sign-in or legacy import) is serialised with an address change:
+-- it takes a share lock on the principal row and rechecks the current address
+-- under that lock. A write racing an address change either waits for the change
+-- and is refused, or commits first and is then dropped by the trigger above, so
+-- a stale address can never keep a fact that a later change back would revive.
+CREATE FUNCTION principal_email_verifications_current_address() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM 1 FROM principals
+    WHERE id = NEW.principal_id AND email IS NOT NULL AND lower(btrim(email)) = lower(btrim(NEW.email))
+    FOR SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'principal_email_verifications: not the principal''s current address'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER principal_email_verifications_current_address
+  BEFORE INSERT OR UPDATE ON principal_email_verifications
+  FOR EACH ROW
+  EXECUTE FUNCTION principal_email_verifications_current_address();

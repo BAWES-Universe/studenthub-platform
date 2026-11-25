@@ -361,21 +361,32 @@ test("EMAIL_VERIFIED_RECORD sign-in records the issuer's email_verified answer f
   assert.equal((await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize({ emailVerified: true } as never) })).status, 302);
 });
 
-test("EMAIL_VERIFIED_BEST_EFFORT a failed verification write leaves the fact unrecorded and the sign-in still succeeds", async () => {
-  const rig = createSyntheticLoginRig(createLoginApplication);
-  (rig.identities as unknown as { recordEmailVerification: unknown }).recordEmailVerification =
-    async () => { throw Object.assign(new Error("connection lost"), { code: "08006" }); };
+test("EMAIL_VERIFIED_BEST_EFFORT a failed verification write forgets the person's recorded answers and the sign-in still succeeds", async () => {
   const warn = console.warn;
-  const warned: unknown[] = [];
-  console.warn = (...args: unknown[]) => { warned.push(args.join(" ")); };
-  try {
-    await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
-    const authorization = rig.provider.authorizationRequests.at(-1)!;
-    const response = await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize({ profile: { email: "person@universe.invalid" }, emailVerified: true } as never) });
-    assert.equal(response.status, 302);
-    assert.equal(rig.sessions.records.size, 1, "the session is created");
-  } finally {
-    console.warn = warn;
+  for (const forgetFails of [false, true]) {
+    const rig = createSyntheticLoginRig(createLoginApplication);
+    const forgotten: string[] = [];
+    Object.assign(rig.identities as object, {
+      recordEmailVerification: async () => { throw Object.assign(new Error("connection lost"), { code: "08006" }); },
+      forgetEmailVerification: async (personId: string) => {
+        if (forgetFails) throw new Error("still down");
+        forgotten.push(personId);
+      },
+    });
+    const warned: unknown[] = [];
+    console.warn = (...args: unknown[]) => { warned.push(args.join(" ")); };
+    try {
+      await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
+      const authorization = rig.provider.authorizationRequests.at(-1)!;
+      const response = await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize({ profile: { email: "person@universe.invalid" }, emailVerified: false } as never) });
+      assert.equal(response.status, 302, `forgetFails=${forgetFails}`);
+      assert.equal(rig.sessions.records.size, 1, "the session is created");
+    } finally {
+      console.warn = warn;
+    }
+    const personId = [...rig.sessions.records.values()][0]!.personId;
+    assert.deepEqual(forgotten, forgetFails ? [] : [personId], "a failed write forgets what was recorded (fail closed)");
+    assert.deepEqual(warned, [JSON.stringify({ event: "email_verification_not_recorded" }),
+      ...(forgetFails ? [JSON.stringify({ event: "email_verification_not_forgotten" })] : [])], "log lines carry no address or person");
   }
-  assert.deepEqual(warned, [JSON.stringify({ event: "email_verification_not_recorded" })], "the log line carries no address or person");
 });

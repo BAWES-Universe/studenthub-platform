@@ -43,11 +43,11 @@ test("EV_RECORD the issuer's answer is kept for the current address, normalised,
 
 test("EV_OTHER_ADDRESS nothing is recorded for an address that is not the person's, or a blank one", async () => {
   const id = await person();
-  await record(id, "someone-else@example.com", true);
-  await record(id, "   ", true);
+  await assert.doesNotReject(record(id, "someone-else@example.com", true), "another address is skipped, not an error");
+  await assert.doesNotReject(record(id, "   ", true));
   assert.deepEqual(await rows(id), []);
   const none = await person(undefined);
-  await record(none, "any@example.com", true);
+  await assert.doesNotReject(record(none, "any@example.com", true));
   assert.deepEqual(await rows(none), [], "a person without an address records nothing");
   assert.equal(await verified(none), false);
   assert.equal(await verified(`ev-missing-${randomUUID()}`), false, "an unknown person is not verified");
@@ -81,10 +81,69 @@ test("EV_LEGACY a legacy import never overrides the issuer, and fills in when no
   assert.deepEqual(await rows(fresh), [{ email: "fresh@example.com", verified: false, source: "oidc" }], "the issuer replaces a legacy answer");
 });
 
+const insertFor = (client: pg.PoolClient | pg.Pool, id: string, email: string, verified = true) => client.query(
+  "INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, $2, $3, 'oidc')", [id, email, verified]);
+
+test("EV_SERIAL_CHANGE_FIRST a write racing an address change waits for it and is refused, so changing back revives nothing", async () => {
+  const id = await person("race-a@example.com");
+  const change = await pool.connect();
+  try {
+    await change.query("BEGIN");
+    await change.query("UPDATE principals SET email = 'race-b@example.com' WHERE id = $1", [id]);
+    const write = record(id, "race-a@example.com", true).then(() => "recorded", (error: Error) => error.message);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await change.query("COMMIT");
+    assert.match(await write, /current address/, "the write saw the change and was refused");
+  } finally {
+    change.release();
+  }
+  assert.deepEqual(await rows(id), []);
+  await pool.query("UPDATE principals SET email = 'race-a@example.com' WHERE id = $1", [id]);
+  assert.equal(await verified(id), false, "changing back revives nothing");
+});
+
+test("EV_SERIAL_WRITE_FIRST an address change waits for a write in flight and then drops it", async () => {
+  const id = await person("first-a@example.com");
+  const write = await pool.connect();
+  try {
+    await write.query("BEGIN");
+    await insertFor(write, id, "first-a@example.com");
+    const change = pool.query("UPDATE principals SET email = 'first-b@example.com' WHERE id = $1", [id]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await write.query("COMMIT");
+    await change;
+  } finally {
+    write.release();
+  }
+  assert.deepEqual(await rows(id), [], "the committed fact for the old address is dropped by the change");
+  await pool.query("UPDATE principals SET email = 'first-a@example.com' WHERE id = $1", [id]);
+  assert.equal(await verified(id), false, "changing back revives nothing");
+});
+
+test("EV_CURRENT_ONLY any writer, the legacy import included, is refused for an address that is not current", async () => {
+  const id = await person("current@example.com");
+  await assert.rejects(insertFor(pool, id, "other@example.com"), /current address/);
+  await assert.rejects(pool.query(
+    `INSERT INTO principal_email_verifications (principal_id, email, verified, source)
+     VALUES ($1, 'other@example.com', true, 'legacy_import') ON CONFLICT (principal_id, email) DO NOTHING`, [id]), /current address/);
+  await record(id, "current@example.com", true);
+  await assert.rejects(pool.query("UPDATE principal_email_verifications SET email = 'other@example.com' WHERE principal_id = $1", [id]), /current address/);
+  assert.deepEqual(await rows(id), [{ email: "current@example.com", verified: true, source: "oidc" }]);
+});
+
+test("EV_FORGET forgetting drops every recorded answer, so the address reads as not verified", async () => {
+  const id = await person("forget@example.com");
+  await record(id, "forget@example.com", true);
+  assert.equal(await verified(id), true);
+  await login.identities.forgetEmailVerification!(id);
+  assert.deepEqual(await rows(id), []);
+  assert.equal(await verified(id), false);
+});
+
 test("EV_SHAPE the table refuses unnormalised addresses and unknown sources, and needs a real principal", async () => {
   const id = await person("shape@example.com");
   await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, 'Shape@example.com', true, 'oidc')", [id]), /check constraint/);
-  await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, '', true, 'oidc')", [id]), /check constraint/);
+  await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, '', true, 'oidc')", [id]), /check constraint|current address/);
   await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, 'shape@example.com', true, 'guess')", [id]), /check constraint/);
-  await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, 'shape@example.com', true, 'oidc')", [`ev-missing-${randomUUID()}`]), /foreign key/);
+  await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, 'shape@example.com', true, 'oidc')", [`ev-missing-${randomUUID()}`]), /foreign key|current address/);
 });

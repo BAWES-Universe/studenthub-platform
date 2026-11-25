@@ -21,6 +21,8 @@ try {
     ["never record the answer", "EMAIL_VERIFIED_RECORD", "await dependencies.identities.recordEmailVerification(identity.personId, claims.email, claims.email_verified === true);", ""],
     ["let a failed write reject the sign-in", "EMAIL_VERIFIED_BEST_EFFORT",
       'console.warn(JSON.stringify({ event: "email_verification_not_recorded" }));', "throw new Error(\"not recorded\");"],
+    ["keep the old answer when the write fails", "EMAIL_VERIFIED_BEST_EFFORT",
+      "await dependencies.identities.forgetEmailVerification?.(identity.personId);", ""],
   ];
   const original = readFileSync(gatewayFile, "utf8");
   for (const [name, token, from, to] of mutants) {
