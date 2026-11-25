@@ -126,7 +126,8 @@ export async function readForm(req: IncomingMessage): Promise<Record<string, str
     }
     chunks.push(bytes);
   }
-  const out: Record<string, string> = {};
+  // A null-prototype record, so a field named __proto__ is kept as a field (and so counted and refused) rather than dropped.
+  const out = Object.create(null) as Record<string, string>;
   for (const [key, value] of new URLSearchParams(Buffer.concat(chunks).toString("utf8"))) {
     if (Object.hasOwn(out, key)) return undefined;
     out[key] = value;

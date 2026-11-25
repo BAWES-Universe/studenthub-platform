@@ -120,9 +120,11 @@ test("U03_SAME_ORIGIN a cross-site or foreign-origin post, or one with fields, c
     assert.equal(response.status, 403, JSON.stringify(headers));
     assert.match(await response.text(), /That request did not come from this page\. Nothing changed\./);
   }
-  const extra = await http.post("/account/sign-out-everywhere", DANA, "personId=omar");
-  assert.equal(extra.status, 400);
-  assert.match(await extra.text(), /Nothing changed\./);
+  for (const body of ["personId=omar", "__proto__=x", "constructor=x"]) {
+    const extra = await http.post("/account/sign-out-everywhere", DANA, body);
+    assert.equal(extra.status, 400, body);
+    assert.match(await extra.text(), /Nothing changed\./);
+  }
   assert.deepEqual(ended, []);
   assert.equal(live.size, 3);
 });
