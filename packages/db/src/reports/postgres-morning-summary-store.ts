@@ -84,9 +84,24 @@ export class PostgresMorningSummaryStore {
   }
   async close(): Promise<void> { if (this.#owns) await this.#pool.end(); }
 
-  /** The counters this store can read for one Asia/Kuwait day. */
-  async counts(day: string, client: Pick<pg.Pool, "query"> = this.#pool): Promise<MorningSummaryRawCounts> {
+  /**
+   * The counters this store can read for one Asia/Kuwait day, all from one snapshot. A caller
+   * already in a repeatable-read transaction passes its client; otherwise the store opens one.
+   */
+  async counts(day: string, client?: Pick<pg.Pool, "query">): Promise<MorningSummaryRawCounts> {
     if (!DAY.test(day)) throw new RangeError("invalid day");
+    if (client) return this.#read(day, client);
+    const c = await this.#pool.connect();
+    try {
+      await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const counts = await this.#read(day, c);
+      await c.query("COMMIT");
+      return counts;
+    } catch (error) { await c.query("ROLLBACK").catch(() => undefined); throw error; }
+    finally { c.release(); }
+  }
+
+  async #read(day: string, client: Pick<pg.Pool, "query">): Promise<MorningSummaryRawCounts> {
     const counts = (await client.query<Record<string, number>>(COUNTS, [day, this.#operatorOrgIds])).rows[0]!;
     const candidates = (await client.query<{ id: string }>(BANK_INFO_CANDIDATES, [day])).rows.map(r => r.id);
     return { ...counts, missingBankInfo: await this.#bank.countWithoutDetails(candidates, client) };
@@ -105,7 +120,8 @@ export class PostgresMorningSummaryStore {
       await c.query("BEGIN");
       await c.query("SELECT pg_advisory_xact_lock(hashtextextended('morning_summary:' || $1, 0))", [day]);
       if ((await c.query("SELECT 1 FROM morning_summary_runs WHERE day = $1::date", [day])).rowCount) { await c.query("ROLLBACK"); return null; }
-      const parameters = build(await this.counts(day, c));
+      // Its own repeatable-read snapshot: this transaction stays read committed so the day lock and the run check see the latest runs.
+      const parameters = build(await this.counts(day));
       const queued = await c.query(`INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key)
         SELECT 'staff.morning_summary', r.principal_id, $2::jsonb, 'staff.morning_summary:' || $1 || ':' || r.principal_id FROM (${RECIPIENTS("$3")}) r
         ON CONFLICT (idempotency_key) DO NOTHING`, [day, JSON.stringify(parameters), this.#operatorOrgIds]);

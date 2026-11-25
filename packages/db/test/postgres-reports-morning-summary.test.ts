@@ -290,3 +290,21 @@ test("REPORTS_MORNING_SUMMARY_PG missing bank info: people placed today at a KWD
   await paid(kwd, await principal("deleted"), "2026-10", "2026-11-01T08:00:00Z", "lock", "delete"); // deleted transfer (the lifecycle deletes only before payment)
   assert.equal(await read() - before, 4);
 });
+
+test("REPORTS_MORNING_SUMMARY_PG missing bank info reads the candidates and their bank details in one snapshot", async () => {
+  const day = "2026-11-21";
+  const racer = await placed(await payCompany(), "2026-10-01");
+  // A pool whose clients commit bank details for `racer` from another connection right after the candidate read.
+  let armed = true;
+  const racing = Object.create(pool, { connect: { value: async () => {
+    const c = await pool.connect(), query = c.query.bind(c) as (...a: unknown[]) => Promise<unknown>;
+    return Object.assign(c, { query: async (...a: unknown[]) => {
+      const out = await query(...a);
+      if (armed && typeof a[0] === "string" && a[0].includes("person_principal_id AS id")) { armed = false; await bankDetails(racer); }
+      return out;
+    } });
+  } } }) as pg.Pool;
+  const before = (await new PostgresMorningSummaryStore({ pool: racing, operatorOrgIds: [OPS] }).counts(day)).missingBankInfo!;
+  assert.equal(armed, false, "the race ran");
+  assert.equal((await store.counts(day)).missingBankInfo!, before - 1, "the committed details count from the next read");
+});
