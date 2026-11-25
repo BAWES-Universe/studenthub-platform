@@ -194,6 +194,17 @@ test("SHU182_BANK_PG_STALE a value changed after the preview is not overwritten"
   assert.equal((await stored(id)).iban, "GB82WEST12345698765432");
 });
 
+test("SHU182_BANK_PG_PRESENCE withoutDetails answers only who has no row, in input order without repeats", async () => {
+  const [withRow, without, other] = [await person(), await person(), await person()];
+  const nobody = `shu182-nobody-${randomUUID()}`;
+  await pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, $3, $4)",
+    [withRow, await catalogueItem("bank"), IBAN, NAME]);
+  assert.deepEqual(await store.withoutDetails([other, withRow, without, other, nobody]), [other, without, nobody]);
+  assert.deepEqual(await store.withoutDetails([withRow]), []);
+  assert.deepEqual(await store.withoutDetails([]), []);
+  await assert.rejects(store.withoutDetails([""]), TypeError);
+});
+
 test("SHU182_BANK_PG_SCHEMA the table and the ledger refuse malformed rows from any writer", async () => {
   const id = await person();
   const bankId = await catalogueItem("bank");
@@ -368,6 +379,7 @@ test("SHU182_BANK_NOT_PROJECTED only the bank-details path can reach the table o
     "apps/gateway/src/wiring/profile.ts",
     "packages/db/src/postgres-bank-details-store.ts",
     "packages/db/src/profile/index.ts",
+    "packages/db/src/reports/postgres-morning-summary-store.ts",
     "packages/pay-contracts/src/bank-write.ts",
   ]);
 });

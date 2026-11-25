@@ -14,7 +14,8 @@
  * - the receipt is a SHU-59 ledger row carrying references and the field name only.
  *
  * This module is the only reader of `candidate_bank_details`; the
- * non-finance projection test keeps it that way.
+ * non-finance projection test keeps it that way. Reports ask it only whether
+ * a row exists (`withoutDetails`), never for a value.
  */
 import { createHash } from "node:crypto";
 import pg from "pg";
@@ -60,6 +61,24 @@ export class PostgresBankDetailsStore {
 
   async close(): Promise<void> {
     if (this.#ownsPool) await this.#pool.end();
+  }
+
+  /**
+   * Of the given principals, the ones with no bank details on file, in input order without
+   * repeats. Presence only: no bank, IBAN or name is read, so a report can count people who
+   * still need to add details (legacy "Candidates missing bank info") without a projection of
+   * the table. A caller in a transaction passes its client so the answer shares its snapshot.
+   */
+  async withoutDetails(principalIds: readonly string[], client: Pick<pg.Pool, "query"> = this.#pool): Promise<string[]> {
+    if (!Array.isArray(principalIds) || principalIds.some((id) => typeof id !== "string" || id.length === 0)) {
+      throw new TypeError("principal ids required");
+    }
+    if (principalIds.length === 0) return [];
+    const result = await client.query<{ id: string }>(
+      `SELECT u.id FROM unnest($1::text[]) WITH ORDINALITY AS u(id, n)
+        WHERE NOT EXISTS (SELECT 1 FROM candidate_bank_details d WHERE d.principal_id = u.id)
+        GROUP BY u.id ORDER BY min(u.n)`, [principalIds]);
+    return result.rows.map((row) => row.id);
   }
 
   /** The port for one signed-in principal; it can reach that person's own row only. */

@@ -1,5 +1,6 @@
 import pg from "pg";
 import { databaseUrl } from "../connection.js";
+import { PostgresBankDetailsStore } from "../postgres-bank-details-store.js";
 import { idCardExpiredCount, idCardNeedsCount } from "./postgres-id-cards-store.js";
 
 /**
@@ -43,6 +44,18 @@ SELECT
   ${idCardExpiredCount("$1")} AS "totalExpiredCards",
   ${idCardNeedsCount("$1")} AS "id_need_generated"`;
 
+// Legacy `Candidate::withoutBankInfoOrWithPayment`, KWD only: people placed today at an organization
+// that bills in KWD, and people with an unpaid line on a live KWD transfer whose payment has arrived
+// (being distributed, or complete). Whether each has bank details is asked of the bank-details store,
+// the table's only reader; this query never names that table.
+const BANK_INFO_CANDIDATES = `SELECT a.person_principal_id AS id FROM work_assignments a
+    LEFT JOIN organization_commercial_terms ct ON ct.org_id = a.org_id AND ct.field = 'currency_code'
+    WHERE a.start_date <= $1::date AND (a.end_date IS NULL OR a.end_date >= $1::date) AND COALESCE(ct.value, 'KWD') = 'KWD'
+  UNION
+  SELECT l.person_id FROM pay_transfer_lines l JOIN pay_transfers p ON p.id = l.transfer_id
+    WHERE NOT l.paid AND NOT p.deleted AND p.currency_code = 'KWD' AND p.status IN ('distributing','complete')
+  ORDER BY 1`;
+
 /**
  * Who may get the email: subscribed, still StudentHub staff (a staff or admin grant over an
  * operator organization's subtree), account not paused. Used when the email is queued and
@@ -55,18 +68,21 @@ export const morningSummaryEligible = (principal: string, orgs: string) => `(EXI
 const RECIPIENTS = (orgs: string) => `SELECT s.principal_id FROM morning_summary_subscriptions s WHERE ${morningSummaryEligible("s.principal_id", orgs)} ORDER BY s.principal_id`;
 
 export class PostgresMorningSummaryStore {
-  readonly #pool: pg.Pool; readonly #owns: boolean; readonly #operatorOrgIds: readonly string[];
+  readonly #pool: pg.Pool; readonly #owns: boolean; readonly #operatorOrgIds: readonly string[]; readonly #bank: PostgresBankDetailsStore;
   constructor(options: { connectionString?: string; pool?: pg.Pool; operatorOrgIds?: readonly string[] } = {}) {
     this.#owns = !options.pool;
     this.#pool = options.pool ?? new pg.Pool({ connectionString: options.connectionString ?? databaseUrl() });
     this.#operatorOrgIds = options.operatorOrgIds ?? ["root"];
+    this.#bank = new PostgresBankDetailsStore({ pool: this.#pool });
   }
   async close(): Promise<void> { if (this.#owns) await this.#pool.end(); }
 
   /** The counters this store can read for one Asia/Kuwait day. */
   async counts(day: string, client: Pick<pg.Pool, "query"> = this.#pool): Promise<MorningSummaryRawCounts> {
     if (!DAY.test(day)) throw new RangeError("invalid day");
-    return (await client.query<Record<string, number>>(COUNTS, [day, this.#operatorOrgIds])).rows[0]!;
+    const counts = (await client.query<Record<string, number>>(COUNTS, [day, this.#operatorOrgIds])).rows[0]!;
+    const candidates = (await client.query<{ id: string }>(BANK_INFO_CANDIDATES, [day])).rows.map(r => r.id);
+    return { ...counts, missingBankInfo: (await this.#bank.withoutDetails(candidates, client)).length };
   }
 
   /**

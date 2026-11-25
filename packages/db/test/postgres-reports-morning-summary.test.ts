@@ -150,11 +150,11 @@ test("REPORTS_MORNING_SUMMARY_PG the email goes once a day to subscribed staff w
     assert.equal(r.idempotency_key, `staff.morning_summary:${day}:${r.recipient_principal_id}`);
     assert.equal(r.state, "pending");
     assert.doesNotThrow(() => validateTemplateParameters("staff.morning_summary", r.template_parameters));
-    assert.equal(r.template_parameters.counters.missingBankInfo, null);
+    assert.equal(typeof r.template_parameters.counters.missingBankInfo, "number");
   }
   const [run] = (await pool.query("SELECT counters, recipients FROM morning_summary_runs WHERE day=$1::date", [day])).rows;
   assert.equal(run.recipients, rows.length);
-  assert.equal(run.counters.missingBankInfo, null);
+  assert.equal(typeof run.counters.missingBankInfo, "number");
   assert.equal(await store.sendDay(day, at, build), null, "a day is sent once");
   assert.equal((await pool.query("SELECT count(*)::int n FROM email_outbox WHERE idempotency_key LIKE $1", [`staff.morning_summary:${day}:%`])).rows[0].n, rows.length);
   await assert.rejects(pool.query("UPDATE morning_summary_runs SET recipients=0 WHERE day=$1::date", [day]), /append-only/);
@@ -253,4 +253,34 @@ test("REPORTS_MORNING_SUMMARY_PG payment counters: KWD companies with staff for 
   for (const org of [goneSub.id, paidSub.id]) await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [org, `receipt-${randomUUID()}`]);
   const [companies, idle] = await read();
   assert.deepEqual([companies - companiesBefore, idle - idleBefore], [5, 8]);
+});
+
+async function bankDetails(person: string): Promise<void> {
+  const bank = randomUUID();
+  await pool.query(`INSERT INTO catalogue_items (id, catalogue_type, name, normalized_name, status, created_by_ref, updated_by_ref, created_at, updated_at)
+    VALUES ($1, 'bank', $2, $2, 'active', $3, $3, now(), now())`, [bank, `Synthetic bank ${bank.slice(0, 8)}`, "a".repeat(64)]);
+  await pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, 'KW81CBKU0000000000001234560101', 'Synthetic Beneficiary')", [person, bank]);
+}
+
+test("REPORTS_MORNING_SUMMARY_PG missing bank info: people placed today at a KWD organization, or with an unpaid line on a KWD transfer being distributed, who have no bank details", async () => {
+  const day = "2026-11-21";
+  const read = async () => (await store.counts(day)).missingBankInfo!;
+  const before = await read();
+  const kwd = await payCompany(), usd = await payCompany(OPS, "USD");
+  await placed(kwd, "2026-10-01"); // placed, no details: counted
+  await bankDetails(await placed(kwd, "2026-10-01")); // placed, details on file
+  await placed(kwd, "2026-11-21"); // placed from today: counted
+  await placed(kwd, "2026-11-22"); // starts tomorrow
+  await placed(kwd, "2026-09-01", "2026-11-20"); // ended yesterday
+  await placed(usd, "2026-10-01"); // placed at an organization that is not KWD
+  const owed = await principal("owed");
+  await paid(kwd, owed, "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // unpaid line being distributed, not placed: counted
+  const both = await placed(kwd, "2026-10-01");
+  await paid(kwd, both, "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // placed and owed: counted once
+  await paid(kwd, await principal("locked"), "2026-10", "2026-11-01T08:00:00Z", "lock"); // payment not received yet
+  await linesPaid(await paid(kwd, await principal("settled"), "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received")); // line paid
+  const owedWithBank = await principal("owed-bank");
+  await bankDetails(owedWithBank);
+  await paid(kwd, owedWithBank, "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // owed, details on file
+  assert.equal(await read() - before, 4);
 });
