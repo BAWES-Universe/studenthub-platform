@@ -42,7 +42,7 @@ export const STAFF_STATISTICS_COUNTERS = [
   { key: "id_need_generated", label: "Candidates assigned to work without ID cards", source: available },
   { key: "profileApprovalRequire", label: "Profiles to be reviewed and approved", source: missing("profile approval, which no lane holds yet") },
   { key: "incompleteAssignedToWork", label: "Assigned candidates with incomplete profiles", source: missing("profile completeness, which no lane holds yet") },
-  { key: "missingBankInfo", label: "Candidates missing bank info", source: missing("unpaid transfers from the pay lane (a count without them would be too low)") },
+  { key: "missingBankInfo", label: "Candidates missing bank info", source: available },
   { key: "requireFollowup", label: "Clients requiring follow-up", source: missing("company follow-up dates, which no lane holds yet") },
   { key: "activeRequests", label: "Active requests", source: available },
   { key: "totalMinor", label: "Candidates under 16", source: available },

@@ -20,6 +20,11 @@
  *   A line has a paid flag but no payment date, so the label says "not paid for a pay period"
  *   rather than legacy's "not received any payment in the past two months". Legacy's query could never match (it asked for a transfer line created in the
  *   last two months that did not exist), so it always showed 0.
+ *
+ * Candidates missing bank info (legacy `Candidate::withoutBankInfoOrWithPayment`, KWD): people placed
+ * today at an organization that bills in KWD, or with an unpaid line on a live KWD transfer being
+ * distributed or complete, who have no bank details on file. The bank-details store answers only
+ * whether details exist; no report reads a bank, IBAN or name.
  */
 export type MorningSummarySource =
   | { readonly kind: "available" }
@@ -37,7 +42,7 @@ export const MORNING_SUMMARY_COUNTERS = [
   { key: "activeRequests", label: "Active requests that need an update", source: available },
   { key: "last40daysNoRequest", label: "Active clients who have not made a request in over 40 days", source: missing("company start dates and active flags from the importer") },
   { key: "requireFollowup", label: "Clients requiring follow-up", source: missing("company follow-up dates, which no lane holds yet") },
-  { key: "missingBankInfo", label: "Candidates missing bank info", source: missing("unpaid transfers from the pay lane (a count without them would be too low)") },
+  { key: "missingBankInfo", label: "Candidates missing bank info", source: available },
   { key: "assignedExpiredCivilID", label: "Assigned candidates with an expired civil ID", source: available },
   { key: "assignedIdleCandidates", label: "Assigned candidates not paid for any pay period that ended in the past two months", source: available },
   { key: "incompleteAssignedToWork", label: "Assigned candidates with incomplete profiles", source: missing("profile completeness, which no lane holds yet") },

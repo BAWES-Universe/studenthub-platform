@@ -3,10 +3,11 @@ import { kuwaitDay } from "../../notifications/src/index.js";
 /**
  * When the person reminder emails are queued (comms lane slice 10). Legacy ran `cron/daily` at 13:30
  * Kuwait time (birthday, civil ID expired today) and the mid-month and end-of-month jobs on the 15th
- * and 28th (civil ID expiring within 25 days). The email delivery job checks on every run; each
+ * and 28th (civil ID expiring within 25 days, and missing bank details, legacy
+ * `Candidate::notifyMissingBankInfo`). The email delivery job checks on every run; each
  * kind is queued once per Kuwait day from 13:30, by a worker that can deliver.
  */
-export type PersonReminderKind = "birthday" | "civil_id_expired" | "civil_id_expiring";
+export type PersonReminderKind = "birthday" | "civil_id_expired" | "civil_id_expiring" | "bank_details_missing";
 export interface PersonRemindersPort { sendDay(kind: PersonReminderKind, day: string, at: Date): Promise<number | null> }
 export const PERSON_REMINDER_MINUTE = 13 * 60 + 30;
 export const CIVIL_ID_EXPIRING_DAYS_OF_MONTH: readonly number[] = [15, 28];
@@ -23,7 +24,7 @@ export function dueReminderKinds(now: Date): { readonly day: string; readonly ki
   const day = kuwaitDay(now);
   if (kuwaitMinute(now) < PERSON_REMINDER_MINUTE) return { day, kinds: [] };
   const kinds: PersonReminderKind[] = ["birthday", "civil_id_expired"];
-  if (CIVIL_ID_EXPIRING_DAYS_OF_MONTH.includes(Number(day.slice(8, 10)))) kinds.push("civil_id_expiring");
+  if (CIVIL_ID_EXPIRING_DAYS_OF_MONTH.includes(Number(day.slice(8, 10)))) kinds.push("civil_id_expiring", "bank_details_missing");
   return { day, kinds };
 }
 

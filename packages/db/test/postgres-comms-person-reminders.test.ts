@@ -5,6 +5,8 @@ import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
 import { PostgresPersonRemindersStore, type PersonReminderKind as StoredKind } from "@studenthub/db/comms";
+import { PostgresBankDetailsStore } from "@studenthub/db";
+import { bankReminderEligible } from "../src/comms/postgres-person-reminders-store.js";
 import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { EmailOutboxService, FakeEmailPort } from "../../notifications/src/index.js";
 import { queuePersonRemindersThenDeliver, type PersonReminderKind } from "../../comms/src/person-reminders.js";
@@ -110,21 +112,21 @@ test("COMMS_PERSON_REMINDERS_PG every delivery attempt rechecks: a renewed civil
 });
 
 test("COMMS_PERSON_REMINDERS_PG the email delivery job queues what is due from 13:30 Kuwait time, once a day, then delivers", async () => {
-  const day = "2031-09-15"; for (const k of ["birthday", "civil_id_expired", "civil_id_expiring"]) await fresh(k, day);
+  const day = "2031-09-15"; for (const k of ["birthday", "civil_id_expired", "civil_id_expiring", "bank_details_missing"]) await fresh(k, day);
   const person = await principal("job"); await profile(person, "Job Person", "2001-09-15");
   let delivered = 0; const deliver = async () => ++delivered;
   await queuePersonRemindersThenDeliver(store, deliver, () => new Date("2031-09-15T10:29:00Z"));
   assert.deepEqual(await queued("person.birthday", day, [person]), [], "13:29 in Kuwait: not yet");
   await queuePersonRemindersThenDeliver(store, deliver, () => new Date("2031-09-15T10:30:00Z"));
   assert.equal((await queued("person.birthday", day, [person])).length, 1);
-  assert.equal(Number((await pool.query("SELECT count(*) n FROM person_reminder_runs WHERE day=$1", [day])).rows[0].n), 3, "the 15th: all three kinds ran");
+  assert.equal(Number((await pool.query("SELECT count(*) n FROM person_reminder_runs WHERE day=$1", [day])).rows[0].n), 4, "the 15th: all four kinds ran");
   await queuePersonRemindersThenDeliver(store, deliver, () => new Date("2031-09-15T18:00:00Z"));
   assert.equal((await queued("person.birthday", day, [person])).length, 1, "and only once");
   assert.equal(delivered, 3, "every run delivers");
 });
 
 test("COMMS_PERSON_REMINDERS_PG the worker queues reminders only when it can deliver, so a day is never spent on emails marked not sent", async () => {
-  const day = "2031-10-01"; for (const k of ["birthday", "civil_id_expired", "civil_id_expiring"]) await fresh(k, day);
+  const day = "2031-10-01"; for (const k of ["birthday", "civil_id_expired", "civil_id_expiring", "bank_details_missing"]) await fresh(k, day);
   const person = await principal("worker"); await profile(person, "Worker Person", "1990-10-01");
   const run = (production: boolean, port: FakeEmailPort) => {
     const emailStore = new PostgresEmailOutboxStore({ pool });
@@ -140,4 +142,35 @@ test("COMMS_PERSON_REMINDERS_PG the worker queues reminders only when it can del
   assert.equal((await queued("person.birthday", day, [person]))[0]?.state, "sent");
   assert.equal(port.sent.filter(m => m.to === `${person}@example.invalid`).length, 1);
   assert.equal(Number((await pool.query("SELECT count(*) n FROM person_reminder_runs WHERE day=$1", [day])).rows[0].n), 2, "birthday and expired today; not the 15th or 28th");
+});
+
+
+test("COMMS_PERSON_REMINDERS_PG missing bank details fails closed until a verified address exists: nothing is queued, and the day is still recorded once", async () => {
+  const day = "2031-11-15"; await fresh("bank_details_missing", day);
+  const missing = await principal("bank-missing"); await profile(missing, "Huda Al-Sabah", null); await assign(missing, "2031-10-01", null);
+  assert.equal(await store.sendDay("bank_details_missing", day, new Date()), 0);
+  assert.deepEqual(await queued("person.bank_details_missing", day, [missing]), [], "an address on the account is not a verified address");
+  assert.equal(await store.sendDay("bank_details_missing", day, new Date()), null, "a day is queued once");
+});
+
+test("COMMS_PERSON_REMINDERS_PG a queued bank reminder is suppressed at the claim while no address is verified", async () => {
+  await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
+  const day = "2031-12-28", person = await principal("bank-queued"); await assign(person, "2031-01-01", null);
+  await pool.query(`INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key) VALUES('person.bank_details_missing', $1, '{"name":""}', $2)`,
+    [person, `person.bank_details_missing:${day}:${person}`]);
+  const port = new FakeEmailPort();
+  await new EmailOutboxService(new PostgresEmailOutboxStore({ pool }), port, true, true).processDue(100, new Date("2031-12-28T11:00:00Z"));
+  assert.equal((await queued("person.bank_details_missing", day, [person]))[0]!.state, "suppressed");
+  assert.equal(port.sent.filter(m => m.to === `${person}@example.invalid`).length, 0);
+});
+
+test("COMMS_PERSON_REMINDERS_PG with a verified address, the bank rule is placed on the attempt's day and not paused; details are asked of the bank store", async () => {
+  const rule = bankReminderEligible(() => "true");
+  const placed = await principal("rule-placed"), future = await principal("rule-future"), ended = await principal("rule-ended"), paused = await principal("rule-paused"), unplaced = await principal("rule-unplaced");
+  await assign(placed, "2032-01-01", "2032-01-15"); await assign(future, "2032-01-16", null); await assign(ended, "2031-06-01", "2032-01-14"); await assign(paused, "2031-06-01", null); await pause(paused);
+  const ids = [placed, future, ended, paused, unplaced];
+  const on = async (day: string) => (await pool.query<{ id: string }>(`SELECT q.id FROM principals q WHERE q.id = ANY($1) AND ${rule("q.id", "$2::date")} ORDER BY q.id`, [ids, day])).rows.map(r => r.id);
+  assert.deepEqual(await on("2032-01-15"), [placed], "the queue day");
+  assert.deepEqual(await on("2032-01-16"), [future].sort(), "an attempt on the next day: the placement that ended on the 15th no longer counts");
+  assert.equal(await new PostgresBankDetailsStore({ pool }).countWithoutDetails([placed]), 1);
 });
