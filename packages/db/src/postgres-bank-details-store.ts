@@ -14,7 +14,8 @@
  * - the receipt is a SHU-59 ledger row carrying references and the field name only.
  *
  * This module is the only reader of `candidate_bank_details`; the
- * non-finance projection test keeps it that way.
+ * non-finance projection test keeps it that way. Reports ask it only how many
+ * people have no row (`countWithoutDetails`), never for a value.
  */
 import { createHash } from "node:crypto";
 import pg from "pg";
@@ -60,6 +61,25 @@ export class PostgresBankDetailsStore {
 
   async close(): Promise<void> {
     if (this.#ownsPool) await this.#pool.end();
+  }
+
+  /**
+   * How many of the given principals have no bank details on file, each counted once. Presence
+   * only: no bank, IBAN or name is read, so a report can count people who still need to add
+   * details (legacy "Candidates missing bank info") without a projection of the table. A missing
+   * row means no saved details, not that an account is invalid. A caller in a transaction passes
+   * its client so the count shares that snapshot.
+   */
+  async countWithoutDetails(principalIds: readonly string[], client: Pick<pg.Pool, "query"> = this.#pool): Promise<number> {
+    if (!Array.isArray(principalIds) || principalIds.some((id) => typeof id !== "string" || id.length === 0)) {
+      throw new TypeError("principal ids required");
+    }
+    const ids = [...new Set(principalIds)];
+    if (ids.length === 0) return 0;
+    const result = await client.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM unnest($1::text[]) AS u(id)
+        WHERE NOT EXISTS (SELECT 1 FROM candidate_bank_details d WHERE d.principal_id = u.id)`, [ids]);
+    return result.rows[0]!.n;
   }
 
   /** The port for one signed-in principal; it can reach that person's own row only. */
