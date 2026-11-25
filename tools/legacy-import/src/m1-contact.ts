@@ -25,11 +25,25 @@ import type { PersonImportRow } from "./m1-people.js";
  * `profile_url` (added by m230406_110939; queue 13's table calls it `candidate_profile_url`).
  */
 export const M1_CONTACT_SOURCES = {
-  candidate: ["candidate_id", "candidate_phone", "profile_url", "candidate_civil_id", "candidate_civil_need_verification"],
+  candidate: ["candidate_id", "candidate_phone", "profile_url", "candidate_civil_id", "candidate_civil_need_verification",
+    "candidate_email", "candidate_email_verification"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Names this mapper's rules, for the run plan that will pin it. */
-export const M1_CONTACT_MAPPER_REVISION = "m1-contact-v1";
+export const M1_CONTACT_MAPPER_REVISION = "m1-contact-v2";
+
+/**
+ * The address form the verified-address fact compares (principal_email_verifications, SHU-721):
+ * outer spaces trimmed, then lower case. The trimmed input must already be plain printable ASCII
+ * before any case change, so no non-ASCII spelling (a Kelvin sign, a dotted capital I) can fold
+ * into an ASCII address legacy never attested. Only A-Z are lowered, which is locale-invariant and
+ * matches PostgreSQL lower() on ASCII. The store's normaliseVerifiedEmail applies the same rule.
+ */
+export function normaliseEmail(raw: string): string | null {
+  const trimmed = raw.replace(/^ +| +$/g, "");
+  if (trimmed.length > 254 || !/^[\x21-\x3f\x41-\x7e]+@[\x21-\x3f\x41-\x7e]+$/.test(trimmed)) return null;
+  return trimmed.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+}
 
 export interface PersonContactRow {
   readonly legacyId: string;
@@ -41,6 +55,12 @@ export interface PersonContactRow {
   readonly civilId: { readonly country: CivilIdCountry; readonly number: string } | null;
   /** Legacy's "needs verification" flag; recorded only with a civil ID. */
   readonly civilIdNeedsReview: boolean | null;
+  /**
+   * The address legacy marked verified (candidate_email_verification = 1), normalised; null
+   * otherwise. It is never recorded as an address: the store keeps only its HMAC, and the
+   * cutover step adds a verified fact only when a linked person's current address matches.
+   */
+  readonly verifiedEmail: string | null;
 }
 
 export type PersonContactIssueRule =
@@ -50,7 +70,9 @@ export type PersonContactIssueRule =
   | "contact.handleDuplicate" // another imported person holds the same handle; recorded for neither
   | "contact.civilIdRule" // not a 12-digit Kuwait or 9-digit Bahrain civil ID; not recorded
   | "contact.civilIdDuplicate" // another imported person holds the same civil ID; recorded for neither
-  | "contact.badValue"; // the review flag is not a legacy boolean; not recorded
+  | "contact.emailRule" // legacy marks the address verified but it is not a plain address; not recorded
+  | "contact.emailDuplicate" // another imported person has the same verified address; recorded for neither
+  | "contact.badValue"; // a flag is not a legacy boolean; not recorded
 
 export interface PersonContactIssue {
   readonly rule: PersonContactIssueRule;
@@ -100,14 +122,14 @@ function civilId(raw: string): { country: CivilIdCountry; number: string } | nul
 export function mapLegacyPersonContacts(candidates: readonly Row[], people: readonly Pick<PersonImportRow, "legacyId">[]): M1Contacts {
   const imported = new Set(people.map((p) => p.legacyId));
   const issues: PersonContactIssue[] = [];
-  type Draft = { legacyId: string; phone: string | null; handle: string | null; civilId: PersonContactRow["civilId"]; civilIdNeedsReview: boolean | null };
+  type Draft = { legacyId: string; phone: string | null; handle: string | null; civilId: PersonContactRow["civilId"]; civilIdNeedsReview: boolean | null; verifiedEmail: string | null };
   const drafts = new Map<string, Draft>();
 
   for (const row of candidates) {
     const id = canonicalId(row.candidate_id);
     // M-1 imports an id only when it is on exactly one usable, active row.
     if (id === null || !imported.has(id) || drafts.has(id)) continue;
-    const draft: Draft = { legacyId: id, phone: null, handle: null, civilId: null, civilIdNeedsReview: null };
+    const draft: Draft = { legacyId: id, phone: null, handle: null, civilId: null, civilIdNeedsReview: null, verifiedEmail: null };
     drafts.set(id, draft);
     const report = (rule: PersonContactIssueRule, field: string) => issues.push({ rule, legacyId: id, field });
 
@@ -133,6 +155,17 @@ export function mapLegacyPersonContacts(candidates: readonly Row[], people: read
       if (checked) draft.civilId = checked;
       else report("contact.civilIdRule", "candidate_civil_id");
     }
+
+    // The address is read only when legacy says it was verified (EMAIL_VERIFIED = 1).
+    const verification = row.candidate_email_verification;
+    if (verification === true || verification === 1 || verification === "1") {
+      const email = row.candidate_email;
+      const normalised = typeof email === "string" ? normaliseEmail(email) : null;
+      if (normalised !== null) draft.verifiedEmail = normalised;
+      else report("contact.emailRule", "candidate_email");
+    } else if (!(isUnset(verification) || verification === false || verification === 0 || verification === "0")) {
+      report("contact.badValue", "candidate_email_verification");
+    }
   }
 
   // Uniqueness among the imported people, as the platform's partial unique indexes require.
@@ -145,6 +178,7 @@ export function mapLegacyPersonContacts(candidates: readonly Row[], people: read
     [(d: Draft) => d.phone, (d: Draft) => { d.phone = null; }, "contact.phoneDuplicate", "candidate_phone"],
     [(d: Draft) => d.handle, (d: Draft) => { d.handle = null; }, "contact.handleDuplicate", "profile_url"],
     [(d: Draft) => d.civilId && `${d.civilId.country}:${d.civilId.number}`, (d: Draft) => { d.civilId = null; }, "contact.civilIdDuplicate", "candidate_civil_id"],
+    [(d: Draft) => d.verifiedEmail, (d: Draft) => { d.verifiedEmail = null; }, "contact.emailDuplicate", "candidate_email"],
   ] as const) {
     for (const ids of holders(key)) {
       for (const id of ids) {
@@ -167,10 +201,10 @@ export function mapLegacyPersonContacts(candidates: readonly Row[], people: read
   }
 
   const contacts = [...drafts.values()]
-    .filter((d) => d.phone !== null || d.handle !== null || d.civilId !== null)
+    .filter((d) => d.phone !== null || d.handle !== null || d.civilId !== null || d.verifiedEmail !== null)
     .sort((a, b) => byId(a.legacyId, b.legacyId))
     .map((d) => Object.freeze({ legacyId: d.legacyId, phone: d.phone, handle: d.handle,
-      civilId: d.civilId && Object.freeze({ ...d.civilId }), civilIdNeedsReview: d.civilIdNeedsReview }));
+      civilId: d.civilId && Object.freeze({ ...d.civilId }), civilIdNeedsReview: d.civilIdNeedsReview, verifiedEmail: d.verifiedEmail }));
   const order = (a: PersonContactIssue, b: PersonContactIssue) => byId(a.legacyId, b.legacyId) || (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0);
   return Object.freeze({ contacts: Object.freeze(contacts), issues: Object.freeze(issues.sort(order)) });
 }

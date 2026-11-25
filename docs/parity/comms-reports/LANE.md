@@ -321,7 +321,8 @@ Candidate notification types (legacy `CandidateNotification`):
 | Type | Legacy | Here |
 |---|---|---|
 | 0 invitation | `Invitation::sendNotification` | `recruit.invitation.sent` (slice 9) |
-| 1 assignment, 2 unassigned | Placement start and end | Open: the work lane writes no event for a placement yet; a feed kind is one registration |
+| 1 assignment | `CandidateWorkHistory::afterSave` on a new placement | `work.assigned` (migration 0606, 2026-11-25): the email delivery job dispatches each `assignment.created` work event once, a feed item for the placed person rendered from the placement as it is now ("You were placed at {store}, {company}, starting {date}.", opening `/work`); imported placements write no event, and events from before the migration are marked done so the first run adds nothing old |
+| 2 unassigned | Placement end | Not ported: commented out in legacy's `afterSave`, so no one gets it today |
 | 3, 4 work day approved, rejected | Day decisions | `work.session_approved`, `work.session_rejected` (one item per decided entry) |
 | 5, 6, 7 transfer initiated, paid, unpaid | Transfers | Wait on the pay lane |
 | 8, 9 work session approved, rejected | Session decisions | `work.session_approved`, `work.session_rejected` |
