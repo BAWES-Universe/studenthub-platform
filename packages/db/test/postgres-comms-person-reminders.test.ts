@@ -163,6 +163,20 @@ test("COMMS_PERSON_REMINDERS_PG missing bank details: people placed on the day w
   assert.equal(await store.sendDay("bank_details_missing", day, new Date()), null, "a day is queued once");
 });
 
+test("COMMS_PERSON_REMINDERS_PG a bank reminder retried on a later day rechecks the placement for the attempt's Kuwait day", async () => {
+  await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
+  const day = "2032-01-15"; await fresh("bank_details_missing", day);
+  const endsToday = await principal("bank-ends"), continues = await principal("bank-continues");
+  await assign(endsToday, "2031-06-01", "2032-01-15"); await assign(continues, "2031-06-01", null);
+  await store.sendDay("bank_details_missing", day, new Date("2032-01-15T10:30:00Z"));
+  assert.equal((await queued("person.bank_details_missing", day, [endsToday, continues])).length, 2, "both placed on the 15th");
+  const port = new FakeEmailPort();
+  // The first attempt is on 16 January in Kuwait: the placement that ended on the 15th no longer counts.
+  await new EmailOutboxService(new PostgresEmailOutboxStore({ pool }), port, true, true).processDue(100, new Date("2032-01-16T06:00:00Z"));
+  const states = Object.fromEntries((await queued("person.bank_details_missing", day, [endsToday, continues])).map(r => [r.recipient_principal_id, r.state]));
+  assert.deepEqual(states, { [endsToday]: "suppressed", [continues]: "sent" });
+});
+
 test("COMMS_PERSON_REMINDERS_PG every delivery attempt rechecks the bank reminder: details added, a placement ended or a pause after queueing sends nothing", async () => {
   await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
   const day = "2031-12-28"; await fresh("bank_details_missing", day);
@@ -173,7 +187,7 @@ test("COMMS_PERSON_REMINDERS_PG every delivery attempt rechecks the bank reminde
   await pool.query("UPDATE work_assignments SET end_date='2031-12-20' WHERE person_principal_id=$1", [leaves]);
   await pause(rests);
   const port = new FakeEmailPort();
-  await new EmailOutboxService(new PostgresEmailOutboxStore({ pool }), port, true, true).processDue(100, new Date());
+  await new EmailOutboxService(new PostgresEmailOutboxStore({ pool }), port, true, true).processDue(100, new Date("2031-12-28T11:00:00Z"));
   const states = Object.fromEntries((await queued("person.bank_details_missing", day, [adds, leaves, rests, stays])).map(r => [r.recipient_principal_id, r.state]));
   assert.deepEqual(states, { [adds]: "suppressed", [leaves]: "suppressed", [rests]: "suppressed", [stays]: "sent" });
   const mail = port.sent.find(m => m.to === `${stays}@example.invalid`)!;
