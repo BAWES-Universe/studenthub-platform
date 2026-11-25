@@ -4,8 +4,8 @@ import { EMAIL_TEMPLATES, validateTemplateParameters } from "../../notifications
 import { MORNING_SUMMARY_COUNTERS, MORNING_SUMMARY_KEYS, MorningSummaryService, completeCounts, kuwaitHour, queueMorningSummaryThenDeliver, sendMorningSummaryIfDue,
   type MorningSummaryCounts, type MorningSummaryStore } from "../src/index.js";
 
-const AVAILABLE = ["interviewScheduledToday", "companyMoreThen40DaysWithoutPayment", "totalExpiredCards", "id_need_generated", "activeRequests", "assignedExpiredCivilID", "assignedIdleCandidates"];
-const RAW = { interviewScheduledToday: 2, companyMoreThen40DaysWithoutPayment: 5, totalExpiredCards: 3, id_need_generated: 4, activeRequests: 7, assignedExpiredCivilID: 1, assignedIdleCandidates: 6 };
+const AVAILABLE = ["interviewScheduledToday", "companyMoreThen40DaysWithoutPayment", "totalExpiredCards", "id_need_generated", "activeRequests", "missingBankInfo", "assignedExpiredCivilID", "assignedIdleCandidates"];
+const RAW = { interviewScheduledToday: 2, companyMoreThen40DaysWithoutPayment: 5, totalExpiredCards: 3, id_need_generated: 4, activeRequests: 7, missingBankInfo: 8, assignedExpiredCivilID: 1, assignedIdleCandidates: 6 };
 
 test("REPORTS_MORNING_SUMMARY_REGISTRY the twelve legacy counters in email order, and only landed sources are available", () => {
   assert.deepEqual(MORNING_SUMMARY_KEYS, ["interviewScheduledToday", "companyMoreThen40DaysWithoutPayment", "totalExpiredCards", "id_need_generated", "activeRequests",
@@ -15,9 +15,9 @@ test("REPORTS_MORNING_SUMMARY_REGISTRY the twelve legacy counters in email order
 });
 
 test("REPORTS_MORNING_SUMMARY_REGISTRY a missing source is null, never 0, and an available counter without a number is an error", () => {
-  const counts = completeCounts({ ...RAW, missingBankInfo: 0 });
+  const counts = completeCounts({ ...RAW, requireFollowup: 0 });
   assert.deepEqual(Object.entries(counts).filter(([, v]) => v !== null).map(([k]) => k), AVAILABLE);
-  assert.equal(counts.missingBankInfo, null, "a number for a missing source is ignored");
+  assert.equal(counts.requireFollowup, null, "a number for a missing source is ignored");
   assert.equal(counts.activeRequests, 7);
   const { assignedExpiredCivilID: _gone, ...noCivil } = RAW;
   assert.throws(() => completeCounts(noCivil), /assignedExpiredCivilID/);
@@ -44,7 +44,8 @@ test("REPORTS_MORNING_SUMMARY_EMAIL legacy's subject, one line per counter, \"no
   assert.match(mail.body, /Interviews scheduled today: organise the meeting between the company and the candidates: 2/);
   assert.match(mail.body, /Active requests that need an update: 7/);
   assert.match(mail.body, /Assigned candidates with an expired civil ID: 1/);
-  assert.match(mail.body, /Candidates missing bank info: not available/);
+  assert.match(mail.body, /Candidates missing bank info: 8/);
+  assert.match(mail.body, /Clients requiring follow-up: not available/);
   assert.match(mail.body, /Urgent: companies with assigned staff that have not made a payment in 40 days: 5/);
   assert.match(mail.body, /Assigned candidates not paid for any pay period that ended in the past two months: 6/);
   assert.equal(mail.body.match(/without ID cards/g)?.length, 1, "legacy's duplicated row is listed once");
@@ -107,7 +108,7 @@ test("REPORTS_MORNING_SUMMARY_PAGE staff see today's counters with the email's v
   assert.equal(page?.subscribed, false);
   assert.deepEqual(page?.rows.map(r => r.key), MORNING_SUMMARY_KEYS);
   assert.deepEqual(Object.fromEntries(page!.rows.map(r => [r.key, r.value])), counts());
-  assert.match(page?.rows.find(r => r.key === "missingBankInfo")?.waitsOn ?? "", /pay lane/);
+  assert.match(page?.rows.find(r => r.key === "requireFollowup")?.waitsOn ?? "", /follow-up dates/);
   assert.equal(page?.rows.find(r => r.key === "activeRequests")?.waitsOn, null);
   assert.equal(await service.subscribe("staff-1", true, now), true);
   assert.equal((await service.today("staff-1", now))?.subscribed, true);

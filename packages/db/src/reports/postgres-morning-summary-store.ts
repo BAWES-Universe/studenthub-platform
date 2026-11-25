@@ -1,5 +1,6 @@
 import pg from "pg";
 import { databaseUrl } from "../connection.js";
+import { PostgresBankDetailsStore } from "../postgres-bank-details-store.js";
 import { idCardExpiredCount, idCardNeedsCount } from "./postgres-id-cards-store.js";
 
 /**
@@ -43,6 +44,25 @@ SELECT
   ${idCardExpiredCount("$1")} AS "totalExpiredCards",
   ${idCardNeedsCount("$1")} AS "id_need_generated"`;
 
+// Legacy `Candidate::withoutBankInfoOrWithPayment` (grouped by candidate): people placed today
+// (legacy `store_id > 0`; here an assignment running on the report day), and people with an unpaid
+// line on a transfer whose payment has arrived (being distributed, or complete). Intentional changes:
+// - KWD only, as the staff statistics page asks the helper (legacy's email counted every currency;
+//   the summary's other shared counters are KWD too). A placement counts at an organization that
+//   bills in KWD, a line on a KWD transfer.
+// - A deleted transfer is left out; legacy checked only that the line was not deleted. The pay lifecycle
+//   deletes only draft, locked or cancelled transfers, so this is a guard.
+// - Legacy left out deleted candidates; people have no deleted state on the platform.
+// How many of them have no bank details is asked of the bank-details store, the table's only reader;
+// this query never names that table.
+const BANK_INFO_CANDIDATES = `SELECT a.person_principal_id AS id FROM work_assignments a
+    LEFT JOIN organization_commercial_terms ct ON ct.org_id = a.org_id AND ct.field = 'currency_code'
+    WHERE a.start_date <= $1::date AND (a.end_date IS NULL OR a.end_date >= $1::date) AND COALESCE(ct.value, 'KWD') = 'KWD'
+  UNION
+  SELECT l.person_id FROM pay_transfer_lines l JOIN pay_transfers p ON p.id = l.transfer_id
+    WHERE NOT l.paid AND NOT p.deleted AND p.currency_code = 'KWD' AND p.status IN ('distributing','complete')
+`;
+
 /**
  * Who may get the email: subscribed, still StudentHub staff (a staff or admin grant over an
  * operator organization's subtree), account not paused. Used when the email is queued and
@@ -55,34 +75,55 @@ export const morningSummaryEligible = (principal: string, orgs: string) => `(EXI
 const RECIPIENTS = (orgs: string) => `SELECT s.principal_id FROM morning_summary_subscriptions s WHERE ${morningSummaryEligible("s.principal_id", orgs)} ORDER BY s.principal_id`;
 
 export class PostgresMorningSummaryStore {
-  readonly #pool: pg.Pool; readonly #owns: boolean; readonly #operatorOrgIds: readonly string[];
+  readonly #pool: pg.Pool; readonly #owns: boolean; readonly #operatorOrgIds: readonly string[]; readonly #bank: Pick<PostgresBankDetailsStore, "countWithoutDetails">;
   constructor(options: { connectionString?: string; pool?: pg.Pool; operatorOrgIds?: readonly string[] } = {}) {
     this.#owns = !options.pool;
     this.#pool = options.pool ?? new pg.Pool({ connectionString: options.connectionString ?? databaseUrl() });
     this.#operatorOrgIds = options.operatorOrgIds ?? ["root"];
+    this.#bank = new PostgresBankDetailsStore({ pool: this.#pool });
   }
   async close(): Promise<void> { if (this.#owns) await this.#pool.end(); }
 
-  /** The counters this store can read for one Asia/Kuwait day. */
-  async counts(day: string, client: Pick<pg.Pool, "query"> = this.#pool): Promise<MorningSummaryRawCounts> {
+  /**
+   * The counters this store can read for one Asia/Kuwait day, all from one snapshot. A caller
+   * already in a repeatable-read transaction passes its client; otherwise the store opens one.
+   */
+  async counts(day: string, client?: Pick<pg.Pool, "query">): Promise<MorningSummaryRawCounts> {
     if (!DAY.test(day)) throw new RangeError("invalid day");
-    return (await client.query<Record<string, number>>(COUNTS, [day, this.#operatorOrgIds])).rows[0]!;
+    if (client) return this.#read(day, client);
+    const c = await this.#pool.connect();
+    try {
+      await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const counts = await this.#read(day, c);
+      await c.query("COMMIT");
+      return counts;
+    } catch (error) { await c.query("ROLLBACK").catch(() => undefined); throw error; }
+    finally { c.release(); }
+  }
+
+  async #read(day: string, client: Pick<pg.Pool, "query">): Promise<MorningSummaryRawCounts> {
+    const counts = (await client.query<Record<string, number>>(COUNTS, [day, this.#operatorOrgIds])).rows[0]!;
+    const candidates = (await client.query<{ id: string }>(BANK_INFO_CANDIDATES, [day])).rows.map(r => r.id);
+    return { ...counts, missingBankInfo: await this.#bank.countWithoutDetails(candidates, client) };
   }
 
   /**
-   * Sends one day's summary, once. In one transaction it takes the day's lock, stops if the
-   * day already ran, reads the counters, lets `build` turn them into the email's closed
+   * Sends one day's summary, once. It first reads the counters in their own repeatable-read
+   * snapshot and releases that connection, so it never holds two at once. Then, in one read
+   * committed transaction, it takes the day's lock, stops if the day already ran (the lock and
+   * this check see the latest runs), lets `build` turn the counters into the email's closed
    * parameters (it throws to send nothing), queues one email per current recipient and
    * records the run. Returns null when the day already ran.
    */
   async sendDay(day: string, at: Date, build: (counts: MorningSummaryRawCounts) => unknown): Promise<MorningSummarySendResult | null> {
     if (!DAY.test(day)) throw new RangeError("invalid day");
+    const counts = await this.counts(day);
     const c = await this.#pool.connect();
     try {
       await c.query("BEGIN");
       await c.query("SELECT pg_advisory_xact_lock(hashtextextended('morning_summary:' || $1, 0))", [day]);
       if ((await c.query("SELECT 1 FROM morning_summary_runs WHERE day = $1::date", [day])).rowCount) { await c.query("ROLLBACK"); return null; }
-      const parameters = build(await this.counts(day, c));
+      const parameters = build(counts);
       const queued = await c.query(`INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key)
         SELECT 'staff.morning_summary', r.principal_id, $2::jsonb, 'staff.morning_summary:' || $1 || ':' || r.principal_id FROM (${RECIPIENTS("$3")}) r
         ON CONFLICT (idempotency_key) DO NOTHING`, [day, JSON.stringify(parameters), this.#operatorOrgIds]);

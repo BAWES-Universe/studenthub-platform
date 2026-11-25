@@ -150,11 +150,11 @@ test("REPORTS_MORNING_SUMMARY_PG the email goes once a day to subscribed staff w
     assert.equal(r.idempotency_key, `staff.morning_summary:${day}:${r.recipient_principal_id}`);
     assert.equal(r.state, "pending");
     assert.doesNotThrow(() => validateTemplateParameters("staff.morning_summary", r.template_parameters));
-    assert.equal(r.template_parameters.counters.missingBankInfo, null);
+    assert.equal(typeof r.template_parameters.counters.missingBankInfo, "number");
   }
   const [run] = (await pool.query("SELECT counters, recipients FROM morning_summary_runs WHERE day=$1::date", [day])).rows;
   assert.equal(run.recipients, rows.length);
-  assert.equal(run.counters.missingBankInfo, null);
+  assert.equal(typeof run.counters.missingBankInfo, "number");
   assert.equal(await store.sendDay(day, at, build), null, "a day is sent once");
   assert.equal((await pool.query("SELECT count(*)::int n FROM email_outbox WHERE idempotency_key LIKE $1", [`staff.morning_summary:${day}:%`])).rows[0].n, rows.length);
   await assert.rejects(pool.query("UPDATE morning_summary_runs SET recipients=0 WHERE day=$1::date", [day]), /append-only/);
@@ -212,10 +212,13 @@ async function placed(org: { id: string; shop: string }, start: string, end: str
   return person;
 }
 async function paid(org: { id: string; shop: string }, person: string, month: string, at: string, ...actions: TransferAction[]): Promise<string> {
+  return paidIn("KWD", org, person, month, at, ...actions);
+}
+async function paidIn(currency: string, org: { id: string; shop: string }, person: string, month: string, at: string, ...actions: TransferAction[]): Promise<string> {
   const id = randomUUID();
-  await pool.query("INSERT INTO pay_transfers(id,company_id,period_start,period_end,currency_code) VALUES($1,$2,$3::date,($3::date + interval '1 month' - interval '1 day')::date,'KWD')", [id, org.id, `${month}-01`]);
-  await pool.query("INSERT INTO pay_transfer_lines(id,transfer_id,person_id,store_id,currency_code,candidate_total,company_total,note,calculation) VALUES($1,$2,$3,$4,'KWD','1.000','2.000','synthetic','{}')",
-    [`line-${randomUUID()}`, id, person, org.shop]);
+  await pool.query("INSERT INTO pay_transfers(id,company_id,period_start,period_end,currency_code) VALUES($1,$2,$3::date,($3::date + interval '1 month' - interval '1 day')::date,$4)", [id, org.id, `${month}-01`, currency]);
+  await pool.query("INSERT INTO pay_transfer_lines(id,transfer_id,person_id,store_id,currency_code,candidate_total,company_total,note,calculation) VALUES($1,$2,$3,$4,$5,'1.000','2.000','synthetic','{}')",
+    [`line-${randomUUID()}`, id, person, org.shop, currency]);
   const policy: PayLifecyclePolicy = { authorize: async () => true, unassignedPersonIds: async () => [] };
   const lifecycle = new TransferLifecycleService(new PostgresTransferLifecycleStore(pool, policy, new PostgresTransferInvoiceEffects()), () => new Date(at));
   for (const action of actions) assert.equal((await lifecycle.transition({ principalId: creator, actingAs: false }, id, action)).kind, "changed", action);
@@ -253,4 +256,78 @@ test("REPORTS_MORNING_SUMMARY_PG payment counters: KWD companies with staff for 
   for (const org of [goneSub.id, paidSub.id]) await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [org, `receipt-${randomUUID()}`]);
   const [companies, idle] = await read();
   assert.deepEqual([companies - companiesBefore, idle - idleBefore], [5, 8]);
+});
+
+async function bankDetails(person: string): Promise<void> {
+  const bank = randomUUID();
+  await pool.query(`INSERT INTO catalogue_items (id, catalogue_type, name, normalized_name, status, created_by_ref, updated_by_ref, created_at, updated_at)
+    VALUES ($1, 'bank', $2, $2, 'active', $3, $3, now(), now())`, [bank, `Synthetic bank ${bank.slice(0, 8)}`, "a".repeat(64)]);
+  await pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, 'KW81CBKU0000000000001234560101', 'Synthetic Beneficiary')", [person, bank]);
+}
+
+test("REPORTS_MORNING_SUMMARY_PG missing bank info: people placed today at a KWD organization, or with an unpaid line on a live KWD transfer being distributed, who have no bank details, each counted once", async () => {
+  const day = "2026-11-21";
+  const read = async () => (await store.counts(day)).missingBankInfo!;
+  const before = await read();
+  const kwd = await payCompany(), usd = await payCompany(OPS, "USD");
+  await placed(kwd, "2026-10-01"); // placed, no details: counted
+  await bankDetails(await placed(kwd, "2026-10-01")); // placed, details on file
+  await placed(kwd, "2026-11-21"); // placed from today: counted
+  await placed(kwd, "2026-11-22"); // starts tomorrow
+  await placed(kwd, "2026-09-01", "2026-11-20"); // ended yesterday
+  await placed(usd, "2026-10-01"); // placed at an organization that is not KWD
+  const owed = await principal("owed");
+  await paid(kwd, owed, "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // unpaid line being distributed, not placed: counted
+  const both = await placed(kwd, "2026-10-01");
+  await paid(kwd, both, "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // placed and owed: counted once
+  await paid(kwd, await principal("locked"), "2026-10", "2026-11-01T08:00:00Z", "lock"); // payment not received yet
+  await linesPaid(await paid(kwd, await principal("settled"), "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received")); // line paid
+  const owedWithBank = await principal("owed-bank");
+  await bankDetails(owedWithBank);
+  await paid(kwd, owedWithBank, "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // owed, details on file
+  await paid(kwd, await principal("cancelled"), "2026-10", "2026-11-01T08:00:00Z", "cancel"); // cancelled transfer
+  await paidIn("USD", usd, await principal("usd"), "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // owed on a USD transfer
+  await paid(kwd, await principal("deleted"), "2026-10", "2026-11-01T08:00:00Z", "lock", "delete"); // deleted transfer (the lifecycle deletes only before payment)
+  assert.equal(await read() - before, 4);
+});
+
+test("REPORTS_MORNING_SUMMARY_PG missing bank info reads the candidates and their bank details in one snapshot", async () => {
+  const day = "2026-11-21";
+  const racer = await placed(await payCompany(), "2026-10-01");
+  // A pool whose clients commit bank details for `racer` from another connection right after the candidate read.
+  let armed = true;
+  const racing = Object.create(pool, { connect: { value: async () => {
+    const c = await pool.connect(), query = c.query.bind(c) as (...a: unknown[]) => Promise<unknown>;
+    return Object.assign(c, { query: async (...a: unknown[]) => {
+      const out = await query(...a);
+      if (armed && typeof a[0] === "string" && a[0].includes("person_principal_id AS id")) { armed = false; await bankDetails(racer); }
+      return out;
+    } });
+  } } }) as pg.Pool;
+  const before = (await new PostgresMorningSummaryStore({ pool: racing, operatorOrgIds: [OPS] }).counts(day)).missingBankInfo!;
+  assert.equal(armed, false, "the race ran");
+  assert.equal((await store.counts(day)).missingBankInfo!, before - 1, "the committed details count from the next read");
+});
+
+test("REPORTS_MORNING_SUMMARY_PG sendDay needs only one connection at a time, and still sends a day once", async () => {
+  const name = `ms-single-${randomUUID()}`;
+  const single = new pg.Pool({ connectionString: URL, max: 1, application_name: name });
+  single.on("error", () => undefined); // a terminated idle connection below is expected
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const one = new PostgresMorningSummaryStore({ pool: single, operatorOrgIds: [OPS] });
+    const day = await freshDay(), at = new Date(`${day}T05:00:00Z`);
+    const build = (raw: Readonly<Record<string, number>>) => MorningSummaryService.parameters(day, raw);
+    const within = <T>(work: Promise<T>) => Promise.race([work, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("sendDay waited for a second connection")), 10_000); })]);
+    const [first, second] = await within(Promise.all([one.sendDay(day, at, build), one.sendDay(day, at, build)]));
+    assert.equal([first, second].filter(r => r === null).length, 1, "one of two concurrent sends finds the day already ran");
+    assert.equal((await pool.query("SELECT count(*)::int n FROM morning_summary_runs WHERE day = $1::date", [day])).rows[0].n, 1);
+    const sent = (first ?? second)!;
+    assert.equal((await pool.query("SELECT count(*)::int n FROM email_outbox WHERE idempotency_key LIKE $1", [`staff.morning_summary:${day}:%`])).rows[0].n, sent.recipients);
+  } finally {
+    clearTimeout(timer);
+    // A send stuck waiting for a second connection still holds the only one: end it so the pool can close.
+    await pool.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = $1", [name]);
+    await single.end().catch(() => undefined);
+  }
 });

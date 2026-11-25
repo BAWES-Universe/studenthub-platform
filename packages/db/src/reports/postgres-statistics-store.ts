@@ -120,7 +120,7 @@ export class PostgresStatisticsStore {
       const own = (await c.query<Record<string, number>>(COUNTS, [day, now])).rows[0]!;
       await c.query("COMMIT");
       return { activeRequests: shared.activeRequests!, assignedExpiredCivilID: shared.assignedExpiredCivilID!, totalExpiredCards: shared.totalExpiredCards!, id_need_generated: shared.id_need_generated!,
-        assignedIdleCandidates: shared.assignedIdleCandidates!, companyMoreThen40DaysWithoutPayment: shared.companyMoreThen40DaysWithoutPayment!, ...own };
+        assignedIdleCandidates: shared.assignedIdleCandidates!, companyMoreThen40DaysWithoutPayment: shared.companyMoreThen40DaysWithoutPayment!, missingBankInfo: shared.missingBankInfo!, ...own };
     } catch (error) { await c.query("ROLLBACK").catch(() => undefined); throw error; }
     finally { c.release(); }
   }
