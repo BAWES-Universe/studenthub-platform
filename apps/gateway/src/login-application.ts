@@ -23,6 +23,7 @@ interface IdTokenClaims {
   readonly exp: number;
   readonly iat: number;
   readonly email?: string;
+  readonly email_verified?: unknown;
   readonly phone?: string;
   readonly name?: string;
   readonly birthdate?: string;
@@ -376,6 +377,10 @@ export const createLoginApplication: LoginApplicationFactory = (
       }
       if (await dependencies.accessPause?.isPaused(identity.personId)) {
         return { status: 403, body: { error: "access_paused" } };
+      }
+      // The issuer's answer for the address it signed: only a boolean true counts as verified.
+      if (typeof claims.email === "string" && claims.email.trim() !== "" && dependencies.identities.recordEmailVerification) {
+        await dependencies.identities.recordEmailVerification(identity.personId, claims.email, claims.email_verified === true);
       }
       const sessionId = opaqueToken(dependencies);
       const reference = upstream ? upstreamReferenceFrom(claims) : undefined;

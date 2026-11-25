@@ -332,3 +332,31 @@ test("SHU457_BOUND with the upstream check on, the browser-edit and legacy-link 
   assert.equal(await checkedLiveSessionPerson(plain, pool as never, "live"), "person-1");
   assert.deepEqual(reads, ["pool"]);
 });
+
+test("EMAIL_VERIFIED_RECORD sign-in records the issuer's email_verified answer for the signed address; only a boolean true counts", async () => {
+  const cases: [Record<string, unknown>, [string, boolean] | undefined][] = [
+    [{ profile: { email: "Person@Universe.invalid" }, emailVerified: true }, ["Person@Universe.invalid", true]],
+    [{ profile: { email: "person@universe.invalid" }, emailVerified: false }, ["person@universe.invalid", false]],
+    [{ profile: { email: "person@universe.invalid" }, emailVerified: "true" }, ["person@universe.invalid", false]],
+    [{ profile: { email: "person@universe.invalid" } }, ["person@universe.invalid", false]],
+    [{ profile: { email: "   " }, emailVerified: true }, undefined],
+    [{ profile: { email: "" }, emailVerified: true }, undefined],
+  ];
+  for (const [overrides, expected] of cases) {
+    const rig = createSyntheticLoginRig(createLoginApplication);
+    const recorded: [string, string, boolean][] = [];
+    (rig.identities as unknown as { recordEmailVerification: unknown }).recordEmailVerification =
+      async (personId: string, email: string, verified: boolean) => { recorded.push([personId, email, verified]); };
+    await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
+    const authorization = rig.provider.authorizationRequests.at(-1)!;
+    const response = await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize(overrides as never) });
+    assert.equal(response.status, 302, JSON.stringify(overrides));
+    const personId = [...rig.sessions.records.values()][0]!.personId;
+    assert.deepEqual(recorded, expected ? [[personId, ...expected]] : [], JSON.stringify(overrides));
+  }
+  // A store without the method records nothing and sign-in works as before.
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
+  const authorization = rig.provider.authorizationRequests.at(-1)!;
+  assert.equal((await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize({ emailVerified: true } as never) })).status, 302);
+});

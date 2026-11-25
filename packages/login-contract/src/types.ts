@@ -138,6 +138,12 @@ export interface IdentityStore {
     subject: string,
     stableUserId: string,
   ): Promise<"bound" | "matched" | "mismatch" | "locked">;
+  /**
+   * Records the issuer's email_verified answer for `email`, and only when `email`
+   * is the person's current address (compared normalised). Optional: a store
+   * without it records nothing, and nothing reads an address as verified.
+   */
+  recordEmailVerification?(personId: string, email: string, verified: boolean): Promise<void>;
 }
 
 export interface AuthorizationStore {
