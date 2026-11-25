@@ -79,7 +79,12 @@ const canonicalId = (raw: unknown) => typeof raw === "number" && Number.isSafeIn
  * 9, so the two never overlap. Legacy's country table has no ISO code, and a resident of either
  * country holds its civil ID whatever their nationality, so nationality cannot decide it.
  */
+const SIGNED = /^[+\-\u058a\u05be\u1400\u1806\u2010-\u2015\u2212\u2e17\u2e1a\u2e3a\u2e3b\u2e40\u301c\u3030\u30a0\ufe31\ufe32\ufe58\ufe63\uff0b\uff0d]/u;
+
 function civilId(raw: string): { country: CivilIdCountry; number: string } | null {
+  // A leading sign or dash is not a separator: the shared formatter would strip it and turn a
+  // signed or negative legacy value into digits. Interior separators stay allowed.
+  if (SIGNED.test(raw.normalize("NFKC").trim())) return null;
   const number = normalizeCivilIdNumber(raw);
   const country: CivilIdCountry | null = number.length === 12 ? "KW" : number.length === 9 ? "BH" : null;
   if (country === null) return null;
@@ -123,7 +128,8 @@ export function mapLegacyPersonContacts(candidates: readonly Row[], people: read
 
     const civil = row.candidate_civil_id;
     if (!isUnset(civil)) {
-      const checked = typeof civil === "string" || (typeof civil === "number" && Number.isSafeInteger(civil)) ? civilId(String(civil)) : null;
+      const checked = typeof civil === "string" ? civilId(civil)
+        : typeof civil === "number" && Number.isSafeInteger(civil) && civil > 0 ? civilId(String(civil)) : null;
       if (checked) draft.civilId = checked;
       else report("contact.civilIdRule", "candidate_civil_id");
     }

@@ -63,6 +63,26 @@ test("a value the platform refuses is not recorded, with a row naming the column
   for (const s of secrets) assert.ok(!text.includes(s), s);
 });
 
+test("a signed or negative civil ID is malformed, never turned into digits; interior separators still pass", () => {
+  // Synthetic 12- and 9-digit shapes; nothing here is a real number.
+  const signed: unknown[] = [-299010112345, -990123456, "-299010112345", "-990123456", "+990123456", "\u2212299010112345",
+    "\uff0d990123456", " -990123456", "\u2010299010112345", -0];
+  const rows = signed.map((value, i) => candidate(60 + i, { candidate_civil_id: value }));
+  const { contacts, issues } = map(rows);
+  assert.deepEqual(contacts, []);
+  assert.deepEqual(issues.map((i) => [i.rule, i.field]), signed.map(() => ["contact.civilIdRule", "candidate_civil_id"]));
+  assert.ok(!JSON.stringify(issues).includes("299010112345") && !JSON.stringify(issues).includes("990123456"));
+  const ok = map([
+    candidate(80, { candidate_civil_id: 299010112345 }), candidate(81, { candidate_civil_id: "2990-1011-2346" }),
+    candidate(82, { candidate_civil_id: "990-123-456" }), candidate(83, { candidate_civil_id: 990123457 }),
+  ]);
+  assert.deepEqual(ok.issues, []);
+  assert.deepEqual(ok.contacts.map((c) => c.civilId), [
+    { country: "KW", number: "299010112345" }, { country: "KW", number: "299010112346" },
+    { country: "BH", number: "990123456" }, { country: "BH", number: "990123457" },
+  ]);
+});
+
 test("a phone, handle or civil ID held by two imported people is recorded for neither, each row naming the other", () => {
   const { contacts, issues } = map([
     candidate(20, { candidate_phone: "50001234", profile_url: "Shared.Handle", candidate_civil_id: "299010112345" }),
