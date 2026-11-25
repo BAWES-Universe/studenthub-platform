@@ -1,6 +1,7 @@
 import pg from "pg";
 import { databaseUrl } from "../connection.js";
 import { PostgresBankDetailsStore } from "../postgres-bank-details-store.js";
+import { emailVerifiedSql } from "../access/email-verification.js";
 
 /**
  * Person reminder emails (comms lane slice 10), legacy's `Candidate::birthdayAlert`,
@@ -22,14 +23,18 @@ const notPaused = (p: string) => `NOT EXISTS (SELECT 1 FROM account_pauses ap WH
 /** Legacy sent the civil ID reminders only to people placed at a store; here, a work assignment that has not ended by the day. */
 const assigned = (p: string, d: string) => `EXISTS (SELECT 1 FROM work_assignments wa WHERE wa.person_principal_id = ${p} AND (wa.end_date IS NULL OR wa.end_date >= ${d}))`;
 /**
- * Legacy sent the bank reminder only to a verified address (`candidate_email_verification = 1`). The
- * platform records no verification of a person's current address yet (the login stores the address
- * from the sign-in claim; nothing records `email_verified`, and the importer carries no flag), and an
- * address that is merely on the account must not learn that bank details are missing. Until that fact
- * exists the class fails closed: nothing is queued and a queued row is suppressed at the claim. When it
- * lands, this predicate becomes "the current address is verified" and nothing else changes.
+ * Legacy sent the bank reminder only to a verified address (`candidate_email_verification = 1`), and an
+ * address that is merely on the account must not learn that bank details are missing. The access lane
+ * records that fact (migration 0410, `emailVerifiedSql`): the current address, as the issuer answered at
+ * sign-in or as legacy verified it at cutover.
+ *
+ * The reminder still stays off behind its activation gate. If a sign-in's write of a newer "not verified"
+ * answer and its fallback veto both fail, the sign-in is refused but an older "verified" row stays
+ * readable until the next sign-in, so the fact can be stale in that one case. Until that case also
+ * reads as not verified, queue and claim both fail closed. Switching the gate on is this one constant.
  */
-const verifiedEmail = (_p: string) => "false";
+export const BANK_REMINDER_ACTIVE = false as boolean;
+const verifiedEmail = (p: string) => BANK_REMINDER_ACTIVE ? emailVerifiedSql(p) : "false";
 /** The bank reminder's SQL eligibility, given the verified-address predicate; exported so the rest of the rule can be tested while that predicate fails closed. */
 export const bankReminderEligible = (verified: (p: string) => string) => (p: string, d: string) => `(${verified(p)} AND ${placedOn(p, d)} AND ${notPaused(p)})`;
 /** Legacy sent the bank reminder to people placed at a store (`store_id > 0`); here, a work assignment running on the day. */
@@ -42,7 +47,7 @@ const birthdayOn = (birth: string, d: string) => `(to_char(${birth}, 'MM-DD') = 
  * Who a reminder of each kind is for on day `d`. Used when the emails are queued and again by the
  * outbox claim on every delivery attempt, so a pause, a released or renewed civil ID, an ended
  * assignment or a corrected birth date after queueing stops the send. The bank reminder's SQL part
- * is a verified address (none yet, so it fails closed), the placement and the pause; whether details
+ * is a verified address (behind the activation gate, so it fails closed for now), the placement and the pause; whether details
  * are still missing is asked of the bank-details store, when queueing and again at the claim.
  */
 export const personReminderEligible: { readonly [K in PersonReminderKind]: (p: string, d: string) => string } = {
