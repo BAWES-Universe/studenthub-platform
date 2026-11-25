@@ -43,7 +43,9 @@ ALTER TABLE notifications ADD CONSTRAINT notifications_kind_payload_check CHECK 
 -- so the mark lives here. Events written before this migration are marked done: they are not
 -- news any more and must not flood the feed on the first run.
 CREATE TABLE comms_dispatched_work_events (
- event_id bigint PRIMARY KEY REFERENCES work_events(id),
+ -- No foreign key: one would make a plain TRUNCATE of the work lane's append-only event table fail
+ -- on the key before its own no-truncate guard speaks. Marks are only ever written for events read.
+ event_id bigint PRIMARY KEY,
  dispatched_at timestamptz NOT NULL
 );
 INSERT INTO comms_dispatched_work_events(event_id, dispatched_at)

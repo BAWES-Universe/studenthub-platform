@@ -93,14 +93,13 @@ test("COMMS_PLACEMENT_FEED_ONCE racing workers write one item, and an event alre
   assert.deepEqual(await items(q.person), []);
 });
 
-test("COMMS_PLACEMENT_FEED_EVENTS only placement events are dispatched, and the marks can't outlive their event", async () => {
+test("COMMS_PLACEMENT_FEED_EVENTS only placement events are dispatched", async () => {
   await drain();
   const p = await place();
   await pool.query("UPDATE work_assignments SET end_date = '2026-12-31' WHERE id = $1", [p.assignmentId]);
   await pool.query("INSERT INTO work_events(kind,org_id,person_principal_id,subject_id,actor_principal_id,detail) VALUES('assignment.ended',$1,$2,$3,$4,'{}'::jsonb)", [p.company, p.person, p.assignmentId, p.staff]);
   assert.equal(await drain(), 1);
   assert.deepEqual((await items(p.person)).map((r) => r.kind), ["work.assigned"], "an ended placement adds nothing (legacy's type 2 was switched off)");
-  await assert.rejects(pool.query("INSERT INTO comms_dispatched_work_events(event_id, dispatched_at) VALUES(-1, now())"), { code: "23503" });
 });
 
 test("COMMS_PLACEMENT_FEED_PAYLOAD the database takes only an empty payload and a placement reference for the kind", async () => {
