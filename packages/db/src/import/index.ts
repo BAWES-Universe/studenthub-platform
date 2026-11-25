@@ -10,3 +10,5 @@ export { PostgresImportedPersonSnapshots, PostgresPersonSnapshotImportStore } fr
 export type { PersonSnapshotImportRefusal, PersonSnapshotImportResult, PersonSnapshotImportRow } from "./person-import.js";
 export { CANONICAL_CANDIDATE_ID, PERSON_SNAPSHOT_KEYS, isValidPersonSnapshotRow, personSnapshotDigest } from "./person-snapshot-contract.js";
 export type { PersonSnapshot, PersonSnapshotKey } from "./person-snapshot-contract.js";
+export { PersonContactImportError, PostgresPersonContactImportStore, isValidPersonContactRow, legacyCivilIdRef } from "./person-contact-import.js";
+export type { CivilIdSealer, PersonContactImportRefusal, PersonContactImportResult, PersonContactImportRow } from "./person-contact-import.js";
