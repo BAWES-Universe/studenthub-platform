@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
-import { PersonContactImportError, PostgresPersonContactImportStore, isValidPersonContactRow, legacyCivilIdRef, normaliseVerifiedEmail, type PersonContactImportRow } from "@studenthub/db/import";
+import { CIVIL_KEY_CHECK, PersonContactImportError, PostgresPersonContactImportStore, civilKeyOpens, isValidPersonContactRow, legacyCivilIdRef, normaliseVerifiedEmail, type PersonContactImportRow } from "@studenthub/db/import";
 import { CivilIdVault } from "../../profile/src/index.js";
 import { mapLegacyPersonContacts, normaliseEmail } from "../../../tools/legacy-import/src/m1-contact.js";
 import { mapLegacyCandidates } from "../../../tools/legacy-import/src/m1-people.js";
@@ -131,7 +131,7 @@ test("a phone, handle or civil ID another staged candidate holds is refused as d
 test("an unexpected failure rolls the batch back and throws only a fixed error: no message detail, no cause", async () => {
   const a = await fixtureIds(pool), b = a + 1;
   const SENTINEL = `Zz${kw(b)}Secret`;
-  const leaky = { keyVersion: 1, seal: () => { const e = new Error(`sealing ${SENTINEL} failed`) as Error & { detail?: string }; e.detail = SENTINEL; throw e; } };
+  const leaky = { keyVersion: 1, open: () => "", seal: () => { const e = new Error(`sealing ${SENTINEL} failed`) as Error & { detail?: string }; e.detail = SENTINEL; throw e; } };
   const failing = new PostgresPersonContactImportStore(pool, leaky, randomBytes(32));
   const rows = contacts([{ candidate_id: a, candidate_phone: `+96${a}` }, { candidate_id: b, candidate_civil_id: kw(b) }]);
   await assert.rejects(failing.importContacts(rows), (error: unknown) => {
@@ -192,4 +192,29 @@ test("the mapper and the cutover compare normalise an address the same, locale-i
   assert.throws(() => store.emailDigest("\u212Aate@example.invalid"), TypeError);
   const row: PersonContactImportRow = { legacyId: "1", phone: null, handle: null, civilId: null, civilIdNeedsReview: null, verifiedEmail: "\u212Aate@example.invalid" };
   assert.equal(isValidPersonContactRow(row), false);
+});
+
+test("a matching-digest replay must still open the staged civil ID under this key, or it is refused, never overwritten", async () => {
+  const a = await fixtureIds(pool), b = a + 1;
+  const digestKey = randomBytes(32);
+  const right = new PostgresPersonContactImportStore(pool, vault, digestKey);
+  const wrong = new PostgresPersonContactImportStore(pool, new CivilIdVault(randomBytes(32)), digestKey);
+  const rows = contacts([{ candidate_id: a, candidate_civil_id: kw(a), candidate_civil_need_verification: 0 }, { candidate_id: b, candidate_phone: `+96${b}` }]);
+  assert.deepEqual(await right.importContacts(rows), { inserted: 2, unchanged: 0, conflicts: [], refused: [] });
+  const staged = await read(a);
+  assert.equal(vault.open(legacyCivilIdRef(String(a)), "KW", staged.civil_number_ciphertext), kw(a), "the right key opens what it staged");
+  assert.deepEqual(await right.importContacts(rows), { inserted: 0, unchanged: 2, conflicts: [], refused: [] });
+  // Same digest key, so the digests match; the civil ID does not open under the other key.
+  assert.deepEqual(await wrong.importContacts(rows), { inserted: 0, unchanged: 1, conflicts: [], refused: [{ legacyId: String(a), code: "undecryptable" }] });
+  assert.deepEqual((await read(a)).civil_number_ciphertext, staged.civil_number_ciphertext, "never overwritten");
+});
+
+test("the civil ID key check opens only under the key that sealed it", () => {
+  const sealed = vault.seal(CIVIL_KEY_CHECK.ref, CIVIL_KEY_CHECK.country, CIVIL_KEY_CHECK.number).ciphertext;
+  assert.equal(civilKeyOpens(vault, sealed), true);
+  assert.equal(civilKeyOpens(new CivilIdVault(randomBytes(32)), sealed), false);
+  assert.equal(civilKeyOpens(vault, Buffer.alloc(40)), false);
+  // Bound to its own reference: a staged candidate's sealed number is no check value.
+  const other = vault.seal(legacyCivilIdRef("1"), "KW", CIVIL_KEY_CHECK.number).ciphertext;
+  assert.equal(civilKeyOpens(vault, other), false);
 });

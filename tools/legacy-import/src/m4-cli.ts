@@ -1,6 +1,8 @@
 /**
  * M-4 importer CLI: organizations, stores, contacts and catalogues from the refreshed legacy copy,
- * then M-1's approved profile snapshots (people), in the same plan and write.
+ * then M-1's approved profile snapshots (people) and their staged contact values (phone, handle,
+ * civil ID sealed with the platform's civil ID key, verified address as an HMAC), in the same plan
+ * and write.
  *
  * On the staging host (a Hermes card runs it, with a fresh M4_INVOCATION each time), only
  * through the launcher, which verifies the runtime before this module is loaded:
@@ -47,11 +49,16 @@
  *          write on another Kuwait day is refused as planMismatch and needs a fresh plan.
  *   write  Refuses unless M4_EXPECTED_PLAN equals the identity it computes now, the target
  *          database's legacy_import_target row says staging with target_id = M4_TARGET_ID
- *          (migration 0652), the operator organization exists there, migration 0653 (the
- *          people snapshot table) is applied there, and no other writer holds the target. Then it publishes `started`, imports in order (catalogues, companies,
- *          brand links, stores, contacts, people) and publishes the outcome. A failure lists the steps
+ *          (migration 0652), the operator organization exists there, migration 0656 (after
+ *          0653 people snapshots, 0654 staged contacts and 0655) is applied there, the civil ID
+ *          key opens the target's provisioned check, and no other writer holds the target. Then it publishes `started`, imports in order (catalogues, companies,
+ *          brand links, stores, contacts, people, person contacts) and publishes the outcome. A failure lists the steps
  *          whose results were confirmed and the ones that were not; the first unconfirmed step
  *          may have committed in part.
+ *
+ *   keycheck  Once per target: seals a fixed, non-personal check value under
+ *          M4_CIVIL_ID_ENCRYPTION_KEY into legacy_import_target.civil_key_check (set once), or
+ *          confirms the key against it. Reads no legacy data and writes nothing else.
  *
  * Receipts carry the invocation, revision, artifact, refresh, destination, plan identity, status
  * and per-step counts and rule codes; no legacy id or value. The private report also lists
@@ -70,18 +77,22 @@
  *   M4_OPERATOR_ORG_ID     the operator organization top-level companies hang under
  *   LEGACY_REFRESH_REPORT  the refresh's last-run.json; the run refuses unless it says ok
  *   LEGACY_REFRESH_LOCK    the refresh's lock file
+ *   M4_CONTACT_DIGEST_KEY  canonical base64 of 32 bytes: the HMAC key for staged contact digests
+ *                          and verified-address HMACs; the plan identity binds those HMACs only
  * For write only:
  *   M4_EXPECTED_PLAN       the plan identity from the reviewed plan receipt
  *   M4_DATABASE_URL        staging PostgreSQL
  *   M4_IMPORT_ACTOR        sha256 hex recorded as the creator of imported rows
+ *   M4_CIVIL_ID_ENCRYPTION_KEY  canonical base64 of 32 bytes: the platform's civil ID key, which
+ *                          seals staged civil IDs; must differ from M4_CONTACT_DIGEST_KEY
  */
 
 import { spawn } from "node:child_process";
 import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import pg from "pg";
-import { PostgresCatalogueImportStore, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore } from "@studenthub/db/import";
-import { PROFILE_PARITY_REVISION } from "@studenthub/profile";
+import { CIVIL_KEY_CHECK, civilKeyOpens, PostgresCatalogueImportStore, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonContactImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore, personContactDigest } from "@studenthub/db/import";
+import { CivilIdVault, PROFILE_PARITY_REVISION } from "@studenthub/profile";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
 import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, lockPathFrom, parseDatabaseUrl } from "./refresh.js";
 import { refreshIdentity } from "./twin/cli.js";
@@ -92,12 +103,41 @@ import { kuwaitDay, planIdentity, planM4, readM4Sources, receiptSafe, receiptSte
 
 export const DEFAULT_M4_OUTPUT_DIR = "/var/lib/legacy-import/m4";
 
-export function m4Writers(pool: pg.Pool, actorRef: string, operatorOrgId: string): M4Writers {
+/**
+ * The two keys the contact step needs, from the operator's environment only. Neither is ever
+ * written to a receipt, report, log or process argument.
+ */
+export interface ContactKeys {
+  /** HMAC key for the staged rows' digests and the verified-address HMAC (M4_CONTACT_DIGEST_KEY). */
+  readonly digest: Buffer;
+  /** The platform's civil ID key (CIVIL_ID_ENCRYPTION_KEY there), write only (M4_CIVIL_ID_ENCRYPTION_KEY). */
+  readonly civilId: Buffer | null;
+}
+
+/** A 32-byte key given as canonical base64, or null. */
+export function keyFrom(raw: string | undefined): Buffer | null {
+  if (typeof raw !== "string" || raw === "") return null;
+  const key = Buffer.from(raw, "base64");
+  return key.length === 32 && key.toString("base64") === raw ? key : null;
+}
+
+export function contactKeysFrom(env: NodeJS.ProcessEnv, mode: "plan" | "write"): ContactKeys | null {
+  const digest = keyFrom(env.M4_CONTACT_DIGEST_KEY);
+  const civilId = keyFrom(env.M4_CIVIL_ID_ENCRYPTION_KEY);
+  if (digest === null || (mode === "write" && civilId === null)) return null;
+  // Separate keys: a digest must never be computable from the civil ID key or the other way round.
+  if (civilId !== null && civilId.equals(digest)) return null;
+  return { digest, civilId };
+}
+
+export function m4Writers(pool: pg.Pool, actorRef: string, operatorOrgId: string, keys: ContactKeys): M4Writers {
+  if (keys.civilId === null) throw new Error("m4.contactKeys");
   const catalogue = new PostgresCatalogueImportStore(pool, actorRef);
   const organizations = new PostgresOrganizationImportStore(pool, ORGANIZATION_PARITY_REVISION, operatorOrgId);
   const stores = new PostgresStoreImportStore(pool, actorRef);
   const contacts = new PostgresContactImportStore(pool, actorRef);
   const people = new PostgresPersonSnapshotImportStore(pool, PROFILE_PARITY_REVISION);
+  const personContacts = new PostgresPersonContactImportStore(pool, new CivilIdVault(keys.civilId), keys.digest);
   return {
     catalogue: (_table, items, now) => catalogue.importItems(items, now),
     companies: (rows) => organizations.importOrganizations(rows),
@@ -105,6 +145,7 @@ export function m4Writers(pool: pg.Pool, actorRef: string, operatorOrgId: string
     stores: (rows, now) => stores.importStores(rows, now),
     contacts: (rows, now) => contacts.importContacts(rows, now),
     people: (rows) => people.importPeople(rows),
+    personContacts: (rows) => personContacts.importContacts(rows),
   };
 }
 
@@ -126,7 +167,7 @@ export function receipt(report: M4Report): string[] {
 export interface M4Receipt {
   readonly schemaVersion: 2;
   readonly invocation: string;
-  readonly kind: "plan" | "write";
+  readonly kind: "plan" | "write" | "keycheck";
   readonly status: "ok" | "started" | "refused_rows" | "failed" | "refused";
   readonly at: string;
   /** Set once the run got as far as computing them. */
@@ -213,6 +254,16 @@ export interface WriteTarget {
   hasOperator(orgId: string): Promise<boolean>;
   /** Whether every table the write needs is migrated (M4_REQUIRED_MIGRATION applied, its table present). */
   schemaReady(): Promise<boolean>;
+  /**
+   * Whether this civil ID key opens the target's provisioned check value (migration 0656):
+   * "missing" when none is provisioned, "mismatch" when the key does not open it.
+   */
+  civilKey(key: Buffer): Promise<"ok" | "missing" | "mismatch">;
+  /**
+   * The `keycheck` step: provisions the check value under this key when the staging marker has
+   * none (set once), else checks the key against it. Never replaces a provisioned value.
+   */
+  provisionCivilKeyCheck(key: Buffer, targetId: string): Promise<"set" | "ok" | "mismatch">;
   /** Takes the one-writer lock for this database without waiting; held until close. */
   claimWriter(): Promise<boolean>;
   /** Writers bound to the lock-holding session; only after claimWriter. */
@@ -226,13 +277,15 @@ export interface WriteTarget {
 }
 
 /**
- * The newest migration a write needs: the people step's snapshot table. Checked before `started`,
- * so a target that lacks it refuses before any step instead of failing at people after the others
- * committed.
+ * The newest migration a write needs: the civil ID key check (0656, after the people snapshot
+ * table 0653, the contact table 0654 and its verified-address column 0655). Checked before
+ * `started`, so a target that lacks it refuses before any step instead of failing at the last
+ * steps after the others committed.
  */
-export const M4_REQUIRED_MIGRATION = "0653_legacy_candidate_snapshots";
+export const M4_REQUIRED_MIGRATION = "0656_legacy_import_civil_key_check";
 export const SCHEMA_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '${M4_REQUIRED_MIGRATION}')
-  AND to_regclass('public.legacy_candidate_snapshots') IS NOT NULL AS ready`;
+  AND to_regclass('public.legacy_candidate_snapshots') IS NOT NULL
+  AND to_regclass('public.legacy_candidate_contacts') IS NOT NULL AS ready`;
 
 /** One writer per target database, across every batch and the terminal receipt. */
 export const WRITER_LOCK_KEY = "hashtextextended('legacy-import:m4-writer', 0)";
@@ -307,7 +360,7 @@ export class WriterSessionPool extends pg.Pool {
 }
 
 /** `sessionLimits` exists for tests that need a shorter wait; production uses the default. */
-export function postgresTarget(url: string, actorRef: string, operatorOrgId: string, sessionLimits = WRITER_SESSION_LIMITS_SQL): WriteTarget {
+export function postgresTarget(url: string, actorRef: string, operatorOrgId: string, keys: ContactKeys | null, sessionLimits = WRITER_SESSION_LIMITS_SQL): WriteTarget {
   const pool = new pg.Pool({ connectionString: url, max: 3 });
   let writer: WriterSessionPool | undefined;
   let wasLost = false;
@@ -324,6 +377,23 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
     },
     schemaReady: async () => {
       try { return (await pool.query<{ ready: boolean }>(SCHEMA_READY_SQL)).rows[0]?.ready === true; } catch { return false; }
+    },
+    civilKey: async (key) => {
+      let check: Buffer | null | undefined;
+      try { check = (await pool.query<{ check: Buffer | null }>("SELECT civil_key_check AS check FROM legacy_import_target")).rows[0]?.check; } catch { return "missing"; }
+      if (!check) return "missing";
+      return civilKeyOpens(new CivilIdVault(key), check) ? "ok" : "mismatch";
+    },
+    provisionCivilKeyCheck: async (key, targetId) => {
+      const vault = new CivilIdVault(key);
+      const sealed = vault.seal(CIVIL_KEY_CHECK.ref, CIVIL_KEY_CHECK.country, CIVIL_KEY_CHECK.number);
+      const { rowCount } = await pool.query(
+        `UPDATE legacy_import_target SET civil_key_check = $1, civil_key_check_version = $2, civil_key_check_set_at = clock_timestamp()
+          WHERE civil_key_check IS NULL AND environment = 'staging' AND target_id = $3`, [sealed.ciphertext, sealed.keyVersion, targetId]);
+      if (rowCount === 1) return "set";
+      const { rows: [row] } = await pool.query<{ check: Buffer | null }>(
+        "SELECT civil_key_check AS check FROM legacy_import_target WHERE environment = 'staging' AND target_id = $1", [targetId]);
+      return row?.check && civilKeyOpens(vault, row.check) ? "ok" : "mismatch";
     },
     claimWriter: async () => {
       if (writer) return !writer.lost;
@@ -345,7 +415,8 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
     },
     writers: () => {
       if (!writer) throw new Error("m4.writerNotClaimed");
-      return m4Writers(writer, actorRef, operatorOrgId);
+      if (!keys) throw new Error("m4.contactKeys");
+      return m4Writers(writer, actorRef, operatorOrgId, keys);
     },
     stillHeld: async () => (writer ? writer.fence() : false),
     lost: () => wasLost || (writer?.lost ?? false),
@@ -374,7 +445,7 @@ export const defaultDeps = (env: NodeJS.ProcessEnv, built: Provenance): CliDeps 
   env,
   lock: acquireSharedLock,
   reader: (e) => mirrorReader(parseDatabaseUrl(e.M4_LEGACY_MIRROR_URL, "mirror")),
-  target: (e) => postgresTarget(e.M4_DATABASE_URL ?? "", e.M4_IMPORT_ACTOR ?? "", e.M4_OPERATOR_ORG_ID ?? ""),
+  target: (e) => postgresTarget(e.M4_DATABASE_URL ?? "", e.M4_IMPORT_ACTOR ?? "", e.M4_OPERATOR_ORG_ID ?? "", contactKeysFrom(e, "write")),
   provenance: () => built,
   now: () => new Date(),
   log: (line) => console.log(line),
@@ -390,7 +461,7 @@ class Refusal extends Error {}
 export async function main(argv: readonly string[], deps: CliDeps): Promise<number> {
   const { env } = deps;
   const mode = argv[0];
-  if (mode !== "plan" && mode !== "write") { deps.error("m4: refused.usage"); return 2; }
+  if (mode !== "plan" && mode !== "write" && mode !== "keycheck") { deps.error("m4: refused.usage"); return 2; }
   const invocation = env.M4_INVOCATION ?? "";
   // Without a fresh, unclaimed name there is nowhere this run's outcome could be published.
   if (!UUID.test(invocation)) { deps.error("m4: refused.invocation"); return 2; }
@@ -416,10 +487,16 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     const revision = env.M4_REVISION ?? "";
     if (!/^[0-9a-f]{40}$/.test(revision)) refuse("revision");
     const targetId = env.M4_TARGET_ID ?? "";
+    if (mode === "keycheck") return await keycheck(deps, revision, targetId, (status, code) => {
+      bound = { revision, target: targetId };
+      publish(status, code);
+    }, (t) => { target = t; });
     const operator = env.M4_OPERATOR_ORG_ID ?? "";
     if (!UUID.test(targetId) || !ORG_ID.test(operator)) refuse("destination");
     const expected = env.M4_EXPECTED_PLAN ?? "";
     if (mode === "write" && (!HEX64.test(expected) || !HEX64.test(env.M4_IMPORT_ACTOR ?? "") || !env.M4_DATABASE_URL)) refuse("writeConfig");
+    const keys = contactKeysFrom(env, mode);
+    if (!keys) refuse("contactKeys");
     // The approved build, as the launcher verified it before loading this module: a clean checkout
     // at the stated revision whose installed runtime matches the digest CI pinned for that commit.
     const artifact = env.M4_ARTIFACT_DIGEST ?? "";
@@ -440,7 +517,8 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     // identity and is refused as planMismatch, so it needs a fresh, reviewed plan.
     const today = kuwaitDay(deps.now().toISOString());
     const plan = planM4(sources, today);
-    const identity = planIdentity(plan, { revision, artifact, refresh: refresh!, target: targetId, operator, today });
+    const identity = planIdentity(plan, { revision, artifact, refresh: refresh!, target: targetId, operator, today },
+      (row) => personContactDigest(keys!.digest, row));
     bound = { ...bound, today, plan: identity };
     const planned = await runM4(sources, null, deps.now().toISOString(), undefined, plan);
     if (!receiptSafe(planned)) throw new Error("m4.report.unsafe");
@@ -460,6 +538,9 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     if (marker?.environment !== "staging" || marker.targetId !== targetId) refuse("target");
     if (!await target.hasOperator(operator)) refuse("operator");
     if (!await target.schemaReady()) refuse("schema");
+    // The supplied civil ID key must open the target's provisioned check (the `keycheck` step),
+    // so a well-formed wrong key is refused before any write.
+    if (await target.civilKey(keys!.civilId!) !== "ok") refuse("civilKey");
     if (!await target.claimWriter()) refuse("writerBusy");
     order = planned.steps.map((s) => s.step);
     publish("started");
@@ -488,4 +569,37 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     await target?.close();
     if (lock.held) lock.release();
   }
+}
+
+/**
+ * `keycheck`: provisions, once, the target's civil ID key check (migration 0656), or confirms the
+ * supplied key against it. The key comes from staging's platform configuration (the gateway's
+ * CIVIL_ID_ENCRYPTION_KEY), never from a card. It reads no legacy data and writes nothing else.
+ * Exit 0 when the check was set or the key opens it; 2 when refused (a mismatch is `civilKey`).
+ */
+async function keycheck(deps: CliDeps, revision: string, targetId: string,
+  publish: (status: M4Receipt["status"], code?: string) => void, track: (target: WriteTarget) => void): Promise<number> {
+  const { env } = deps;
+  const refuse = (code: string): number => {
+    deps.error(`m4: refused.${code}`);
+    try { publish("refused", code); } catch { return 1; }
+    return 2;
+  };
+  if (!UUID.test(targetId)) return refuse("destination");
+  if (!env.M4_DATABASE_URL) return refuse("writeConfig");
+  const key = keyFrom(env.M4_CIVIL_ID_ENCRYPTION_KEY);
+  if (!key) return refuse("contactKeys");
+  const artifact = env.M4_ARTIFACT_DIGEST ?? "";
+  const built = deps.provenance();
+  if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
+  const target = deps.target(env);
+  track(target);
+  const marker = await target.marker();
+  if (marker?.environment !== "staging" || marker.targetId !== targetId) return refuse("target");
+  if (!await target.schemaReady()) return refuse("schema");
+  const result = await target.provisionCivilKeyCheck(key, targetId);
+  if (result === "mismatch") return refuse("civilKey");
+  publish("ok");
+  deps.log(`m4 keycheck ok invocation=${env.M4_INVOCATION} check=${result === "set" ? "set" : "matched"}`);
+  return 0;
 }
