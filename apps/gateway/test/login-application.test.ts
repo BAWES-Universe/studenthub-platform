@@ -332,3 +332,61 @@ test("SHU457_BOUND with the upstream check on, the browser-edit and legacy-link 
   assert.equal(await checkedLiveSessionPerson(plain, pool as never, "live"), "person-1");
   assert.deepEqual(reads, ["pool"]);
 });
+
+test("EMAIL_VERIFIED_RECORD sign-in records the issuer's email_verified answer for the signed address; only a boolean true counts", async () => {
+  const cases: [Record<string, unknown>, [string, boolean] | undefined][] = [
+    [{ profile: { email: "Person@Universe.invalid" }, emailVerified: true }, ["Person@Universe.invalid", true]],
+    [{ profile: { email: "person@universe.invalid" }, emailVerified: false }, ["person@universe.invalid", false]],
+    [{ profile: { email: "person@universe.invalid" }, emailVerified: "true" }, ["person@universe.invalid", false]],
+    [{ profile: { email: "person@universe.invalid" } }, ["person@universe.invalid", false]],
+    [{ profile: { email: "   " }, emailVerified: true }, undefined],
+    [{ profile: { email: "" }, emailVerified: true }, undefined],
+  ];
+  for (const [overrides, expected] of cases) {
+    const rig = createSyntheticLoginRig(createLoginApplication);
+    const recorded: [string, string, boolean][] = [];
+    (rig.identities as unknown as { recordEmailVerification: unknown }).recordEmailVerification =
+      async (personId: string, email: string, verified: boolean) => { recorded.push([personId, email, verified]); };
+    await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
+    const authorization = rig.provider.authorizationRequests.at(-1)!;
+    const response = await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize(overrides as never) });
+    assert.equal(response.status, 302, JSON.stringify(overrides));
+    const personId = [...rig.sessions.records.values()][0]!.personId;
+    assert.deepEqual(recorded, expected ? [[personId, ...expected]] : [], JSON.stringify(overrides));
+  }
+  // A store without the method records nothing and sign-in works as before.
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
+  const authorization = rig.provider.authorizationRequests.at(-1)!;
+  assert.equal((await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize({ emailVerified: true } as never) })).status, 302);
+});
+
+test("EMAIL_VERIFIED_BEST_EFFORT a failed verification write vetoes the current address and the sign-in still succeeds; if the veto fails too, no session is created", async () => {
+  const warn = console.warn;
+  for (const vetoFails of [false, true]) {
+    const rig = createSyntheticLoginRig(createLoginApplication);
+    const vetoed: string[] = [];
+    Object.assign(rig.identities as object, {
+      recordEmailVerification: async () => { throw Object.assign(new Error("connection lost"), { code: "08006" }); },
+      vetoEmailVerification: async (personId: string) => {
+        if (vetoFails) throw new Error("still down");
+        vetoed.push(personId);
+      },
+    });
+    const warned: unknown[] = [];
+    console.warn = (...args: unknown[]) => { warned.push(args.join(" ")); };
+    try {
+      await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
+      const authorization = rig.provider.authorizationRequests.at(-1)!;
+      const response = await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize({ profile: { email: "person@universe.invalid" }, emailVerified: false } as never) });
+      assert.equal(response.status, vetoFails ? 400 : 302, `vetoFails=${vetoFails}`);
+      assert.equal(rig.sessions.records.size, vetoFails ? 0 : 1, "a session exists only when no stale answer can remain");
+    } finally {
+      console.warn = warn;
+    }
+    if (!vetoFails) assert.deepEqual(vetoed, [[...rig.sessions.records.values()][0]!.personId], "a failed write vetoes the current address (fail closed)");
+    else assert.deepEqual(vetoed, []);
+    assert.deepEqual(warned, [JSON.stringify({ event: "email_verification_not_recorded" }),
+      ...(vetoFails ? [JSON.stringify({ event: "email_verification_not_vetoed" })] : [])], "log lines carry no address or person");
+  }
+});

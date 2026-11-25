@@ -23,6 +23,7 @@ interface IdTokenClaims {
   readonly exp: number;
   readonly iat: number;
   readonly email?: string;
+  readonly email_verified?: unknown;
   readonly phone?: string;
   readonly name?: string;
   readonly birthdate?: string;
@@ -376,6 +377,24 @@ export const createLoginApplication: LoginApplicationFactory = (
       }
       if (await dependencies.accessPause?.isPaused(identity.personId)) {
         return { status: 403, body: { error: "access_paused" } };
+      }
+      // The issuer's answer for the address it signed: only a boolean true counts as verified.
+      // A failed write does not block sign-in: every recorded answer for the person is then
+      // vetoed (fail closed: read as not verified), so an older "verified" cannot outlive
+      // the newer answer that was missed. Only if the veto fails too is this sign-in refused
+      // (no session), so a new session never coexists with an answer it could not replace.
+      if (typeof claims.email === "string" && claims.email.trim() !== "" && dependencies.identities.recordEmailVerification) {
+        try {
+          await dependencies.identities.recordEmailVerification(identity.personId, claims.email, claims.email_verified === true);
+        } catch {
+          console.warn(JSON.stringify({ event: "email_verification_not_recorded" }));
+          try {
+            await dependencies.identities.vetoEmailVerification?.(identity.personId);
+          } catch (vetoError) {
+            console.warn(JSON.stringify({ event: "email_verification_not_vetoed" }));
+            throw vetoError;
+          }
+        }
       }
       const sessionId = opaqueToken(dependencies);
       const reference = upstream ? upstreamReferenceFrom(claims) : undefined;

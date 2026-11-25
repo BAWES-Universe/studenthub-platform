@@ -58,6 +58,8 @@ interface TokenOverrides {
   readonly profile?: ClaimedProfile;
   readonly role?: string;
   readonly sid?: string;
+  /** The id token's email_verified claim, as sent; absent when not given. */
+  readonly emailVerified?: unknown;
 }
 
 function encoded(value: unknown): string {
@@ -269,6 +271,7 @@ class FakeProvider implements OidcTransport, JwksResolver {
       birthdate: issued.overrides.profile?.dateOfBirth ?? "2000-01-01",
       role: issued.overrides.role ?? "admin",
       ...(issued.overrides.sid !== undefined ? { sid: issued.overrides.sid } : {}),
+      ...(issued.overrides.emailVerified !== undefined ? { email_verified: issued.overrides.emailVerified } : {}),
     };
     const header = encoded({ alg: "EdDSA", kid: "synthetic-key", typ: "JWT" });
     const payload = encoded(claims);
