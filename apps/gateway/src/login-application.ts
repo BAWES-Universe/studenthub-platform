@@ -379,9 +379,10 @@ export const createLoginApplication: LoginApplicationFactory = (
         return { status: 403, body: { error: "access_paused" } };
       }
       // The issuer's answer for the address it signed: only a boolean true counts as verified.
-      // Never turns a valid sign-in into a rejection. If the write fails, every recorded
-      // answer for the person is forgotten (fail closed: read as not verified), so an older
-      // "verified" cannot outlive the newer answer that was missed.
+      // A failed write does not block sign-in: every recorded answer for the person is then
+      // forgotten (fail closed: read as not verified), so an older "verified" cannot outlive
+      // the newer answer that was missed. Only if the forget fails too is this sign-in refused
+      // (no session), so a new session never coexists with an answer it could not replace.
       if (typeof claims.email === "string" && claims.email.trim() !== "" && dependencies.identities.recordEmailVerification) {
         try {
           await dependencies.identities.recordEmailVerification(identity.personId, claims.email, claims.email_verified === true);
@@ -389,8 +390,9 @@ export const createLoginApplication: LoginApplicationFactory = (
           console.warn(JSON.stringify({ event: "email_verification_not_recorded" }));
           try {
             await dependencies.identities.forgetEmailVerification?.(identity.personId);
-          } catch {
+          } catch (forgetError) {
             console.warn(JSON.stringify({ event: "email_verification_not_forgotten" }));
+            throw forgetError;
           }
         }
       }
