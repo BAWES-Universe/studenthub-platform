@@ -390,3 +390,22 @@ test("EMAIL_VERIFIED_BEST_EFFORT a failed verification write vetoes the current 
       ...(vetoFails ? [JSON.stringify({ event: "email_verification_not_vetoed" })] : [])], "log lines carry no address or person");
   }
 });
+
+test("EMAIL_VERIFIED_PAIRED a store that records but cannot veto gets no session when the write fails", async () => {
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  (rig.identities as unknown as { recordEmailVerification: unknown }).recordEmailVerification =
+    async () => { throw new Error("connection lost"); };
+  const warn = console.warn;
+  const warned: unknown[] = [];
+  console.warn = (...args: unknown[]) => { warned.push(args.join(" ")); };
+  try {
+    await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
+    const authorization = rig.provider.authorizationRequests.at(-1)!;
+    const response = await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize({ profile: { email: "person@universe.invalid" }, emailVerified: false } as never) });
+    assert.equal(response.status, 400);
+    assert.equal(rig.sessions.records.size, 0, "no session beside an answer that could not be replaced");
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(warned, [JSON.stringify({ event: "email_verification_not_recorded" }), JSON.stringify({ event: "email_verification_not_vetoed" })]);
+});
