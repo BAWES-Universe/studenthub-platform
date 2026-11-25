@@ -13,6 +13,8 @@ import {
   parsePeopleQuery,
   parsePauseRequest,
   type AccountPause,
+  type AccountSession,
+  type AccountSessionsStore,
   type AccountPauseService,
   type AccountPauseStore,
   type PauseRefusal,
@@ -37,6 +39,8 @@ import {
  * POST /admin/access/preview              review one change, with a single-use token
  * POST /admin/access/confirm              apply it
  * GET  /profile/access                    "Your access", read-only, for everyone signed in
+ * GET  /account                           U-03: where the person is signed in, for everyone signed in
+ * POST /account/sign-out-everywhere       U-03: end every StudentHub session of the person
  *
  * A caller without an operator admin or staff grant is not answered here at
  * all: the handler returns false and the gateway sends the same 404 it sends
@@ -53,6 +57,8 @@ export interface AccessPorts {
   readonly pauses?: { readonly reads: Pick<AccountPauseStore, "pause">; readonly writes?: AccountPauseService };
   /** A9: when StudentHub staff viewed the signed-in person's account, for their own Access page. */
   readonly views?: { viewedOn(principalId: string): Promise<readonly string[]> };
+  /** U-03: the person's own sessions. Absent: /account is not answered. */
+  readonly account?: AccountSessionsStore;
 }
 
 export type AccessPageWriter = (status: number, title: string, body: string) => void;
@@ -141,9 +147,11 @@ const personHref = (principalId: string, extra: Record<string, string> = {}): st
 
 const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
 
-function layout(main: string, current: "access" | "own"): string {
+function layout(main: string, current: "access" | "own" | "account"): string {
   const nav = current === "own"
-    ? `<a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/profile/access" aria-current="page">Your access</a><a class="nav-item" href="/workspace">Workspaces</a>`
+    ? `<a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/profile/access" aria-current="page">Your access</a><a class="nav-item" href="/account">Account</a><a class="nav-item" href="/workspace">Workspaces</a>`
+    : current === "account"
+    ? `<a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/profile/access">Your access</a><a class="nav-item active" href="/account" aria-current="page">Account</a><a class="nav-item" href="/workspace">Workspaces</a>`
     : `<a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace">Workspaces</a><a class="nav-item" href="/workspace/people">People</a><a class="nav-item active" href="/admin/access" aria-current="page">Access</a>`;
   return `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out</button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace">${nav}</nav></aside><main id="main" class="profile-main">${main}<footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`;
 }
@@ -290,6 +298,24 @@ export function renderOwnAccess(rows: readonly OwnAccessRow[], extra = ""): stri
   return layout(`<div class="profile-heading"><h1>Your access<span class="accent">.</span></h1><span class="badge">Read-only</span></div><p>These are the roles you hold in StudentHub. An administrator or your company’s owner changes them.</p>${list}${extra}`, "own");
 }
 
+const timeText = (value: string): string =>
+  new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kuwait" }).format(new Date(value));
+
+/** U-03: where the person is signed in, and the sign-out-everywhere form. */
+export function renderAccount(sessions: readonly AccountSession[], notice = ""): string {
+  const e = escapeHtml;
+  const rows = sessions.map((item) =>
+    `<tr><th scope="row">${item.current ? "This browser" : "Another browser or device"}</th><td>${item.signedInAt ? e(timeText(item.signedInAt)) : "Not recorded"}</td><td>${e(timeText(item.expiresAt))}</td></tr>`).join("");
+  const others = sessions.filter((item) => !item.current).length;
+  const summary = others === 0
+    ? `<p role="status">You are signed in to StudentHub only in this browser.</p>`
+    : `<p role="status">You are signed in to StudentHub in this browser and ${others} other${others === 1 ? "" : "s"}.</p>`;
+  return layout(`<div class="profile-heading"><h1>Account<span class="accent">.</span></h1></div>${notice}`
+    + `<section><h2>Where you are signed in</h2>${summary}<div class="directory-table"><table><caption>Your StudentHub sign-ins (Kuwait time)</caption><thead><tr><th scope="col">Where</th><th scope="col">Signed in</th><th scope="col">Ends by itself</th></tr></thead><tbody>${rows}</tbody></table></div></section>`
+    + `<section><h2>Sign out everywhere</h2><p>This signs you out of StudentHub in every browser and device, this one included. Your Universe sign-in is not changed; sign in again to come back.</p>`
+    + `<form action="/account/sign-out-everywhere" method="post"><button type="submit">Sign out everywhere</button></form></section>`, "account");
+}
+
 // --- Request handling ---------------------------------------------------------
 
 const refusalStatus = (reason: GrantRefusal | "invalid_request" | "unavailable"): number =>
@@ -310,6 +336,8 @@ export async function handleAccess(
   const url = new URL(req.url ?? "/", "http://gateway.invalid");
   const path = url.pathname;
   const isOwn = path === "/profile/access";
+  const isAccount = path === "/account" || path === "/account/sign-out-everywhere";
+  if (isAccount) return handleAccount(req, res, ports, origin, write, path);
   const personMatch = PERSON.exec(path);
   const pauseMatch = PAUSE.exec(path);
   const isAdminPath = path === "/admin/access" || path === "/admin/access/preview" || path === "/admin/access/confirm" || personMatch !== null
@@ -490,4 +518,42 @@ export async function handleAccess(
     else res.destroy();
     return true;
   }
+}
+
+const SIGNED_OUT_COOKIE = "__Host-studenthub_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
+
+/**
+ * U-03. Signed out, or without the port: not answered (the unknown-path 404).
+ * GET /account lists the person's own sessions; POST /account/sign-out-everywhere,
+ * a same-origin form post with no fields, ends all of them and clears the cookie.
+ * Both go by the person the session belongs to, never by an id in the request.
+ */
+async function handleAccount(req: IncomingMessage, res: ServerResponse, ports: AccessPorts | undefined, origin: string | undefined,
+  write: AccessPageWriter, path: string): Promise<boolean> {
+  if (!ports?.account) return false;
+  const session = sessionCookie(req.headers.cookie);
+  const caller = session ? (await ports.sessions.get(session))?.personId : undefined;
+  if (!session || !caller) return false;
+  if (path === "/account") {
+    if (req.method !== "GET") return false;
+    write(200, "Account", renderAccount(await ports.account.list(caller, session)));
+    return true;
+  }
+  if (req.method !== "POST") return false;
+  if (!origin || req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {
+    req.resume();
+    write(403, "Account", renderAccount(await ports.account.list(caller, session),
+      `<p class="error" role="alert">That request did not come from this page. Nothing changed.</p>`));
+    return true;
+  }
+  const form = await readForm(req);
+  if (!form || Object.keys(form).length !== 0) {
+    write(400, "Account", renderAccount(await ports.account.list(caller, session),
+      `<p class="error" role="alert">That request was not understood. Nothing changed.</p>`));
+    return true;
+  }
+  await ports.account.endAll(caller);
+  res.writeHead(303, { location: "/signed-out", "set-cookie": SIGNED_OUT_COOKIE, "cache-control": "no-store" });
+  res.end();
+  return true;
 }
