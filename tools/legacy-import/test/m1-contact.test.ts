@@ -175,3 +175,17 @@ test("a legacy-verified address is kept normalised for its HMAC only; unverified
   assert.equal(normaliseEmail("\ta@b.c"), null, "only spaces are trimmed, as btrim does");
   assert.equal(normaliseEmail("a@b@c"), null);
 });
+
+test("a non-ASCII spelling never folds into an ASCII verified address", () => {
+  // U+212A KELVIN SIGN lower-cases to "k" and U+0130 to "i" plus a combining dot: the ASCII
+  // check runs on the trimmed input before any case change, so both are refused.
+  for (const raw of ["\u212Aate@example.invalid", "ate@\u212Aexample.invalid", "\u0130an@example.invalid", "a\u00e9@example.invalid", "\uff41@example.invalid"]) {
+    assert.equal(normaliseEmail(raw), null, JSON.stringify(raw));
+  }
+  assert.equal(normaliseEmail(" KATE@EXAMPLE.INVALID "), "kate@example.invalid", "ASCII upper case still lowers");
+  const { contacts, issues } = mapLegacyPersonContacts(
+    [{ candidate_id: 98, candidate_email: "\u212Aate@example.invalid", candidate_email_verification: 1 }, { candidate_id: 99, candidate_email: "kate@example.invalid", candidate_email_verification: 1 }],
+    [{ legacyId: "98" }, { legacyId: "99" }]);
+  assert.deepEqual(contacts.map((c) => [c.legacyId, c.verifiedEmail]), [["99", "kate@example.invalid"]], "no fold makes 98 a duplicate of 99 or stages it");
+  assert.deepEqual(issues, [{ rule: "contact.emailRule", legacyId: "98", field: "candidate_email" }]);
+});

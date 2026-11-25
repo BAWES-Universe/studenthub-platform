@@ -34,12 +34,15 @@ export const M1_CONTACT_MAPPER_REVISION = "m1-contact-v2";
 
 /**
  * The address form the verified-address fact compares (principal_email_verifications, SHU-721):
- * outer spaces trimmed, lower case, the same as SQL lower(btrim(email)). Only plain ASCII
- * addresses are kept, so JavaScript and PostgreSQL lower-case them the same way.
+ * outer spaces trimmed, then lower case. The trimmed input must already be plain printable ASCII
+ * before any case change, so no non-ASCII spelling (a Kelvin sign, a dotted capital I) can fold
+ * into an ASCII address legacy never attested. Only A-Z are lowered, which is locale-invariant and
+ * matches PostgreSQL lower() on ASCII. The store's normaliseVerifiedEmail applies the same rule.
  */
 export function normaliseEmail(raw: string): string | null {
-  const email = raw.replace(/^ +| +$/g, "").toLowerCase();
-  return email.length <= 254 && /^[\x21-\x3f\x41-\x7e]+@[\x21-\x3f\x41-\x7e]+$/.test(email) ? email : null;
+  const trimmed = raw.replace(/^ +| +$/g, "");
+  if (trimmed.length > 254 || !/^[\x21-\x3f\x41-\x7e]+@[\x21-\x3f\x41-\x7e]+$/.test(trimmed)) return null;
+  return trimmed.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
 }
 
 export interface PersonContactRow {

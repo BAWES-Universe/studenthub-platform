@@ -41,9 +41,22 @@ export interface PersonContactImportResult {
 }
 
 const KEYS = ["civilId", "civilIdNeedsReview", "handle", "legacyId", "phone", "verifiedEmail"];
-/** lower(btrim(...)) of a plain ASCII address, as the mapper's normaliseEmail produces. */
+/** A plain printable ASCII address with no upper case: what normaliseVerifiedEmail produces. */
 const EMAIL = /^[\x21-\x3f\x41-\x7e]+@[\x21-\x3f\x41-\x7e]+$/;
-const isNormalisedEmail = (v: unknown) => typeof v === "string" && v.length <= 254 && EMAIL.test(v) && v === v.toLowerCase();
+const isNormalisedEmail = (v: unknown) => typeof v === "string" && v.length <= 254 && EMAIL.test(v) && !/[A-Z]/.test(v);
+
+/**
+ * The one address normalisation the verified-address fact uses, the same rule as the mapper's
+ * normaliseEmail: outer spaces trimmed, the trimmed input must be plain printable ASCII before any
+ * case change (so no non-ASCII spelling folds into an ASCII address), then only A-Z lowered, which
+ * is locale-invariant. null when the address is outside that form. The cutover compare runs this
+ * in JavaScript on principals.email, never a collation-dependent SQL lower().
+ */
+export function normaliseVerifiedEmail(raw: string): string | null {
+  const trimmed = raw.replace(/^ +| +$/g, "");
+  if (trimmed.length > 254 || !EMAIL.test(trimmed)) return null;
+  return trimmed.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+}
 const PHONE = /^\+[0-9]{8,15}$/;
 const HANDLE = /^[a-z][a-z0-9._-]{2,29}$/;
 const CIVIL = { KW: /^[0-9]{12}$/, BH: /^[0-9]{9}$/ } as const;
@@ -108,11 +121,22 @@ export class PostgresPersonContactImportStore {
   async close(): Promise<void> { if (this.#owns) await this.#pool.end(); }
 
   /**
-   * The HMAC a verified address is staged as. The cutover step hashes a linked person's current
-   * address (lower(btrim(principals.email))) with this and compares; no address is stored.
+   * The HMAC a verified address is staged as. Takes an address already in normaliseVerifiedEmail
+   * form and refuses anything else; no address is stored.
    */
   emailDigest(normalisedEmail: string): Buffer {
+    if (!isNormalisedEmail(normalisedEmail)) throw new TypeError("not a normalised address");
     return createHmac("sha256", this.#digestKey).update(JSON.stringify(["m1-verified-email-v1", normalisedEmail])).digest();
+  }
+
+  /**
+   * For the cutover compare: normalises a linked person's current principals.email with
+   * normaliseVerifiedEmail and returns its HMAC, or null when the address is outside that form
+   * (then no verified fact is added).
+   */
+  currentEmailDigest(rawEmail: string): Buffer | null {
+    const normalised = normaliseVerifiedEmail(rawEmail);
+    return normalised === null ? null : this.emailDigest(normalised);
   }
 
   /** HMAC over the row's id and values; never a value-revealing hash. */

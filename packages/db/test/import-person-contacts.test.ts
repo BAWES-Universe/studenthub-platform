@@ -3,9 +3,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
-import { PersonContactImportError, PostgresPersonContactImportStore, legacyCivilIdRef, type PersonContactImportRow } from "@studenthub/db/import";
+import { PersonContactImportError, PostgresPersonContactImportStore, isValidPersonContactRow, legacyCivilIdRef, normaliseVerifiedEmail, type PersonContactImportRow } from "@studenthub/db/import";
 import { CivilIdVault } from "../../profile/src/index.js";
-import { mapLegacyPersonContacts } from "../../../tools/legacy-import/src/m1-contact.js";
+import { mapLegacyPersonContacts, normaliseEmail } from "../../../tools/legacy-import/src/m1-contact.js";
 import { mapLegacyCandidates } from "../../../tools/legacy-import/src/m1-people.js";
 import { fixtureIds } from "./legacy-fixture-ids.js";
 
@@ -179,4 +179,17 @@ test("the table refuses a malformed id, value or half-recorded civil ID", async 
   await assert.rejects(ins("civil_country, civil_number_ciphertext, civil_number_hash, civil_key_version", `'SA', '\\x${"00".repeat(40)}', '\\x${"00".repeat(32)}', 1`), { code: "23514" });
   await assert.rejects(pool.query(`INSERT INTO legacy_candidate_contacts (legacy_candidate_id, digest) VALUES ('5', '${"a".repeat(64)}')`), { code: "23514" });
   await assert.rejects(ins("verified_email_hmac", `'\\x${"00".repeat(31)}'`), { code: "23514" });
+});
+
+test("the mapper and the cutover compare normalise an address the same, locale-invariant way", () => {
+  const vectors = [" Kate@Example.INVALID ", "kate@example.invalid", "\u212Aate@example.invalid", "\u0130an@example.invalid",
+    "a\u00e9@example.invalid", "\ta@b.c", "a@b@c", "IAN@EXAMPLE.INVALID", `${"a".repeat(250)}@b.c`, ""];
+  for (const raw of vectors) assert.equal(normaliseVerifiedEmail(raw), normaliseEmail(raw), JSON.stringify(raw));
+  assert.equal(normaliseVerifiedEmail("IAN@EXAMPLE.INVALID"), "ian@example.invalid", "no Turkish dotless i");
+  assert.deepEqual(store.currentEmailDigest(" Kate@Example.INVALID "), store.emailDigest("kate@example.invalid"));
+  assert.equal(store.currentEmailDigest("\u212Aate@example.invalid"), null, "a non-ASCII current address gets no verified fact");
+  assert.throws(() => store.emailDigest("Kate@example.invalid"), TypeError);
+  assert.throws(() => store.emailDigest("\u212Aate@example.invalid"), TypeError);
+  const row: PersonContactImportRow = { legacyId: "1", phone: null, handle: null, civilId: null, civilIdNeedsReview: null, verifiedEmail: "\u212Aate@example.invalid" };
+  assert.equal(isValidPersonContactRow(row), false);
 });
