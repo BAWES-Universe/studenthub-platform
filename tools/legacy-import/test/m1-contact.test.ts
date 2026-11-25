@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { validateCivilId, validatePersonSelfEditValue } from "@studenthub/profile";
-import { M1_CONTACT_SOURCES, mapLegacyPersonContacts } from "../src/m1-contact.js";
+import { M1_CONTACT_SOURCES, mapLegacyPersonContacts, normaliseEmail } from "../src/m1-contact.js";
 import { mapLegacyCandidates } from "../src/m1-people.js";
 
 // Synthetic rows only. Numbers are made up and shaped like legacy's columns.
 const TODAY = "2026-11-25";
 const candidate = (id: number | string, extra: Record<string, unknown> = {}) => ({
   candidate_id: id, deleted: 0, candidate_name: "Test Person", candidate_phone: null, profile_url: null,
-  candidate_civil_id: null, candidate_civil_need_verification: null, ...extra,
+  candidate_civil_id: null, candidate_civil_need_verification: null, candidate_email: null, candidate_email_verification: 0, ...extra,
 });
 const map = (rows: readonly Record<string, unknown>[]) => {
   const { people } = mapLegacyCandidates({ candidate: rows, country: [], university: [], area: [] }, TODAY);
@@ -25,10 +25,10 @@ test("phone, handle and civil ID map to the values the platform's own rules stor
   ]);
   assert.deepEqual(issues, []);
   assert.deepEqual(contacts, [
-    { legacyId: "1", phone: "+96550001234", handle: "noor.test", civilId: { country: "KW", number: "299010112345" }, civilIdNeedsReview: true },
-    { legacyId: "2", phone: "+96560001234", handle: "noor_2", civilId: { country: "BH", number: "990123456" }, civilIdNeedsReview: false },
-    { legacyId: "3", phone: "+96570001234", handle: null, civilId: null, civilIdNeedsReview: null },
-    { legacyId: "4", phone: "+442071838750", handle: null, civilId: null, civilIdNeedsReview: null },
+    { legacyId: "1", phone: "+96550001234", handle: "noor.test", civilId: { country: "KW", number: "299010112345" }, civilIdNeedsReview: true, verifiedEmail: null },
+    { legacyId: "2", phone: "+96560001234", handle: "noor_2", civilId: { country: "BH", number: "990123456" }, civilIdNeedsReview: false, verifiedEmail: null },
+    { legacyId: "3", phone: "+96570001234", handle: null, civilId: null, civilIdNeedsReview: null, verifiedEmail: null },
+    { legacyId: "4", phone: "+442071838750", handle: null, civilId: null, civilIdNeedsReview: null, verifiedEmail: null },
   ]);
   // Every stored value is one the platform's write would accept as it is.
   for (const c of contacts) {
@@ -46,7 +46,7 @@ test("a value the platform refuses is not recorded, with a row naming the column
     candidate(7, { profile_url: "1noor", candidate_phone: "+965 5000 1234" }),
     candidate(8, { candidate_civil_id: { number: "299010112345" }, candidate_phone: true, profile_url: 42 }),
   ]);
-  assert.deepEqual(contacts, [{ legacyId: "7", phone: "+96550001234", handle: null, civilId: null, civilIdNeedsReview: null }]);
+  assert.deepEqual(contacts, [{ legacyId: "7", phone: "+96550001234", handle: null, civilId: null, civilIdNeedsReview: null, verifiedEmail: null }]);
   assert.deepEqual(issues, [
     { rule: "contact.civilIdRule", legacyId: "5", field: "candidate_civil_id" },
     { rule: "contact.handleRule", legacyId: "5", field: "profile_url" },
@@ -91,8 +91,8 @@ test("a phone, handle or civil ID held by two imported people is recorded for ne
     candidate(13, { candidate_civil_id: "990123457" }),
   ]);
   assert.deepEqual(contacts, [
-    { legacyId: "12", phone: null, handle: "own.handle", civilId: { country: "BH", number: "990123456" }, civilIdNeedsReview: null },
-    { legacyId: "13", phone: null, handle: null, civilId: { country: "BH", number: "990123457" }, civilIdNeedsReview: null },
+    { legacyId: "12", phone: null, handle: "own.handle", civilId: { country: "BH", number: "990123456" }, civilIdNeedsReview: null, verifiedEmail: null },
+    { legacyId: "13", phone: null, handle: null, civilId: { country: "BH", number: "990123457" }, civilIdNeedsReview: null, verifiedEmail: null },
   ]);
   assert.deepEqual(issues, [
     { rule: "contact.civilIdDuplicate", legacyId: "11", field: "candidate_civil_id", target: "20" },
@@ -136,12 +136,42 @@ test("output is ordered by legacy id and the same input gives the same output", 
 
 test("the mapper reads only the listed columns, and the list holds no email, password, token or document", () => {
   assert.deepEqual([...M1_CONTACT_SOURCES.candidate].sort(),
-    ["candidate_civil_id", "candidate_civil_need_verification", "candidate_id", "candidate_phone", "profile_url"]);
-  for (const column of M1_CONTACT_SOURCES.candidate) assert.doesNotMatch(column, /email|password|hash|token|photo|resume|iban|latitude|longitude/);
+    ["candidate_civil_id", "candidate_civil_need_verification", "candidate_email", "candidate_email_verification", "candidate_id", "candidate_phone", "profile_url"]);
+  for (const column of M1_CONTACT_SOURCES.candidate) assert.doesNotMatch(column, /password|hash|token|photo|resume|iban|latitude|longitude|new_email/);
   const read = new Set<string>();
   const proxy = (row: Record<string, unknown>) => new Proxy(row, { get: (target, key) => { if (typeof key === "string") read.add(key); return target[key as string]; } });
   const rows = [candidate(50, { candidate_phone: "50001234", profile_url: "proxy.me", candidate_civil_id: "299010112345", candidate_civil_need_verification: 1, candidate_email: "x@example.invalid" })];
   const { people } = mapLegacyCandidates({ candidate: rows, country: [], university: [], area: [] }, TODAY);
   mapLegacyPersonContacts(rows.map(proxy), people);
   assert.deepEqual([...read].filter((k) => !(M1_CONTACT_SOURCES.candidate as readonly string[]).includes(k)), []);
+});
+
+test("a legacy-verified address is kept normalised for its HMAC only; unverified addresses are never read", () => {
+  const read = new Set<string>();
+  const proxy = (row: Record<string, unknown>) => new Proxy(row, { get: (t, k) => { if (typeof k === "string") read.add(`${t.candidate_id}:${k}`); return t[k as string]; } });
+  const rows = [
+    candidate(90, { candidate_email: "  Noor.Test@Example.INVALID ", candidate_email_verification: 1 }),
+    candidate(91, { candidate_email: "other@example.invalid", candidate_email_verification: "0" }),
+    candidate(92, { candidate_email: "x@example.invalid", candidate_email_verification: null }),
+    candidate(93, { candidate_email: "not an address", candidate_email_verification: "1" }),
+    candidate(94, { candidate_email: "نور@example.invalid", candidate_email_verification: true }),
+    candidate(95, { candidate_email: "y@example.invalid", candidate_email_verification: "yes" }),
+    candidate(96, { candidate_email: "Shared@example.invalid", candidate_email_verification: 1 }),
+    candidate(97, { candidate_email: "shared@EXAMPLE.invalid", candidate_email_verification: 1 }),
+  ];
+  const { people } = mapLegacyCandidates({ candidate: rows, country: [], university: [], area: [] }, TODAY);
+  const { contacts, issues } = mapLegacyPersonContacts(rows.map(proxy), people);
+  assert.deepEqual(contacts.map((c) => [c.legacyId, c.verifiedEmail]), [["90", "noor.test@example.invalid"]]);
+  assert.deepEqual(issues, [
+    { rule: "contact.emailRule", legacyId: "93", field: "candidate_email" },
+    { rule: "contact.emailRule", legacyId: "94", field: "candidate_email" },
+    { rule: "contact.badValue", legacyId: "95", field: "candidate_email_verification" },
+    { rule: "contact.emailDuplicate", legacyId: "96", field: "candidate_email", target: "97" },
+    { rule: "contact.emailDuplicate", legacyId: "97", field: "candidate_email", target: "96" },
+  ]);
+  for (const id of [91, 92, 95]) assert.ok(!read.has(`${id}:candidate_email`), `unverified ${id} address not read`);
+  assert.ok(!JSON.stringify(issues).includes("@"));
+  assert.equal(normaliseEmail(" A@B.C "), "a@b.c");
+  assert.equal(normaliseEmail("\ta@b.c"), null, "only spaces are trimmed, as btrim does");
+  assert.equal(normaliseEmail("a@b@c"), null);
 });

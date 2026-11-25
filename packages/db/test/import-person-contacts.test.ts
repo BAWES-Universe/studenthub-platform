@@ -92,7 +92,7 @@ test("rows off the contract are refused before any lookup, new or replayed, with
     { ...fresh!, civilId: { country: "KW", number: bh(b) } },
     { ...fresh!, civilId: { country: "BH", number: bh(b), extra: 1 } },
     { ...fresh!, civilId: null, civilIdNeedsReview: true },
-    { ...fresh!, phone: null, handle: null, civilId: null, civilIdNeedsReview: null },
+    { ...fresh!, phone: null, handle: null, civilId: null, civilIdNeedsReview: null, verifiedEmail: null },
     { ...fresh!, legacyId: `0${b}` },
     { ...fresh!, handle: "UPPER" },
     null,
@@ -117,10 +117,10 @@ test("a phone, handle or civil ID another staged candidate holds is refused as d
   await store.importContacts(contacts([{ candidate_id: a, candidate_phone: `+96${a}`, profile_url: `t${a}`, candidate_civil_id: kw(a) }]));
   // Each later row clashes with a on one value only; the mapper never saw them together.
   const rows: PersonContactImportRow[] = [
-    { legacyId: String(b), phone: `+96${a}`, handle: null, civilId: null, civilIdNeedsReview: null },
-    { legacyId: String(c), phone: null, handle: `t${a}`, civilId: null, civilIdNeedsReview: null },
-    { legacyId: String(d), phone: null, handle: null, civilId: { country: "KW", number: kw(a) }, civilIdNeedsReview: null },
-    { legacyId: String(e), phone: `+96${e}`, handle: null, civilId: null, civilIdNeedsReview: null },
+    { legacyId: String(b), phone: `+96${a}`, handle: null, civilId: null, civilIdNeedsReview: null, verifiedEmail: null },
+    { legacyId: String(c), phone: null, handle: `t${a}`, civilId: null, civilIdNeedsReview: null, verifiedEmail: null },
+    { legacyId: String(d), phone: null, handle: null, civilId: { country: "KW", number: kw(a) }, civilIdNeedsReview: null, verifiedEmail: null },
+    { legacyId: String(e), phone: `+96${e}`, handle: null, civilId: null, civilIdNeedsReview: null, verifiedEmail: null },
   ];
   assert.deepEqual(await store.importContacts(rows), {
     inserted: 1, unchanged: 0, conflicts: [],
@@ -150,6 +150,25 @@ test("an unexpected failure rolls the batch back and throws only a fixed error: 
   finally { await nowhere.close(); }
 });
 
+test("a legacy-verified address is staged only as its keyed HMAC; a shared one is refused as duplicate", async () => {
+  const a = await fixtureIds(pool), b = a + 1, c = a + 2;
+  const address = `m1-${a}@example.invalid`;
+  const [row] = contacts([{ candidate_id: a, candidate_email: ` ${address.toUpperCase()}`, candidate_email_verification: 1 }]);
+  assert.equal(row!.verifiedEmail, address);
+  assert.deepEqual(await store.importContacts([row!]), { inserted: 1, unchanged: 0, conflicts: [], refused: [] });
+  assert.deepEqual(await store.importContacts([row!]), { inserted: 0, unchanged: 1, conflicts: [], refused: [] });
+  const staged = await read(a);
+  assert.deepEqual(staged.verified_email_hmac, store.emailDigest(address), "the cutover compare hashes the current address the same way");
+  assert.notDeepEqual(staged.verified_email_hmac, store.emailDigest(`x${address}`));
+  assert.ok(!JSON.stringify({ ...staged, verified_email_hmac: null }).includes("example.invalid"), "no address is stored");
+  assert.equal(staged.phone, null);
+  const clash: PersonContactImportRow = { legacyId: String(b), phone: null, handle: null, civilId: null, civilIdNeedsReview: null, verifiedEmail: address };
+  const bad = { ...clash, legacyId: String(c), verifiedEmail: "Mixed@Example.invalid" };
+  assert.deepEqual(await store.importContacts([clash, bad as never]), {
+    inserted: 0, unchanged: 0, conflicts: [], refused: [{ legacyId: String(b), code: "duplicate" }, { legacyId: String(c), code: "invalid" }],
+  });
+});
+
 test("the table refuses a malformed id, value or half-recorded civil ID", async () => {
   const ins = (cols: string, vals: string) => pool.query(`INSERT INTO legacy_candidate_contacts (legacy_candidate_id, digest, ${cols}) VALUES ('5', '${"a".repeat(64)}', ${vals})`);
   await assert.rejects(pool.query(`INSERT INTO legacy_candidate_contacts (legacy_candidate_id, digest, phone) VALUES ('05', '${"a".repeat(64)}', '+96550001234')`), { code: "23514" });
@@ -159,4 +178,5 @@ test("the table refuses a malformed id, value or half-recorded civil ID", async 
   await assert.rejects(ins("civil_needs_review", "true"), { code: "23514" });
   await assert.rejects(ins("civil_country, civil_number_ciphertext, civil_number_hash, civil_key_version", `'SA', '\\x${"00".repeat(40)}', '\\x${"00".repeat(32)}', 1`), { code: "23514" });
   await assert.rejects(pool.query(`INSERT INTO legacy_candidate_contacts (legacy_candidate_id, digest) VALUES ('5', '${"a".repeat(64)}')`), { code: "23514" });
+  await assert.rejects(ins("verified_email_hmac", `'\\x${"00".repeat(31)}'`), { code: "23514" });
 });
