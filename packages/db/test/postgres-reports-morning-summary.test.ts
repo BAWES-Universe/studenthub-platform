@@ -212,10 +212,13 @@ async function placed(org: { id: string; shop: string }, start: string, end: str
   return person;
 }
 async function paid(org: { id: string; shop: string }, person: string, month: string, at: string, ...actions: TransferAction[]): Promise<string> {
+  return paidIn("KWD", org, person, month, at, ...actions);
+}
+async function paidIn(currency: string, org: { id: string; shop: string }, person: string, month: string, at: string, ...actions: TransferAction[]): Promise<string> {
   const id = randomUUID();
-  await pool.query("INSERT INTO pay_transfers(id,company_id,period_start,period_end,currency_code) VALUES($1,$2,$3::date,($3::date + interval '1 month' - interval '1 day')::date,'KWD')", [id, org.id, `${month}-01`]);
-  await pool.query("INSERT INTO pay_transfer_lines(id,transfer_id,person_id,store_id,currency_code,candidate_total,company_total,note,calculation) VALUES($1,$2,$3,$4,'KWD','1.000','2.000','synthetic','{}')",
-    [`line-${randomUUID()}`, id, person, org.shop]);
+  await pool.query("INSERT INTO pay_transfers(id,company_id,period_start,period_end,currency_code) VALUES($1,$2,$3::date,($3::date + interval '1 month' - interval '1 day')::date,$4)", [id, org.id, `${month}-01`, currency]);
+  await pool.query("INSERT INTO pay_transfer_lines(id,transfer_id,person_id,store_id,currency_code,candidate_total,company_total,note,calculation) VALUES($1,$2,$3,$4,$5,'1.000','2.000','synthetic','{}')",
+    [`line-${randomUUID()}`, id, person, org.shop, currency]);
   const policy: PayLifecyclePolicy = { authorize: async () => true, unassignedPersonIds: async () => [] };
   const lifecycle = new TransferLifecycleService(new PostgresTransferLifecycleStore(pool, policy, new PostgresTransferInvoiceEffects()), () => new Date(at));
   for (const action of actions) assert.equal((await lifecycle.transition({ principalId: creator, actingAs: false }, id, action)).kind, "changed", action);
@@ -262,7 +265,7 @@ async function bankDetails(person: string): Promise<void> {
   await pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, 'KW81CBKU0000000000001234560101', 'Synthetic Beneficiary')", [person, bank]);
 }
 
-test("REPORTS_MORNING_SUMMARY_PG missing bank info: people placed today at a KWD organization, or with an unpaid line on a KWD transfer being distributed, who have no bank details", async () => {
+test("REPORTS_MORNING_SUMMARY_PG missing bank info: people placed today at a KWD organization, or with an unpaid line on a live KWD transfer being distributed, who have no bank details, each counted once", async () => {
   const day = "2026-11-21";
   const read = async () => (await store.counts(day)).missingBankInfo!;
   const before = await read();
@@ -282,5 +285,8 @@ test("REPORTS_MORNING_SUMMARY_PG missing bank info: people placed today at a KWD
   const owedWithBank = await principal("owed-bank");
   await bankDetails(owedWithBank);
   await paid(kwd, owedWithBank, "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // owed, details on file
+  await paid(kwd, await principal("cancelled"), "2026-10", "2026-11-01T08:00:00Z", "cancel"); // cancelled transfer
+  await paidIn("USD", usd, await principal("usd"), "2026-10", "2026-11-01T08:00:00Z", "lock", "payment_received"); // owed on a USD transfer
+  await paid(kwd, await principal("deleted"), "2026-10", "2026-11-01T08:00:00Z", "lock", "delete"); // deleted transfer (the lifecycle deletes only before payment)
   assert.equal(await read() - before, 4);
 });

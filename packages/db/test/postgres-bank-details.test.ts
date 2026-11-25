@@ -194,15 +194,15 @@ test("SHU182_BANK_PG_STALE a value changed after the preview is not overwritten"
   assert.equal((await stored(id)).iban, "GB82WEST12345698765432");
 });
 
-test("SHU182_BANK_PG_PRESENCE withoutDetails answers only who has no row, in input order without repeats", async () => {
+test("SHU182_BANK_PG_PRESENCE countWithoutDetails counts each principal with no row once", async () => {
   const [withRow, without, other] = [await person(), await person(), await person()];
   const nobody = `shu182-nobody-${randomUUID()}`;
   await pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, $3, $4)",
     [withRow, await catalogueItem("bank"), IBAN, NAME]);
-  assert.deepEqual(await store.withoutDetails([other, withRow, without, other, nobody]), [other, without, nobody]);
-  assert.deepEqual(await store.withoutDetails([withRow]), []);
-  assert.deepEqual(await store.withoutDetails([]), []);
-  await assert.rejects(store.withoutDetails([""]), TypeError);
+  assert.equal(await store.countWithoutDetails([other, withRow, without, other, nobody, without]), 3);
+  assert.equal(await store.countWithoutDetails([withRow, withRow]), 0);
+  assert.equal(await store.countWithoutDetails([]), 0);
+  await assert.rejects(store.countWithoutDetails([""]), TypeError);
 });
 
 test("SHU182_BANK_PG_SCHEMA the table and the ledger refuse malformed rows from any writer", async () => {

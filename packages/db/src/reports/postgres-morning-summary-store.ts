@@ -44,17 +44,24 @@ SELECT
   ${idCardExpiredCount("$1")} AS "totalExpiredCards",
   ${idCardNeedsCount("$1")} AS "id_need_generated"`;
 
-// Legacy `Candidate::withoutBankInfoOrWithPayment`, KWD only: people placed today at an organization
-// that bills in KWD, and people with an unpaid line on a live KWD transfer whose payment has arrived
-// (being distributed, or complete). Whether each has bank details is asked of the bank-details store,
-// the table's only reader; this query never names that table.
+// Legacy `Candidate::withoutBankInfoOrWithPayment` (grouped by candidate): people placed today
+// (legacy `store_id > 0`; here an assignment running on the report day), and people with an unpaid
+// line on a transfer whose payment has arrived (being distributed, or complete). Intentional changes:
+// - KWD only, as the staff statistics page asks the helper (legacy's email counted every currency;
+//   the summary's other shared counters are KWD too). A placement counts at an organization that
+//   bills in KWD, a line on a KWD transfer.
+// - A deleted transfer is left out; legacy checked only that the line was not deleted. The pay lifecycle
+//   deletes only draft, locked or cancelled transfers, so this is a guard.
+// - Legacy left out deleted candidates; people have no deleted state on the platform.
+// How many of them have no bank details is asked of the bank-details store, the table's only reader;
+// this query never names that table.
 const BANK_INFO_CANDIDATES = `SELECT a.person_principal_id AS id FROM work_assignments a
     LEFT JOIN organization_commercial_terms ct ON ct.org_id = a.org_id AND ct.field = 'currency_code'
     WHERE a.start_date <= $1::date AND (a.end_date IS NULL OR a.end_date >= $1::date) AND COALESCE(ct.value, 'KWD') = 'KWD'
   UNION
   SELECT l.person_id FROM pay_transfer_lines l JOIN pay_transfers p ON p.id = l.transfer_id
     WHERE NOT l.paid AND NOT p.deleted AND p.currency_code = 'KWD' AND p.status IN ('distributing','complete')
-  ORDER BY 1`;
+`;
 
 /**
  * Who may get the email: subscribed, still StudentHub staff (a staff or admin grant over an
@@ -68,7 +75,7 @@ export const morningSummaryEligible = (principal: string, orgs: string) => `(EXI
 const RECIPIENTS = (orgs: string) => `SELECT s.principal_id FROM morning_summary_subscriptions s WHERE ${morningSummaryEligible("s.principal_id", orgs)} ORDER BY s.principal_id`;
 
 export class PostgresMorningSummaryStore {
-  readonly #pool: pg.Pool; readonly #owns: boolean; readonly #operatorOrgIds: readonly string[]; readonly #bank: PostgresBankDetailsStore;
+  readonly #pool: pg.Pool; readonly #owns: boolean; readonly #operatorOrgIds: readonly string[]; readonly #bank: Pick<PostgresBankDetailsStore, "countWithoutDetails">;
   constructor(options: { connectionString?: string; pool?: pg.Pool; operatorOrgIds?: readonly string[] } = {}) {
     this.#owns = !options.pool;
     this.#pool = options.pool ?? new pg.Pool({ connectionString: options.connectionString ?? databaseUrl() });
@@ -82,7 +89,7 @@ export class PostgresMorningSummaryStore {
     if (!DAY.test(day)) throw new RangeError("invalid day");
     const counts = (await client.query<Record<string, number>>(COUNTS, [day, this.#operatorOrgIds])).rows[0]!;
     const candidates = (await client.query<{ id: string }>(BANK_INFO_CANDIDATES, [day])).rows.map(r => r.id);
-    return { ...counts, missingBankInfo: (await this.#bank.withoutDetails(candidates, client)).length };
+    return { ...counts, missingBankInfo: await this.#bank.countWithoutDetails(candidates, client) };
   }
 
   /**
