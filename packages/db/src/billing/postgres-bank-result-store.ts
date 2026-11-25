@@ -80,6 +80,11 @@ export class PostgresBankResultStore {
       // Only money the company has paid in can be settled; other lines stay unmatched.
       if (transfer && !transfer.deleted && ELIGIBLE.has(transfer.status)) locked.set(id, transfer);
     }
+    // Settling a line is part of completing its transfer: the actor must hold that
+    // company-scoped permission on every transfer this file could write to.
+    for (const transfer of locked.values()) {
+      if (!await tx.authorize(actor, transfer, "complete")) return { kind: "refused", code: "forbidden" };
+    }
     const lines: BankCandidateLine[] = (await client.query(
       "SELECT id,transfer_id,paid,candidate_total::text AS amount,currency_code FROM pay_transfer_lines WHERE id = ANY($1::text[]) AND transfer_id = ANY($2::text[]) ORDER BY id",
       [lineRefs, [...locked.keys()]])).rows.map((r) => ({

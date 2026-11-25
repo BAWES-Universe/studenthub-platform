@@ -22,6 +22,8 @@ const mutations = [
     'throw new Error("bank_result_complete_refused");', "{}"],
   ["record a zero amount for an AUB confirmation", "BANK_STORE_PAY",
     "row.amount ?? line.paidAmount", 'row.amount ?? "0.000"'],
+  ["settle lines without the actor's permission on their transfer", "BANK_STORE_AUTHORIZE",
+    'if (!await tx.authorize(actor, transfer, "complete"))', "if (false)"],
   ["let an act-as session apply a file", "BANK_STORE_REFUSED",
     "async apply(actor, fileId) {\n        if (actor.actingAs !== false ||", "async apply(actor, fileId) {\n        if ("],
   ["let an act-as session upload a file", "BANK_STORE_REFUSED",

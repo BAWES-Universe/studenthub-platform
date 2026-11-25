@@ -21,7 +21,7 @@ const effects = () => new PostgresTransferInvoiceEffects();
 const lifecycle = () => new TransferLifecycleService(new PostgresTransferLifecycleStore(pool, policy, effects()), now);
 const complete: BankResultCompletePort = async (tx, who, id) =>
   (await new TransferLifecycleService(new PostgresTransferLifecycleStore(pool, policy, effects()), now).transitionInTransaction(tx, who, id, "complete")).kind === "changed";
-const results = (port: BankResultCompletePort = complete) => new PostgresBankResultStore(pool, policy, effects(), port);
+const results = (port: BankResultCompletePort = complete, rules: PayLifecyclePolicy = policy) => new PostgresBankResultStore(pool, rules, effects(), port);
 const AUB_HEAD = ["Status", "Status Description", "Debit Narrative", "Credit Narrative"];
 const aub = (...rows: BankCell[][]): BankCell[][] => [[], AUB_HEAD, ...rows];
 const sha = (cells: unknown) => createHash("sha256").update(JSON.stringify(cells)).digest("hex");
@@ -160,4 +160,18 @@ test("BANK_STORE_REFUSED act-as sessions and unreadable files are refused before
   const fileId = await submit(cells);
   assert.deepEqual(await results().apply({ principalId: "fin", actingAs: true }, fileId), { kind: "refused", code: "forbidden" });
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM bank_result_files")).rows[0].n, 1);
+});
+
+test("BANK_STORE_AUTHORIZE an actor who may not complete a named transfer settles nothing in the file, and the file stays pending", async () => {
+  const mine = await transfer([{ id: "L-1", person: "w1", amount: "10.000" }], "lock", "payment_received");
+  const other = await transfer([{ id: "L-2", person: "w2", amount: "10.000" }, { id: "L-3", person: "w3", amount: "10.000" }], "lock", "payment_received");
+  const fileId = await submit(aub(["SUCCESS", "REF-1", "x", "L-1"], ["SUCCESS", "REF-2", "x", "L-2"]));
+  const asked: string[] = [];
+  const onlyMine: PayLifecyclePolicy = { ...policy, authorize: async (_c, who, t, action) => { asked.push(`${who.principalId}:${action}`); return t.id === mine; } };
+  assert.deepEqual(await results(complete, onlyMine).apply(actor, fileId), { kind: "refused", code: "forbidden" });
+  assert.ok(asked.length > 0 && asked.every((a) => a === "fin:complete"));
+  assert.deepEqual(await paidLines(), []);
+  assert.deepEqual(await rows(fileId), []);
+  assert.equal(await status(other), "distributing");
+  assert.equal((await pool.query("SELECT status FROM bank_result_files WHERE id=$1", [fileId])).rows[0].status, "pending");
 });
