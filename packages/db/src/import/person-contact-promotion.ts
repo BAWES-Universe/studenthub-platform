@@ -7,10 +7,11 @@
 // - the civil ID into person_civil_ids, only when the person has no civil ID row at all (released
 //   included), opened from its legacy-candidate binding and re-sealed to the principal;
 // - the verified address into principal_email_verifications (verified true, source
-//   legacy_import), only when the person's current principals.email, normalised in JavaScript,
-//   hashes to the staged HMAC, joined on the current address in SQL, ON CONFLICT DO NOTHING, so an
-//   OIDC answer, true or false, always wins. The access lane's trigger serialises the insert with
-//   an address change; its refusal is recorded as addressChanged.
+//   legacy_import), only when the person's current principals.email, read with the principal row
+//   locked FOR SHARE until commit, normalises in JavaScript to the database's principal_email_key
+//   for it (migration 0658, one ASCII-only, locale-independent rule for insert, cleanup and read)
+//   and hashes to the staged HMAC. ON CONFLICT DO NOTHING, so an OIDC answer, true or false,
+//   always wins. A refusal by the access lane's trigger is recorded as addressChanged.
 //
 // A value another person already holds is left for its holder (taken). Each principal is promoted
 // once, in one transaction that also writes legacy_contact_promotions (migration 0657), so a value
@@ -31,8 +32,9 @@ export type CivilIdOutcome = ProfileValueOutcome | "undecryptable";
 /**
  * answered: the address already has a recorded answer (OIDC true or false, or an earlier import).
  * mismatch: the current address does not hash to the staged one. unverifiable: the current
- * address is outside the normalised form, or has none. addressChanged: the address changed while
- * promoting (the access lane's trigger refused), or the SQL normalisation disagreed.
+ * address is outside the ASCII form, has none, or the JavaScript and database keys disagree.
+ * addressChanged: the access lane's trigger refused the insert (not expected while the principal
+ * row is locked; kept as a fail-closed outcome).
  */
 export type EmailOutcome = "promoted" | "none" | "answered" | "mismatch" | "unverifiable" | "addressChanged";
 
@@ -207,17 +209,20 @@ export class PostgresContactPromotion {
 
   async #email(client: PoolClient, principalId: string, stagedHmac: Buffer | null): Promise<EmailOutcome> {
     if (stagedHmac === null) return "none";
-    const current = (await client.query<{ email: string | null }>("SELECT email FROM principals WHERE id = $1", [principalId])).rows[0]?.email ?? null;
-    // The same JavaScript rule the address was staged under; never a collation-dependent SQL lower().
-    const normalised = current === null ? null : normaliseVerifiedEmail(current);
-    if (normalised === null) return "unverifiable";
+    // FOR SHARE: the address cannot change between this decision and commit; an address change
+    // waits for this transaction (or this read waits for the change and sees the new address).
+    const row = (await client.query<{ email: string | null; key: string | null }>(
+      "SELECT email, principal_email_key(email) AS key FROM principals WHERE id = $1 FOR SHARE", [principalId])).rows[0];
+    // The same JavaScript rule the address was staged under, and the database's own key for the
+    // locked row (migration 0658, the rule Access inserts, cleans up and reads by) must agree.
+    const normalised = row?.email == null ? null : normaliseVerifiedEmail(row.email);
+    if (normalised === null || row?.key !== normalised) return "unverifiable";
     if (!this.#emails.emailDigest(normalised).equals(stagedHmac)) return "mismatch";
     await client.query("SAVEPOINT promote_email");
     try {
       const written = await client.query(
         `INSERT INTO principal_email_verifications (principal_id, email, verified, source)
-         SELECT id, $2, true, 'legacy_import' FROM principals WHERE id = $1 AND email IS NOT NULL AND lower(btrim(email)) = $2
-         ON CONFLICT (principal_id, email) DO NOTHING RETURNING 1`, [principalId, normalised]);
+         VALUES ($1, $2, true, 'legacy_import') ON CONFLICT (principal_id, email) DO NOTHING RETURNING 1`, [principalId, normalised]);
       await client.query("RELEASE SAVEPOINT promote_email");
       if (written.rowCount === 1) return "promoted";
     } catch (error) {

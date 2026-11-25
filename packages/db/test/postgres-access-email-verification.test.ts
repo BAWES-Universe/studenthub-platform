@@ -179,3 +179,18 @@ test("EV_SHAPE the table refuses unnormalised addresses and unknown sources, and
   await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, 'shape@example.com', true, 'guess')", [id]), /check constraint/);
   await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, 'shape@example.com', true, 'oidc')", [`ev-missing-${randomUUID()}`]), /foreign key|current address/);
 });
+
+test("EV_ASCII_KEY an address outside the plain-ASCII form records nothing, from the issuer or a veto, and reads as not verified", async () => {
+  for (const email of ["Kelvin@example.com", "dİana@example.com", "nbsp@example.com ", "straße@example.com"]) {
+    const id = await person(email);
+    await assert.doesNotReject(record(id, email, true), "no key is a skip, not an error");
+    await assert.doesNotReject(login.identities.vetoEmailVerification!(id));
+    assert.deepEqual(await rows(id), [], `nothing recorded for ${JSON.stringify(email)}`);
+    assert.equal(await verified(id), false);
+  }
+  const id = await person("kelvin@example.com");
+  await record(id, "kelvin@example.com", true);
+  await pool.query("UPDATE principals SET email = $2 WHERE id = $1", [id, "Kelvin@example.com"]);
+  assert.deepEqual(await rows(id), [], "a change to a spelling a locale might fold drops the fact");
+  assert.equal(await verified(id), false);
+});

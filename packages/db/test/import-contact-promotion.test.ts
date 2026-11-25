@@ -3,7 +3,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
-import { ContactPromotionError, PostgresContactPromotion, PostgresPersonContactImportStore } from "@studenthub/db/import";
+import { emailVerifiedSql } from "@studenthub/db";
+import { ContactPromotionError, PostgresContactPromotion, PostgresPersonContactImportStore, normaliseVerifiedEmail } from "@studenthub/db/import";
 import { CivilIdVault } from "../../profile/src/index.js";
 import { mapLegacyPersonContacts } from "../../../tools/legacy-import/src/m1-contact.js";
 import { mapLegacyCandidates } from "../../../tools/legacy-import/src/m1-people.js";
@@ -168,5 +169,59 @@ test("a database failure rolls the person back and throws only the fixed error",
   } finally {
     await pool.query("DROP TRIGGER promo_test_refuse ON legacy_contact_promotions");
     await pool.query("DROP FUNCTION promo_test_refuse()");
+  }
+});
+
+test("the address decision holds the principal row: an address change in flight is waited for and the new address is judged", async () => {
+  const a = await fixtureIds(pool);
+  await stage([{ candidate_id: a, profile_url: `t${a}`, candidate_email: `p${a}@example.invalid`, candidate_email_verification: 1 }]);
+  const p = await person(`p${a}@example.invalid`);
+  await link(p, a);
+  const change = await pool.connect();
+  try {
+    await change.query("BEGIN");
+    await change.query("UPDATE principals SET email = $2 WHERE id = $1", [p, `q${a}@example.invalid`]);
+    const promoting = promotion.promote(p);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await change.query("COMMIT");
+    const result = await promoting;
+    assert.equal(result.kind === "promoted" && result.outcomes.email, "mismatch");
+  } finally {
+    change.release();
+  }
+  assert.deepEqual(await verification(p), []);
+  await pool.query("UPDATE principals SET email = $2 WHERE id = $1", [p, `p${a}@example.invalid`]);
+  assert.deepEqual(await verification(p), [], "changing back revives nothing");
+});
+
+test("a promoted fact never carries to a spelling outside the ASCII form, even one a locale would fold", async () => {
+  const a = await fixtureIds(pool);
+  await stage([{ candidate_id: a, profile_url: `t${a}`, candidate_email: `k${a}@example.invalid`, candidate_email_verification: 1 }]);
+  const p = await person(`K${a}@example.invalid`);
+  await link(p, a);
+  const result = await promotion.promote(p);
+  assert.equal(result.kind === "promoted" && result.outcomes.email, "promoted");
+  const verifiedNow = async () => (await pool.query(`SELECT ${emailVerifiedSql("$1::text")} AS v`, [p])).rows[0].v as boolean;
+  assert.equal(await verifiedNow(), true);
+  for (const spelling of [`K${a}@example.invalid`, `k${a}@example.İnvalid`, `k${a}@example.invalid `]) {
+    await pool.query("UPDATE principals SET email = $2 WHERE id = $1", [p, spelling]);
+    assert.deepEqual(await verification(p), [], `the fact is dropped for ${JSON.stringify(spelling)}`);
+    assert.equal(await verifiedNow(), false);
+    await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, $2, true, 'legacy_import')", [p, `k${a}@example.invalid`]), /current address/);
+    await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, lower($2), true, 'legacy_import')", [p, spelling]), /check constraint|current address/);
+  }
+  await pool.query("UPDATE principals SET email = $2 WHERE id = $1", [p, `k${a}@example.invalid`]);
+  assert.equal(await verifiedNow(), false, "changing back revives nothing");
+});
+
+test("the database key and the importer's JavaScript rule agree on every spelling", async () => {
+  const corpus = [
+    "a@b.c", " A@B.C ", "MiXeD.Case+tag@Example.COM", "  spaced@x.y", "K@x.y", "İ@x.y", "ı@x.y", "straße@x.y",
+    "a @x.y", "\ta@x.y", "a@x.y\t", "a b@x.y", "a@@x.y", "@x.y", "a@", "", "   ", "a@x.y".padStart(254, "z"), "a@x.y".padStart(255, "z"),
+    "Ａ@x.y", "a@x.у", "a@x.y​", "A~!#$%&'*+/=?^_`{|}-@X.Y", "À@x.y",
+  ];
+  for (const raw of corpus) {
+    const sql = (await pool.query<{ key: string | null }>("SELECT principal_email_key($1) AS key", [raw])).rows[0]!.key;
+    assert.equal(sql, normaliseVerifiedEmail(raw), `same key for ${JSON.stringify(raw)}`);
   }
 });
