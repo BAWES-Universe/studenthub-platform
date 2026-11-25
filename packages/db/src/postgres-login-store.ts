@@ -80,6 +80,8 @@ export class PostgresLoginStore {
       createForSubject: (issuer, subject, claims) => this.#createIdentity(issuer, subject, claims),
       bindStableId: (issuer, subject, stableUserId) =>
         this.#bindStableId(issuer, subject, stableUserId),
+      recordEmailVerification: (personId, email, verified) => this.#recordEmailVerification(personId, email, verified),
+      vetoEmailVerification: (personId) => this.#vetoEmailVerification(personId),
       // Deliberately unavailable: mutable donor/profile fields are never an
       // authentication binding mechanism.
       findLegacyMatch: async () => undefined,
@@ -219,6 +221,41 @@ export class PostgresLoginStore {
 
   async #deleteSession(id: string): Promise<void> {
     await this.#pool.query("DELETE FROM login_sessions WHERE id = $1", [storedToken(id)]);
+  }
+
+  // Access lane (migration 0410): the issuer's answer is kept only for the person's
+  // current address, normalised, and always replaces what was recorded for it
+  // (a legacy import only ever inserts). One statement; nothing for another address.
+  // FOR SHARE OF p makes an address change wait for this write (or this write wait
+  // for the change and then skip); the table's trigger enforces the same for any writer.
+  async #recordEmailVerification(personId: string, email: string, verified: boolean): Promise<void> {
+    await this.#pool.query(
+      `INSERT INTO principal_email_verifications (principal_id, email, verified, source, recorded_at)
+       SELECT p.id, lower(btrim($2::text)), $3::boolean, 'oidc', now()
+         FROM principals p
+        WHERE p.id = $1::text AND p.email IS NOT NULL AND lower(btrim(p.email)) = lower(btrim($2::text))
+           AND btrim($2::text) <> ''
+        FOR SHARE OF p
+       ON CONFLICT (principal_id, email)
+       DO UPDATE SET verified = EXCLUDED.verified, source = 'oidc', recorded_at = EXCLUDED.recorded_at`,
+      [personId, email, verified],
+    );
+  }
+
+  // Failure recovery: an address-scoped issuer veto for the current address
+  // (verified false, source oidc). Kept, never deleted, so a legacy import that
+  // only inserts can never turn it into "verified". Locked like the write above.
+  async #vetoEmailVerification(personId: string): Promise<void> {
+    await this.#pool.query(
+      `INSERT INTO principal_email_verifications (principal_id, email, verified, source, recorded_at)
+       SELECT p.id, lower(btrim(p.email)), false, 'oidc', now()
+         FROM principals p
+        WHERE p.id = $1::text AND p.email IS NOT NULL AND btrim(p.email) <> ''
+       FOR SHARE OF p
+       ON CONFLICT (principal_id, email)
+       DO UPDATE SET verified = false, source = 'oidc', recorded_at = EXCLUDED.recorded_at`,
+      [personId],
+    );
   }
 
   async #findIdentity(issuer: string, subject: string): Promise<ExternalIdentity | undefined> {

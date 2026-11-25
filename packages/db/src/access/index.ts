@@ -11,3 +11,4 @@ export { PostgresAccessAbuseStore } from "./postgres-access-abuse-store.js";
 export { PostgresAccessStaffViewsStore } from "./postgres-access-staff-views-store.js";
 export { PostgresAccessRegistrationsStore } from "./postgres-access-registrations-store.js";
 export { PostgresAccessSessionsStore, ACCOUNT_SESSIONS_LIMIT } from "./postgres-access-sessions-store.js";
+export { emailVerifiedSql } from "./email-verification.js";
