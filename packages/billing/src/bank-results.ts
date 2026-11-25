@@ -132,7 +132,7 @@ export interface BankCandidateLine {
 
 export type BankHoldReason =
   | "rejected_row" | "unmatched" | "ambiguous" | "amount_mismatch" | "currency_mismatch"
-  | "already_paid" | "line_listed_twice" | "reference_conflict";
+  | "already_paid" | "line_listed_twice" | "reference_conflict" | "missing_reference" | "paid_line_failed";
 
 /** A bank confirmation already recorded on a paid line, from ANY earlier file or
  * transfer. Looked up by reference only; never a candidate to apply. */
@@ -146,7 +146,7 @@ export interface BankRecordedPayment {
 
 export type BankRowDecision =
   | { readonly kind: "pay"; readonly rowNumber: number; readonly lineId: string; readonly transferId: string; readonly reference: string | null }
-  | { readonly kind: "unpay"; readonly rowNumber: number; readonly lineId: string; readonly transferId: string; readonly wasPaid: boolean }
+  | { readonly kind: "unpay"; readonly rowNumber: number; readonly lineId: string; readonly transferId: string }
   | { readonly kind: "duplicate"; readonly rowNumber: number; readonly lineId: string }
   | { readonly kind: "hold"; readonly rowNumber: number; readonly reason: BankHoldReason; readonly lineIds: readonly string[] };
 
@@ -173,17 +173,21 @@ export function planBankResult(
     if (byId.has(line.lineId)) throw new TypeError("duplicate candidate line");
     byId.set(line.lineId, line);
   }
-  const claimed = new Set<string>();
-  const references = new Set<string>();
+  // A reference carried by more than one success row is contradictory as a group:
+  // hold every row in it, so row order never decides which line is paid.
+  const uses = new Map<string, number>();
+  for (const row of sheet.rows) {
+    if (row.outcome === "success" && row.reference !== null) uses.set(row.reference, (uses.get(row.reference) ?? 0) + 1);
+  }
   const decisions: BankRowDecision[] = sheet.rejected.map((r) => hold(r.rowNumber, "rejected_row"));
 
   for (const row of sheet.rows) {
     // A success row's reference is the bank's confirmation: resolve its provenance first.
     const prior = row.outcome === "success" && row.reference !== null
       ? recorded.filter((r) => r.reference === row.reference) : [];
-    if (row.outcome === "success" && row.reference !== null) {
-      if (references.has(row.reference)) { decisions.push(hold(row.rowNumber, "reference_conflict", prior.map((r) => r.lineId))); continue; }
-      references.add(row.reference);
+    if (row.outcome === "success" && row.reference !== null && uses.get(row.reference)! > 1) {
+      decisions.push(hold(row.rowNumber, "reference_conflict", prior.map((r) => r.lineId)));
+      continue;
     }
     let line: BankCandidateLine | undefined;
     if (row.lineRef !== null) {
@@ -199,6 +203,8 @@ export function planBankResult(
       }
     } else {
       if (row.outcome === "fail") { decisions.push(hold(row.rowNumber, "unmatched")); continue; }
+      // Without an echoed id, only the bank's reference proves a row is new; no reference, no fallback.
+      if (row.reference === null) { decisions.push(hold(row.rowNumber, "missing_reference")); continue; }
       if (prior.length) {
         const p = prior[0]!;
         const replay = prior.length === 1 && p.account === row.account && p.amount === row.amount && p.currency === row.currency;
@@ -208,21 +214,27 @@ export function planBankResult(
       }
       const same = (l: BankCandidateLine) => l.beneficiaryAccount === row.account && l.paidAmount === row.amount && l.currency === row.currency;
       const unpaid = lines.filter((l) => !l.paid && same(l));
-      const open = unpaid.filter((l) => !claimed.has(l.lineId));
-      if (open.length > 1) { decisions.push(hold(row.rowNumber, "ambiguous", open.map((l) => l.lineId))); continue; }
-      if (open.length === 0 && unpaid.length > 0) { decisions.push(hold(row.rowNumber, "line_listed_twice", unpaid.map((l) => l.lineId))); continue; }
-      if (open.length === 0) { decisions.push(hold(row.rowNumber, "unmatched")); continue; }
-      line = open[0]!;
+      if (unpaid.length > 1) { decisions.push(hold(row.rowNumber, "ambiguous", unpaid.map((l) => l.lineId))); continue; }
+      if (unpaid.length === 0) { decisions.push(hold(row.rowNumber, "unmatched")); continue; }
+      line = unpaid[0]!;
     }
-    if (claimed.has(line.lineId)) { decisions.push(hold(row.rowNumber, "line_listed_twice", [line.lineId])); continue; }
-    claimed.add(line.lineId);
     if (row.outcome === "fail") {
-      decisions.push({ kind: "unpay", rowNumber: row.rowNumber, lineId: line.lineId, transferId: line.transferId, wasPaid: line.paid });
+      // A FAIL for a line already paid may be an old file replayed: a person decides.
+      decisions.push(line.paid ? hold(row.rowNumber, "paid_line_failed", [line.lineId])
+        : { kind: "unpay", rowNumber: row.rowNumber, lineId: line.lineId, transferId: line.transferId });
     } else if (line.paid) {
       decisions.push(hold(row.rowNumber, "already_paid", [line.lineId]));
     } else {
       decisions.push({ kind: "pay", rowNumber: row.rowNumber, lineId: line.lineId, transferId: line.transferId, reference: row.reference });
     }
+  }
+  // A line that more than one row would act on is contradictory as a group: hold
+  // every such row, so row order never decides which outcome a line gets.
+  const acting = new Map<string, number>();
+  for (const x of decisions) if (x.kind !== "hold") acting.set(x.lineId, (acting.get(x.lineId) ?? 0) + 1);
+  for (let i = 0; i < decisions.length; i++) {
+    const x = decisions[i]!;
+    if (x.kind !== "hold" && acting.get(x.lineId)! > 1) decisions[i] = hold(x.rowNumber, "line_listed_twice", [x.lineId]);
   }
   decisions.sort((a, b) => a.rowNumber - b.rowNumber);
   const transferIds = [...new Set(decisions.flatMap((d) => (d.kind === "pay" || d.kind === "unpay" ? [d.transferId] : [])))].sort();

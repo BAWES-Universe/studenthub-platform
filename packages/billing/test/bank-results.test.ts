@@ -64,20 +64,22 @@ test("BANK_SHEET_KFH reads legacy row 9 headers; no status column means success"
   assert.deepEqual(sheet.rejected, [{ rowNumber: 11, problem: "invalid_amount" }, { rowNumber: 12, problem: "missing_match_key" }]);
 });
 
-test("BANK_PLAN_BY_ID success pays, fail unpays, replays are duplicates", () => {
+test("BANK_PLAN_BY_ID success pays, fail unpays an unpaid line, replays are duplicates", () => {
   const sheet = read(readBankResultSheet("aub", aub(
     ["SUCCESS", "CONF-1", "T1", "L1"],
     ["FAIL", "bad iban", "T2", "L2"],
     ["SUCCESS", "CONF-3", "T2", "L3"],
+    ["FAIL", "bounced", "T4", "L4"],
   )));
   const plan = planBankResult(sheet, [
-    line(), line({ lineId: "L2", transferId: "T2", paid: true }),
-    line({ lineId: "L3", transferId: "T2", paid: true }),
-  ], [rec("L2", "OLD"), rec("L3", "CONF-3")]);
+    line(), line({ lineId: "L2", transferId: "T2" }),
+    line({ lineId: "L3", transferId: "T2", paid: true }), line({ lineId: "L4", transferId: "T4", paid: true }),
+  ], [rec("L3", "CONF-3"), rec("L4", "OLD")]);
   assert.deepEqual(plan.decisions, [
     { kind: "pay", rowNumber: 3, lineId: "L1", transferId: "T1", reference: "CONF-1" },
-    { kind: "unpay", rowNumber: 4, lineId: "L2", transferId: "T2", wasPaid: true },
+    { kind: "unpay", rowNumber: 4, lineId: "L2", transferId: "T2" },
     { kind: "duplicate", rowNumber: 5, lineId: "L3" },
+    { kind: "hold", rowNumber: 6, reason: "paid_line_failed", lineIds: ["L4"] },
   ]);
   assert.deepEqual(plan.transferIds, ["T1", "T2"]);
 });
@@ -92,9 +94,9 @@ test("BANK_PLAN_HOLDS unsafe rows are held for a person, never guessed", () => {
   )));
   const plan = planBankResult(sheet, [line(), line({ lineId: "L2", paid: true })], [rec("L2", "OTHER")]);
   assert.deepEqual(plan.decisions.map((x) => [x.rowNumber, x.kind, x.kind === "hold" ? x.reason : ""]), [
-    [3, "hold", "unmatched"], [4, "pay", ""], [5, "hold", "line_listed_twice"], [6, "hold", "already_paid"], [7, "hold", "rejected_row"],
+    [3, "hold", "unmatched"], [4, "hold", "line_listed_twice"], [5, "hold", "line_listed_twice"], [6, "hold", "already_paid"], [7, "hold", "rejected_row"],
   ]);
-  assert.deepEqual(plan.transferIds, ["T1"]);
+  assert.deepEqual(plan.transferIds, []);
 });
 
 test("BANK_PLAN_FALLBACK account match pays one, holds ties, mismatches and repeats", () => {
@@ -113,14 +115,14 @@ test("BANK_PLAN_FALLBACK account match pays one, holds ties, mismatches and repe
     line({ lineId: "L4", beneficiaryAccount: "ACC-3", paidAmount: d("70.000"), paid: true }),
   ], [rec("L4", "R4", { account: "ACC-3", amount: d("70.000") })]);
   assert.deepEqual(plan.decisions, [
-    { kind: "pay", rowNumber: 10, lineId: "L1", transferId: "T1", reference: "R1" },
+    { kind: "hold", rowNumber: 10, reason: "line_listed_twice", lineIds: ["L1"] },
     { kind: "hold", rowNumber: 11, reason: "ambiguous", lineIds: ["L2", "L3"] },
     { kind: "hold", rowNumber: 12, reason: "line_listed_twice", lineIds: ["L1"] },
     { kind: "duplicate", rowNumber: 13, lineId: "L4" },
     { kind: "hold", rowNumber: 14, reason: "unmatched", lineIds: [] },
     { kind: "hold", rowNumber: 15, reason: "unmatched", lineIds: [] },
   ]);
-  assert.deepEqual(plan.transferIds, ["T1"]);
+  assert.deepEqual(plan.transferIds, []);
 });
 
 test("BANK_PLAN_CHECKS an echoed id with a different amount or currency is held", () => {
@@ -156,13 +158,50 @@ test("BANK_PLAN_PROVENANCE contradictory or non-unique references are held", () 
   const reason = (plan: ReturnType<typeof planBankResult>) => plan.decisions.map((x) => x.kind === "hold" ? `${x.reason}:${x.lineIds.join(",")}` : x.kind);
   assert.deepEqual(reason(planBankResult(row, lines, [rec("L1", "R1", { amount: d("99.000") })])), ["reference_conflict:L1"]);
   assert.deepEqual(reason(planBankResult(row, lines, [rec("L1", "R1"), rec("L7", "R1")])), ["reference_conflict:L1,L7"]);
-  const twice = read(readBankResultSheet("kfh", kfh(["ACC-1", "120.5", "KWD", "R5"], ["ACC-1", "120.5", "KWD", "R5"])));
-  assert.deepEqual(reason(planBankResult(twice, [...lines, line({ lineId: "L3", transferId: "T3", beneficiaryAccount: "ACC-1" })], [])),
-    ["ambiguous:L2,L3", "reference_conflict:"]);
+  // One fresh reference on two independently matchable rows: both held, in either row order.
+  const two = [line({ lineId: "L2", transferId: "T2" }), line({ lineId: "L3", transferId: "T3", beneficiaryAccount: "ACC-3" })];
+  for (const order of [[["ACC-1", "120.5", "KWD", "R5"], ["ACC-3", "120.5", "KWD", "R5"]], [["ACC-3", "120.5", "KWD", "R5"], ["ACC-1", "120.5", "KWD", "R5"]]]) {
+    const plan = planBankResult(read(readBankResultSheet("kfh", kfh(...order))), two, []);
+    assert.deepEqual(reason(plan), ["reference_conflict:", "reference_conflict:"]);
+    assert.deepEqual(plan.transferIds, []);
+  }
+  const byIdTwice = read(readBankResultSheet("aub", aub(["SUCCESS", "R6", "T2", "L2"], ["SUCCESS", "R6", "T3", "L3"])));
+  assert.deepEqual(reason(planBankResult(byIdTwice, two, [])), ["reference_conflict:", "reference_conflict:"]);
   // By id: a confirmation already recorded on another line is held, not applied to this one.
   const byId = read(readBankResultSheet("aub", aub(["SUCCESS", "R1", "T2", "L2"])));
   assert.deepEqual(reason(planBankResult(byId, lines, [rec("L1", "R1")])), ["reference_conflict:L1,L2"]);
   const paid = [line({ lineId: "L2", transferId: "T2", paid: true })];
   assert.deepEqual(reason(planBankResult(byId, paid, [rec("L2", "R1")])), ["duplicate"]);
   assert.deepEqual(reason(planBankResult(byId, paid, [])), ["already_paid:L2"]);
+});
+
+test("BANK_PLAN_NO_REFERENCE an account match without a bank reference is held, never paid", () => {
+  // L1 was paid earlier; a blank-reference replay must not pay the later equivalent L2.
+  const lines = [line({ paid: true }), line({ lineId: "L2", transferId: "T2" })];
+  const replay = read(readBankResultSheet("kfh", kfh(["ACC-1", "120.5", "KWD", ""])));
+  const plan = planBankResult(replay, lines, [rec("L1", "R1")]);
+  assert.deepEqual(plan.decisions, [{ kind: "hold", rowNumber: 10, reason: "missing_reference", lineIds: [] }]);
+  assert.deepEqual(plan.transferIds, []);
+  // An echoed line id still works without a reference.
+  const byId = read(readBankResultSheet("aub", aub(["SUCCESS", "", "T2", "L2"])));
+  assert.deepEqual(planBankResult(byId, lines, []).decisions,
+    [{ kind: "pay", rowNumber: 3, lineId: "L2", transferId: "T2", reference: null }]);
+});
+
+test("BANK_PLAN_SAME_LINE rows acting on one line are all held, in either row order", () => {
+  const rows = [["FAIL", "bad iban", "T1", "L1"], ["SUCCESS", "C1", "T1", "L1"]];
+  for (const order of [rows, [...rows].reverse()]) {
+    const plan = planBankResult(read(readBankResultSheet("aub", aub(...order))), [line()], []);
+    assert.deepEqual(plan.decisions.map((x) => x.kind === "hold" ? x.reason : x.kind), ["line_listed_twice", "line_listed_twice"]);
+    assert.deepEqual(plan.transferIds, []);
+  }
+  // Two fallback rows with different references on the one matching line: both held.
+  const kfhRows = [["ACC-1", "120.5", "KWD", "R1"], ["ACC-1", "120.5", "KWD", "R2"]];
+  for (const order of [kfhRows, [...kfhRows].reverse()]) {
+    const plan = planBankResult(read(readBankResultSheet("kfh", kfh(...order))), [line()], []);
+    assert.deepEqual(plan.decisions.map((x) => x.kind === "hold" ? x.reason : x.kind), ["line_listed_twice", "line_listed_twice"]);
+  }
+  // Control: one row for the line still pays it.
+  const one = planBankResult(read(readBankResultSheet("aub", aub(["SUCCESS", "C1", "T1", "L1"]))), [line()], []);
+  assert.deepEqual(one.decisions.map((x) => x.kind), ["pay"]);
 });
