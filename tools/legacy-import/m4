@@ -1,5 +1,5 @@
 #!/bin/sh
-# M-4 importer entry for operators: `tools/legacy-import/m4 plan|write`.
+# M-4 importer entry for operators: `tools/legacy-import/m4 plan|write|keycheck|promote`.
 # It starts the checkout's own pinned Node runtime (.runtime/node/bin/node, installed by root with
 # install-runtime.sh and hashed with everything else), never a `node` found on PATH. Before Node
 # starts it removes every environment variable except PATH and LANG, which it sets itself, and the

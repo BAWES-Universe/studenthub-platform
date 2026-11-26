@@ -8,6 +8,8 @@
  * through the launcher, which verifies the runtime before this module is loaded:
  *   tools/legacy-import/m4 plan
  *   tools/legacy-import/m4 write
+ *   tools/legacy-import/m4 keycheck   (once per target: the civil ID key check)
+ *   tools/legacy-import/m4 promote    (after a write: linked people's staged contacts, see `promote`)
  * (a shell entry that clears the environment and starts Node on tools/legacy-import/m4-launch.mjs).
  * This module is not an entry point: run directly, it evaluates its imports but never calls `main`.
  *
@@ -91,7 +93,7 @@ import { spawn } from "node:child_process";
 import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import pg from "pg";
-import { CIVIL_KEY_CHECK, civilKeyOpens, PostgresCatalogueImportStore, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonContactImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore, personContactDigest } from "@studenthub/db/import";
+import { CIVIL_KEY_CHECK, civilKeyOpens, PostgresCatalogueImportStore, ContactPromotionError, PostgresContactPromotion, type ContactPromotionResult, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonContactImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore, personContactDigest } from "@studenthub/db/import";
 import { CivilIdVault, PROFILE_PARITY_REVISION } from "@studenthub/profile";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
 import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, lockPathFrom, parseDatabaseUrl } from "./refresh.js";
@@ -167,7 +169,7 @@ export function receipt(report: M4Report): string[] {
 export interface M4Receipt {
   readonly schemaVersion: 2;
   readonly invocation: string;
-  readonly kind: "plan" | "write" | "keycheck";
+  readonly kind: "plan" | "write" | "keycheck" | "promote";
   readonly status: "ok" | "started" | "refused_rows" | "failed" | "refused";
   readonly at: string;
   /** Set once the run got as far as computing them. */
@@ -185,6 +187,35 @@ export interface M4Receipt {
   readonly unconfirmed?: readonly string[];
   /** For a refused or failed run: the fixed code. */
   readonly code?: string;
+  /** For `promote`: counts only, never a principal or legacy id. */
+  readonly promotion?: PromotionCounts;
+}
+
+/** What a `promote` run did, as counts per outcome; the per-principal record is in the database. */
+export interface PromotionCounts {
+  promoted: number;
+  skipped: Record<string, number>;
+  phone: Record<string, number>;
+  handle: Record<string, number>;
+  civilId: Record<string, number>;
+  email: Record<string, number>;
+}
+
+/** Adds one promotion result to the counts. */
+export function countPromotion(counts: PromotionCounts, result: ContactPromotionResult): void {
+  const bump = (m: Record<string, number>, k: string) => { m[k] = (m[k] ?? 0) + 1; };
+  if (result.kind === "skipped") { bump(counts.skipped, result.reason); return; }
+  counts.promoted++;
+  bump(counts.phone, result.outcomes.phone);
+  bump(counts.handle, result.outcomes.handle);
+  bump(counts.civilId, result.outcomes.civilId);
+  bump(counts.email, result.outcomes.email);
+}
+
+/** The promotion step, on the writer session. */
+export interface ContactPromoter {
+  pending(limit: number): Promise<readonly string[]>;
+  promote(principalId: string): Promise<ContactPromotionResult>;
 }
 
 /**
@@ -268,6 +299,10 @@ export interface WriteTarget {
   claimWriter(): Promise<boolean>;
   /** Writers bound to the lock-holding session; only after claimWriter. */
   writers(): M4Writers;
+  /** Whether the promotion schema is migrated (M4_PROMOTE_REQUIRED_MIGRATION applied, its table present). */
+  promotionReady(): Promise<boolean>;
+  /** The promotion step bound to the lock-holding session; only after claimWriter. */
+  promoter(): ContactPromoter;
   /** Re-checks, on the lock session itself, that it is alive and still holds the lock. */
   stillHeld(): Promise<boolean>;
   /** Whether the lock session was lost or broken at any point. Once true, stays true. */
@@ -286,6 +321,17 @@ export const M4_REQUIRED_MIGRATION = "0656_legacy_import_civil_key_check";
 export const SCHEMA_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '${M4_REQUIRED_MIGRATION}')
   AND to_regclass('public.legacy_candidate_snapshots') IS NOT NULL
   AND to_regclass('public.legacy_candidate_contacts') IS NOT NULL AS ready`;
+
+/**
+ * The newest migration `promote` needs: 0659 (after the promotion record 0657 and the shared ASCII
+ * address key 0658). Without it the promotion would decide addresses by the old rule.
+ */
+export const M4_PROMOTE_REQUIRED_MIGRATION = "0659_drop_principal_email_rekey";
+export const PROMOTION_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '${M4_PROMOTE_REQUIRED_MIGRATION}')
+  AND to_regclass('public.legacy_contact_promotions') IS NOT NULL
+  AND to_regprocedure('public.principal_email_key(text)') IS NOT NULL AS ready`;
+/** How many pending principals `promote` takes at a time. */
+export const PROMOTE_BATCH = 500;
 
 /** One writer per target database, across every batch and the terminal receipt. */
 export const WRITER_LOCK_KEY = "hashtextextended('legacy-import:m4-writer', 0)";
@@ -418,6 +464,15 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
       if (!keys) throw new Error("m4.contactKeys");
       return m4Writers(writer, actorRef, operatorOrgId, keys);
     },
+    promotionReady: async () => {
+      try { return (await pool.query<{ ready: boolean }>(PROMOTION_READY_SQL)).rows[0]?.ready === true; } catch { return false; }
+    },
+    promoter: () => {
+      if (!writer) throw new Error("m4.writerNotClaimed");
+      if (!keys?.civilId) throw new Error("m4.contactKeys");
+      const promotion = new PostgresContactPromotion(writer, new CivilIdVault(keys.civilId), keys.digest);
+      return { pending: (limit) => promotion.pending(limit), promote: (id) => promotion.promote(id) };
+    },
     stillHeld: async () => (writer ? writer.fence() : false),
     lost: () => wasLost || (writer?.lost ?? false),
     close: async () => {
@@ -461,7 +516,7 @@ class Refusal extends Error {}
 export async function main(argv: readonly string[], deps: CliDeps): Promise<number> {
   const { env } = deps;
   const mode = argv[0];
-  if (mode !== "plan" && mode !== "write" && mode !== "keycheck") { deps.error("m4: refused.usage"); return 2; }
+  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote") { deps.error("m4: refused.usage"); return 2; }
   const invocation = env.M4_INVOCATION ?? "";
   // Without a fresh, unclaimed name there is nowhere this run's outcome could be published.
   if (!UUID.test(invocation)) { deps.error("m4: refused.invocation"); return 2; }
@@ -473,10 +528,11 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
   let bound: Omit<M4Receipt, "schemaVersion" | "invocation" | "kind" | "status" | "at" | "steps"> = {};
   const confirmed: M4Step[] = [];
   let order: readonly string[] = [];
-  const publish = (status: M4Receipt["status"], code?: string) => {
-    const unconfirmed = status === "failed" ? order.slice(confirmed.length) : undefined;
+  const publish = (status: M4Receipt["status"], code?: string, promotion?: PromotionCounts) => {
+    const unconfirmed = status === "failed" && mode !== "promote" ? order.slice(confirmed.length) : undefined;
     writeWhole(receiptPath, { schemaVersion: 2, invocation, kind: mode, status, at: deps.now().toISOString(), ...bound,
-      steps: confirmed.map(receiptStep), ...(unconfirmed ? { unconfirmed } : {}), ...(code ? { code } : {}) } satisfies M4Receipt);
+      steps: confirmed.map(receiptStep), ...(unconfirmed ? { unconfirmed } : {}), ...(code ? { code } : {}),
+      ...(promotion ? { promotion } : {}) } satisfies M4Receipt);
   };
   const refuse = (code: string): never => { throw new Refusal(code); };
 
@@ -488,6 +544,7 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     if (!/^[0-9a-f]{40}$/.test(revision)) refuse("revision");
     const targetId = env.M4_TARGET_ID ?? "";
     if (mode === "keycheck") return await keycheck(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
+    if (mode === "promote") return await promote(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
     const operator = env.M4_OPERATOR_ORG_ID ?? "";
     if (!UUID.test(targetId) || !ORG_ID.test(operator)) refuse("destination");
     const expected = env.M4_EXPECTED_PLAN ?? "";
@@ -602,5 +659,67 @@ async function keycheck(deps: CliDeps, revision: string, targetId: string,
   if (result === "mismatch") return refuse("civilKey");
   publish("ok");
   deps.log(`m4 keycheck ok invocation=${env.M4_INVOCATION} target=${targetId} revision=${revision} artifact=${artifact} check=${result === "set" ? "set" : "matched"}`);
+  return 0;
+}
+
+/**
+ * `promote`: moves linked people's staged contact values into the person-owned tables
+ * (PostgresContactPromotion, migrations 0657-0659), one principal per transaction, under the
+ * target's one-writer lock, so it never runs beside a `write`. It reads no legacy data. Both keys
+ * come from staging's configuration, like `write`; the civil ID key must open the target's check.
+ * Every principal commits on its own and is recorded once, so a re-run after a failure promotes
+ * only those not done yet. The receipt carries counts per outcome only. Exit 0 when every pending
+ * principal was handled, 1 when the run failed part way, 2 when refused before any promotion.
+ */
+async function promote(deps: CliDeps, revision: string, targetId: string,
+  publish: (status: M4Receipt["status"], code?: string, promotion?: PromotionCounts) => void,
+  bind: (bound: { revision: string; artifact: string; target: string }) => void, track: (target: WriteTarget) => void): Promise<number> {
+  const { env } = deps;
+  const refuse = (code: string): number => {
+    deps.error(`m4: refused.${code}`);
+    try { publish("refused", code); } catch { return 1; }
+    return 2;
+  };
+  if (!UUID.test(targetId)) return refuse("destination");
+  if (!env.M4_DATABASE_URL) return refuse("writeConfig");
+  const keys = contactKeysFrom(env, "write");
+  if (!keys) return refuse("contactKeys");
+  const artifact = env.M4_ARTIFACT_DIGEST ?? "";
+  const built = deps.provenance();
+  if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
+  bind({ revision, artifact, target: targetId });
+  const target = deps.target(env);
+  track(target);
+  const marker = await target.marker();
+  if (marker?.environment !== "staging" || marker.targetId !== targetId) return refuse("target");
+  if (!await target.promotionReady()) return refuse("promotionSchema");
+  if (await target.civilKey(keys.civilId!) !== "ok") return refuse("civilKey");
+  if (!await target.claimWriter()) return refuse("writerBusy");
+  const counts: PromotionCounts = { promoted: 0, skipped: {}, phone: {}, handle: {}, civilId: {}, email: {} };
+  publish("started", undefined, counts);
+  try {
+    const promoter = target.promoter();
+    const seen = new Set<string>();
+    for (;;) {
+      // A principal pending() returns again (skipped, say, because it was unlinked meanwhile) is
+      // not retried in this run, so the walk always ends.
+      const batch = (await promoter.pending(PROMOTE_BATCH)).filter((id) => !seen.has(id));
+      if (batch.length === 0) break;
+      for (const id of batch) {
+        seen.add(id);
+        countPromotion(counts, await promoter.promote(id));
+      }
+    }
+    if (!await target.stillHeld()) throw new Error("m4.writerLost");
+  } catch (error) {
+    const code = target.lost() ? "m4.writerLost" : error instanceof ContactPromotionError ? error.code : errorCode(error);
+    deps.error(`m4: ${code}`);
+    try { publish("failed", code, counts); } catch { /* the exit code still says failed */ }
+    return 1;
+  }
+  publish("ok", undefined, counts);
+  const line = (name: string, m: Record<string, number>) => `${name} ${Object.entries(m).sort().map(([k, n]) => `${k}=${n}`).join(" ")}`.trimEnd();
+  for (const l of [line("phone", counts.phone), line("handle", counts.handle), line("civilId", counts.civilId), line("email", counts.email), line("skipped", counts.skipped)]) deps.log(l);
+  deps.log(`m4 promote ok invocation=${env.M4_INVOCATION} target=${targetId} revision=${revision} artifact=${artifact} promoted=${counts.promoted}`);
   return 0;
 }

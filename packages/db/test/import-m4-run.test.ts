@@ -367,6 +367,26 @@ test("civil ID key: keycheck provisions the target once; a well-formed wrong key
     const replay = deps({ M4_EXPECTED_PLAN: plan });
     assert.equal(await main(["write"], replay), 0);
     assert.ok(receipt(replay, "write").steps.every((s) => s.write!.inserted === 0));
+    // promote: a linked person gets the staged values through the writer session, counts only.
+    const person = `m4-promote-${randomUUID()}`;
+    await pool.query("INSERT INTO principals (id, display_name, email) VALUES ($1, 'Test Person', $2)", [person, `M4-${c}@example.invalid`]);
+    await pool.query("INSERT INTO legacy_account_links (principal_id, legacy_candidate_id, linked_by_ref, method) VALUES ($1, $2, $3, 'staff')", [person, String(c), "a".repeat(64)]);
+    const wrongPromote = deps({ M4_CIVIL_ID_ENCRYPTION_KEY: wrongKey });
+    assert.equal(await main(["promote"], wrongPromote), 2);
+    assert.equal(receipt(wrongPromote, "promote").code, "civilKey");
+    const promoted = deps();
+    assert.equal(await main(["promote"], promoted), 0);
+    const counted = receipt(promoted, "promote");
+    assert.equal(counted.status, "ok");
+    assert.ok(counted.promotion!.promoted >= 1 && (counted.promotion!.email.promoted ?? 0) >= 1);
+    const { rows: [mine] } = await pool.query("SELECT phone, civil_id, email FROM legacy_contact_promotions WHERE principal_id = $1", [person]);
+    assert.deepEqual(mine, { phone: "promoted", civil_id: "promoted", email: "promoted" });
+    const { rows: [civil] } = await pool.query("SELECT number_ciphertext FROM person_civil_ids WHERE principal_id = $1", [person]);
+    assert.equal(new CivilIdVault(KEYS.civilId).open(person, "KW", civil.number_ciphertext), String(c), "re-sealed to the principal");
+    assert.equal((await pool.query("SELECT 1 FROM principal_email_verifications WHERE principal_id = $1 AND verified AND source = 'legacy_import'", [person])).rowCount, 1);
+    const rerun = deps();
+    assert.equal(await main(["promote"], rerun), 0);
+    assert.equal(receipt(rerun, "promote").promotion!.promoted, 0, "a re-run finds nothing pending");
     for (const file of readdirSync(path.join(dir, "out"))) {
       const text = readFileSync(path.join(dir, "out", file), "utf8");
       assert.ok(![wrongKey, KEY_ENV.M4_CIVIL_ID_ENCRYPTION_KEY, KEY_ENV.M4_CONTACT_DIGEST_KEY, `+96${c}`].some((v) => text.includes(v)), file);

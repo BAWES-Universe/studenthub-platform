@@ -6,7 +6,8 @@ import path from "node:path";
 import test from "node:test";
 
 import { M4_SOURCES, planM4, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
-import { acceptWrite, acquireSharedLock, main, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
+import { acceptWrite, acquireSharedLock, main, PROMOTE_BATCH, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
+import { ContactPromotionError, type ContactPromotionResult } from "@studenthub/db/import";
 
 // Synthetic legacy rows only. SECRET marks every value that must never reach a receipt or a log.
 const SECRET = "Secret";
@@ -53,8 +54,14 @@ interface FakeDb {
   sessionLost: boolean;
   /** The civil ID key the target's check value was provisioned under (base64), or null. */
   civilKeyCheck: string | null;
+  /** Whether migration 0659 (the promotion schema) is applied. */
+  promotionReady: boolean;
+  /** Principals the promotion would list as pending, and what promoting each returns. */
+  pending: string[];
+  promoted: Map<string, ContactPromotionResult | Error>;
 }
-const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY });
+const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY,
+  promotionReady: true, pending: [], promoted: new Map() });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -77,7 +84,7 @@ interface Harness {
   readonly err: string[];
   readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined };
   readonly file: (name: string) => string;
-  readonly receipt: (mode: "plan" | "write") => M4Receipt;
+  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote") => M4Receipt;
 }
 
 function harness(opts: HarnessOptions = {}): Harness {
@@ -120,6 +127,22 @@ function harness(opts: HarnessOptions = {}): Harness {
         return f(...a);
       };
       return { catalogue: fenced(writers.catalogue), companies: fenced(writers.companies), brandLinks: fenced(writers.brandLinks), stores: fenced(writers.stores), contacts: fenced(writers.contacts), people: fenced(writers.people), personContacts: fenced(writers.personContacts) };
+    },
+    promotionReady: async () => db.promotionReady,
+    promoter: () => {
+      assert.equal(db.writer, me, "the promoter is used only by the lock holder");
+      return {
+        pending: async (limit) => { calls.push(`pending:${limit}`); return db.pending.slice(0, limit); },
+        promote: async (id) => {
+          calls.push("promote");
+          if (db.sessionLost || db.writer !== me) throw new Error("m4.writerLost");
+          const result = db.promoted.get(id) ?? { kind: "skipped", reason: "notStaged" };
+          if (result instanceof Error) throw result;
+          // Like the database: a promoted principal is no longer pending.
+          if (result.kind === "promoted") db.pending = db.pending.filter((p) => p !== id);
+          return result;
+        },
+      };
     },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
@@ -164,7 +187,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       err.push(line);
     },
   };
-  const receipt = (mode: "plan" | "write") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
+  const receipt = (mode: "plan" | "write" | "keycheck" | "promote") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
   return { dir, invocation, deps, calls, out, err, state, file, receipt };
 }
 
@@ -641,4 +664,81 @@ test("a keycheck refused for provenance names no build: an unverified revision o
     assert.deepEqual([r.status, r.code, r.revision, r.artifact, r.target], ["refused", "provenance", undefined, undefined, undefined]);
     assert.deepEqual(h.calls, []);
   } finally { cleanup(h); }
+});
+
+const PRINCIPALS = ["principal-secret-a", "principal-secret-b", "principal-secret-c"];
+const promotedAs = (legacyId: string, email: "promoted" | "answered" | "mismatch"): ContactPromotionResult =>
+  ({ kind: "promoted", legacyId, outcomes: { phone: "promoted", handle: "personWritten", civilId: "promoted", email } });
+
+test("promote walks every pending principal under the writer lock and publishes counts only; it reads no legacy data", async () => {
+  const db = { ...fakeDb(), pending: [...PRINCIPALS, "principal-secret-gone"] };
+  db.promoted.set(PRINCIPALS[0]!, promotedAs("900000000031", "promoted"));
+  db.promoted.set(PRINCIPALS[1]!, promotedAs("900000000032", "answered"));
+  db.promoted.set(PRINCIPALS[2]!, promotedAs("900000000033", "mismatch"));
+  // Unlinked meanwhile: listed again by every pending() call, tried once, and the run still ends.
+  db.promoted.set("principal-secret-gone", { kind: "skipped", reason: "notLinked" });
+  const h = harness({ db });
+  try {
+    assert.equal(await main(["promote"], h.deps), 0);
+    const r = h.receipt("promote");
+    assert.deepEqual([r.kind, r.status, r.target, r.revision, r.artifact], ["promote", "ok", TARGET, REVISION, ARTIFACT]);
+    assert.deepEqual(r.promotion, { promoted: 3, skipped: { notLinked: 1 }, phone: { promoted: 3 }, handle: { personWritten: 3 },
+      civilId: { promoted: 3 }, email: { promoted: 1, answered: 1, mismatch: 1 } });
+    assert.deepEqual(h.calls, [`pending:${PROMOTE_BATCH}`, "promote", "promote", "promote", "promote", `pending:${PROMOTE_BATCH}`]);
+    assert.equal(h.state.reads, 0, "no legacy read");
+    assert.equal(h.state.locked, false, "no refresh lock needed");
+    assert.equal(db.writer, null, "the writer lock is released");
+    const seen = JSON.stringify(r) + h.out.join("\n") + h.err.join("\n");
+    assert.ok(![...PRINCIPALS, "principal-secret", "9000000000", CIVIL_KEY, DIGEST_KEY].some((v) => seen.includes(v)), "no id, legacy id or key");
+    assert.ok(h.out.some((l) => l === `m4 promote ok invocation=${h.invocation} target=${TARGET} revision=${REVISION} artifact=${ARTIFACT} promoted=3`));
+    assert.ok(h.out.includes("email answered=1 mismatch=1 promoted=1"));
+  } finally { cleanup(h); }
+});
+
+test("promote is refused before any promotion unless the build, target, schema, keys, civil key and writer lock all check out", async () => {
+  const cases: [string, Partial<FakeDb>, HarnessOptions, string][] = [
+    ["unverified build", {}, { provenance: { artifact: "f".repeat(64) } }, "provenance"],
+    ["another target", {}, { env: { M4_TARGET_ID: "22222222-2222-4222-8222-222222222222" } }, "target"],
+    ["not staging", { marker: { environment: "production", targetId: TARGET } }, {}, "target"],
+    ["no promotion schema", { promotionReady: false }, {}, "promotionSchema"],
+    ["no civil ID key", {}, { env: { M4_CIVIL_ID_ENCRYPTION_KEY: undefined } }, "contactKeys"],
+    ["no digest key", {}, { env: { M4_CONTACT_DIGEST_KEY: undefined } }, "contactKeys"],
+    ["no check provisioned", { civilKeyCheck: null }, {}, "civilKey"],
+    ["a wrong civil ID key", {}, { env: { M4_CIVIL_ID_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64") } }, "civilKey"],
+    ["another writer", { writer: {} }, {}, "writerBusy"],
+    ["no database", {}, { env: { M4_DATABASE_URL: undefined } }, "writeConfig"],
+  ];
+  for (const [label, patch, opts, code] of cases) {
+    const db = { ...fakeDb(), pending: [...PRINCIPALS], ...patch };
+    const h = harness({ ...opts, db });
+    try {
+      assert.equal(await main(["promote"], h.deps), 2, label);
+      const r = h.receipt("promote");
+      assert.deepEqual([r.status, r.code, h.err], ["refused", code, [`m4: refused.${code}`]], label);
+      assert.deepEqual(h.calls, [], `${label}: nothing promoted`);
+      if (code === "provenance") assert.deepEqual([r.revision, r.artifact, r.target], [undefined, undefined, undefined], "no unverified build is bound");
+    } finally { cleanup(h); }
+  }
+});
+
+test("a promote that fails part way publishes failed with the counts so far and the fixed code; a re-run finishes the rest", async () => {
+  const db = { ...fakeDb(), pending: [...PRINCIPALS] };
+  db.promoted.set(PRINCIPALS[0]!, promotedAs("900000000031", "promoted"));
+  db.promoted.set(PRINCIPALS[1]!, new ContactPromotionError());
+  db.promoted.set(PRINCIPALS[2]!, promotedAs("900000000033", "promoted"));
+  const h = harness({ db });
+  try {
+    assert.equal(await main(["promote"], h.deps), 1);
+    const r = h.receipt("promote");
+    assert.deepEqual([r.status, r.code, r.promotion?.promoted, r.unconfirmed], ["failed", "m1.contact.promotionFailed", 1, undefined]);
+    assert.deepEqual(h.err, ["m4: m1.contact.promotionFailed"]);
+    assert.equal(db.writer, null);
+  } finally { cleanup(h); }
+  db.promoted.set(PRINCIPALS[1]!, promotedAs("900000000032", "promoted"));
+  const again = harness({ db });
+  try {
+    assert.equal(await main(["promote"], again.deps), 0);
+    assert.equal(again.receipt("promote").promotion?.promoted, 2, "only the two not yet promoted");
+    assert.deepEqual(db.pending, []);
+  } finally { cleanup(again); }
 });
