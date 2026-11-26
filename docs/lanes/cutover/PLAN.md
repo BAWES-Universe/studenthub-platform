@@ -121,14 +121,15 @@ Two active rows of one kind whose names normalize the same become one item: the 
 - Keys follow legacy's own rules (`common/models/Candidate.php`, legacy main 55119d3):
   - Personal photo: a value under `candidate-profile-photos/` or `photos/` is the key. Otherwise legacy probes `candidate-profile-photos/<basename>`, then `photos/<basename>`.
   - Civil ID front and back: `photos/...` stays as it is, `candidate-civil-id/<x>` becomes `photos/<basename>`, and anything else becomes `photos/<value>`.
-  - CV: `candidate-resume/<value>`.
-- A value that cannot name one object safely is `document.badKey` and is not recorded. That covers a non-string, a `.`, `..` or empty path segment, a backslash, a control or format character, or more than 960 bytes.
-- One object that two imported people could resolve to, by any probe, is recorded for neither (`document.sharedObject`, naming the lowest other legacy id), because a document belongs to one person.
+  - Photo and civil ID values are read as legacy reads them: PHP `trim`, then leading slashes removed.
+  - CV: `candidate-resume/<value>`, the stored value verbatim. Only null or empty is no CV.
+- A value that cannot name one object safely is `document.badKey` and is not recorded. That covers a non-string, a `.`, `..` or empty path segment, a backslash, a control or format character, or more than 960 bytes. A CV value with outer spaces or a leading slash is also held as `document.badKey`, never rewritten, because legacy keys it verbatim.
+- One object, one owner. Every candidate row claims the keys legacy could resolve its values to, with legacy's own lenient rules and every probe, including archived, duplicate-id and unimported rows and rows with no usable id. An object any other row claims is recorded for no imported person (`document.sharedObject`, naming the lowest other usable legacy id, or none). Only the two first distinct claimants are kept per key, so a placeholder name shared by many rows stays cheap.
 - Object names can hold personal words, so they stay in memory. Issues carry legacy ids, rule codes and column names only.
 - **Next slices (proposed):**
   - A read-only fetch port on legacy's permanent bucket, with no credential in the repo and a staging-only setting.
   - Each object checked by `validateCandidateContent` (admission, 10 MB, PNG, JPEG or PDF by content), with its sha256 recorded.
-  - Staging apart from the person-owned documents, bound to `legacy-candidate:<id>` like the contact slice, then promoted into the person's slot on link, only where the person has no document of that kind.
+  - Staging apart from the person-owned documents, bound to `legacy-candidate:<id>` like the contact slice, then promoted into the person's slot on link, only where the slot is empty. The check and the write happen under the owner and slot lock, and a slot the person cleared on purpose counts as theirs: the import never refills it.
   - A refused object (`document.missing`, `document.admission`, `document.tooLarge`) is reported by legacy id and rule, never copied.
   - Legacy's public objects stay where they are until SHU-54 is fixed.
 

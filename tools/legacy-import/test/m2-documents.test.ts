@@ -39,9 +39,9 @@ test("each kind resolves to legacy's own bucket keys, in legacy's probe order", 
 
 test("imported people get one row per set column, ordered by legacy id then kind; unset values get none", () => {
   const { documents, issues } = map([
-    candidate(20, { candidate_resume: "  cv-20.pdf ", candidate_personal_photo: "/photos/p20.jpg" }),
-    candidate(3, { candidate_civil_photo_back: "back3.png", candidate_civil_photo_front: "front3.png", candidate_personal_photo: "" }),
-    candidate(4, { candidate_resume: "   " }),
+    candidate(20, { candidate_resume: "cv-20.pdf", candidate_personal_photo: " /photos/p20.jpg\t" }),
+    candidate(3, { candidate_civil_photo_back: "back3.png", candidate_civil_photo_front: "front3.png", candidate_personal_photo: " / " }),
+    candidate(4, { candidate_resume: "", candidate_civil_photo_back: "\n" }),
   ]);
   assert.deepEqual(issues, []);
   assert.deepEqual(documents, [
@@ -71,6 +71,11 @@ test("a value that cannot name one object safely is document.badKey, by column, 
   assert.deepEqual(documents, []);
   assert.deepEqual(issues, bad.map((_, i) => ({ rule: "document.badKey", legacyId: String(100 + i), field: "candidate_resume" })));
   assert.ok(!JSON.stringify(issues).includes("Secret"));
+  // A CV key is legacy's stored value verbatim: a value that would need trimming or slash removal is held, never rewritten.
+  const altered = ["  cv.pdf", "cv.pdf ", "/cv.pdf", "   ", "\u00a0cv.pdf"];
+  const held = map(altered.map((value, i) => candidate(200 + i, { candidate_resume: value })));
+  assert.deepEqual(held.documents, []);
+  assert.deepEqual(held.issues, altered.map((_, i) => ({ rule: "document.badKey", legacyId: String(200 + i), field: "candidate_resume" })));
   // Spaces inside a name and non-ASCII letters are legacy object names, not refusals.
   assert.deepEqual(map([candidate(7, { candidate_resume: "My CV نور.pdf" })]).documents,
     [{ legacyId: "7", kind: "resume", keys: ["candidate-resume/My CV نور.pdf"] }]);
@@ -101,6 +106,37 @@ test("one object named by two imported people is recorded for neither, whichever
     { rule: "document.sharedObject", legacyId: "15", field: "candidate_resume", target: "13" },
   ]);
   assert.ok(!JSON.stringify(issues).includes("Secret"));
+});
+
+test("rows M-1 does not import still claim their objects, by legacy's lenient rules and every probe", () => {
+  const { documents, issues } = map([
+    // An archived row's CV and a duplicate-id row's photo probe (the fallback photos/<name>).
+    candidate(30, { candidate_resume: "Secret-a.pdf", candidate_civil_photo_front: "Secret-b.png" }),
+    candidate(31, { deleted: 1, candidate_resume: "Secret-a.pdf" }),
+    candidate(32, { candidate_personal_photo: "Secret-b.png" }), candidate(32, {}),
+    // A row with no usable id, written the way only legacy's lenient reading accepts (outer spaces, a trailing slash).
+    candidate(33, { candidate_personal_photo: "Secret-c.jpg" }),
+    candidate("legacy-x", { candidate_civil_photo_back: " /candidate-civil-id/Secret-c.jpg/\n" }),
+    candidate(34, { candidate_resume: "own-34.pdf" }),
+  ]);
+  assert.deepEqual(documents, [{ legacyId: "34", kind: "resume", keys: ["candidate-resume/own-34.pdf"] }]);
+  assert.deepEqual(issues, [
+    { rule: "document.sharedObject", legacyId: "30", field: "candidate_resume", target: "31" },
+    { rule: "document.sharedObject", legacyId: "30", field: "candidate_civil_photo_front", target: "32" },
+    // The only other claimant has no usable id: blocked, and no target is named.
+    { rule: "document.sharedObject", legacyId: "33", field: "candidate_personal_photo" },
+  ]);
+  assert.ok(!JSON.stringify(issues).includes("Secret"));
+});
+
+test("many people naming one placeholder object are all held, each naming the lowest other id", () => {
+  const n = 5000;
+  const rows = Array.from({ length: n }, (_, i) => candidate(n - i, { candidate_resume: "placeholder.pdf" }));
+  const { documents, issues } = map(rows);
+  assert.deepEqual(documents, []);
+  assert.equal(issues.length, n);
+  assert.deepEqual(issues[0], { rule: "document.sharedObject", legacyId: "1", field: "candidate_resume", target: "2" });
+  assert.ok(issues.slice(1).every((issue) => issue.target === "1"));
 });
 
 test("the mapping is deterministic whatever the row order", () => {
