@@ -50,6 +50,25 @@ const mutations = [
     "async run(actor, fileId, reviewId) {\n        if (actor.actingAs !== false ||", "async run(actor, fileId, reviewId) {\n        if ("],
   ["let an act-as session upload a file", "BANK_STORE_REFUSED",
     "async submit(actor, input) {\n        if (actor.actingAs !== false ||", "async submit(actor, input) {\n        if ("],
+  ["name held lines the reader may not settle", "BANK_STORE_HELD",
+    '"SELECT id,transfer_id,paid FROM pay_transfer_lines WHERE id = ANY($1::text[])", [[...visible]]', '"SELECT id,transfer_id,paid FROM pay_transfer_lines WHERE id = ANY($1::text[])", [held.flatMap((r) => r.line_ids)]'],
+  ["list rows that were not held", "BANK_STORE_HELD",
+    "WHERE r.kind='hold'\n", "WHERE r.kind<>'duplicate'\n"],
+  ["list held rows without finance file permission", "BANK_STORE_HELD",
+    "            if (!await this.gate(client, actor.principalId))\n                return null;\n            const held", "            const held"],
+  ["show a transfer the reader may not settle", "BANK_STORE_TRANSFER",
+    "if (!t || !await this.policy.authorize(", "if (!t || false && !await this.policy.authorize("],
+  ["show a transfer without finance file permission", "BANK_STORE_TRANSFER",
+    "            if (!await this.gate(client, actor.principalId))\n                return null;\n            const t =", "            const t ="],
+  ["show paid rows as held or failed", "BANK_STORE_TRANSFER",
+    "WHERE r.kind IN ('hold','unpay')", "WHERE r.kind IN ('hold','unpay','pay')"],
+  ["hide that an older held page exists", "BANK_STORE_HELD", "const more = held.length > limit;", "const more = false;"],
+  ["read the records in a read-only transaction", "BANK_STORE_RECORDS_PRODUCTION",
+    'const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ";', 'const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";'],
+  ["name the transfer of a line the reader may not settle", "BANK_STORE_READER_SCOPED",
+    "WHERE id = ANY($1::text[]) ORDER BY id\", [[...visible]]", "WHERE id = ANY($1::text[]) ORDER BY id\", [recorded.flatMap((r) => r.line_ids)]"],
+  ["give a file page no transfer links", "BANK_HTTP_RECORDS_PRODUCTION",
+    "lineTransfers[l.id] = l.transfer_id;", "void l;"],
 ];
 const original = await readFile(store, "utf8");
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-concurrency=1",
@@ -59,7 +78,7 @@ try {
   assert.equal(run().status, 0, "the unmutated suite passes");
   for (const [name, pattern, from, to] of mutations) {
     assert.equal(original.split(from).length - 1, 1, `mutation binds exactly once: ${name}`);
-    await writeFile(store, original.replace(from, to));
+    await writeFile(store, original.replace(from, () => to));
     const result = run(pattern);
     const output = result.stdout + result.stderr;
     assert.equal(result.error, undefined, `${name}: runner error`);
