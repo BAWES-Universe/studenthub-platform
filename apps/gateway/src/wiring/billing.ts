@@ -48,7 +48,10 @@ export function wireBilling(settings: WiringSettings, access: Access, env: Reado
   return {
     services: {
       invoices: createInvoicesHttp({ sessions: access.loginStore.sessions, reads, ...(bank ? { bank } : {}),
-        voids: { reads: voidReads, credit: input => voids.credit(input), origin } }),
+        voids: { reads: voidReads, credit: input => voids.credit(input), origin },
+        // The ordinary transfer record links its bank payments only when the bank record itself would open:
+        // the same central gate and per-transfer rule the bank result page enforces.
+        bankRecords: async (viewer, transferId) => await bankStore.transfer({ principalId: viewer, actingAs: false }, transferId) !== null }),
       bankResults: createBankResultsHttp({ sessions: access.loginStore.sessions, store: bankStore, allowed: operatorFinance, origin,
         // Off until native AUB/KFH result files are checked (see bank-results-http.ts); only the exact value "on" enables it.
         applyEnabled: env.BILLING_BANK_RESULTS_APPLY === "on" }),

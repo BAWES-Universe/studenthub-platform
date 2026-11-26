@@ -4,7 +4,11 @@ import { after, afterEach, before, beforeEach, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
 import { PostgresBankResultStore, PostgresTransferInvoiceEffects, bankResultLifecyclePolicy, operatorFinanceGate, type BankResultCompletePort, type BankResultFileGate } from "@studenthub/db/billing";
-import { transferInvoiceVoidDecision } from "../../billing/src/transfer-invoice-access.js";
+import { TRANSFER_INVOICE_VOID_ROLE, transferInvoiceVoidDecision } from "../../billing/src/transfer-invoice-access.js";
+import { DEFAULT_OPERATOR_ORG_IDS } from "../../organizations/src/organizations.js";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createBankResultsHttp, handleBankResults } from "../../../apps/gateway/src/billing/bank-results-http.js";
 import { AUB_RESULT_COLUMNS, type BankCell } from "../../billing/src/bank-results.js";
 import { TransferLifecycleService, type TransferAction } from "../../payroll/src/transfer-lifecycle.js";
 import { PostgresTransferLifecycleStore, type PayLifecyclePolicy } from "../src/payroll/postgres-transfer-lifecycle-store.js";
@@ -413,4 +417,42 @@ test("BANK_STORE_RECORDS_PRODUCTION the held and transfer reads work with the pr
   const cfin = { principalId: "cfin", actingAs: false };
   assert.equal(await store.held(cfin), null, "a company's own finance user is refused at the gate");
   assert.equal(await results(complete, rule, async () => true).transfer(cfin, t), null, "and, past an open gate, by the settle policy");
+});
+
+test("BANK_HTTP_RECORDS_PRODUCTION both record pages, wired as production with the real gate and settle rule on PostgreSQL: allowed, refused, and an unknown transfer indistinguishable from a refused one", async (t) => {
+  await pool.query("INSERT INTO principals(id) VALUES ('cfin')");
+  await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES ('fin','root','finance','subtree'),('cfin','P','finance','subtree')");
+  const paidOnly = await transfer([{ id: "L-1", person: "w1", amount: "10.000" }], "lock", "payment_received");
+  const held = await transfer([{ id: "L-2", person: "w2", amount: "20.000" }], "lock", "payment_received");
+  await approve(results(), actor, await submit(aub(["SUCCESS", "REF-1", "x", "L-1"], ["SUCCESS", "REF-2", "x", "L-404"])));
+  const S_FIN = "f".repeat(43), S_CFIN = "c".repeat(43);
+  // As apps/gateway/src/wiring/billing.ts builds them.
+  const voidDecision = (rows: Parameters<typeof transferInvoiceVoidDecision>[0], orgId: string, ancestors: readonly string[]) =>
+    transferInvoiceVoidDecision(rows, orgId, ancestors, DEFAULT_OPERATOR_ORG_IDS);
+  const fileGate = operatorFinanceGate(DEFAULT_OPERATOR_ORG_IDS, TRANSFER_INVOICE_VOID_ROLE);
+  const store = new PostgresBankResultStore(pool, bankResultLifecyclePolicy(voidDecision), effects(), complete, fileGate);
+  const allowed = async (viewer: string) => { const c = await pool.connect(); try { return await fileGate(c, viewer); } finally { c.release(); } };
+  const sessions = { get: async (id: string) => ({ [S_FIN]: { personId: "fin" }, [S_CFIN]: { personId: "cfin" } } as Record<string, { personId: string }>)[id] as never };
+  const service = createBankResultsHttp({ sessions, store, allowed, origin: "https://studenthub.test.invalid" });
+  const server = createServer(async (req, res) => { if (!await handleBankResults(req, res, service)) { res.writeHead(418); res.end(); } });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>(r => server.close(() => r())));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const get = (path: string, session: string) => fetch(base + path, { headers: { cookie: `__Host-studenthub_session=${session}`, accept: "application/json" } });
+
+  const heldPage = await get("/finance/bank-results/held", S_FIN);
+  assert.equal(heldPage.status, 200, await heldPage.clone().text());
+  const heldBody = await heldPage.json() as { held: { rowNumber: number; reason: string }[]; page: number; more: boolean };
+  assert.deepEqual([heldBody.held.map((r) => [r.rowNumber, r.reason]), heldBody.page, heldBody.more], [[[4, "unmatched"]], 1, false]);
+  const paid = await get(`/finance/bank-results/transfers/${paidOnly}`, S_FIN);
+  assert.equal(paid.status, 200, await paid.clone().text());
+  assert.deepEqual((await paid.json() as { lines: { lineId: string; paid: boolean; payment: { reference: string } | null }[] }).lines.map((l) => [l.lineId, l.paid, l.payment?.reference ?? null]), [["L-1", true, "REF-1"]]);
+  assert.equal((await get(`/finance/bank-results/transfers/${held}`, S_FIN)).status, 200);
+
+  const refusedHeld = await get("/finance/bank-results/held", S_CFIN);
+  const refused = await get(`/finance/bank-results/transfers/${paidOnly}`, S_CFIN), unknown = await get(`/finance/bank-results/transfers/${randomUUID()}`, S_FIN);
+  assert.equal(refusedHeld.status, 404, "a company's own finance user does not see the held page");
+  assert.equal(refused.status, 404); assert.equal(unknown.status, 404);
+  assert.deepEqual(await refused.json(), await unknown.json(), "a refused transfer and an unknown one read the same");
+  assert.equal(await store.transfer({ principalId: "fin", actingAs: false }, randomUUID()), null, "the store itself answers an unknown transfer as not found");
 });

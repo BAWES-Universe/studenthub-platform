@@ -49,6 +49,8 @@ export interface InvoicesHttp {
   statement(viewer: string, orgId: string, from: string, to: string): Promise<TransferStatement | null>;
   transfers(viewer: string, orgId: string): Promise<CompanyTransferPage | null>;
   transfer(viewer: string, orgId: string, transferId: string): Promise<CompanyTransferDetail | null>;
+  /** True when the viewer may open the transfer's bank result record (StudentHub finance); false on any doubt. */
+  bankRecords(viewer: string, transferId: string): Promise<boolean>;
   /** Today's date in Kuwait, YYYY-MM-DD. */
   today(): string;
   /** The gateway origin a void post must come from; voids are refused without one. */
@@ -76,7 +78,8 @@ export interface InvoiceVoidPorts {
   readonly origin: string;
 }
 
-export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">; reads: TransferInvoiceReads; bank?: InvoiceBankInfo; now?: () => Date; voids?: InvoiceVoidPorts }): InvoicesHttp {
+export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">; reads: TransferInvoiceReads; bank?: InvoiceBankInfo; now?: () => Date; voids?: InvoiceVoidPorts;
+  bankRecords?(viewer: string, transferId: string): Promise<boolean> }): InvoicesHttp {
   const voids = ports.voids;
   return {
     async viewer(sessionId) { return sessionId ? (await ports.sessions.get(sessionId))?.personId : undefined; },
@@ -88,6 +91,8 @@ export function createInvoicesHttp(ports: { sessions: Pick<SessionStore, "get">;
     statement: (viewer, orgId, from, to) => ports.reads.statement(viewer, orgId, from, to),
     transfers: async (viewer, orgId) => await ports.reads.companyTransfers?.(viewer, orgId) ?? null,
     transfer: async (viewer, orgId, transferId) => await ports.reads.companyTransfer?.(viewer, orgId, transferId) ?? null,
+    // A failing bank read only hides the link; the ordinary record still shows.
+    bankRecords: async (viewer, transferId) => ports.bankRecords ? await ports.bankRecords(viewer, transferId).catch(() => false) === true : false,
     today: () => new Date((ports.now?.() ?? new Date()).getTime() + 3 * 3600_000).toISOString().slice(0, 10),
     origin: voids?.origin || undefined,
     async voidList(viewer, orgId) {
@@ -177,12 +182,16 @@ function transfersHtml(page: CompanyTransferPage): string {
     : "<p>There are no transfers yet.</p>"}<p><a href="${esc(`${INVOICES_PATH}/${encodeURIComponent(page.orgId)}`)}">Invoices</a></p></main>`;
 }
 
-function transferHtml(orgId: string, t: CompanyTransferDetail): string {
+/** The bank result record of a transfer (bank-results-http.ts): each line with the bank payment that paid it, or the held rows naming it. */
+const bankRecordHref = (transferId: string) => `/finance/bank-results/transfers/${encodeURIComponent(transferId)}`;
+
+function transferHtml(orgId: string, t: CompanyTransferDetail, bankRecords: boolean): string {
   const rows = t.lines.map(l => `<tr><td>${esc(l.personName)}</td><td>${esc(l.storeName)}</td><td>${l.worked ? `${esc(l.worked.hours)} h ${l.worked.minutes} min` : ""}</td>`
     + `<td>${esc(t.currencyCode)} ${esc(l.companyTotal)}</td><td>${l.paid ? "Paid" : "Not paid yet"}</td></tr>`).join("");
   return `<main><h1>Transfer</h1><p>${esc(t.companyName)}, ${esc(longDate(t.periodStart))} to ${esc(longDate(t.periodEnd))}. ${esc(transferStatus(t.status, t.paymentReceivedOn))}.</p>`
     + `<p>Amount: ${esc(t.currencyCode)} ${esc(t.companyTotal)} for ${t.lineCount} ${t.lineCount === 1 ? "person" : "people"}.</p>`
     + (t.lines.length ? `<table><thead><tr><th>Person</th><th>Store</th><th>Worked</th><th>Amount</th><th>Salary</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>This transfer has no lines yet.</p>")
+    + (bankRecords ? `<p><a href="${esc(bankRecordHref(t.transferId))}">Bank payments for this transfer</a></p>` : "")
     + `<p><a href="${esc(`/organization/${encodeURIComponent(orgId)}/transfers`)}">All transfers</a></p></main>`;
 }
 
@@ -243,7 +252,7 @@ export async function handleInvoices(req: IncomingMessage, res: ServerResponse, 
       const result = await service.transfer(viewer, orgId, id);
       if (!result) return notFound(req, res);
       if (!wantsHtml(req.headers.accept)) return json(res, 200, result);
-      writeHtml(res, 200, pageDocument("Transfer", transferHtml(orgId, result)), { "cache-control": "no-store" });
+      writeHtml(res, 200, pageDocument("Transfer", transferHtml(orgId, result, await service.bankRecords(viewer, result.transferId))), { "cache-control": "no-store" });
       return true;
     }
     if (statement) {
