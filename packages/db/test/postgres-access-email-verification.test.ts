@@ -194,3 +194,63 @@ test("EV_ASCII_KEY an address outside the plain-ASCII form records nothing, from
   assert.deepEqual(await rows(id), [], "a change to a spelling a locale might fold drops the fact");
   assert.equal(await verified(id), false);
 });
+
+test("EV_REKEY_NEGATIVE moving to the ASCII key carries an issuer negative made under a locale's old key, and the negative wins", async () => {
+  // Re-creates what migration 0658 met: rows keyed by the old lower(btrim()) under a locale that
+  // lowers I to a dotless i (Turkish). All in one transaction, rolled back.
+  const client = await pool.connect();
+  const tag = randomUUID().slice(0, 8);
+  try {
+    await client.query("BEGIN");
+    await client.query("ALTER TABLE principal_email_verifications DROP CONSTRAINT principal_email_verifications_email_key");
+    // Column-scoped triggers block a collation change; the rollback restores them.
+    for (const { tgname } of (await client.query<{ tgname: string }>(
+      "SELECT tgname FROM pg_trigger WHERE tgrelid = 'principals'::regclass AND NOT tgisinternal AND tgattr::text <> ''")).rows) {
+      await client.query(`DROP TRIGGER "${tgname}" ON principals`);
+    }
+    await client.query("ALTER TABLE principals ALTER COLUMN email TYPE text COLLATE \"tr-x-icu\"");
+    const add = async (email: string) => {
+      const id = `ev-rekey-${randomUUID()}`;
+      await client.query("INSERT INTO principals (id, display_name, email) VALUES ($1, 'Rekey Person', $2)", [id, email]);
+      return id;
+    };
+    const old = async (id: string) => (await client.query<{ e: string }>("SELECT lower(btrim(email)) AS e FROM principals WHERE id = $1", [id])).rows[0]!.e;
+    const put = (id: string, email: string, verified: boolean, source: string) => client.query(
+      "INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, $2, $3, $4)", [id, email, verified, source]);
+    await client.query("ALTER TABLE principal_email_verifications DISABLE TRIGGER principal_email_verifications_current_address");
+    // A vetoed address, plus a legacy true already recorded under the new key: the negative wins.
+    const vetoed = await add(`Ilker-${tag}@example.com`);
+    assert.equal(await old(vetoed), `ılker-${tag}@example.com`, "the locale's old key differs from the ASCII key");
+    await put(vetoed, await old(vetoed), false, "oidc");
+    await put(vetoed, `ilker-${tag}@example.com`, true, "legacy_import");
+    // A vetoed address with nothing under the new key.
+    const alone = await add(`IVY-${tag}@example.com`);
+    await put(alone, await old(alone), false, "oidc");
+    // A positive under the old key fails closed; a stale negative for another address goes.
+    const positive = await add(`Iris-${tag}@example.com`);
+    await put(positive, await old(positive), true, "oidc");
+    const stale = await add(`now-${tag}@example.com`);
+    await put(stale, `ıvan-${tag}@example.com`, false, "oidc");
+    await client.query("ALTER TABLE principal_email_verifications ENABLE TRIGGER principal_email_verifications_current_address");
+
+    const carried = (await client.query<{ n: number }>("SELECT principal_email_verifications_rekey() AS n")).rows[0]!.n;
+    assert.equal(carried, 2);
+    await client.query(`ALTER TABLE principal_email_verifications ADD CONSTRAINT principal_email_verifications_email_key
+      CHECK (principal_email_key(email) IS NOT NULL AND email = principal_email_key(email))`);
+    const rowsOf = async (id: string) => (await client.query(
+      "SELECT email, verified, source FROM principal_email_verifications WHERE principal_id = $1 ORDER BY email", [id])).rows;
+    const verifiedOf = async (id: string) => (await client.query(`SELECT ${emailVerifiedSql("$1::text")} AS v`, [id])).rows[0].v as boolean;
+    assert.deepEqual(await rowsOf(vetoed), [{ email: `ilker-${tag}@example.com`, verified: false, source: "oidc" }], "the negative wins the collision");
+    assert.deepEqual(await rowsOf(alone), [{ email: `ivy-${tag}@example.com`, verified: false, source: "oidc" }]);
+    assert.deepEqual(await rowsOf(positive), [], "an old-key positive is dropped, not carried");
+    assert.deepEqual(await rowsOf(stale), []);
+    for (const id of [vetoed, alone, positive, stale]) assert.equal(await verifiedOf(id), false);
+    // A later legacy promotion cannot turn a carried veto into verified.
+    await client.query(`INSERT INTO principal_email_verifications (principal_id, email, verified, source)
+      VALUES ($1, $2, true, 'legacy_import') ON CONFLICT (principal_id, email) DO NOTHING`, [alone, `ivy-${tag}@example.com`]);
+    assert.equal(await verifiedOf(alone), false);
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+  }
+});
