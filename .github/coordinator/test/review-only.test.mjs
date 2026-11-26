@@ -20,7 +20,9 @@ import {
   episodeVerdict,
 } from "../single-run-activation.mjs";
 import { createReceipt, nextReceiptState, validateReceipt, verifyReviewOnlyPull, receiptCommentBody, parseReceiptsFromComments, RECEIPT_IMMUTABLE_FIELDS,
-  foreignReviewReceipt, foreignReviewDisposition, endedEpisodeSupervisorSockets, settledSupervisorAnswer } from "../reconcile.mjs";
+  foreignReviewReceipt, foreignReviewDisposition, endedEpisodeSupervisorSockets, settledSupervisorAnswer,
+  ownsCrossCardSettles, workerOfActivation, cardRunLockPresent } from "../reconcile.mjs";
+import { workerActivationFile, MAX_CARD_WORKERS } from "../service/credential-delivery.mjs";
 import { resolveReviewOnlyLane, fixtureReviewTests } from "../workspace-scope.mjs";
 import { readPullChange, reviewRule, REVIEW_ONLY_VERDICT_RULE, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { REVIEW_ONLY_BRIEF } from "../card-contracts.mjs";
@@ -1179,4 +1181,101 @@ test("SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keep
     assert.equal(young.h.receiptFor(young.unknown.attempt_id).stage, "LAUNCH_UNKNOWN", "SHU71_INSIDE_ITS_BOUND_NOT_ASKED");
     assert.deepEqual(young.operations, [], "an episode that may still run is not asked about");
   } finally { young.h.cleanup(); }
+});
+
+// SHU-71, 26 Nov: card workers 1 and 2 started together and both coordinators
+// settled the same ended review: two identical HOLD receipts for one attempt, a
+// second apart. A cross-card settle is published by one card worker only
+// (ownsCrossCardSettles), and the attempt's thread is read again right before
+// the write.
+function endedReviewBoard() {
+  return import("./fixture/episode-harness.mjs").then(({ createEpisodeHarness }) => {
+    const h = createEpisodeHarness({ configOverrides: { workers: { max: 2 }, dispatch_scope: { issue_ids: ["SHU-140"] } },
+      extraNodes: [{ id: "uuid-SHU-304", identifier: DESK, title: "review desk", state: { name: "Todo" }, priorityLabel: "Low",
+        labels: { nodes: [{ name: "repo:platform" }] }, assignee: null, delegate: null, parent: null, relations: { nodes: [] } }] });
+    const made = createReceipt({ receipt_version: "1.1.0", issue_id: DESK, authorization_ref: DESK, requested_worker: "codex-verifier",
+      role: "review", runtime: "codex-cli", repo: REPO, branch: "feature/reviewed", target_sha: HEAD,
+      workspace_scope: "full", scope_phase: "review", episode_id: "shu-304-run-20260909T230000Z", review_base_sha: BASE });
+    assert.ok(made.ok, JSON.stringify(made.errors));
+    const unknown = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+    h.comments.push({ body: receiptCommentBody(unknown), createdAt: unknown.last_activity });
+    const holds = () => h.comments.filter((c) => c.body.includes(unknown.attempt_id) && c.body.includes("held: ENDED_EPISODE_REVIEW")).length;
+    const failed = (order) => supervisorAnswer(order, { stage: "FAILED", result: null });
+    // Each status answer yields first, so concurrent ticks interleave as two
+    // processes would: both have read the board before either writes.
+    const tick = (io = {}, onStatus = () => {}) => h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET }, io: {
+      supervisorTransport: async ({ request }) => { onStatus(); await new Promise((resolve) => setImmediate(resolve)); return failed(request.order); },
+      ...io } });
+    return { h, unknown, holds, tick };
+  });
+}
+
+test("CROSS_CARD_SETTLE_ONCE: two card workers reconciling the same ended-episode review at once publish exactly one HOLD", async () => {
+  const { h, unknown, holds, tick } = await endedReviewBoard();
+  try {
+    // Both card runs hold their run locks, as workers 1 and 2 did at 04:00.
+    const bothRunning = (worker) => worker === 1 || worker === 2;
+    const [one, two] = await Promise.all([
+      tick({ cardWorker: 1, cardRunLockHeld: bothRunning }),
+      tick({ cardWorker: 2, cardRunLockHeld: bothRunning }),
+    ]);
+    assert.equal(holds(), 1, `exactly one HOLD comment\n--- worker 1\n${one.text}\n--- worker 2\n${two.text}`);
+    assert.equal(h.receiptFor(unknown.attempt_id).stage, "HOLD");
+    assert.match(two.text, /ENDED_EPISODE_REVIEW SHU-304 attempt \S+ LAUNCH_UNKNOWN in episode \S+ left to a lower card worker/);
+    assert.match(one.text, /LAUNCH_UNKNOWN -> HOLD \(ENDED_EPISODE_REVIEW/);
+    await Promise.all([tick({ cardWorker: 1, cardRunLockHeld: bothRunning }), tick({ cardWorker: 2, cardRunLockHeld: bothRunning })]);
+    assert.equal(holds(), 1, "the settled review is not settled again");
+  } finally { h.cleanup(); }
+});
+
+test("CROSS_CARD_SETTLE_REREAD: a HOLD another worker wrote after this tick read the board ends the settle without a second write", async () => {
+  const { h, unknown, holds, tick } = await endedReviewBoard();
+  try {
+    // Worker 2 owned the settle until worker 1's run began; its HOLD lands
+    // while worker 1's tick is asking the supervisors.
+    const other = nextReceiptState(unknown, { type: "hold", reason: "ENDED_EPISODE_REVIEW: written by another card worker" }).receipt;
+    let landed = false;
+    const run = await tick({ cardWorker: 1 }, () => {
+      if (landed) return;
+      landed = true;
+      h.comments.push({ body: receiptCommentBody(other), createdAt: new Date(Date.parse(unknown.last_activity) + 1000).toISOString() });
+    });
+    assert.equal(holds(), 1, run.text);
+    assert.match(run.text, /ENDED_EPISODE_REVIEW SHU-304 attempt \S+ LAUNCH_UNKNOWN in episode \S+ not written — its receipt has already moved/);
+  } finally { h.cleanup(); }
+});
+
+test("CROSS_CARD_SETTLE_LIVENESS: with no lower worker running, worker 2 settles the review itself", async () => {
+  const { h, unknown, holds, tick } = await endedReviewBoard();
+  try {
+    const run = await tick({ cardWorker: 2, cardRunLockHeld: (worker) => worker === 2 });
+    assert.equal(holds(), 1, run.text);
+    assert.equal(h.receiptFor(unknown.attempt_id).stage, "HOLD");
+  } finally { h.cleanup(); }
+});
+
+test("CROSS_CARD_SETTLE_OWNER: the lowest running card worker owns cross-card writes; a lock that cannot be looked up defers", () => {
+  assert.equal(ownsCrossCardSettles(1, () => true), true, "worker 1 always owns");
+  assert.equal(ownsCrossCardSettles(null, () => true), true, "no card worker named: one coordinator, as before");
+  assert.equal(ownsCrossCardSettles(2, (n) => n === 1), false, "worker 1 running");
+  assert.equal(ownsCrossCardSettles(2, () => false), true, "worker 1 not running");
+  assert.equal(ownsCrossCardSettles(3, (n) => n === 2), false, "worker 2 running");
+  assert.equal(ownsCrossCardSettles(3, () => false), true);
+  assert.equal(ownsCrossCardSettles(2, () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); }), false, "EACCES counts as held");
+  for (let worker = 1; worker <= MAX_CARD_WORKERS; worker += 1) assert.equal(workerOfActivation(workerActivationFile(worker)), worker);
+  assert.equal(workerOfActivation("/tmp/activation.json"), null);
+  assert.equal(workerOfActivation(null), null);
+  // The default probe: absent is not held; any other lookup error is thrown.
+  const statSync = fs.statSync;
+  try {
+    fs.statSync = () => { throw Object.assign(new Error("absent"), { code: "ENOENT" }); };
+    assert.equal(cardRunLockPresent(1), false);
+    assert.equal(ownsCrossCardSettles(2), true, "worker 1's lock absent");
+    fs.statSync = () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); };
+    assert.throws(() => cardRunLockPresent(1), { code: "EACCES" });
+    assert.equal(ownsCrossCardSettles(2), false, "worker 1's lock unreadable: defer");
+    fs.statSync = () => ({});
+    assert.equal(cardRunLockPresent(1), true);
+    assert.equal(ownsCrossCardSettles(2), false, "worker 1's lock present");
+  } finally { fs.statSync = statSync; }
 });

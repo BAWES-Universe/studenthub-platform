@@ -1472,7 +1472,13 @@ export function workerOfActivation(activationPath) {
   const index = workerActivationFiles().indexOf(activationPath);
   return index >= 0 ? index + 1 : null;
 }
-export function ownsCrossCardSettles(worker, runLockHeld = (n) => fs.existsSync(workerRunLock(n))) {
+// Only a lock confirmed absent (ENOENT) is "not held"; any other lookup error
+// (EACCES, ...) is thrown, so ownsCrossCardSettles counts it as held.
+export function cardRunLockPresent(worker) {
+  try { fs.statSync(workerRunLock(worker)); return true; }
+  catch (error) { if (error?.code === "ENOENT") return false; throw error; }
+}
+export function ownsCrossCardSettles(worker, runLockHeld = cardRunLockPresent) {
   if (!Number.isInteger(worker) || worker <= 1) return true;
   for (let lower = 1; lower < worker; lower += 1) {
     // A lock that cannot be read counts as held: defer rather than write twice.
@@ -3335,6 +3341,23 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       // ownership is read again right before the write.
       if (!settleOwner()) {
         if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} left to a lower card worker — its run lock appeared before the write`);
+        continue;
+      }
+      // A worker that owned the settle a moment ago (worker 2 before worker 1's
+      // run began) may have written its HOLD after this tick read the board:
+      // the attempt's thread is read again, and a receipt that has moved, or a
+      // thread that cannot be read, is left for the next tick.
+      let moved;
+      try {
+        const fresh = parseReceiptsFromComments(await fetchThreadComments({
+          issueIds: threadIdsFor.get(receipt.issue_id) ?? [linearIssueId], token: linearToken, fetchImpl }))
+          .filter((r) => r.attempt_id === receipt.attempt_id);
+        moved = fresh.length === 0 ? "its receipt is missing from the thread" : fresh.some((r) => r.stage !== receipt.stage) ? "its receipt has already moved" : null;
+      } catch (error) {
+        moved = `its thread could not be read again (${error?.code ?? "unreadable"})`;
+      }
+      if (moved) {
+        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} not written — ${moved}`);
         continue;
       }
       await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);

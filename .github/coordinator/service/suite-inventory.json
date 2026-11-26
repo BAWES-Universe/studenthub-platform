@@ -2782,6 +2782,10 @@
     "SHU71_ENDED_EPISODE_OWNING_SUPERVISOR: the worker that ran the review answers for it, whichever worker ticks",
     "COMMENT_CONTINUATIONS_FIXTURE: b760441e's history stays on the full SHU-304, one terminal receipt lands on SHU-711, a re-tick writes nothing, and a real 429 still backs off",
     "SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keeps the gate and nothing is written",
+    "CROSS_CARD_SETTLE_ONCE: two card workers reconciling the same ended-episode review at once publish exactly one HOLD",
+    "CROSS_CARD_SETTLE_REREAD: a HOLD another worker wrote after this tick read the board ends the settle without a second write",
+    "CROSS_CARD_SETTLE_LIVENESS: with no lower worker running, worker 2 settles the review itself",
+    "CROSS_CARD_SETTLE_OWNER: the lowest running card worker owns cross-card writes; a lock that cannot be looked up defers",
     "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
     "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
     "SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick",
@@ -22464,6 +22468,22 @@
     },
     {
       "name": "SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keeps the gate and nothing is written",
+      "capabilities": []
+    },
+    {
+      "name": "CROSS_CARD_SETTLE_ONCE: two card workers reconciling the same ended-episode review at once publish exactly one HOLD",
+      "capabilities": []
+    },
+    {
+      "name": "CROSS_CARD_SETTLE_REREAD: a HOLD another worker wrote after this tick read the board ends the settle without a second write",
+      "capabilities": []
+    },
+    {
+      "name": "CROSS_CARD_SETTLE_LIVENESS: with no lower worker running, worker 2 settles the review itself",
+      "capabilities": []
+    },
+    {
+      "name": "CROSS_CARD_SETTLE_OWNER: the lowest running card worker owns cross-card writes; a lock that cannot be looked up defers",
       "capabilities": []
     },
     {
