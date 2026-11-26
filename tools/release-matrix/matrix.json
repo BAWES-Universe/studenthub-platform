@@ -1391,10 +1391,17 @@
     "G-03": {
       "lane": "access",
       "subject": "`/admin/access/people/:principalId/audit` \u2014 effective grants, provenance, history, next-request result",
+      "served": [
+        {
+          "route": "/admin/access/people/:principalId/audit",
+          "test": "apps/gateway/test/access-admin.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "built in the grant audit PR; closes at its final code head"
+          "state": "done",
+          "evidence": "PR #731 at 60522ae4b0ead42d0ea4b02595667cd21b2960fa"
         },
         "verified": {
           "state": "open"
