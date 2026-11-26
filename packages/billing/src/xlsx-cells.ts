@@ -1,4 +1,4 @@
-import { inflateRawSync } from "node:zlib";
+import { crc32, inflateRawSync } from "node:zlib";
 import type { BankCell } from "./bank-results.js";
 
 /**
@@ -27,45 +27,74 @@ export type XlsxRead =
   | { readonly kind: "refused"; readonly code: "unreadable" | "too_many_rows" | "too_large" };
 const refused = (code: "unreadable" | "too_many_rows" | "too_large"): XlsxRead => ({ kind: "refused", code });
 
-interface Entry { readonly method: number; readonly compressed: number; readonly size: number; readonly offset: number }
+interface Entry { readonly name: string; readonly flags: number; readonly method: number; readonly crc: number; readonly compressed: number; readonly size: number; readonly offset: number }
 
+/** The key a part name is found by: case, `\` and leading `/` folded, so two spellings of one part collide. */
+function partKey(name: string): string | null {
+  const parts = name.replace(/\\/gu, "/").replace(/^\/+/u, "").toLowerCase().split("/").filter((p) => p !== "" && p !== ".");
+  return parts.length === 0 || parts.includes("..") ? null : parts.join("/");
+}
+
+/** The central directory, keyed by part. Refused: a second directory end, multi-disk or zip64 archives,
+ * encryption, and any part name that is malformed or collides with another once normalized. */
 function entries(zip: Buffer): Map<string, Entry> | null {
   // End of central directory: the last 22 bytes, or earlier when a comment follows.
   let eocd = -1;
   for (let i = zip.length - 22; i >= Math.max(0, zip.length - 22 - 0xffff); i--) {
     if (zip.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
   }
-  if (eocd < 0) return null;
-  const count = zip.readUInt16LE(eocd + 10);
-  let at = zip.readUInt32LE(eocd + 16);
+  if (eocd < 0 || eocd + 22 + zip.readUInt16LE(eocd + 20) !== zip.length) return null;
+  const disk = zip.readUInt16LE(eocd + 4), dirDisk = zip.readUInt16LE(eocd + 6);
+  const onDisk = zip.readUInt16LE(eocd + 8), count = zip.readUInt16LE(eocd + 10);
+  const dirSize = zip.readUInt32LE(eocd + 12), dirStart = zip.readUInt32LE(eocd + 16);
+  if (disk !== 0 || dirDisk !== 0 || onDisk !== count || count === 0xffff || dirStart === 0xffffffff || dirStart + dirSize !== eocd) return null;
+  let at = dirStart;
   const found = new Map<string, Entry>();
   for (let n = 0; n < count; n++) {
-    if (at + 46 > zip.length || zip.readUInt32LE(at) !== 0x02014b50) return null;
-    const flags = zip.readUInt16LE(at + 8), method = zip.readUInt16LE(at + 10);
+    if (at + 46 > eocd || zip.readUInt32LE(at) !== 0x02014b50) return null;
+    const flags = zip.readUInt16LE(at + 8), method = zip.readUInt16LE(at + 10), crc = zip.readUInt32LE(at + 16);
     const compressed = zip.readUInt32LE(at + 20), size = zip.readUInt32LE(at + 24);
     const nameLength = zip.readUInt16LE(at + 28), extra = zip.readUInt16LE(at + 30), comment = zip.readUInt16LE(at + 32);
     const offset = zip.readUInt32LE(at + 42);
-    if (flags & 1) return null; // encrypted
+    if (flags & 1 || compressed === 0xffffffff || size === 0xffffffff || offset === 0xffffffff) return null; // encrypted or zip64
     const name = zip.subarray(at + 46, at + 46 + nameLength).toString("utf8");
-    found.set(name, { method, compressed, size, offset });
+    const key = partKey(name);
+    if (key === null || found.has(key)) return null;
+    found.set(key, { name, flags, method, crc, compressed, size, offset });
     at += 46 + nameLength + extra + comment;
   }
-  return found;
+  return at === eocd ? found : null;
 }
 
+/** One part, inflated and checked against its declared integrity: the local header names the same part with
+ * the same method, and the CRC-32 and both sizes (local header, or data descriptor when bit 3 is set) agree
+ * with the central directory and with the bytes inflated. Anything else is null. */
 function read(zip: Buffer, all: Map<string, Entry>, name: string): string | null {
-  const entry = all.get(name);
-  if (!entry || entry.size > MAX_ENTRY_BYTES) return null;
+  const key = partKey(name);
+  const entry = key === null ? undefined : all.get(key);
+  if (!entry || entry.size > MAX_ENTRY_BYTES || (entry.method !== 0 && entry.method !== 8)) return null;
   const local = entry.offset;
   if (local + 30 > zip.length || zip.readUInt32LE(local) !== 0x04034b50) return null;
-  const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+  const localFlags = zip.readUInt16LE(local + 6), localMethod = zip.readUInt16LE(local + 8);
+  const nameLength = zip.readUInt16LE(local + 26), extra = zip.readUInt16LE(local + 28);
+  if (localMethod !== entry.method || (localFlags & 8) !== (entry.flags & 8) || localFlags & 1) return null;
+  if (zip.subarray(local + 30, local + 30 + nameLength).toString("utf8") !== entry.name) return null;
+  const start = local + 30 + nameLength + extra;
   const data = zip.subarray(start, start + entry.compressed);
   if (data.length !== entry.compressed) return null;
-  try {
-    if (entry.method === 0) return data.toString("utf8");
-    if (entry.method === 8) return inflateRawSync(data, { maxOutputLength: MAX_ENTRY_BYTES }).toString("utf8");
-  } catch { return null; }
-  return null;
+  let declared: { crc: number; compressed: number; size: number };
+  if (entry.flags & 8) {
+    // Data descriptor after the data, with or without its signature.
+    let d = start + entry.compressed;
+    if (d + 4 <= zip.length && zip.readUInt32LE(d) === 0x08074b50) d += 4;
+    if (d + 12 > zip.length) return null;
+    declared = { crc: zip.readUInt32LE(d), compressed: zip.readUInt32LE(d + 4), size: zip.readUInt32LE(d + 8) };
+  } else declared = { crc: zip.readUInt32LE(local + 14), compressed: zip.readUInt32LE(local + 18), size: zip.readUInt32LE(local + 22) };
+  if (declared.crc !== entry.crc || declared.compressed !== entry.compressed || declared.size !== entry.size) return null;
+  let bytes: Buffer;
+  try { bytes = entry.method === 0 ? data : inflateRawSync(data, { maxOutputLength: MAX_ENTRY_BYTES }); } catch { return null; }
+  if (bytes.length !== entry.size || (crc32(bytes) >>> 0) !== entry.crc) return null;
+  return bytes.toString("utf8");
 }
 
 const ENTITY: Readonly<Record<string, string>> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'" };

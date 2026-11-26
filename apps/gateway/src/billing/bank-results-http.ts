@@ -22,6 +22,14 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
  * Only StudentHub's own finance users (a finance grant on an operator organization) reach any of
  * this; everyone else, a company's finance users included, gets not found before any file is read.
  * Posts must come from the gateway origin. No money moves here: rows mark pay lines paid.
+ *
+ * Gate before real-file use: the reader is tested against workbooks generated from the bank-file
+ * contract's decoded AUB/KFH matrices, not against native files from the banks (the contract marks
+ * native workbook fidelity NOT_ESTABLISHED). A sanitized native AUB result file and KFH transfer
+ * report must be read and checked by this reader before Finance applies a real bank file.
+ * Preview is a dry run of apply in one transaction that is rolled back: it stays safe only while
+ * every effect of apply (paid flags, confirmations, lifecycle completion and its effects) is
+ * transactional, with nothing sent outside the database.
  */
 export const BANK_RESULTS_PATH = "/finance/bank-results";
 export interface BankResultsStore {

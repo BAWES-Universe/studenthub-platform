@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { deflateRawSync } from "node:zlib";
+import { crc32, deflateRawSync } from "node:zlib";
 import { test } from "node:test";
 import { AUB_RESULT_COLUMNS, readBankResultSheet } from "../src/bank-results.js";
 import { readFileSync } from "node:fs";
@@ -16,21 +16,25 @@ async function workbook(rows: (string | number | null)[][]): Promise<Uint8Array>
 /** The grid, or the refusal code. */
 const cellsOf = (bytes: Uint8Array) => { const read = readXlsxCells(bytes); return read.kind === "cells" ? read.cells : read.code; };
 
-/** A minimal zip of named text entries, deflated or stored. */
-function zip(files: Record<string, string>, stored = false): Uint8Array {
+/** A minimal zip of named text entries, deflated or stored. `tamper` edits one entry's headers or bytes after they are built. */
+type Tamper = (entry: { name: string; local: Buffer; central: Buffer; body: Buffer }) => void;
+function zip(files: Record<string, string> | readonly (readonly [string, string])[], stored = false, tamper?: Tamper): Uint8Array {
   const locals: Buffer[] = [], centrals: Buffer[] = [];
+  const list = Array.isArray(files) ? files : Object.entries(files);
   let offset = 0;
-  for (const [name, content] of Object.entries(files)) {
-    const raw = Buffer.from(content, "utf8"), body = stored ? raw : deflateRawSync(raw), nameBytes = Buffer.from(name, "utf8");
-    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(stored ? 0 : 8, 8);
+  for (const [name, content] of list) {
+    const raw = Buffer.from(content, "utf8"), body = stored ? Buffer.from(raw) : deflateRawSync(raw), nameBytes = Buffer.from(name, "utf8");
+    const crc = crc32(raw) >>> 0;
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(stored ? 0 : 8, 8); local.writeUInt32LE(crc, 14);
     local.writeUInt32LE(body.length, 18); local.writeUInt32LE(raw.length, 22); local.writeUInt16LE(nameBytes.length, 26);
-    const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(stored ? 0 : 8, 10);
+    const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(stored ? 0 : 8, 10); central.writeUInt32LE(crc, 16);
     central.writeUInt32LE(body.length, 20); central.writeUInt32LE(raw.length, 24); central.writeUInt16LE(nameBytes.length, 28); central.writeUInt32LE(offset, 42);
-    locals.push(local, nameBytes, body); centrals.push(central, nameBytes);
+    tamper?.({ name, local, central, body });
+    locals.push(local, Buffer.from(nameBytes), body); centrals.push(central, nameBytes);
     offset += 30 + nameBytes.length + body.length;
   }
   const dir = Buffer.concat(centrals), end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(Object.keys(files).length, 8); end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(list.length, 8); end.writeUInt16LE(list.length, 10);
   end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
   return new Uint8Array(Buffer.concat([...locals, dir, end]));
 }
@@ -106,12 +110,15 @@ test("XLSX_STRICT rows and cells out of order, repeated or in the wrong row, and
   assert.equal(one(repeated, `<si><t>${"y".repeat(1000)}</t></si>`), "too_large", "one shared string repeated past the grid cap");
 });
 
-/** Decoded cell matrices from the bank-file contract (docs/parity/bank-file-contract/fixtures.json), synthetic values only. */
+/** Decoded cell matrices from the bank-file contract (docs/parity/bank-file-contract/fixtures.json), synthetic values only.
+ * These workbooks are GENERATED from the contract's matrices by write-excel-file: they prove the layouts and the reader
+ * agree, not that a bank's native export reads the same. Native AUB/KFH producer files are separate evidence and a
+ * gate before real-file use (see the bank result page's module note); this suite claims nothing about them. */
 type Fixture = { readonly id: string; readonly format?: string; readonly header_row?: number; readonly rows: (string | null)[][] };
 const contract = JSON.parse(readFileSync(new URL("../../../../docs/parity/bank-file-contract/fixtures.json", import.meta.url), "utf8")) as { formats: Fixture[]; malformed_cases: Fixture[] };
 const fixture = (list: readonly Fixture[], id: string) => list.find((f) => f.id === id)!.rows;
 
-test("XLSX_CONTRACT_FIXTURES the AUB and KFH result layouts from the bank-file contract round-trip through a real workbook into the expected rows", async () => {
+test("XLSX_CONTRACT_FIXTURES the AUB and KFH result layouts from the bank-file contract, written as generated workbooks, read back into the expected rows", async () => {
   const aubCells = cellsOf(await workbook(fixture(contract.formats, "aub-results")));
   assert.ok(Array.isArray(aubCells));
   const aub = readBankResultSheet("aub", aubCells);
@@ -204,4 +211,33 @@ test("XLSX_ATTRIBUTES every attribute is read by one grammar: either quote style
   assert.deepEqual(cellsOf(zip(quoted)), [["1"]], "the workbook and its relationships use the same grammar");
   assert.equal(cellsOf(zip({ ...quoted, "xl/_rels/workbook.xml.rels": `<Relationships><Relationship Id="rId7" Target="worksheets/sheet1.xml"/><Relationship Id="rId7" Target="worksheets/other.xml"/></Relationships>` })),
     "unreadable", "one relationship id twice");
+});
+
+test("XLSX_ARCHIVE duplicate or colliding part names and parts that disagree with their declared CRC-32 or sizes refuse the workbook", async () => {
+  const files = book(`<row r="1"><c><v>1</v></c></row>`);
+  assert.deepEqual(cellsOf(zip(files)), [["1"]]);
+  assert.deepEqual(cellsOf(zip(files, true)), [["1"]]);
+  const sheetPath = "xl/worksheets/sheet1.xml", other = `<worksheet><sheetData><row r="1"><c><v>2</v></c></row></sheetData></worksheet>`;
+  for (const twin of [sheetPath, "XL/Worksheets/Sheet1.xml", "/xl/worksheets/sheet1.xml", "xl\\worksheets\\sheet1.xml", "xl/./worksheets/sheet1.xml"])
+    assert.equal(cellsOf(zip([...Object.entries(files), [twin, other]])), "unreadable", `a second ${twin}`);
+  assert.equal(cellsOf(zip([...Object.entries(files), ["xl/../evil.xml", "<x/>"]])), "unreadable", "a part outside the package");
+  const only = (name: string, edit: Tamper): Tamper => (e) => { if (e.name === name) edit(e); };
+  const cases: [string, Tamper, boolean?][] = [
+    ["central CRC", only(sheetPath, (e) => e.central.writeUInt32LE((e.central.readUInt32LE(16) ^ 1) >>> 0, 16))],
+    ["local CRC", only(sheetPath, (e) => e.local.writeUInt32LE((e.local.readUInt32LE(14) ^ 1) >>> 0, 14))],
+    ["content changed under both CRCs", only(sheetPath, (e) => { e.body[e.body.indexOf("1")] = "7".charCodeAt(0); }), true],
+    ["central size", only(sheetPath, (e) => e.central.writeUInt32LE(e.central.readUInt32LE(24) + 1, 24))],
+    ["local size", only(sheetPath, (e) => e.local.writeUInt32LE(e.local.readUInt32LE(22) - 1, 22))],
+    ["local method", only(sheetPath, (e) => e.local.writeUInt16LE(0, 8))],
+    ["workbook part CRC", only("xl/workbook.xml", (e) => e.central.writeUInt32LE((e.central.readUInt32LE(16) ^ 1) >>> 0, 16))],
+  ];
+  for (const [label, edit, stored] of cases)
+    assert.equal(cellsOf(zip(files, stored ?? false, edit)), "unreadable", label);
+  const renamed = Buffer.from(zip(files));
+  renamed.write("xl/worksheets/sheet2.xml", renamed.indexOf("xl/worksheets/sheet1.xml"), "utf8");
+  assert.equal(cellsOf(renamed), "unreadable", "the local header names another part");
+  const trailing = Buffer.concat([Buffer.from(zip(files)), Buffer.from("junk")]);
+  assert.equal(cellsOf(trailing), "unreadable", "bytes after the directory end");
+  const real = await workbook([["a", "b"], ["1", "2"]]);
+  assert.deepEqual(cellsOf(real), [["a", "b"], ["1", "2"]], "a writer's data descriptors carry the same CRC and sizes");
 });
