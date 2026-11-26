@@ -18,6 +18,7 @@ export function emailDeliveryWork(deps: {
   readonly recruitDispatch: RecruitDispatchPort;
   readonly placementFeed: PlacementFeedPort;
   readonly transferPaidFeed: PlacementFeedPort;
+  readonly transferInitiatedFeed: PlacementFeedPort;
   readonly service: Delivery[0];
   readonly summaryStore: Delivery[1];
   readonly spikeStore: Delivery[2];
@@ -31,6 +32,6 @@ export function emailDeliveryWork(deps: {
   const delivery = { production: service.production, configured: service.configured,
     processDue: () => service.production && service.configured ? queuePersonRemindersThenDeliver(deps.reminders, () => service.processDue(), now) : service.processDue() };
   return () => deliverAndCheckVolume(
-    () => dispatchPlacementsThen(deps.placementFeed, () => dispatchPlacementsThen(deps.transferPaidFeed, () => dispatchRecruitThenDeliver(deps.recruitDispatch, () => deliverWithDailyStaffEmails(delivery, deps.summaryStore, deps.spikeStore, now), now), now), now),
+    () => dispatchPlacementsThen(deps.placementFeed, () => dispatchPlacementsThen(deps.transferPaidFeed, () => dispatchPlacementsThen(deps.transferInitiatedFeed, () => dispatchRecruitThenDeliver(deps.recruitDispatch, () => deliverWithDailyStaffEmails(delivery, deps.summaryStore, deps.spikeStore, now), now), now), now), now),
     deps.volumeStore, deps.alert, now);
 }
