@@ -332,6 +332,17 @@ test("G02_PREVIEW_EFFECT the review page says what the change opens or closes fo
     async organization(orgId: string) { const org = await ports.reads.organization(orgId); return org && { ...org, ancestors: ["skewed"] }; } } };
   const fromSnapshot = await (await (await serve(t, stale)).post("/admin/access/preview", "admin-1", grantForm)).text();
   assert.match(fromSnapshot, /Nothing in the <a class="text-link" href="\/admin\/access\/catalogue">grant catalogue<\/a> changes for Dana Candidate/);
+  // The same with coverage that only the ancestry gives: finance on StudentHub and below,
+  // nothing held on Acme itself. A skewed ancestry would show contacts as newly opened.
+  const inherited = world();
+  inherited.grants.splice(inherited.grants.findIndex((grant) => grant.principalId === "candidate-1"), 1,
+    { principalId: "candidate-1", orgId: "root", role: "finance", scope: "subtree" });
+  const skewed = { ...inherited.ports, reads: { ...inherited.ports.reads,
+    async grants() { throw new Error("the preview must not re-read grants"); },
+    async organization(orgId: string) { const org = await inherited.ports.reads.organization(orgId); return org && { ...org, ancestors: ["skewed"] }; } } };
+  const fromAncestry = await (await (await serve(t, skewed)).post("/admin/access/preview", "admin-1", grantForm)).text();
+  assert.match(fromAncestry, /Nothing in the <a class="text-link" href="\/admin\/access\/catalogue">grant catalogue<\/a> changes for Dana Candidate/);
+  assert.doesNotMatch(fromAncestry, /See company contacts/);
   // Nothing to change: no effect section.
   assert.doesNotMatch(await (await http.post("/admin/access/preview", "admin-1", { ...grantForm, role: "finance" })).text(), /What changes for them/);
   assert.equal(events.length, 0, "previews write nothing");
