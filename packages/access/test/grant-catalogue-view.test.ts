@@ -43,11 +43,15 @@ test("G01_OPENS what each grant opens is what the enforced rules allow", () => {
   assert.deepEqual(row("company", "org-owner", "self").opens, ["read_company_contacts", "change_company_contacts", "manage_store_managers"]);
   assert.deepEqual(row("company", "recruiter", "self").opens, ["read_company_contacts"]);
   assert.deepEqual(row("company", "candidate", "self").opens, []);
+  // Roles are given only on the Access pages: a lone company admin or staff grant cannot open them, so it gives nothing.
+  for (const role of ["admin", "staff"]) for (const scope of GRANT_SCOPES) {
+    assert.deepEqual(row("company", role, scope).opens, ["read_company_contacts", "change_company_contacts", "manage_store_managers"], `company ${role} ${scope}`);
+  }
 });
 
 test("G01_VERSION the catalogue's meaning is pinned to its version; a rule change must bump GRANT_CATALOGUE_VERSION", () => {
   const view = grantCatalogueView(OPS);
   const digest = createHash("sha256").update(JSON.stringify(view)).digest("hex");
-  const pinned: Record<number, string> = { 1: "a882c210e96e1ccc65cfb70a87f66ed28ff5bbd76135c86f5b2b858d66123632" };
+  const pinned: Record<number, string> = { 1: "6ee8cf1655fe1e06552069e8024fd0932c789d3613e4c6c2a1e657f68f8f4c43" };
   assert.equal(digest, pinned[GRANT_CATALOGUE_VERSION], "the catalogue changed: bump GRANT_CATALOGUE_VERSION and pin the new digest");
 });

@@ -67,17 +67,22 @@ function opensFor(grant: HeldGrant, operator: string, operatorOrgIds: readonly s
   const company = grant.orgId === operator ? COMPANY : grant.orgId;
   const child = { id: CHILD, ancestors: [...companyAncestors, company] };
   const reports = reportAccess(grants, operatorOrgIds);
+  // Roles are given only on the Access pages, so a grant that cannot open
+  // them gives nothing, whatever the catalogue alone would offer it.
+  const accessPages = mayOpenAccessAdmin(grants, operatorOrgIds);
+  const gives = (targetOrgId: string, targetAncestors: readonly string[]) =>
+    accessPages && grantCatalogue({ callerGrants: grants, targetOrgId, targetAncestors, operatorOrgIds }).length > 0;
   const checks: readonly [CatalogueCapability, boolean][] = [
-    ["access_pages", mayOpenAccessAdmin(grants, operatorOrgIds)],
+    ["access_pages", accessPages],
     ["review_registrations", mayReviewRegistrations(grants, operatorOrgIds)],
     ["pause_and_view_as", mayPauseAccount(CALLER, TARGET, grants, [], operatorOrgIds)],
     ["pause_operator_roles", mayPauseAccount(CALLER, TARGET, grants, [{ orgId: operator, role: "staff", scope: "subtree" }], operatorOrgIds)],
     ["manage_ip_blocks", mayManageBlocks(grants, operatorOrgIds)],
     ["operations_reports", reports.operations],
     ["finance_reports", reports.finance],
-    ["give_operator_roles", grantCatalogue({ callerGrants: grants, targetOrgId: operator, targetAncestors: [], operatorOrgIds }).length > 0],
-    ["give_company_roles", grantCatalogue({ callerGrants: grants, targetOrgId: company, targetAncestors: companyAncestors, operatorOrgIds }).length > 0],
-    ["give_company_roles_below", grantCatalogue({ callerGrants: grants, targetOrgId: child.id, targetAncestors: child.ancestors, operatorOrgIds }).length > 0],
+    ["give_operator_roles", gives(operator, [])],
+    ["give_company_roles", gives(company, companyAncestors)],
+    ["give_company_roles_below", gives(child.id, child.ancestors)],
     ["read_company_contacts", mayReadContacts(grants, company, companyAncestors)],
     ["change_company_contacts", mayWriteContacts(grants, company, companyAncestors)],
     ["manage_store_managers", mayManageStoreAccess(grants, company, companyAncestors)],
