@@ -253,6 +253,24 @@ test("A1_READ_SITES the workspace shows the Access link to operator admins and s
   assert.doesNotMatch(render({ orgId: "root", role: "admin", organizationName: "StudentHub" }, false), /\/admin\/access/);
 });
 
+test("U03_ACCOUNT_LINK the workspace and the profile menu link to Account wherever the sessions store is wired, for every role", async () => {
+  const { renderWorkspace } = await import("../src/web-ui.js");
+  const { CONTRIBUTIONS } = await import("../src/contributions/index.js");
+  const { ports } = world();
+  const account = {} as never;
+  const render = (active: { orgId: string; role: string; organizationName: string } | null, login: unknown) =>
+    renderWorkspace({ status: 200, body: { contexts: active ? [active] : [], active } } as never, login as never);
+  for (const active of [null, { orgId: "acme", role: "candidate", organizationName: "Acme" }, { orgId: "root", role: "admin", organizationName: "StudentHub" }]) {
+    assert.match(render(active, { access: { ...ports, account } }), /<a class="nav-item" href="\/account">Account<\/a>/, JSON.stringify(active));
+    assert.doesNotMatch(render(active, { access: ports }), /href="\/account"/, "no link where the sessions store is not wired");
+    assert.doesNotMatch(render(active, {}), /href="\/account"/);
+  }
+  const entry = CONTRIBUTIONS.navigation.find((item) => item.key === "account")!;
+  assert.equal(entry.href, "/account");
+  assert.equal(entry.visible({ access: { ...ports, account } } as never), true);
+  assert.equal(entry.visible({ access: ports } as never), false);
+});
+
 test("A1_GUARDS a confirm that fails with an unknown outcome never claims nothing changed", async (t) => {
   const { ports } = world();
   const failing: AccessPorts = { ...ports, writes: { ...ports.writes!, confirm: async () => { throw new Error("connection lost after COMMIT"); } } };
