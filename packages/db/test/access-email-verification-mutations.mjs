@@ -12,7 +12,7 @@ const predicate = new URL("../dist/access/email-verification.js", import.meta.ur
 const suite = fileURLToPath(new URL("../../../dist/packages/db/test/postgres-access-email-verification.test.js", import.meta.url));
 const mutations = [
   ["record an answer for an address that is not the person's", loginStore, "EV_OTHER_ADDRESS",
-    "AND lower(btrim(p.email)) = lower(btrim($2::text))", ""],
+    "AND principal_email_key(p.email) = principal_email_key($2::text)", ""],
   ["keep the first answer instead of the issuer's latest", loginStore, "EV_RECORD",
     "DO UPDATE SET verified = EXCLUDED.verified,", "DO UPDATE SET verified = principal_email_verifications.verified,"],
   ["count an address recorded as not verified", predicate, "EV_RECORD",
@@ -23,7 +23,7 @@ const mutations = [
     "DO UPDATE SET verified = false, source = 'oidc', recorded_at = EXCLUDED.recorded_at`, [personId]);",
     "DO NOTHING`, [personId]);\n        await this.#pool.query(\"DELETE FROM principal_email_verifications WHERE principal_id = $1::text\", [personId]);"],
   ["veto with a true answer", loginStore, "EV_VETO",
-    "SELECT p.id, lower(btrim(p.email)), false, 'oidc', now()", "SELECT p.id, lower(btrim(p.email)), true, 'oidc', now()"],
+    "SELECT p.id, principal_email_key(p.email), false, 'oidc', now()", "SELECT p.id, principal_email_key(p.email), true, 'oidc', now()"],
   ["keep an earlier true when vetoing", loginStore, "EV_VETO",
     "DO UPDATE SET verified = false, source", "DO UPDATE SET source"],
 ];

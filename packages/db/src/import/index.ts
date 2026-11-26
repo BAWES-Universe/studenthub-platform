@@ -10,5 +10,7 @@ export { PostgresImportedPersonSnapshots, PostgresPersonSnapshotImportStore } fr
 export type { PersonSnapshotImportRefusal, PersonSnapshotImportResult, PersonSnapshotImportRow } from "./person-import.js";
 export { CANONICAL_CANDIDATE_ID, PERSON_SNAPSHOT_KEYS, isValidPersonSnapshotRow, personSnapshotDigest } from "./person-snapshot-contract.js";
 export type { PersonSnapshot, PersonSnapshotKey } from "./person-snapshot-contract.js";
-export { PersonContactImportError, PostgresPersonContactImportStore, isValidPersonContactRow, legacyCivilIdRef, normaliseVerifiedEmail } from "./person-contact-import.js";
+export { CIVIL_KEY_CHECK, PersonContactImportError, PostgresPersonContactImportStore, civilKeyOpens, isValidPersonContactRow, legacyCivilIdRef, normaliseVerifiedEmail, personContactDigest } from "./person-contact-import.js";
 export type { CivilIdSealer, PersonContactImportRefusal, PersonContactImportResult, PersonContactImportRow } from "./person-contact-import.js";
+export { CONTACT_PROMOTION_REVISION, ContactPromotionError, PostgresContactPromotion } from "./person-contact-promotion.js";
+export type { CivilIdOutcome, CivilIdResealer, ContactPromotionOutcomes, ContactPromotionResult, EmailOutcome, ProfileValueOutcome } from "./person-contact-promotion.js";

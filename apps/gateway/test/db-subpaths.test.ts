@@ -62,7 +62,7 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
     types: "./dist/billing/index.d.ts", import: "./dist/billing/index.js",
   });
   const billing = await moduleFor("@studenthub/db/billing");
-  assert.deepEqual(Object.keys(billing).sort(), ["CREDIT_REASON_MAX", "PAY_HISTORY_CALCULATION_VERSION", "PAY_HISTORY_PAGE_SIZE", "PostgresBillingAccountStore", "PostgresLegacyInvoiceStore", "PostgresOrgRegistry", "PostgresPayHistoryReads", "PostgresTransferInvoiceEffects", "PostgresTransferInvoiceReads", "PostgresTransferInvoiceVoids", "TRANSFER_INVOICE_SERIES", "allocateInvoiceNumber", "candidateWorked", "creditReason", "issueInvoice", "listTransferInvoices", "resolveInvoice", "transferInvoiceForLine"]);
+  assert.deepEqual(Object.keys(billing).sort(), ["CREDIT_REASON_MAX", "PAY_HISTORY_CALCULATION_VERSION", "PAY_HISTORY_PAGE_SIZE", "PostgresBankResultStore", "PostgresBillingAccountStore", "PostgresLegacyInvoiceStore", "PostgresOrgRegistry", "PostgresPayHistoryReads", "PostgresTransferInvoiceEffects", "PostgresTransferInvoiceReads", "PostgresTransferInvoiceVoids", "TRANSFER_INVOICE_SERIES", "allocateInvoiceNumber", "candidateWorked", "creditReason", "issueInvoice", "listTransferInvoices", "operatorFinanceGate", "resolveInvoice", "transferInvoiceForLine"]);
 });
 
 test("PREP_ROOT_SAME root database exports are the unchanged golden set and identical area objects", async () => {

@@ -45,7 +45,7 @@ test("a plan maps every step in order, writes nothing, and its report and receip
   assert.equal(report.ok, true);
   assert.deepEqual(report.steps.map((s) => s.step), [
     "catalogue.country", "catalogue.currency", "catalogue.bank", "catalogue.tag", "catalogue.brand", "catalogue.mall",
-    "catalogue.university", "catalogue.area", "company", "brand_company", "store", "company_contact", "candidate"]);
+    "catalogue.university", "catalogue.area", "company", "brand_company", "store", "company_contact", "candidate", "candidate_contact"]);
   const by = new Map(report.steps.map((s) => [s.step, s]));
   // A row with no usable id is counted under its rule but has no id to list.
   assert.deepEqual([by.get("company")!.legacy, by.get("company")!.mapped, by.get("company")!.rules, by.get("company")!.issueIds],
@@ -68,6 +68,7 @@ test("write mode calls each store once, in dependency order, and the report keep
     stores: async (rows) => { calls.push("store"); return done(rows.length); },
     contacts: async (rows) => { calls.push("company_contact"); return { inserted: 0, unchanged: 0, conflicts: rows.map((r) => ({ legacyId: r.legacyId, existingDigest: "a".repeat(64), incomingDigest: "b".repeat(64) })), refused: [] }; },
     people: async (rows) => { calls.push("candidate"); return done(rows.length); },
+    personContacts: async (rows) => { calls.push("candidate_contact"); return done(rows.length); },
   };
   const report = await runM4(sources(), writers, "2026-11-23T00:00:00.000Z");
   assert.deepEqual(calls, report.steps.map((s) => s.step));
@@ -92,13 +93,17 @@ test("the CLI prints our own codes as they are, camel case included, and masks a
   assert.equal(errorCode("m4.read.store"), "m4.failed");
 });
 
-test("the run reads M-1's columns through the same allowlist, and nothing private", async () => {
+test("the run reads M-1's people and contact columns through the same allowlist, and nothing else", async () => {
   const { M1_SOURCES } = await import("../src/m1-people.js");
   for (const [table, columns] of Object.entries(M1_SOURCES)) {
     const listed = M4_SOURCES[table as M4Table] as readonly string[];
     for (const column of columns) assert.ok(listed.includes(column), `${table}.${column}`);
   }
-  for (const column of ["candidate_password_hash", "candidate_email", "candidate_phone", "candidate_iban", "candidate_civil_id"]) {
+  // Exactly the two slices' columns: the contact values are read on purpose (staged apart, the
+  // civil ID sealed, the address only as an HMAC); a password hash or bank detail never is.
+  const { M1_CONTACT_SOURCES } = await import("../src/m1-contact.js");
+  assert.deepEqual([...M4_SOURCES.candidate].sort(), [...new Set([...M1_SOURCES.candidate, ...M1_CONTACT_SOURCES.candidate])].sort());
+  for (const column of ["candidate_password_hash", "candidate_iban", "candidate_auth_key", "candidate_password_reset_token"]) {
     assert.ok(!(M4_SOURCES.candidate as readonly string[]).includes(column), column);
   }
 });

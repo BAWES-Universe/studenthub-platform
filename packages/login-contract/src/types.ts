@@ -145,6 +145,8 @@ export interface IdentityStore {
    */
   recordEmailVerification?(personId: string, email: string, verified: boolean): Promise<void>;
   /**
+   * Required whenever recordEmailVerification is implemented: sign-in refuses
+   * the session if a write fails and the store has no veto.
    * Records an issuer veto for the person's current address: verified false,
    * source oidc, replacing any earlier answer and kept so a later legacy import
    * can never promote it. Sign-in calls it when recording the issuer's answer

@@ -6,7 +6,8 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
 import { PostgresPersonRemindersStore, type PersonReminderKind as StoredKind } from "@studenthub/db/comms";
 import { PostgresBankDetailsStore } from "@studenthub/db";
-import { bankReminderEligible } from "../src/comms/postgres-person-reminders-store.js";
+import { BANK_REMINDER_ACTIVE, bankReminderEligible } from "../src/comms/postgres-person-reminders-store.js";
+import { emailVerifiedSql } from "@studenthub/db/access";
 import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { EmailOutboxService, FakeEmailPort } from "../../notifications/src/index.js";
 import { queuePersonRemindersThenDeliver, type PersonReminderKind } from "../../comms/src/person-reminders.js";
@@ -145,17 +146,21 @@ test("COMMS_PERSON_REMINDERS_PG the worker queues reminders only when it can del
 });
 
 
-test("COMMS_PERSON_REMINDERS_PG missing bank details fails closed until a verified address exists: nothing is queued, and the day is still recorded once", async () => {
+const verify = (person: string, verified = true) => pool.query(
+  "INSERT INTO principal_email_verifications(principal_id, email, verified, source) SELECT id, lower(btrim(email)), $2, 'oidc' FROM principals WHERE id = $1", [person, verified]);
+
+test("COMMS_PERSON_REMINDERS_PG missing bank details stays off behind its activation gate, even for a verified address: nothing is queued, and the day is still recorded once", async () => {
+  assert.equal(BANK_REMINDER_ACTIVE, false, "switched on only once a stale verified fact also reads as not verified");
   const day = "2031-11-15"; await fresh("bank_details_missing", day);
-  const missing = await principal("bank-missing"); await profile(missing, "Huda Al-Sabah", null); await assign(missing, "2031-10-01", null);
+  const missing = await principal("bank-missing"); await profile(missing, "Huda Al-Sabah", null); await assign(missing, "2031-10-01", null); await verify(missing);
   assert.equal(await store.sendDay("bank_details_missing", day, new Date()), 0);
-  assert.deepEqual(await queued("person.bank_details_missing", day, [missing]), [], "an address on the account is not a verified address");
+  assert.deepEqual(await queued("person.bank_details_missing", day, [missing]), [], "the gate holds at the queue");
   assert.equal(await store.sendDay("bank_details_missing", day, new Date()), null, "a day is queued once");
 });
 
-test("COMMS_PERSON_REMINDERS_PG a queued bank reminder is suppressed at the claim while no address is verified", async () => {
+test("COMMS_PERSON_REMINDERS_PG a queued bank reminder is suppressed at the claim while the gate is off, even for a verified address", async () => {
   await pool.query("UPDATE email_outbox SET state='suppressed' WHERE state IN ('pending','sending')");
-  const day = "2031-12-28", person = await principal("bank-queued"); await assign(person, "2031-01-01", null);
+  const day = "2031-12-28", person = await principal("bank-queued"); await assign(person, "2031-01-01", null); await verify(person);
   await pool.query(`INSERT INTO email_outbox(class, recipient_principal_id, template_parameters, idempotency_key) VALUES('person.bank_details_missing', $1, '{"name":""}', $2)`,
     [person, `person.bank_details_missing:${day}:${person}`]);
   const port = new FakeEmailPort();
@@ -173,4 +178,15 @@ test("COMMS_PERSON_REMINDERS_PG with a verified address, the bank rule is placed
   assert.deepEqual(await on("2032-01-15"), [placed], "the queue day");
   assert.deepEqual(await on("2032-01-16"), [future].sort(), "an attempt on the next day: the placement that ended on the 15th no longer counts");
   assert.equal(await new PostgresBankDetailsStore({ pool }).countWithoutDetails([placed]), 1);
+});
+
+test("COMMS_PERSON_REMINDERS_PG the bank rule reads the access lane's fact: only the current address recorded as verified counts", async () => {
+  const rule = bankReminderEligible(emailVerifiedSql), day = "2032-02-15";
+  const verified = await principal("ev-yes"), refused = await principal("ev-no"), unrecorded = await principal("ev-none"), moved = await principal("ev-moved");
+  for (const p of [verified, refused, unrecorded, moved]) await assign(p, "2032-01-01", null);
+  await verify(verified); await verify(refused, false); await verify(moved);
+  await pool.query("UPDATE principals SET email = $2 WHERE id = $1", [moved, `${moved}-new@example.invalid`]);
+  const ids = [verified, refused, unrecorded, moved];
+  const eligible = (await pool.query<{ id: string }>(`SELECT q.id FROM principals q WHERE q.id = ANY($1) AND ${rule("q.id", "$2::date")}`, [ids, day])).rows.map(r => r.id);
+  assert.deepEqual(eligible, [verified], "not verified, nothing recorded and a changed address all fail closed");
 });
