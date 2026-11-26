@@ -11,6 +11,10 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 const suite = "dist/packages/billing/test/bank-results.test.js";
 const module = "dist/packages/billing/src/bank-results.js";
 const mutations = [
+  ["take the first of two same-named used columns", "BANK_SHEET_STRICT",
+    'if (ambiguous.length)', 'if (false)'],
+  ["read a file with more rows than supported", "BANK_SHEET_STRICT",
+    'return { kind: "refused", code: "too_many_rows" };', '{}'],
   ["round a fourth decimal away", "BANK_AMOUNT",
     "(?:\\.(\\d{1,3}))?$/u", "(?:\\.(\\d{1,3})\\d*)?$/u"],
   ["read a decimal comma as a thousands separator", "BANK_AMOUNT",
