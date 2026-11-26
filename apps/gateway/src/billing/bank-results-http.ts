@@ -25,8 +25,10 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
  *
  * Gate before real-file use: the reader is tested against workbooks generated from the bank-file
  * contract's decoded AUB/KFH matrices, not against native files from the banks (the contract marks
- * native workbook fidelity NOT_ESTABLISHED). A sanitized native AUB result file and KFH transfer
- * report must be read and checked by this reader before Finance applies a real bank file.
+ * native workbook fidelity NOT_ESTABLISHED). Apply is therefore OFF unless the deployment sets
+ * `applyEnabled` (gateway env BILLING_BANK_RESULTS_APPLY=on), which is only to be set once a sanitized
+ * native AUB result file and KFH transfer report have been read and checked by this reader. Upload,
+ * preview and history work while it is off.
  * Preview is a dry run of apply in one transaction that is rolled back: it stays safe only while
  * every effect of apply (paid flags, confirmations, lifecycle completion and its effects) is
  * transactional, with nothing sent outside the database.
@@ -44,6 +46,8 @@ export interface BankResultsHttp {
   /** StudentHub finance only; decided again per transfer inside apply. */
   allowed(viewer: string): Promise<boolean>;
   readonly origin: string | undefined;
+  /** False until native bank files are checked: the page shows no apply, and an apply is refused before the store. */
+  readonly applyEnabled: boolean;
   files(viewer: string): Promise<readonly BankResultFileEntry[] | null>;
   file(viewer: string, fileId: string): Promise<BankResultFileDetail | null>;
   submit(viewer: string, format: BankResultFormat, bytes: Buffer): Promise<BankResultSubmit | { readonly kind: "workbook_refused"; readonly code: "unreadable" | "too_many_rows" | "too_large" }>;
@@ -52,7 +56,7 @@ export interface BankResultsHttp {
   apply(viewer: string, fileId: string, reviewId: string): Promise<BankResultApply>;
 }
 
-export function createBankResultsHttp(ports: { sessions: Pick<SessionStore, "get">; store: BankResultsStore; allowed(viewer: string): Promise<boolean>; origin: string | undefined }): BankResultsHttp {
+export function createBankResultsHttp(ports: { sessions: Pick<SessionStore, "get">; store: BankResultsStore; allowed(viewer: string): Promise<boolean>; origin: string | undefined; applyEnabled?: boolean }): BankResultsHttp {
   const actor = (principalId: string) => ({ principalId, actingAs: false });
   return {
     async viewer(sessionId) {
@@ -60,6 +64,7 @@ export function createBankResultsHttp(ports: { sessions: Pick<SessionStore, "get
     },
     allowed: (viewer) => ports.allowed(viewer),
     origin: ports.origin || undefined,
+    applyEnabled: ports.applyEnabled === true,
     files: (viewer) => ports.store.files(actor(viewer)),
     file: (viewer, id) => ports.store.file(actor(viewer), id),
     async submit(viewer, format, bytes) {
@@ -104,7 +109,7 @@ function listHtml(files: readonly BankResultFileEntry[]): string {
     + `<label>File <input type="file" name="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label> <button>Upload</button></form>`
     + (files.length ? `<table><thead><tr><th>Uploaded (UTC)</th><th>Bank</th><th>Rows</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No files uploaded yet.</p>") + "</main>";
 }
-function fileHtml(file: BankResultFileDetail, preview: BankResultApply | null): string {
+function fileHtml(file: BankResultFileDetail, preview: BankResultApply | null, applyEnabled: boolean): string {
   const head = `<main><h1>Bank result file</h1><p>${esc(FORMAT_NAME[file.format])}, uploaded ${esc(file.uploadedAt.slice(0, 16).replace("T", " "))} UTC, ${file.rowCount} rows.</p>`;
   const back = `<p><a href="${BANK_RESULTS_PATH}">All bank result files</a></p></main>`;
   if (file.status === "applied") return `${head}<p>Applied ${esc((file.appliedAt ?? "").slice(0, 16).replace("T", " "))} UTC.</p>${decisionsTable(file.decisions)}${back}`;
@@ -113,7 +118,9 @@ function fileHtml(file: BankResultFileDetail, preview: BankResultApply | null): 
   const pays = preview.decisions.filter(d => d.kind === "pay").length;
   const shown = preview.decisions.map(d => ({ rowNumber: d.rowNumber, kind: d.kind, reason: d.kind === "hold" ? d.reason : null, lineIds: d.kind === "hold" ? d.lineIds : [d.lineId] }));
   return `${head}${changed}<p>Applying this file marks ${pays} ${pays === 1 ? "line" : "lines"} paid and completes ${preview.completedTransferIds.length} ${preview.completedTransferIds.length === 1 ? "transfer" : "transfers"}. Held rows change nothing.</p>`
-    + decisionsTable(shown) + `<form method="post" action="${BANK_RESULTS_PATH}/${file.fileId}/apply"><input type="hidden" name="review" value="${esc(preview.reviewId)}"><button>Apply this file</button></form>${back}`;
+    + decisionsTable(shown) + (applyEnabled
+      ? `<form method="post" action="${BANK_RESULTS_PATH}/${file.fileId}/apply"><input type="hidden" name="review" value="${esc(preview.reviewId)}"><button>Apply this file</button></form>`
+      : `<p>Applying bank result files is not switched on yet. Nothing is marked paid from this page until it is.</p>`) + back;
 }
 
 function json(res: ServerResponse, status: number, body: unknown): true {
@@ -221,6 +228,7 @@ export async function handleBankResults(req: IncomingMessage, res: ServerRespons
     }
     const id = (file ?? applying)![1]!;
     if (applying) {
+      if (!service.applyEnabled) { req.resume(); return reply(req, res, 409, "apply_disabled", "Not switched on", "Applying bank result files is not switched on yet."); }
       const reviewId = reviewOf(await bytes(req, 1024), req.headers["content-type"]);
       if (!reviewId) return reply(req, res, 400, "invalid_request", "Review the file first", "Open the file and review what applying it does, then apply it.");
       const result = await service.apply(viewer, id, reviewId);
@@ -232,7 +240,7 @@ export async function handleBankResults(req: IncomingMessage, res: ServerRespons
         if (!wantsHtml(req.headers.accept)) return json(res, 409, { error: "review_changed", review: result });
         const detail = await service.file(viewer, id);
         if (!detail) return notFound(req, res);
-        writeHtml(res, 409, pageDocument("Bank result file", fileHtml(detail, result)), { "cache-control": "no-store" }); return true;
+        writeHtml(res, 409, pageDocument("Bank result file", fileHtml(detail, result, service.applyEnabled)), { "cache-control": "no-store" }); return true;
       }
       if (wantsHtml(req.headers.accept) || req.headers["content-type"]?.startsWith("application/x-www-form-urlencoded")) return seeOther(res, `${BANK_RESULTS_PATH}/${id}`);
       return json(res, 200, result);
@@ -241,7 +249,7 @@ export async function handleBankResults(req: IncomingMessage, res: ServerRespons
     if (!detail) return notFound(req, res);
     const preview = detail.status === "pending" ? await service.preview(viewer, id) : null;
     if (!wantsHtml(req.headers.accept)) return json(res, 200, { ...detail, ...(preview ? { preview } : {}) });
-    writeHtml(res, 200, pageDocument("Bank result file", fileHtml(detail, preview)), { "cache-control": "no-store" }); return true;
+    writeHtml(res, 200, pageDocument("Bank result file", fileHtml(detail, preview, service.applyEnabled)), { "cache-control": "no-store" }); return true;
   } catch {
     if (!res.headersSent) return unavailable(req, res);
     res.destroy(); return true;

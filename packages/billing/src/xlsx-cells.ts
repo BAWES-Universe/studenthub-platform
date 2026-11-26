@@ -250,7 +250,10 @@ export function readXlsxCells(bytes: Uint8Array): XlsxRead {
   if (!all) return refused("unreadable");
   const sheet = firstSheet(zip, all);
   if (sheet === null) return refused("unreadable");
-  const sharedXml = read(zip, all, "xl/sharedStrings.xml");
+  // The shared-strings part is optional; present but unreadable is a broken file, never "no shared strings".
+  const sharedPresent = all.has(partKey("xl/sharedStrings.xml")!);
+  const sharedXml = sharedPresent ? read(zip, all, "xl/sharedStrings.xml") : null;
+  if (sharedPresent && sharedXml === null) return refused("unreadable");
   const shared = sharedXml === null ? [] : sharedStrings(sharedXml);
   if (!Array.isArray(shared)) return refused(shared);
 

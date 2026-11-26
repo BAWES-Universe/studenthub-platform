@@ -13,6 +13,8 @@ const mutations = [
   ["preview a file already applied", "BANK_HTTP_FLOW", 'detail.status === "pending" ? await service.preview(viewer, id) : null', "await service.preview(viewer, id)"],
   ["apply without a reviewed outcome", "BANK_HTTP_FLOW", "if (!reviewId)\n                return reply(", "if (false)\n                return reply("],
   ["take a changed outcome as applied", "BANK_HTTP_FLOW", 'if (result.kind === "changed") {', 'if (false) {'],
+  ["switch apply on by default", "BANK_HTTP_APPLY_OFF", "applyEnabled: ports.applyEnabled === true,", "applyEnabled: true,"],
+  ["apply while switched off", "BANK_HTTP_APPLY_OFF", "if (!service.applyEnabled) {", "if (false) {"],
   ["accept an unknown form field", "BANK_HTTP_INPUT", "else\n            return undefined;\n    }", "\n    }"],
 ];
 const original = await readFile(handler, "utf8");

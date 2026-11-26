@@ -15,7 +15,8 @@ type Access = ReturnType<typeof wireAccess>["services"];
 
 /**
  * Invoices lane: read-only company invoices and their PDFs (I3), and each person's own pay history (F4.9).
- * BILLING_BANK_INFO (JSON) adds the bank block to unpaid invoices. StudentHub's finance users
+ * BILLING_BANK_RESULTS_APPLY=on switches on applying bank result files (off by default until native
+ * AUB/KFH files are checked). BILLING_BANK_INFO (JSON) adds the bank block to unpaid invoices. StudentHub's finance users
  * void invoices with credit notes (F4.7) through same-origin posts from the gateway origin. All share one pool.
  */
 export function wireBilling(settings: WiringSettings, access: Access, env: Readonly<Record<string, string | undefined>>): Wired<{ readonly invoices: InvoicesHttp; readonly payHistory: PayHistoryHttp; readonly bankResults: BankResultsHttp }> {
@@ -48,7 +49,9 @@ export function wireBilling(settings: WiringSettings, access: Access, env: Reado
     services: {
       invoices: createInvoicesHttp({ sessions: access.loginStore.sessions, reads, ...(bank ? { bank } : {}),
         voids: { reads: voidReads, credit: input => voids.credit(input), origin } }),
-      bankResults: createBankResultsHttp({ sessions: access.loginStore.sessions, store: bankStore, allowed: operatorFinance, origin }),
+      bankResults: createBankResultsHttp({ sessions: access.loginStore.sessions, store: bankStore, allowed: operatorFinance, origin,
+        // Off until native AUB/KFH result files are checked (see bank-results-http.ts); only the exact value "on" enables it.
+        applyEnabled: env.BILLING_BANK_RESULTS_APPLY === "on" }),
       payHistory: createPayHistoryHttp({ sessions: access.loginStore.sessions, reads: new PostgresPayHistoryReads({ pool }) }),
     },
     async close() { await pool.end(); },

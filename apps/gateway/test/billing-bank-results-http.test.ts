@@ -24,7 +24,7 @@ const AUB_FIRST = ["Status", "Status Description", "Debit Narrative", "Credit Na
 const AUB_HEAD = [...AUB_FIRST, ...AUB_RESULT_COLUMNS.filter((c) => !AUB_FIRST.includes(c))];
 const AUB = () => xlsx([[""], AUB_HEAD, ["SUCCESS", "REF-1", "x", "L-1"]]);
 
-async function rig(t: TestContext) {
+async function rig(t: TestContext, applyEnabled: boolean | "unset" = true) {
   const calls: string[] = [];
   let file: BankResultFileDetail | null = PENDING;
   const store: BankResultsStore = {
@@ -44,7 +44,7 @@ async function rig(t: TestContext) {
     },
   };
   const sessions = { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [COMPANY_FIN]: { personId: "company-fin" } } as Record<string, { personId: string }>)[id] as never };
-  const service = createBankResultsHttp({ sessions, store, origin: ORIGIN, allowed: async (viewer) => { calls.push(`allowed:${viewer}`); return viewer === "fin"; } });
+  const service = createBankResultsHttp({ sessions, store, origin: ORIGIN, ...(applyEnabled === "unset" ? {} : { applyEnabled }), allowed: async (viewer) => { calls.push(`allowed:${viewer}`); return viewer === "fin"; } });
   const server = createServer(async (req, res) => { if (!await handleBankResults(req, res, service)) { res.writeHead(418); res.end(); } });
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
   t.after(() => new Promise<void>(r => server.close(() => r())));
@@ -121,4 +121,16 @@ test("BANK_HTTP_INPUT a file that is not a readable workbook, a wrong bank layou
   assert.equal(uploadForm(Buffer.from(`${part("format", "kfh")}${part("format", "aub")}${part("file", "data", "a.xlsx")}--${b}--\r\n`), `multipart/form-data; boundary=${b}`), undefined, "a repeated field");
   assert.equal(uploadForm(Buffer.from(`${part("format", "kfh")}${part("note", "x")}${part("file", "data", "a.xlsx")}--${b}--\r\n`), `multipart/form-data; boundary=${b}`), undefined, "an unknown field");
   assert.equal(uploadForm(Buffer.from(`${part("format", "kfh")}${part("file", "", "a.xlsx")}--${b}--\r\n`), `multipart/form-data; boundary=${b}`), undefined, "an empty file");
+});
+
+test("BANK_HTTP_APPLY_OFF apply is off unless switched on: the page previews without an apply form and an apply is refused before the store", async (t) => {
+  const x = await rig(t, "unset");
+  const page = await (await x.call(`/finance/bank-results/${ID}`, { session: FIN, accept: "text/html" })).text();
+  assert.match(page, /marks 1 line paid/, "preview still works");
+  assert.doesNotMatch(page, /Apply this file|name="review"/);
+  assert.match(page, /not switched on yet/);
+  const refused = await x.call(`/finance/bank-results/${ID}/apply`, { session: FIN, method: "POST", type: "application/json", body: JSON.stringify({ review: REVIEW }) });
+  assert.equal(refused.status, 409); assert.deepEqual(await refused.json(), { error: "apply_disabled" });
+  assert.deepEqual(x.calls.filter(c => c.startsWith("apply")), [], "the store is never asked to apply");
+  assert.equal((await x.upload(FIN, "aub", await AUB())).status, 303, "upload still works");
 });

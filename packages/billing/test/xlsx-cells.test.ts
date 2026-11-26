@@ -241,3 +241,13 @@ test("XLSX_ARCHIVE duplicate or colliding part names and parts that disagree wit
   const real = await workbook([["a", "b"], ["1", "2"]]);
   assert.deepEqual(cellsOf(real), [["a", "b"], ["1", "2"]], "a writer's data descriptors carry the same CRC and sizes");
 });
+
+test("XLSX_SHARED_PRESENT a shared-strings part that is present but unreadable refuses the file; only an absent part means no shared strings", () => {
+  const files = book(`<row r="1"><c><v>1</v></c></row>`, "<si><t>x</t></si>");
+  assert.deepEqual(cellsOf(zip(files)), [["1"]]);
+  const { ["xl/sharedStrings.xml"]: _shared, ...absent } = files;
+  assert.deepEqual(cellsOf(zip(absent)), [["1"]], "absent is fine");
+  assert.equal(cellsOf(zip(files, false, (e) => { if (e.name === "xl/sharedStrings.xml") e.central.writeUInt32LE((e.central.readUInt32LE(16) ^ 1) >>> 0, 16); })), "unreadable", "present, bad CRC");
+  assert.equal(cellsOf(zip(files, false, (e) => { if (e.name === "xl/sharedStrings.xml") e.local.writeUInt16LE(0, 8); })), "unreadable", "present, method disagrees");
+  assert.equal(cellsOf(zip({ ...files, "xl/sharedStrings.xml": "<sst><si><t>x</t></si>" })), "unreadable", "present, truncated XML");
+});
