@@ -17,7 +17,11 @@ const mutations = [
   ["count what they already had as gained", "G02_EFFECT", "grant-catalogue-view.js",
     "now.has(capability) && !before.has(capability)", "now.has(capability)"],
   ["ask an operator change at the operator itself", "G02_EFFECT", "grant-catalogue-view.js",
-    "operatorOrgIds.includes(change.orgId)\n", "false\n"],
+    "const onOperator = operatorOrgIds.includes(change.orgId);", "const onOperator = false;"],
+  ["ignore what a company role reaches below it", "G02_EFFECT_BELOW", "grant-catalogue-view.js",
+    "companyAncestors: [...input.orgAncestors, change.orgId] }", "companyAncestors: [...input.orgAncestors] }"],
+  ["ask below at the company itself", "G02_EFFECT_BELOW", "grant-catalogue-view.js",
+    "diff({ companyId: CHILD,", "diff({ companyId: change.orgId,"],
 ];
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap",
   ...(pattern ? [`--test-name-pattern=^${pattern} `] : []), ...suites], { encoding: "utf8", timeout: 120_000 });

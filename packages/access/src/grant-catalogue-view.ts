@@ -139,9 +139,16 @@ export function grantCatalogueView(operatorOrgIds: readonly string[] = DEFAULT_O
  * that adds nothing they cannot already do shows no gain.
  */
 export interface GrantChangeEffect {
+  /** At the changed organization (for StudentHub itself: there and at a company below it). */
   readonly gained: readonly CatalogueCapability[];
   readonly lost: readonly CatalogueCapability[];
+  /** At a company below the changed company, where only a subtree grant reaches. Empty for StudentHub itself. */
+  readonly gainedBelow: readonly CatalogueCapability[];
+  readonly lostBelow: readonly CatalogueCapability[];
 }
+
+/** The abilities asked at one company; the rest do not depend on where they are asked. */
+export const COMPANY_CAPABILITIES: readonly CatalogueCapability[] = Object.freeze(["read_company_contacts", "change_company_contacts", "manage_store_managers"]);
 
 export function grantChangeEffect(input: {
   /** Every grant the person holds now. */
@@ -153,15 +160,25 @@ export function grantChangeEffect(input: {
 }): GrantChangeEffect {
   const operatorOrgIds = input.operatorOrgIds ?? DEFAULT_OPERATOR_ORG_IDS;
   const { change } = input;
-  const place = operatorOrgIds.includes(change.orgId)
+  const onOperator = operatorOrgIds.includes(change.orgId);
+  const place = onOperator
     ? { companyId: COMPANY, companyAncestors: [change.orgId] }
     : { companyId: change.orgId, companyAncestors: input.orgAncestors };
   const others = input.held.filter((grant) => !(grant.orgId === change.orgId && grant.role === change.role));
   const after = change.after === null ? others : [...others, { orgId: change.orgId, role: change.role, scope: change.after }];
-  const before = new Set(capabilitiesAt(input.held, place, operatorOrgIds));
-  const now = new Set(capabilitiesAt(after, place, operatorOrgIds));
-  return Object.freeze({
-    gained: Object.freeze(CATALOGUE_CAPABILITIES.filter((capability) => now.has(capability) && !before.has(capability))),
-    lost: Object.freeze(CATALOGUE_CAPABILITIES.filter((capability) => before.has(capability) && !now.has(capability))),
-  });
+  const diff = (at: CapabilityPlace, among: readonly CatalogueCapability[]) => {
+    const before = new Set(capabilitiesAt(input.held, at, operatorOrgIds));
+    const now = new Set(capabilitiesAt(after, at, operatorOrgIds));
+    return {
+      gained: Object.freeze(among.filter((capability) => now.has(capability) && !before.has(capability))),
+      lost: Object.freeze(among.filter((capability) => before.has(capability) && !now.has(capability))),
+    };
+  };
+  const here = diff(place, CATALOGUE_CAPABILITIES);
+  // A company grant's scope decides whether it reaches the companies below:
+  // ask a company directly below the changed one as well.
+  const below = onOperator
+    ? { gained: Object.freeze([]), lost: Object.freeze([]) }
+    : diff({ companyId: CHILD, companyAncestors: [...input.orgAncestors, change.orgId] }, COMPANY_CAPABILITIES);
+  return Object.freeze({ gained: here.gained, lost: here.lost, gainedBelow: below.gained, lostBelow: below.lost });
 }

@@ -19,6 +19,7 @@ try {
     ["ignore the roles the person already holds", page, "held, change: { orgId", "held: [], change: { orgId"],
     ["treat a removal as keeping the scope", page, "after: result.after }", "after: request.scope }"],
     ["leave the effect off the review page", page, "${input.effect ? renderGrantEffect(", "${false ? renderGrantEffect("],
+    ["leave out what changes in the companies below", page, "${gained}${lost}${gainedBelow}${lostBelow}${none}", "${gained}${lost}${none}"],
   ];
   for (const [name, relative, from, to] of mutants) {
     const file = join(root, relative);
