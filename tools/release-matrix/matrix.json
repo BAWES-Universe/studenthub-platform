@@ -1390,11 +1390,18 @@
     },
     "G-03": {
       "lane": "access",
-      "subject": "`/access/grants/audit` \u2014 effective grants, provenance, history, next-request result",
+      "subject": "`/admin/access/people/:principalId/audit` \u2014 effective grants, provenance, history, next-request result",
+      "served": [
+        {
+          "route": "/admin/access/people/:principalId/audit",
+          "test": "apps/gateway/test/access-admin.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): authz audit API; no audit page"
+          "state": "done",
+          "evidence": "PR #731 at d4eaeb4bb549b5678f34cb8afe3bfc131e683455"
         },
         "verified": {
           "state": "open"
