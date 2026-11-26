@@ -6,7 +6,8 @@ import path from "node:path";
 import test from "node:test";
 
 import { M4_SOURCES, planM4, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
-import { acceptWrite, acquireSharedLock, main, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
+import { acceptWrite, acquireSharedLock, contactSetDigest, digestKeyFingerprint, main, PROMOTE_BATCH, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
+import { ContactPromotionError, LinkReportError, type ContactPromotionResult, type LinkReport } from "@studenthub/db/import";
 
 // Synthetic legacy rows only. SECRET marks every value that must never reach a receipt or a log.
 const SECRET = "Secret";
@@ -53,8 +54,21 @@ interface FakeDb {
   sessionLost: boolean;
   /** The civil ID key the target's check value was provisioned under (base64), or null. */
   civilKeyCheck: string | null;
+  /** Whether migration 0659 (the promotion schema) is applied. */
+  promotionReady: boolean;
+  /** Principals the promotion would list as pending, and what promoting each returns. */
+  pending: string[];
+  promoted: Map<string, ContactPromotionResult | Error>;
+  /** contactSetDigest over the staged table, as the target would compute it. */
+  staged: string;
+  /** Whether the link report's tables are migrated. */
+  linkReportReady: boolean;
+  /** What the link report reads, or an error to throw. */
+  links: LinkReport | Error;
 }
-const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY });
+const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY,
+  promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64), linkReportReady: true,
+  links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplePrincipals": [], "link.contactTaken": [], "link.emailMismatch": [] } } });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -77,7 +91,7 @@ interface Harness {
   readonly err: string[];
   readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined };
   readonly file: (name: string) => string;
-  readonly receipt: (mode: "plan" | "write") => M4Receipt;
+  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport") => M4Receipt;
 }
 
 function harness(opts: HarnessOptions = {}): Harness {
@@ -120,6 +134,33 @@ function harness(opts: HarnessOptions = {}): Harness {
         return f(...a);
       };
       return { catalogue: fenced(writers.catalogue), companies: fenced(writers.companies), brandLinks: fenced(writers.brandLinks), stores: fenced(writers.stores), contacts: fenced(writers.contacts), people: fenced(writers.people), personContacts: fenced(writers.personContacts) };
+    },
+    promotionReady: async () => db.promotionReady,
+    promoter: () => {
+      assert.equal(db.writer, me, "the promoter is used only by the lock holder");
+      return {
+        pending: async (limit, after) => {
+          calls.push(`pending:${after ?? "-"}`);
+          return [...db.pending].sort().filter((id) => after === undefined || id > after).slice(0, limit);
+        },
+        promote: async (id) => {
+          calls.push("promote");
+          if (db.sessionLost || db.writer !== me) throw new Error("m4.writerLost");
+          const result = db.promoted.get(id) ?? { kind: "skipped", reason: "notStaged" };
+          if (result instanceof Error) throw result;
+          // Like the database: a promoted principal is no longer pending.
+          if (result.kind === "promoted") db.pending = db.pending.filter((p) => p !== id);
+          return result;
+        },
+      };
+    },
+    stagedContacts: async () => { assert.equal(db.writer, me, "the staged set is read under the writer lock"); return db.staged; },
+    linkReportReady: async () => db.linkReportReady,
+    linkReport: async () => {
+      calls.push("linkReport");
+      assert.equal(db.writer, null, "the link report takes no writer lock");
+      if (db.links instanceof Error) throw db.links;
+      return db.links;
     },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
@@ -164,7 +205,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       err.push(line);
     },
   };
-  const receipt = (mode: "plan" | "write") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
+  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
   return { dir, invocation, deps, calls, out, err, state, file, receipt };
 }
 
@@ -641,4 +682,194 @@ test("a keycheck refused for provenance names no build: an unverified revision o
     assert.deepEqual([r.status, r.code, r.revision, r.artifact, r.target], ["refused", "provenance", undefined, undefined, undefined]);
     assert.deepEqual(h.calls, []);
   } finally { cleanup(h); }
+});
+
+const PRINCIPALS = ["principal-secret-a", "principal-secret-b", "principal-secret-c"];
+const promotedAs = (legacyId: string, email: "promoted" | "answered" | "mismatch"): ContactPromotionResult =>
+  ({ kind: "promoted", legacyId, outcomes: { phone: "promoted", handle: "personWritten", civilId: "promoted", email } });
+
+/** A real plan and accepted write through the harness, in `dir`; the target's staged set then matches it. */
+async function acceptedWrite(db: FakeDb, dir: string): Promise<{ invocation: string; plan: string; contacts: string }> {
+  const plan = await planId({ dir, db });
+  const w = harness({ dir, db, env: { M4_EXPECTED_PLAN: plan } });
+  assert.equal(await main(["write"], w.deps), 0);
+  const r = w.receipt("write");
+  db.staged = r.contacts!;
+  return { invocation: w.invocation, plan, contacts: r.contacts! };
+}
+
+test("a write receipt binds the staged contact set and the digest key's fingerprint, never a value or the key", async () => {
+  const db = fakeDb();
+  const dir = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
+  try {
+    const w = await acceptedWrite(db, dir);
+    const r = JSON.parse(readFileSync(path.join(dir, "out", `${w.invocation}.write.receipt.json`), "utf8")) as M4Receipt;
+    assert.match(r.contacts!, /^[0-9a-f]{64}$/);
+    assert.equal(r.digestKey, digestKeyFingerprint(Buffer.from(DIGEST_KEY, "base64")));
+    assert.notEqual(r.contacts, contactSetDigest([]), "the planned candidate's row is in the set");
+    const text = JSON.stringify(r);
+    assert.ok(![DIGEST_KEY, CIVIL_KEY, ...CONTACT_VALUES].some((v) => text.includes(v)));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("promote consumes one accepted write and walks every pending principal under the writer lock, counts only", async () => {
+  const db = { ...fakeDb(), pending: [...PRINCIPALS, "principal-secret-gone"] };
+  db.promoted.set(PRINCIPALS[0]!, promotedAs("900000000031", "promoted"));
+  db.promoted.set(PRINCIPALS[1]!, promotedAs("900000000032", "answered"));
+  db.promoted.set(PRINCIPALS[2]!, promotedAs("900000000033", "mismatch"));
+  // Unlinked meanwhile: still listed as pending, tried once, and the walk passes it.
+  db.promoted.set("principal-secret-gone", { kind: "skipped", reason: "notLinked" });
+  const dir = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
+  try {
+    const w = await acceptedWrite(db, dir);
+    const h = harness({ dir, db, env: { M4_ACCEPTED_WRITE: w.invocation, M4_EXPECTED_PLAN: w.plan } });
+    assert.equal(await main(["promote"], h.deps), 0);
+    const r = h.receipt("promote");
+    assert.deepEqual([r.kind, r.status, r.target, r.revision, r.artifact, r.plan, r.acceptedWrite], ["promote", "ok", TARGET, REVISION, ARTIFACT, w.plan, w.invocation]);
+    assert.deepEqual(r.promotion, { promoted: 3, skipped: { notLinked: 1 }, phone: { promoted: 3 }, handle: { personWritten: 3 },
+      civilId: { promoted: 3 }, email: { promoted: 1, answered: 1, mismatch: 1 } });
+    assert.deepEqual(h.calls, ["pending:-", "promote", "promote", "promote", "promote", "pending:principal-secret-gone"]);
+    assert.equal(h.state.reads, 0, "no legacy read");
+    assert.equal(h.state.locked, false, "no refresh lock needed");
+    assert.equal(db.writer, null, "the writer lock is released");
+    const seen = JSON.stringify(r) + h.out.join("\n") + h.err.join("\n");
+    assert.ok(![...PRINCIPALS, "principal-secret", "9000000000", CIVIL_KEY, DIGEST_KEY].some((v) => seen.includes(v)), "no id, legacy id or key");
+    assert.ok(h.out.includes(`m4 promote ok invocation=${h.invocation} target=${TARGET} revision=${REVISION} artifact=${ARTIFACT} write=${w.invocation} promoted=3`));
+    assert.ok(h.out.includes("email answered=1 mismatch=1 promoted=1"));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("the walk advances past repeated and skipped principals: more than a batch of them never ends it early", async () => {
+  const ids = Array.from({ length: PROMOTE_BATCH * 2 + 7 }, (_, i) => `p-${String(i).padStart(5, "0")}`);
+  const db = { ...fakeDb(), pending: [...ids] };
+  // Every one is skipped and stays pending, then one promotable principal sorts last.
+  db.pending.push("z-last");
+  db.promoted.set("z-last", promotedAs("900000000099", "promoted"));
+  const dir = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
+  try {
+    const w = await acceptedWrite(db, dir);
+    const h = harness({ dir, db, env: { M4_ACCEPTED_WRITE: w.invocation, M4_EXPECTED_PLAN: w.plan } });
+    assert.equal(await main(["promote"], h.deps), 0);
+    const r = h.receipt("promote");
+    assert.deepEqual([r.promotion!.promoted, r.promotion!.skipped], [1, { notStaged: ids.length }]);
+    assert.equal(h.calls.filter((c) => c === "promote").length, ids.length + 1, "every principal tried exactly once");
+    assert.equal(h.calls.filter((c) => c.startsWith("pending:")).length, 4);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("promote is refused before any promotion without an accepted same-target write, its key, its staged set, the schema, civil key and writer lock", async () => {
+  const otherDigest = Buffer.alloc(32, 7).toString("base64");
+  type Case = [string, (db: FakeDb, w: { invocation: string; plan: string }) => { env?: Record<string, string | undefined>; db?: Partial<FakeDb>; opts?: HarnessOptions; receipt?: (r: Record<string, unknown>) => void }, string];
+  const cases: Case[] = [
+    ["unverified build", () => ({ opts: { provenance: { artifact: "f".repeat(64) } } }), "provenance"],
+    ["no accepted write named", () => ({ env: { M4_ACCEPTED_WRITE: undefined } }), "writeConfig"],
+    ["no expected plan", () => ({ env: { M4_EXPECTED_PLAN: undefined } }), "writeConfig"],
+    ["an unknown write", () => ({ env: { M4_ACCEPTED_WRITE: "33333333-3333-4333-8333-333333333333" } }), "acceptedWrite"],
+    ["another plan", () => ({ env: { M4_EXPECTED_PLAN: "9".repeat(64) } }), "acceptedWrite"],
+    ["a write that did not pass", () => ({ receipt: (r) => { r.status = "refused_rows"; } }), "acceptedWrite"],
+    ["a write still started", () => ({ receipt: (r) => { r.status = "started"; } }), "acceptedWrite"],
+    ["a write to another target", () => ({ receipt: (r) => { r.target = "22222222-2222-4222-8222-222222222222"; } }), "acceptedWrite"],
+    ["a write by another build", () => ({ receipt: (r) => { r.artifact = "d".repeat(64); } }), "acceptedWrite"],
+    ["a write receipt without the contact set", () => ({ receipt: (r) => { delete r.contacts; } }), "acceptedWrite"],
+    ["a different digest key", () => ({ env: { M4_CONTACT_DIGEST_KEY: otherDigest } }), "digestKey"],
+    ["staged rows not from that write", () => ({ db: { staged: "1".repeat(64) } }), "stagedInput"],
+    ["not staging", () => ({ db: { marker: { environment: "production", targetId: TARGET } } }), "target"],
+    ["no promotion schema", () => ({ db: { promotionReady: false } }), "promotionSchema"],
+    ["no civil ID key", () => ({ env: { M4_CIVIL_ID_ENCRYPTION_KEY: undefined } }), "contactKeys"],
+    ["no check provisioned", () => ({ db: { civilKeyCheck: null } }), "civilKey"],
+    ["a wrong civil ID key", () => ({ env: { M4_CIVIL_ID_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64") } }), "civilKey"],
+    ["another writer", () => ({ db: { writer: {} } }), "writerBusy"],
+  ];
+  for (const [label, make, code] of cases) {
+    const db = { ...fakeDb(), pending: [...PRINCIPALS] };
+    const dir = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
+    try {
+      const w = await acceptedWrite(db, dir);
+      const c = make(db, w);
+      if (c.receipt) {
+        const file = path.join(dir, "out", `${w.invocation}.write.receipt.json`);
+        const r = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+        c.receipt(r);
+        writeFileSync(file, JSON.stringify(r));
+      }
+      Object.assign(db, c.db ?? {});
+      const h = harness({ ...c.opts, dir, db, env: { M4_ACCEPTED_WRITE: w.invocation, M4_EXPECTED_PLAN: w.plan, ...c.env } });
+      assert.equal(await main(["promote"], h.deps), 2, label);
+      const r = h.receipt("promote");
+      assert.deepEqual([r.status, r.code, h.err], ["refused", code, [`m4: refused.${code}`]], label);
+      assert.ok(!h.calls.some((x) => x === "promote" || x.startsWith("pending:")), `${label}: nothing promoted`);
+      if (code === "provenance") assert.deepEqual([r.revision, r.artifact, r.target], [undefined, undefined, undefined], "no unverified build is bound");
+      assert.ok(![otherDigest, DIGEST_KEY, CIVIL_KEY].some((k) => JSON.stringify(r).includes(k)), label);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test("a promote that fails part way publishes failed with the counts so far and the fixed code; a re-run finishes the rest", async () => {
+  const db = { ...fakeDb(), pending: [...PRINCIPALS] };
+  db.promoted.set(PRINCIPALS[0]!, promotedAs("900000000031", "promoted"));
+  db.promoted.set(PRINCIPALS[1]!, new ContactPromotionError());
+  db.promoted.set(PRINCIPALS[2]!, promotedAs("900000000033", "promoted"));
+  const dir = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
+  try {
+    const w = await acceptedWrite(db, dir);
+    const env = { M4_ACCEPTED_WRITE: w.invocation, M4_EXPECTED_PLAN: w.plan };
+    const h = harness({ dir, db, env });
+    assert.equal(await main(["promote"], h.deps), 1);
+    const r = h.receipt("promote");
+    assert.deepEqual([r.status, r.code, r.promotion?.promoted, r.unconfirmed], ["failed", "m1.contact.promotionFailed", 1, undefined]);
+    assert.deepEqual(h.err, ["m4: m1.contact.promotionFailed"]);
+    assert.equal(db.writer, null);
+    db.promoted.set(PRINCIPALS[1]!, promotedAs("900000000032", "promoted"));
+    const again = harness({ dir, db, env });
+    assert.equal(await main(["promote"], again.deps), 0);
+    assert.equal(again.receipt("promote").promotion?.promoted, 2, "only the two not yet promoted");
+    assert.deepEqual(db.pending, []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+const LINKS: LinkReport = { imported: 5, linked: 2, ids: { "link.unlinked": ["31", "40", "100"], "link.notImported": ["77"], "link.multiplePrincipals": ["40"], "link.contactTaken": [], "link.emailMismatch": ["31"] } };
+
+test("linkreport reads the target only, writes ids to the private report and counts only to the receipt", async () => {
+  const db = { ...fakeDb(), links: LINKS };
+  const h = harness({ db, env: { M4_CONTACT_DIGEST_KEY: undefined, M4_CIVIL_ID_ENCRYPTION_KEY: undefined, M4_OPERATOR_ORG_ID: undefined } });
+  try {
+    assert.equal(await main(["linkreport"], h.deps), 0);
+    assert.equal(h.state.reads, 0, "no legacy read");
+    assert.equal(h.state.locked, false, "no refresh lock");
+    assert.deepEqual(h.calls, ["linkReport"]);
+    const r = h.receipt("linkreport");
+    assert.deepEqual([r.kind, r.status, r.target, r.revision, r.artifact], ["linkreport", "ok", TARGET, REVISION, ARTIFACT]);
+    assert.deepEqual(r.links, { imported: 5, linked: 2, rules: { "link.unlinked": 3, "link.notImported": 1, "link.multiplePrincipals": 1, "link.contactTaken": 0, "link.emailMismatch": 1 } });
+    for (const id of ["31", "40", "100", "77"]) assert.ok(!JSON.stringify(r).includes(`"${id}"`), "no legacy id in the receipt");
+    const reportFile = path.join(h.file("out"), `${h.invocation}.linkreport.report.json`);
+    assert.equal(statSync(reportFile).mode & 0o777, 0o600);
+    const report = JSON.parse(readFileSync(reportFile, "utf8"));
+    assert.deepEqual([report.imported, report.linked, report.ids], [5, 2, LINKS.ids]);
+    assert.deepEqual([report.target, report.revision, report.artifact, report.invocation], [TARGET, REVISION, ARTIFACT, h.invocation]);
+    assert.ok(h.out.some((l) => l === "links imported=5 linked=2 link.unlinked=3 link.notImported=1 link.multiplePrincipals=1 link.contactTaken=0 link.emailMismatch=1"));
+    assert.ok(h.out.some((l) => l.startsWith(`m4 linkreport ok invocation=${h.invocation} target=${TARGET}`)));
+    assert.ok(!h.out.join("\n").replaceAll(h.invocation, "<invocation>").includes("100"), "no legacy id in the log");
+  } finally { cleanup(h); }
+});
+
+test("linkreport is refused before any read without a verified build, its target or its schema; a failed read is failed with a fixed code", async () => {
+  const run = async (opts: HarnessOptions, expect: [number, string, string]) => {
+    const h = harness(opts);
+    try {
+      assert.equal(await main(["linkreport"], h.deps), expect[0]);
+      const r = h.receipt("linkreport");
+      assert.deepEqual([r.status, r.code], [expect[1], expect[2]]);
+      assert.equal(r.links, undefined);
+      assert.ok(!existsSync(path.join(h.file("out"), `${h.invocation}.linkreport.report.json`)), "no report");
+      return h.calls;
+    } finally { cleanup(h); }
+  };
+  assert.deepEqual(await run({ env: { M4_TARGET_ID: "not-a-uuid" } }, [2, "refused", "destination"]), []);
+  assert.deepEqual(await run({ env: { M4_DATABASE_URL: undefined } }, [2, "refused", "writeConfig"]), []);
+  assert.deepEqual(await run({ provenance: { clean: false } }, [2, "refused", "provenance"]), []);
+  assert.deepEqual(await run({ provenance: { artifact: "f".repeat(64) } }, [2, "refused", "provenance"]), []);
+  assert.deepEqual(await run({ db: { ...fakeDb(), marker: { environment: "production", targetId: TARGET } } }, [2, "refused", "target"]), []);
+  assert.deepEqual(await run({ env: { M4_TARGET_ID: "22222222-2222-4222-8222-222222222222" } }, [2, "refused", "target"]), []);
+  assert.deepEqual(await run({ db: { ...fakeDb(), linkReportReady: false } }, [2, "refused", "schema"]), []);
+  assert.deepEqual(await run({ db: { ...fakeDb(), links: new LinkReportError() } }, [1, "failed", "m3.link.reportFailed"]), ["linkReport"]);
 });

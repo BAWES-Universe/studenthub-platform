@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  bankAmount, planBankResult, readBankResultSheet,
+  AUB_RESULT_COLUMNS, KFH_RESULT_COLUMNS, MAX_BANK_RESULT_ROWS, bankAmount, planBankResult, readBankResultSheet,
   type BankCandidateLine, type BankCell, type BankRecordedPayment, type BankSheetResult,
 } from "../src/bank-results.js";
 import { parseDecimalString } from "../src/decimal-string.js";
@@ -15,9 +15,11 @@ const line = (over: Partial<BankCandidateLine> = {}): BankCandidateLine => ({
 const rec = (lineId: string, reference: string, over: Partial<BankRecordedPayment> = {}): BankRecordedPayment => ({
   lineId, reference, account: "ACC-1", amount: d("120.500"), currency: "KWD", ...over,
 });
-const AUB_HEAD = ["Status", "Status Description", "Debit Narrative", "Credit Narrative"];
+const AUB_FIRST = ["Status", "Status Description", "Debit Narrative", "Credit Narrative"];
+const AUB_HEAD = [...AUB_FIRST, ...AUB_RESULT_COLUMNS.filter((c) => !AUB_FIRST.includes(c))];
 const aub = (...rows: BankCell[][]): BankCell[][] => [[], AUB_HEAD, ...rows];
-const KFH_HEAD = ["Beneficiary Account", "Amount", "Transfer Currency", "Refrence Number"];
+const KFH_FIRST = ["Beneficiary Account", "Amount", "Transfer Currency", "Refrence Number"];
+const KFH_HEAD = [...KFH_FIRST, ...KFH_RESULT_COLUMNS.filter((c) => !KFH_FIRST.includes(c))];
 const kfh = (...rows: BankCell[][]): BankCell[][] => [...Array.from({ length: 8 }, () => ["bank banner"]), KFH_HEAD, ...rows];
 const read = (sheet: BankSheetResult) => {
   assert.equal(sheet.kind, "read");
@@ -49,10 +51,22 @@ test("BANK_SHEET_AUB reads legacy row 2 headers, statuses and the echoed line id
 });
 
 test("BANK_SHEET_REFUSED a file without the legacy headers or rows is refused whole", () => {
-  assert.deepEqual(readBankResultSheet("aub", [[], ["Status", "Credit Narrative"]]),
+  assert.deepEqual(readBankResultSheet("aub", [[], AUB_HEAD.filter((c) => c !== "Status Description")]),
     { kind: "refused", code: "missing_headers", missing: ["Status Description"] });
+  assert.deepEqual(readBankResultSheet("kfh", [[], [], [], [], [], [], [], [], KFH_HEAD.filter((c) => c !== "Amount Deducted")]),
+    { kind: "refused", code: "missing_headers", missing: ["Amount Deducted"] }, "an unused column of the established layout is still required");
   assert.deepEqual(readBankResultSheet("aub", aub()), { kind: "refused", code: "no_rows" });
   assert.equal(readBankResultSheet("kfh", aub(["SUCCESS", "C", "T", "L"])).kind, "refused");
+});
+
+test("BANK_SHEET_STRICT a used column named twice, or more data rows than supported, is a refusal, never a guess or a crash", () => {
+  assert.deepEqual(readBankResultSheet("aub", [[], [...AUB_HEAD, "Credit Narrative"], ["SUCCESS", "R1", "T", "L1", "L9"]]),
+    { kind: "refused", code: "duplicate_headers", missing: ["Credit Narrative"] });
+  assert.equal(readBankResultSheet("aub", [[], [...AUB_HEAD, "Remarks", "Remarks"], ["SUCCESS", "R1", "T", "L1"]]).kind, "read", "an unused column may repeat");
+  const many = Array.from({ length: MAX_BANK_RESULT_ROWS + 1 }, (_, i): BankCell[] => ["SUCCESS", `R${i}`, "T", `L${i}`]);
+  const over = readBankResultSheet("aub", aub(...many));
+  assert.equal(over.kind === "refused" ? over.code : `read ${over.rows.length} rows`, "too_many_rows");
+  assert.equal(readBankResultSheet("aub", aub(...many.slice(1))).kind, "read");
 });
 
 test("BANK_SHEET_KFH reads legacy row 9 headers; no status column means success", () => {

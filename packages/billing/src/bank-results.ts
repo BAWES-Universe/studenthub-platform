@@ -33,7 +33,7 @@ export interface BankRowRejected { readonly rowNumber: number; readonly problem:
 
 export type BankSheetResult =
   | { readonly kind: "read"; readonly rows: readonly BankResultRow[]; readonly rejected: readonly BankRowRejected[] }
-  | { readonly kind: "refused"; readonly code: "missing_headers" | "no_rows"; readonly missing?: readonly string[] };
+  | { readonly kind: "refused"; readonly code: "missing_headers" | "duplicate_headers" | "no_rows" | "too_many_rows"; readonly missing?: readonly string[] };
 
 interface Layout {
   readonly headerRow: number;
@@ -46,15 +46,21 @@ interface Layout {
   readonly currency: string | null;
 }
 
+/** Every column the bank's result sheet carries, as recorded in the bank-file contract fixtures
+ * (docs/parity/bank-file-contract/fixtures.json, `aub-results` / `kfh-results`). A sheet missing
+ * any of them is not the established layout and is refused whole (contract: HOLD_HEADER_ROW_WIDTH). */
+export const AUB_RESULT_COLUMNS: readonly string[] = Object.freeze(["Credit Narrative", "Status Description", "Debit Narrative", "Status", "Section Index", "Transfer Method", "Credit Amount", "Credit Currency", "Exchange Rate", "DealRefNo", "Value Date", "Debit Account No", "Credit Account No", "Payment Details 1", "Payment Details 2", "Payment Details 3", "Payment Details 4", "Beneficiary Name", "Beneficiary Address Line 1", "Beneficiary Address Line 2", "Beneficiary Bank Name", "Beneficiary Bank Address 1", "Beneficiary Bank Address 2", "Beneficiary Bank Address 3", "Swift", "Intermediary Account", "Intermediary Swift", "Intrmediary Name", "Intermediary Address 1", "Intermediary Address 2", "Intermediary Address 3", "Charges Type", "Sort Code", "BIC Code", "IBAN", "ABA Routing Code"]);
+export const KFH_RESULT_COLUMNS: readonly string[] = Object.freeze(["Refrence Number", "Beneficiary Account", "Amount", "Transfer Currency", "Exchange Rates", "Beneficiary Name", "Bank", "Amount Deducted"]);
+
 /** Header rows and names as legacy reads them (AUB: row 2; KFH: row 9, no status column). */
 const LAYOUTS: Readonly<Record<BankResultFormat, Layout>> = {
   aub: {
-    headerRow: 2, required: ["Status", "Status Description", "Credit Narrative"],
+    headerRow: 2, required: AUB_RESULT_COLUMNS,
     status: "Status", lineRef: "Credit Narrative", reference: "Status Description",
     account: null, amount: null, currency: null,
   },
   kfh: {
-    headerRow: 9, required: ["Beneficiary Account", "Amount", "Transfer Currency", "Refrence Number"],
+    headerRow: 9, required: KFH_RESULT_COLUMNS,
     status: null, lineRef: null, reference: "Refrence Number",
     account: "Beneficiary Account", amount: "Amount", currency: "Transfer Currency",
   },
@@ -87,9 +93,14 @@ export function readBankResultSheet(format: BankResultFormat, cells: readonly (r
   const layout = LAYOUTS[format];
   const header = (cells[layout.headerRow - 1] ?? []).map((cell) => text(cell));
   const index = new Map<string, number>();
-  header.forEach((name, i) => { if (name !== null && !index.has(name)) index.set(name, i); });
+  const used = new Set([layout.status, layout.lineRef, layout.reference, layout.account, layout.amount, layout.currency, ...layout.required]);
+  const twice = new Set<string>();
+  header.forEach((name, i) => { if (name !== null) { if (index.has(name)) twice.add(name); else index.set(name, i); } });
   const missing = layout.required.filter((name) => !index.has(name));
   if (missing.length) return { kind: "refused", code: "missing_headers", missing };
+  // A column this reader uses, named twice, is ambiguous: which one the bank meant is never guessed.
+  const ambiguous = [...twice].filter((name) => used.has(name));
+  if (ambiguous.length) return { kind: "refused", code: "duplicate_headers", missing: ambiguous };
   const at = (row: readonly BankCell[], name: string | null): BankCell => (name === null ? null : row[index.get(name)!]);
 
   const rows: BankResultRow[] = [];
@@ -118,7 +129,7 @@ export function readBankResultSheet(format: BankResultFormat, cells: readonly (r
     rows.push({ rowNumber, outcome, lineRef, reference: text(at(row, layout.reference)), account, amount, currency });
   }
   if (rows.length + rejected.length === 0) return { kind: "refused", code: "no_rows" };
-  if (rows.length + rejected.length > MAX_BANK_RESULT_ROWS) throw new RangeError("bank result file has too many rows");
+  if (rows.length + rejected.length > MAX_BANK_RESULT_ROWS) return { kind: "refused", code: "too_many_rows" };
   return { kind: "read", rows, rejected };
 }
 

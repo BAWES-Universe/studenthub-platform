@@ -21,6 +21,7 @@ export interface RecruitInvitationsStore {
 export interface RequestInvitationView { readonly invitationId: string; readonly personId: string; readonly personName: string | null; readonly status: InvitationStatus; readonly invitedAt: string; readonly answeredAt: string | null }
 export interface RecruitInvitations {
   mine(session: string | undefined): Promise<RecruitResult<{ invitations: readonly InvitationView[] }>>;
+  one(session: string | undefined, invitationId: string): Promise<RecruitResult<{ invitation: InvitationView }>>;
   answer(session: string | undefined, invitationId: string, to: "seen" | "accepted" | "declined"): Promise<RecruitResult<{ invitationId: string; status: InvitationStatus; cardId: string | null }>>;
   forRequest(session: string | undefined, requestId: string): Promise<RecruitResult<{ requestId: string; invitations: readonly RequestInvitationView[] }>>;
   invite(session: string | undefined, requestId: string, body: unknown): Promise<RecruitResult<{ invitationId: string; created: boolean }>>;
@@ -42,6 +43,15 @@ export function createRecruitInvitations(p: { sessions: Pick<SessionStore, "get"
       const id = await principal(s);
       if (!id) return UNAUTHORIZED;
       return { status: 200, body: { invitations: (await p.store.mine(id)).map(invitationView) } };
+    },
+    async one(s, invitationId) {
+      const id = await principal(s);
+      if (!id) return UNAUTHORIZED;
+      if (!isRecruitId(invitationId)) return NOT_FOUND;
+      const wanted = invitationId.toLowerCase();
+      const row = (await p.store.mine(id)).find((candidate) => candidate.id === wanted);
+      if (!row) return NOT_FOUND;
+      return { status: 200, body: { invitation: invitationView(row) } };
     },
     async answer(s, invitationId, to) {
       const id = await principal(s);
@@ -83,12 +93,17 @@ const TYPE_LABEL: Readonly<Record<string, string>> = { full_time: "Full time", p
 const PAY_LABEL: Readonly<Record<string, string>> = { hourly: "Hourly", fixed_price: "Fixed price", monthly_salary: "Monthly salary" };
 
 export function renderInvitations(invitations: readonly InvitationView[]): string {
-  const item = (v: InvitationView) => {
-    const answer = v.canAnswer ? `<form method="post" action="/recruit/invitations/${html(v.invitationId)}/accept"><button class="button primary" type="submit">Accept</button></form> <form method="post" action="/recruit/invitations/${html(v.invitationId)}/decline"><button class="button" type="submit">Decline</button></form>${v.status === "sent" ? ` <form method="post" action="/recruit/invitations/${html(v.invitationId)}/seen"><button class="button" type="submit">Mark as seen</button></form>` : ""}` : "";
-    const facts = [TYPE_LABEL[v.positionType] ?? v.positionType, v.period ? `${v.period.start} to ${v.period.end}` : null, v.location].filter((x): x is string => Boolean(x));
-    return `<li><h2>${html(v.positionTitle)}</h2><p>${html(v.company)} · ${html(v.store)} · <span class="badge">${STATUS_LABEL[v.status]}</span></p><p>${facts.map(html).join(" · ")}</p><p>Pay: ${html(v.pay)}${v.payModel ? ` (${html(PAY_LABEL[v.payModel] ?? v.payModel)})` : ""}</p><p class="muted">Invited <time datetime="${html(v.invitedAt)}">${html(when(v.invitedAt))}</time></p>${answer}</li>`;
-  };
-  return `<main id="main" class="profile-main"><h1>Invitations<span class="accent">.</span></h1>${invitations.length ? `<ol class="plain">${invitations.map(item).join("")}</ol>` : "<p>You have no invitations yet.</p>"}<p><a class="text-link" href="/recruit/my-interviews">Your interviews</a> · <a class="text-link" href="/recruit/open-requests">Open positions</a></p></main>`;
+  return `<main id="main" class="profile-main"><h1>Invitations<span class="accent">.</span></h1>${invitations.length ? `<ol class="plain">${invitations.map(renderInvitationItem).join("")}</ol>` : "<p>You have no invitations yet.</p>"}<p><a class="text-link" href="/recruit/my-interviews">Your interviews</a> · <a class="text-link" href="/recruit/open-requests">Open positions</a></p></main>`;
+}
+
+function renderInvitationItem(v: InvitationView): string {
+  const answer = v.canAnswer ? `<form method="post" action="/recruit/invitations/${html(v.invitationId)}/accept"><button class="button primary" type="submit">Accept</button></form> <form method="post" action="/recruit/invitations/${html(v.invitationId)}/decline"><button class="button" type="submit">Decline</button></form>${v.status === "sent" ? ` <form method="post" action="/recruit/invitations/${html(v.invitationId)}/seen"><button class="button" type="submit">Mark as seen</button></form>` : ""}` : "";
+  const facts = [TYPE_LABEL[v.positionType] ?? v.positionType, v.period ? `${v.period.start} to ${v.period.end}` : null, v.location].filter((x): x is string => Boolean(x));
+  return `<li><h2>${html(v.positionTitle)}</h2><p>${html(v.company)} · ${html(v.store)} · <span class="badge">${STATUS_LABEL[v.status]}</span></p><p>${facts.map(html).join(" · ")}</p><p>Pay: ${html(v.pay)}${v.payModel ? ` (${html(PAY_LABEL[v.payModel] ?? v.payModel)})` : ""}</p><p class="muted">Invited <time datetime="${html(v.invitedAt)}">${html(when(v.invitedAt))}</time></p>${answer}</li>`;
+}
+
+function renderInvitation(v: InvitationView): string {
+  return `<main id="main" class="profile-main"><h1>Invitation<span class="accent">.</span></h1><ol class="plain">${renderInvitationItem(v)}</ol><p><a class="text-link" href="/recruit/invitations">Back to your invitations</a></p></main>`;
 }
 
 export function renderRequestInvitations(requestId: string, invitations: readonly RequestInvitationView[]): string {
@@ -97,17 +112,23 @@ export function renderRequestInvitations(requestId: string, invitations: readonl
 }
 
 const MINE = "/recruit/invitations";
-const ANSWER = /^\/recruit\/invitations\/([^/]+)\/(seen|accept|decline)$/, REQUEST = /^\/recruit\/staff\/requests\/([^/]+)\/invitations$/, WITHDRAW = /^\/recruit\/staff\/invitations\/([^/]+)\/withdraw$/;
+const DETAIL = /^\/recruit\/invitations\/([^/]+)$/, ANSWER = /^\/recruit\/invitations\/([^/]+)\/(seen|accept|decline)$/, REQUEST = /^\/recruit\/staff\/requests\/([^/]+)\/invitations$/, WITHDRAW = /^\/recruit\/staff\/invitations\/([^/]+)\/withdraw$/;
 const TO = { seen: "seen", accept: "accepted", decline: "declined" } as const;
 
 export async function handleRecruitInvitations(req: IncomingMessage, res: ServerResponse, s: RecruitInvitations | undefined, origin: string | undefined, write: RecruitPageWriter, wantsHtml: boolean): Promise<boolean> {
   const path = new URL(req.url ?? "/", "http://x").pathname;
-  const answer = ANSWER.exec(path), request = REQUEST.exec(path), withdraw = WITHDRAW.exec(path);
-  if (path !== MINE && !answer && !request && !withdraw) return false;
+  const detail = DETAIL.exec(path), answer = ANSWER.exec(path), request = REQUEST.exec(path), withdraw = WITHDRAW.exec(path);
+  if (path !== MINE && !detail && !answer && !request && !withdraw) return false;
+  if (detail && req.method !== "GET" && req.method !== "HEAD") return false;
   const back = request ? { href: `/recruit/staff/requests/${encodeURIComponent(decodeSegment(request))}`, label: "Back to the pipeline" } : { href: MINE, label: "Back to your invitations" };
   try {
     if (!s || !origin) { wantsHtml ? errorPage(write, 503, back) : sendJson(res, { status: 503, body: { error: "recruit_unavailable" } }); return true; }
     const session = sessionCookie(req.headers.cookie);
+    if (detail) {
+      const r = await s.one(session, decodeSegment(detail));
+      if (!wantsHtml) sendJson(res, r); else if (r.status === 200) write(200, "Invitation", renderInvitation(r.body.invitation)); else errorPage(write, r.status, back);
+      return true;
+    }
     if (req.method === "GET" && (path === MINE || request)) {
       if (path === MINE) {
         const r = await s.mine(session);
