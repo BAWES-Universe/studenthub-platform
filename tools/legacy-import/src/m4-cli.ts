@@ -90,6 +90,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { createHash, createHmac } from "node:crypto";
 import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import pg from "pg";
@@ -189,6 +190,29 @@ export interface M4Receipt {
   readonly code?: string;
   /** For `promote`: counts only, never a principal or legacy id. */
   readonly promotion?: PromotionCounts;
+  /**
+   * For `write`: the staged contact set the plan writes (contactSetDigest over every planned
+   * candidate_contact row's legacy id and keyed digest) and the digest key's fingerprint. A
+   * `promote` requires both to match: the staged table holds exactly that set, under that key.
+   */
+  readonly contacts?: string;
+  readonly digestKey?: string;
+  /** For `promote`: the accepted write invocation it consumed. */
+  readonly acceptedWrite?: string;
+}
+
+/**
+ * A digest of a staged contact set: sha256 over its (legacy id, keyed row digest) pairs, sorted
+ * by id. No value and no key; the same function reads the plan (write) and the table (promote).
+ */
+export function contactSetDigest(pairs: readonly (readonly [string, string])[]): string {
+  const sorted = [...pairs].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return createHash("sha256").update(JSON.stringify(["m4-contact-set-v1", sorted])).digest("hex");
+}
+
+/** A non-secret fingerprint of the contact digest key: an HMAC of a fixed label under it. */
+export function digestKeyFingerprint(key: Buffer): string {
+  return createHmac("sha256", key).update("m4-contact-digest-key-check-v1").digest("hex");
 }
 
 /** What a `promote` run did, as counts per outcome; the per-principal record is in the database. */
@@ -214,7 +238,8 @@ export function countPromotion(counts: PromotionCounts, result: ContactPromotion
 
 /** The promotion step, on the writer session. */
 export interface ContactPromoter {
-  pending(limit: number): Promise<readonly string[]>;
+  /** Pending principals in id order, strictly after `after` when given. */
+  pending(limit: number, after?: string): Promise<readonly string[]>;
   promote(principalId: string): Promise<ContactPromotionResult>;
 }
 
@@ -303,6 +328,8 @@ export interface WriteTarget {
   promotionReady(): Promise<boolean>;
   /** The promotion step bound to the lock-holding session; only after claimWriter. */
   promoter(): ContactPromoter;
+  /** contactSetDigest over every staged legacy_candidate_contacts row, read on the writer session. */
+  stagedContacts(): Promise<string>;
   /** Re-checks, on the lock session itself, that it is alive and still holds the lock. */
   stillHeld(): Promise<boolean>;
   /** Whether the lock session was lost or broken at any point. Once true, stays true. */
@@ -471,7 +498,12 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
       if (!writer) throw new Error("m4.writerNotClaimed");
       if (!keys?.civilId) throw new Error("m4.contactKeys");
       const promotion = new PostgresContactPromotion(writer, new CivilIdVault(keys.civilId), keys.digest);
-      return { pending: (limit) => promotion.pending(limit), promote: (id) => promotion.promote(id) };
+      return { pending: (limit, after) => promotion.pending(limit, after), promote: (id) => promotion.promote(id) };
+    },
+    stagedContacts: async () => {
+      if (!writer) throw new Error("m4.writerNotClaimed");
+      const { rows } = await writer.query<{ id: string; digest: string }>("SELECT legacy_candidate_id AS id, digest FROM legacy_candidate_contacts");
+      return contactSetDigest(rows.map((r) => [r.id, r.digest] as const));
     },
     stillHeld: async () => (writer ? writer.fence() : false),
     lost: () => wasLost || (writer?.lost ?? false),
@@ -573,7 +605,9 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     const plan = planM4(sources, today);
     const identity = planIdentity(plan, { revision, artifact, refresh: refresh!, target: targetId, operator, today },
       (row) => personContactDigest(keys!.digest, row));
-    bound = { ...bound, today, plan: identity };
+    bound = { ...bound, today, plan: identity,
+      contacts: contactSetDigest(plan.personContacts.contacts.map((r) => [r.legacyId, personContactDigest(keys!.digest, r)] as const)),
+      digestKey: digestKeyFingerprint(keys!.digest) };
     const planned = await runM4(sources, null, deps.now().toISOString(), undefined, plan);
     if (!receiptSafe(planned)) throw new Error("m4.report.unsafe");
 
@@ -665,15 +699,21 @@ async function keycheck(deps: CliDeps, revision: string, targetId: string,
 /**
  * `promote`: moves linked people's staged contact values into the person-owned tables
  * (PostgresContactPromotion, migrations 0657-0659), one principal per transaction, under the
- * target's one-writer lock, so it never runs beside a `write`. It reads no legacy data. Both keys
- * come from staging's configuration, like `write`; the civil ID key must open the target's check.
- * Every principal commits on its own and is recorded once, so a re-run after a failure promotes
- * only those not done yet. The receipt carries counts per outcome only. Exit 0 when every pending
- * principal was handled, 1 when the run failed part way, 2 when refused before any promotion.
+ * target's one-writer lock, so it never runs beside a `write`. It reads no legacy data.
+ *
+ * It consumes one accepted write only: M4_ACCEPTED_WRITE names a write invocation whose own
+ * terminal receipt in M4_OUTPUT_DIR says ok for M4_EXPECTED_PLAN, for this target, revision and
+ * artifact. Its contact digest key must have the fingerprint that write recorded (so a wrong but
+ * well-formed key never records `mismatch`), and the staged table must hold exactly the contact
+ * set that write recorded (so rows left by a partial, failed or other write are never consumed).
+ * The civil ID key must open the target's check. Then it walks every pending principal once, in
+ * id order with a cursor, so repeats and skipped principals never end the walk early. The receipt
+ * carries counts per outcome only. Exit 0 when the walk finished, 1 when it failed part way (a
+ * re-run promotes only the rest), 2 when refused before any promotion.
  */
 async function promote(deps: CliDeps, revision: string, targetId: string,
   publish: (status: M4Receipt["status"], code?: string, promotion?: PromotionCounts) => void,
-  bind: (bound: { revision: string; artifact: string; target: string }) => void, track: (target: WriteTarget) => void): Promise<number> {
+  bind: (bound: Omit<M4Receipt, "schemaVersion" | "invocation" | "kind" | "status" | "at" | "steps">) => void, track: (target: WriteTarget) => void): Promise<number> {
   const { env } = deps;
   const refuse = (code: string): number => {
     deps.error(`m4: refused.${code}`);
@@ -681,13 +721,25 @@ async function promote(deps: CliDeps, revision: string, targetId: string,
     return 2;
   };
   if (!UUID.test(targetId)) return refuse("destination");
-  if (!env.M4_DATABASE_URL) return refuse("writeConfig");
+  const accepted = env.M4_ACCEPTED_WRITE ?? "";
+  const expected = env.M4_EXPECTED_PLAN ?? "";
+  if (!env.M4_DATABASE_URL || !UUID.test(accepted) || accepted === env.M4_INVOCATION || !HEX64.test(expected)) return refuse("writeConfig");
   const keys = contactKeysFrom(env, "write");
   if (!keys) return refuse("contactKeys");
   const artifact = env.M4_ARTIFACT_DIGEST ?? "";
   const built = deps.provenance();
   if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
   bind({ revision, artifact, target: targetId });
+  // The accepted write, by its own terminal receipt: ok for the reviewed plan, same target and build.
+  let write: Partial<M4Receipt> | undefined;
+  try {
+    write = JSON.parse(readFileSync(path.join(env.M4_OUTPUT_DIR || DEFAULT_M4_OUTPUT_DIR, `${accepted}.write.receipt.json`), "utf8")) as Partial<M4Receipt>;
+  } catch { write = undefined; }
+  if (!write || write.schemaVersion !== 2 || write.kind !== "write" || write.invocation !== accepted || write.status !== "ok" || write.plan !== expected
+    || write.target !== targetId || write.revision !== revision || write.artifact !== artifact
+    || typeof write.contacts !== "string" || !HEX64.test(write.contacts) || typeof write.digestKey !== "string") return refuse("acceptedWrite");
+  bind({ revision, artifact, target: targetId, plan: expected, acceptedWrite: accepted });
+  if (digestKeyFingerprint(keys.digest) !== write.digestKey) return refuse("digestKey");
   const target = deps.target(env);
   track(target);
   const marker = await target.marker();
@@ -695,19 +747,22 @@ async function promote(deps: CliDeps, revision: string, targetId: string,
   if (!await target.promotionReady()) return refuse("promotionSchema");
   if (await target.civilKey(keys.civilId!) !== "ok") return refuse("civilKey");
   if (!await target.claimWriter()) return refuse("writerBusy");
+  // Under the writer lock, so no write can change the staged set from here to the end.
+  let staged: string;
+  try { staged = await target.stagedContacts(); } catch { staged = ""; }
+  if (staged !== write.contacts) return refuse("stagedInput");
   const counts: PromotionCounts = { promoted: 0, skipped: {}, phone: {}, handle: {}, civilId: {}, email: {} };
   publish("started", undefined, counts);
   try {
     const promoter = target.promoter();
-    const seen = new Set<string>();
+    let after: string | undefined;
     for (;;) {
-      // A principal pending() returns again (skipped, say, because it was unlinked meanwhile) is
-      // not retried in this run, so the walk always ends.
-      const batch = (await promoter.pending(PROMOTE_BATCH)).filter((id) => !seen.has(id));
+      const batch = await promoter.pending(PROMOTE_BATCH, after);
       if (batch.length === 0) break;
       for (const id of batch) {
-        seen.add(id);
+        if (after !== undefined && !(id > after)) throw new Error("m4.promoteOrder");
         countPromotion(counts, await promoter.promote(id));
+        after = id;
       }
     }
     if (!await target.stillHeld()) throw new Error("m4.writerLost");
@@ -720,6 +775,6 @@ async function promote(deps: CliDeps, revision: string, targetId: string,
   publish("ok", undefined, counts);
   const line = (name: string, m: Record<string, number>) => `${name} ${Object.entries(m).sort().map(([k, n]) => `${k}=${n}`).join(" ")}`.trimEnd();
   for (const l of [line("phone", counts.phone), line("handle", counts.handle), line("civilId", counts.civilId), line("email", counts.email), line("skipped", counts.skipped)]) deps.log(l);
-  deps.log(`m4 promote ok invocation=${env.M4_INVOCATION} target=${targetId} revision=${revision} artifact=${artifact} promoted=${counts.promoted}`);
+  deps.log(`m4 promote ok invocation=${env.M4_INVOCATION} target=${targetId} revision=${revision} artifact=${artifact} write=${accepted} promoted=${counts.promoted}`);
   return 0;
 }
