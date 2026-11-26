@@ -17,9 +17,9 @@ An Orca bot works only on a ticket listed here, read fresh from `main`, and only
 | #640 | `reports-readme` | studenthub-universe | 1 | work | `7088635341` | `packages/reports/README.md` only; no migrations | Claude | done | 2026-11-30 18:00 |
 | #641 | `observability-package-readme` | studenthub-universe | 1 | work | `7088635688` | `packages/observability/README.md` only; no migrations | Claude | done | 2026-11-30 18:00 |
 | #642 | `exports-readme` | studenthub-universe | 1 | work | `7088636015` | `packages/exports/README.md` only; no migrations | Claude | done | 2026-11-30 18:00 |
-| #652 | `notifications-readme-precision` | studenthub-universe | 1 | work | `7091953714` | `packages/notifications/README.md` only; no migrations | Claude | active | 2026-11-30 18:00 |
+| #652 | `notifications-readme-precision` | studenthub-universe | 1 | work | `7091953714` | `packages/notifications/README.md` only; no migrations | Claude | done | 2026-11-30 18:00 |
 | #653 | `comms-readme` | studenthub-universe | 1 | work | `7091954000` | `packages/comms/README.md` only; no migrations | Claude | active | 2026-11-30 18:00 |
-| #654 | `profile-records-readme` | studenthub-universe | 1 | work | `7091954239` | `packages/profile-records/README.md` only; no migrations | Claude | active | 2026-11-30 18:00 |
+| #654 | `profile-records-readme` | studenthub-universe | 1 | work | `7091954239` | `packages/profile-records/README.md` only; no migrations | Claude | done | 2026-11-30 18:00 |
 | #655 | `recruit-readme` | studenthub-universe | 1 | work | `7091954544` | `packages/recruit/README.md` only; no migrations | Claude | active | 2026-11-30 18:00 |
 | #656 | `work-readme` | studenthub-universe | 1 | work | `7091954789` | `packages/work/README.md` only; no migrations | Claude | active | 2026-11-30 18:00 |
 | #657 | `reference-catalogue-readme` | studenthub-universe | 1 | work | `7091955067` | `packages/reference-catalogue/README.md` only; no migrations | Claude | active | 2026-11-30 18:00 |
