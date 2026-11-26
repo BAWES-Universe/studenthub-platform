@@ -214,11 +214,52 @@ test("BANK_STORE_SCOPED_REPLAY a replayed reference is still caught from history
   assert.deepEqual(await paidLines(), ["L-1"]);
 });
 
-test("BANK_STORE_RACE two files applied at once with one bank reference for different lines settle exactly one", async () => {
-  await transfer([{ id: "L-1", person: "w1", amount: "10.000" }, { id: "L-2", person: "w2", amount: "10.000" }, { id: "L-3", person: "w3", amount: "10.000" }], "lock", "payment_received");
+test("BANK_STORE_CENTRAL_GATE file authority is a subtree finance grant covering every operator organization; self-only, company, other-role and partial cover are refused", async () => {
+  await pool.query("INSERT INTO organizations(id,name,parent_org_id) VALUES ('ops2','Second operator',NULL),('desk','Operator desk','root')");
+  for (const id of ["self", "sub", "both", "cfin", "staff", "deskfin"]) await pool.query("INSERT INTO principals(id) VALUES($1)", [id]);
+  await pool.query(`INSERT INTO grants(principal_id,org_id,role,scope) VALUES ('self','root','finance','self'),('sub','root','finance','subtree'),
+    ('both','root','finance','subtree'),('both','ops2','finance','subtree'),('cfin','P','finance','subtree'),('staff','root','staff','subtree'),('deskfin','desk','finance','subtree')`);
+  const client = await pool.connect();
+  const verdicts = async (operators: readonly string[]) => {
+    const gate = operatorFinanceGate(operators);
+    const out: Record<string, boolean> = {};
+    for (const who of ["self", "sub", "both", "cfin", "staff", "deskfin"]) out[who] = await gate(client, who);
+    return out;
+  };
+  try {
+    assert.deepEqual(await verdicts(["root"]), { self: false, sub: true, both: true, cfin: false, staff: false, deskfin: false }, "one operator: only a subtree finance grant on it");
+    assert.deepEqual(await verdicts(["root", "ops2"]), { self: false, sub: false, both: true, cfin: false, staff: false, deskfin: false }, "two separate operators: both must be covered");
+    assert.deepEqual(await verdicts(["root", "desk"]), { self: false, sub: true, both: true, cfin: false, staff: false, deskfin: false }, "a nested operator is covered by its ancestor's subtree grant, not the reverse");
+    assert.deepEqual(await verdicts([]), { self: false, sub: false, both: false, cfin: false, staff: false, deskfin: false }, "no operator list is no authority");
+    assert.deepEqual(await verdicts(["nowhere"]), { self: false, sub: false, both: false, cfin: false, staff: false, deskfin: false }, "an unknown operator is no authority");
+  } finally { client.release(); }
+  const central = (store = results(complete, policy, operatorFinanceGate(["root", "ops2"]))) => store;
+  const cells = aub(["SUCCESS", "REF-1", "x", "L-1"]);
+  assert.deepEqual(await central().submit({ principalId: "self", actingAs: false }, { format: "aub", contentSha256: sha(cells), cells }), { kind: "refused", code: "forbidden" });
+  assert.deepEqual(await central().submit({ principalId: "sub", actingAs: false }, { format: "aub", contentSha256: sha(cells), cells }), { kind: "refused", code: "forbidden" });
+  const stored = await central().submit({ principalId: "both", actingAs: false }, { format: "aub", contentSha256: sha(cells), cells });
+  assert.equal(stored.kind, "submitted");
+  assert.deepEqual(await central().apply({ principalId: "sub", actingAs: false }, (stored as { fileId: string }).fileId), { kind: "refused", code: "forbidden" });
+});
+
+test("BANK_STORE_RACE two files naming one bank reference on lines of different transfers are serialised: the second sees the first's confirmation", async () => {
+  await transfer([{ id: "L-1", person: "w1", amount: "10.000" }], "lock", "payment_received");
+  await transfer([{ id: "L-2", person: "w2", amount: "10.000" }], "lock", "payment_received");
   const a = await submit(aub(["SUCCESS", "REF-1", "a", "L-1"])), b = await submit(aub(["SUCCESS", "REF-1", "b", "L-2"]));
-  const outcomes = await Promise.all([results().apply(actor, a), results().apply(actor, b)]);
-  assert.deepEqual(outcomes.map((o) => o.kind), ["applied", "applied"]);
+  // Each apply waits at the gate for the other to arrive (or 400 ms). Without serialisation both pass
+  // together, read no recorded confirmation, and race to the reference index; with it the second waits.
+  const seen: number[] = [];
+  let arrived = 0;
+  const rendezvous: BankResultFileGate = async () => {
+    seen.push((await pool.query("SELECT count(*)::int AS n FROM bank_result_files WHERE status='applied'")).rows[0].n);
+    arrived++;
+    const deadline = Date.now() + 400;
+    while (arrived < 2 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+    return true;
+  };
+  const outcomes = await Promise.allSettled([results(complete, policy, rendezvous).apply(actor, a), results(complete, policy, rendezvous).apply(actor, b)]);
+  assert.deepEqual(outcomes.map((o) => (o.status === "fulfilled" ? o.value.kind : `rejected:${String(o.reason?.message ?? o.reason).slice(0, 80)}`)), ["applied", "applied"]);
+  assert.deepEqual([...seen].sort(), [0, 1], "the second apply reached the gate only after the first committed");
   assert.equal((await paidLines()).length, 1);
   const kinds = (await pool.query("SELECT kind,reason FROM bank_result_rows ORDER BY kind")).rows.map((r) => `${r.kind}:${r.reason}`);
   assert.deepEqual(kinds, ["hold:reference_conflict", "pay:null"]);

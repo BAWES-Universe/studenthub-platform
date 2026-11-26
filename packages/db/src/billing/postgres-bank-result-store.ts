@@ -4,19 +4,41 @@ import { planBankResult, readBankResultSheet, type BankCell, type BankCandidateL
 import { PostgresTransferLifecycleTransaction, type PayLifecycleActor, type PayLifecycleEffects, type PayLifecyclePolicy,
   type PayLifecycleTransfer } from "../payroll/postgres-transfer-lifecycle-store.js";
 
-/** Runs the lifecycle `complete` action for a transfer inside the SAME locked
- * transaction (the payroll service's transitionInTransaction). Returns whether
- * the transfer changed. db does not import payroll source, so the caller wires it. */
 /** Whether the actor may handle bank result files at all (upload, look up, apply, read decisions).
  * Runs on the caller's client, inside the transaction where there is one. */
 export type BankResultFileGate = (client: pg.PoolClient, actorId: string) => Promise<boolean>;
 
-/** StudentHub's own finance users: a `role` grant on one of the operator organizations, read FOR SHARE. */
+/**
+ * Central file authority. A bank result file is not scoped to one company: one file can name lines of
+ * any company, so handling files at all needs finance authority over the whole operator pool. That is a
+ * `role` grant with subtree scope covering EVERY listed operator organization (on it, or on an ancestor of
+ * it). A self-only grant, a grant on a company, or cover of only some operator organizations is refused,
+ * as is an empty or unknown operator list. Per-transfer `complete` authorization still runs on apply.
+ * The organization chains are locked FOR SHARE and read again, and the grants are read FOR SHARE.
+ */
 export function operatorFinanceGate(operatorOrgIds: readonly string[], role = "finance"): BankResultFileGate {
-  return async (client, actorId) => (await client.query(
-    "SELECT 1 FROM grants WHERE principal_id = $1 AND role = $2 AND org_id = ANY($3::text[]) ORDER BY org_id LIMIT 1 FOR SHARE", [actorId, role, [...operatorOrgIds]])).rowCount === 1;
+  const operators = [...new Set(operatorOrgIds)].sort();
+  const chains = async (client: pg.PoolClient) => (await client.query<{ operator: string; id: string }>(`WITH RECURSIVE chain(operator, id, parent_org_id, depth) AS (
+      SELECT id, id, parent_org_id, 0 FROM organizations WHERE id = ANY($1::text[])
+      UNION ALL SELECT c.operator, o.id, o.parent_org_id, c.depth + 1 FROM organizations o JOIN chain c ON o.id = c.parent_org_id WHERE c.depth < 64)
+    SELECT operator, id FROM chain ORDER BY operator, depth`, [operators])).rows;
+  return async (client, actorId) => {
+    if (operators.length === 0) return false;
+    const before = await chains(client);
+    const orgIds = [...new Set(before.map((row) => row.id))].sort();
+    await client.query("SELECT id FROM organizations WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE", [orgIds]);
+    const held = new Set((await client.query<{ org_id: string }>(
+      "SELECT org_id FROM grants WHERE principal_id = $1 AND role = $2 AND scope = 'subtree' AND org_id = ANY($3::text[]) ORDER BY org_id FOR SHARE",
+      [actorId, role, orgIds])).rows.map((row) => row.org_id));
+    const after = await chains(client);
+    if (JSON.stringify(after) !== JSON.stringify(before)) return false;
+    return operators.every((operator) => before.some((row) => row.operator === operator && held.has(row.id)));
+  };
 }
 
+/** Runs the lifecycle `complete` action for a transfer inside the SAME locked
+ * transaction (the payroll service's transitionInTransaction). Returns whether
+ * the transfer changed. db does not import payroll source, so the caller wires it. */
 export type BankResultCompletePort = (tx: PostgresTransferLifecycleTransaction, actor: PayLifecycleActor, transferId: string) => Promise<boolean>;
 
 export type BankResultSubmit =
