@@ -20,7 +20,7 @@ import {
   episodeVerdict,
 } from "../single-run-activation.mjs";
 import { createReceipt, nextReceiptState, validateReceipt, verifyReviewOnlyPull, receiptCommentBody, parseReceiptsFromComments, RECEIPT_IMMUTABLE_FIELDS,
-  foreignReviewReceipt, foreignReviewDisposition, endedEpisodeSupervisorSockets, settledSupervisorAnswer } from "../reconcile.mjs";
+  foreignReviewReceipt, foreignReviewDisposition, endedEpisodeSupervisorSockets, settledSupervisorAnswer, crossCardHoldCommentId } from "../reconcile.mjs";
 import { resolveReviewOnlyLane, fixtureReviewTests } from "../workspace-scope.mjs";
 import { readPullChange, reviewRule, REVIEW_ONLY_VERDICT_RULE, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { REVIEW_ONLY_BRIEF } from "../card-contracts.mjs";
@@ -1179,4 +1179,185 @@ test("SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keep
     assert.equal(young.h.receiptFor(young.unknown.attempt_id).stage, "LAUNCH_UNKNOWN", "SHU71_INSIDE_ITS_BOUND_NOT_ASKED");
     assert.deepEqual(young.operations, [], "an episode that may still run is not asked about");
   } finally { young.h.cleanup(); }
+});
+
+// SHU-71, 26 Nov: card workers 1 and 2 started together and both coordinators
+// settled the same ended review: two identical HOLD receipts for one attempt, a
+// second apart. The HOLD now carries an id derived from the card, the attempt
+// and its head, so every publisher sends the same id and Linear keeps one.
+function endedReviewBoard() {
+  return import("./fixture/episode-harness.mjs").then(({ createEpisodeHarness }) => {
+    const h = createEpisodeHarness({ configOverrides: { workers: { max: 2 }, dispatch_scope: { issue_ids: ["SHU-140"] } },
+      extraNodes: [{ id: "uuid-SHU-304", identifier: DESK, title: "review desk", state: { name: "Todo" }, priorityLabel: "Low",
+        labels: { nodes: [{ name: "repo:platform" }] }, assignee: null, delegate: null, parent: null, relations: { nodes: [] } }] });
+    const made = createReceipt({ receipt_version: "1.1.0", issue_id: DESK, authorization_ref: DESK, requested_worker: "codex-verifier",
+      role: "review", runtime: "codex-cli", repo: REPO, branch: "feature/reviewed", target_sha: HEAD,
+      workspace_scope: "full", scope_phase: "review", episode_id: "shu-304-run-20260909T230000Z", review_base_sha: BASE });
+    assert.ok(made.ok, JSON.stringify(made.errors));
+    const unknown = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+    h.comments.push({ body: receiptCommentBody(unknown), createdAt: unknown.last_activity });
+    const holds = () => h.comments.filter((c) => c.body.includes(unknown.attempt_id) && c.body.includes("held: ENDED_EPISODE_REVIEW")).length;
+    const holdId = crossCardHoldCommentId({ issueId: DESK, attemptId: unknown.attempt_id, targetSha: unknown.target_sha });
+    // Every Linear call and status answer yields first, so concurrent ticks
+    // interleave as two processes would: both re-read the thread before either
+    // writes.
+    const yieldFirst = () => new Promise((resolve) => setImmediate(resolve));
+    const through = (inner) => async (url, opts) => { await yieldFirst(); return inner(url, opts); };
+    const tick = (io = {}) => h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET }, io: {
+      fetchImpl: through(h.fetchImpl),
+      supervisorTransport: async ({ request }) => { await yieldFirst(); return supervisorAnswer(request.order, { stage: "FAILED", result: null }); },
+      ...io } });
+    const isCreate = (opts) => JSON.parse(opts.body).query.includes("commentCreate");
+    return { h, unknown, holds, holdId, tick, through, isCreate };
+  });
+}
+
+test("CROSS_CARD_HOLD_ID: the HOLD's comment id is a stable UUID v4 bound to card, attempt and head", () => {
+  const base = { issueId: DESK, attemptId: "b760441e-9aee-434e-b738-3dbf1ef608e0", targetSha: HEAD };
+  const id = crossCardHoldCommentId(base);
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, "UUID v4 shape, version and variant bits set");
+  assert.equal(crossCardHoldCommentId({ ...base }), id, "the same inputs give the same id on every worker");
+  for (const change of [{ issueId: "SHU-711" }, { attemptId: "b760441e-9aee-434e-b738-3dbf1ef608e1" }, { targetSha: "b".repeat(40) }]) {
+    assert.notEqual(crossCardHoldCommentId({ ...base, ...change }), id, JSON.stringify(change));
+  }
+});
+
+test("CROSS_CARD_SETTLE_RACE: two card workers settling the same ended review at once publish exactly one HOLD", async () => {
+  const { h, unknown, holds, holdId, tick } = await endedReviewBoard();
+  try {
+    const [one, two] = await Promise.all([tick(), tick()]);
+    assert.equal(holds(), 1, `exactly one HOLD comment\n--- worker 1\n${one.text}\n--- worker 2\n${two.text}`);
+    assert.equal(h.comments.filter((c) => c.id === holdId).length, 1, "published under its derived id");
+    assert.equal(h.receiptFor(unknown.attempt_id).stage, "HOLD");
+    assert.match([one.text, two.text].join("\n"), /HOLD comment \S+ read back after its write failed \(LINEAR_HTTP_200\); published once/);
+    await Promise.all([tick(), tick()]);
+    assert.equal(holds(), 1, "the settled review is not settled again");
+  } finally { h.cleanup(); }
+  // Control: the same race against a Linear that ignored the id publishes
+  // twice, as on 26 Nov. The id is what makes it once.
+  const control = await endedReviewBoard();
+  try {
+    const ignoreId = control.through(async (url, opts) => {
+      if (!control.isCreate(opts)) return control.h.fetchImpl(url, opts);
+      const { query, variables } = JSON.parse(opts.body);
+      const { id, ...rest } = variables;
+      assert.ok(id, "the HOLD is sent with an id");
+      return control.h.fetchImpl(url, { ...opts, body: JSON.stringify({ query, variables: rest }) });
+    });
+    // Each tick then fails: Linear did not acknowledge the id it was sent.
+    await Promise.allSettled([control.tick({ fetchImpl: ignoreId }), control.tick({ fetchImpl: ignoreId })]);
+    assert.equal(control.holds(), 2, "without the id the duplicate is reproduced");
+  } finally { control.h.cleanup(); }
+});
+
+test("CROSS_CARD_SETTLE_LOST_BEFORE_VISIBLE: a HOLD committed but not yet visible is never published a second time", async () => {
+  const { h, holds, holdId, tick, through, isCreate } = await endedReviewBoard();
+  try {
+    // Worker 1's write commits, its answer is lost, and the comment is not yet
+    // visible in reads (or worker 1 died right after sending it).
+    let hidden = null;
+    const lost = through(async (url, opts) => {
+      if (!isCreate(opts)) return h.fetchImpl(url, opts);
+      const { variables } = JSON.parse(opts.body);
+      h.commentIds.add(variables.id);
+      hidden = { id: variables.id, body: variables.body, createdAt: new Date().toISOString() };
+      throw new Error("socket hang up after the write");
+    });
+    await assert.rejects(tick({ fetchImpl: lost }), /socket hang up/);
+    assert.equal(holds(), 0, "nothing visible yet");
+    // Worker 2 reads the old state and publishes with the same id: Linear
+    // refuses it, the read-back does not see it yet, and the tick fails.
+    await assert.rejects(tick(), /duplicate id/);
+    assert.equal(holds(), 0, "no second comment was created");
+    // The first commit becomes visible: every later tick reads it and sends nothing.
+    h.comments.push(hidden);
+    const later = await Promise.all([tick(), tick()]);
+    assert.equal(holds(), 1, later.map((r) => r.text).join("\n---\n"));
+    assert.equal(h.comments.filter((c) => c.id === holdId).length, 1);
+    // A tick whose board read still missed it finds it by id before writing.
+    const staleBoard = through(async (url, opts) => {
+      if (!JSON.parse(opts.body).query.includes("CoordinatorIssues")) return h.fetchImpl(url, opts);
+      const at = h.comments.indexOf(hidden);
+      h.comments.splice(at, 1);
+      try { return await h.fetchImpl(url, opts); } finally { h.comments.splice(at, 0, hidden); }
+    });
+    const stale = await tick({ fetchImpl: staleBoard });
+    assert.match(stale.text, new RegExp(`not written — its HOLD is already published as comment ${holdId}`));
+    assert.equal(holds(), 1);
+  } finally { h.cleanup(); }
+});
+
+test("CROSS_CARD_SETTLE_UNCERTAIN_PUBLISH: a HOLD write that lands and then fails is read back as published, never written twice", async () => {
+  const { h, unknown, holds, tick, through, isCreate } = await endedReviewBoard();
+  try {
+    const lost = through(async (url, opts) => {
+      if (!isCreate(opts)) return h.fetchImpl(url, opts);
+      await h.fetchImpl(url, opts);
+      throw new Error("socket hang up after the write");
+    });
+    const run = await tick({ fetchImpl: lost });
+    assert.equal(holds(), 1, run.text);
+    assert.match(run.text, /HOLD comment \S+ read back after its write failed \(unknown\); published once/);
+    assert.equal(h.receiptFor(unknown.attempt_id).stage, "HOLD");
+    const next = await Promise.all([tick(), tick()]);
+    assert.equal(holds(), 1, next.map((r) => r.text).join("\n---\n"));
+  } finally { h.cleanup(); }
+});
+
+// A HOLD is published only on Linear's positive acknowledgement of its own id,
+// or on reading back that id carrying this attempt, this head and HOLD.
+// Anything else fails the tick with the slot still held.
+async function unconfirmedPublish(answerCreate) {
+  const { h, unknown, holdId, tick, through, isCreate } = await endedReviewBoard();
+  const out = [];
+  const create = through(async (url, opts) => {
+    if (!isCreate(opts)) return h.fetchImpl(url, opts);
+    const { variables } = JSON.parse(opts.body);
+    return { status: 200, ok: true, json: async () => answerCreate({ h, unknown, holdId, variables }) };
+  });
+  let failed = null;
+  try { await tick({ fetchImpl: create, stdout: (line) => out.push(line) }); } catch (error) { failed = error; }
+  const text = out.join("\n");
+  h.cleanup();
+  return { failed, text, unknown };
+}
+const heldNotPublished = ({ failed, text }, label) => {
+  assert.ok(failed, `${label}: the tick fails`);
+  assert.doesNotMatch(text, /published once/, `${label}: never logged as published`);
+  assert.doesNotMatch(text, /-> HOLD \(ENDED_EPISODE_REVIEW/, `${label}: the slot is not freed`);
+};
+// A comment written under the HOLD's id whose receipt is changed by `edit`.
+const storedUnderId = (edit) => ({ h, unknown, variables }) => {
+  const hold = nextReceiptState(unknown, { type: "hold", reason: "ENDED_EPISODE_REVIEW: test" }).receipt;
+  h.comments.push({ id: variables.id, body: receiptCommentBody(edit(hold, unknown)), createdAt: new Date().toISOString() });
+  return { errors: [{ message: "duplicate id" }] };
+};
+
+test("CROSS_CARD_PUBLISH_UNACKNOWLEDGED: success false, another comment id, or no comment id never frees the slot", async () => {
+  for (const [label, answerCreate] of [
+    ["success false", () => ({ data: { commentCreate: { success: false, comment: null } } })],
+    ["another comment id", () => ({ data: { commentCreate: { success: true, comment: { id: "00000000-0000-4000-8000-000000000000" } } } })],
+    ["another comment id, with a HOLD stored under it", ({ h, unknown }) => {
+      const hold = nextReceiptState(unknown, { type: "hold", reason: "ENDED_EPISODE_REVIEW: test" }).receipt;
+      h.comments.push({ id: "00000000-0000-4000-8000-000000000000", body: receiptCommentBody(hold), createdAt: new Date().toISOString() });
+      return { data: { commentCreate: { success: true, comment: { id: "00000000-0000-4000-8000-000000000000" } } } };
+    }],
+    ["no comment id", () => ({ data: { commentCreate: { success: true, comment: null } } })],
+  ]) {
+    const result = await unconfirmedPublish(answerCreate);
+    heldNotPublished(result, label);
+    assert.equal(result.failed.code, "LINEAR_PUBLISH_UNCONFIRMED", `${label}: ${result.failed.message}`);
+  }
+});
+
+test("CROSS_CARD_PUBLISH_MISMATCHED_READBACK: the HOLD's id on the thread with another attempt, head or stage never frees the slot", async () => {
+  for (const [label, edit] of [
+    ["another attempt", (hold) => ({ ...hold, attempt_id: "00000000-0000-4000-8000-0000000000aa" })],
+    ["another head", (hold) => ({ ...hold, target_sha: "b".repeat(40) })],
+    ["not HOLD", (hold, unknown) => unknown],
+  ]) {
+    const result = await unconfirmedPublish(storedUnderId(edit));
+    heldNotPublished(result, label);
+    assert.match(result.failed.message, /duplicate id/, `${label}: the write's own error stands`);
+  }
 });
