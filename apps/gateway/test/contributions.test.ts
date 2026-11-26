@@ -28,10 +28,14 @@ test("PREP_NAV default area contributions preserve profile navigation", () => {
     { key: "invitations", order: 250 },
     { key: "work", order: 260 },
     { key: "workspaces", order: 300 },
+    { key: "account", order: 310 },
   ]);
   assert.deepEqual(CONTRIBUTIONS.profileRows, []);
   assert.equal(CONTRIBUTIONS.navigation[3]!.visible({}), false);
   assert.equal(CONTRIBUTIONS.navigation[3]!.visible({ access: {} as never }), true);
+  assert.equal(CONTRIBUTIONS.navigation[7]!.visible({ access: {} as never }), false, "Account shows only where the sessions store is wired");
+  assert.equal(CONTRIBUTIONS.navigation[7]!.visible({ access: { account: {} } as never }), true);
+  assert.equal(CONTRIBUTIONS.navigation[7]!.href, "/account");
   assert.equal(CONTRIBUTIONS.navigation[6]!.visible({}), false);
   assert.equal(CONTRIBUTIONS.navigation[6]!.visible({ navigation: {} as never }), true);
   assert.equal(CONTRIBUTIONS.navigation[4]!.visible({ navigation: {} as never }), false, "invitations show only where recruit is wired");
