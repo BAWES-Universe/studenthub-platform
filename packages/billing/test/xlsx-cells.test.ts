@@ -62,6 +62,10 @@ test("XLSX_CELLS shared, inline and rich strings, numbers, gaps and entities kee
   assert.deepEqual(cells, [[], ["Status", null, "in & out"], [], [null, "120.5", null, "REF-1", "1", null]]);
   assert.deepEqual(readXlsxCells(zip(book(`<row r="1"><c r="A1" t="s"><v>0</v></c></row>`, "<si><t>stored</t></si>"), true)), [["stored"]]);
   assert.deepEqual(readXlsxCells(zip(book(`<row r="1"><c r="A1"><v>7</v></c></row>`, undefined, "worksheets/other.xml"))), [["7"]]);
+  assert.deepEqual(readXlsxCells(zip(book(`<row><c><v>1</v></c></row><row r="3"><c><v>3</v></c></row><row><c><v>4</v></c></row>`))), [["1"], [], ["3"], ["4"]],
+    "a row without r follows the previous row");
+  assert.deepEqual(readXlsxCells(zip(book(`<row r="1"><c r="A1" t="inlineStr"><is><t>a&#x110000;b&#99999999999;c&#x41;</t></is></c></row>`))), [["a\uFFFDb\uFFFDcA"]],
+    "a numeric reference past Unicode reads as U+FFFD, not an exception");
 });
 
 test("XLSX_REFUSED anything that is not a readable, bounded workbook is refused, not guessed", () => {

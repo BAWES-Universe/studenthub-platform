@@ -56,10 +56,12 @@ function read(zip: Buffer, all: Map<string, Entry>, name: string): string | null
 }
 
 const ENTITY: Readonly<Record<string, string>> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'" };
+/** A numeric reference past Unicode is not a character: it reads as U+FFFD instead of throwing. */
+const codePoint = (n: number): string => (Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : "\uFFFD");
 function text(xml: string): string {
   return xml.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|amp|lt|gt|quot|apos);/gu, (_, e: string) =>
-    e.startsWith("#x") ? String.fromCodePoint(parseInt(e.slice(2), 16))
-      : e.startsWith("#") ? String.fromCodePoint(parseInt(e.slice(1), 10)) : ENTITY[e]!);
+    e.startsWith("#x") ? codePoint(parseInt(e.slice(2), 16))
+      : e.startsWith("#") ? codePoint(parseInt(e.slice(1), 10)) : ENTITY[e]!);
 }
 /** All <t> text of one string item, rich-text runs joined; phonetic runs dropped. */
 function itemText(xml: string): string {
@@ -103,7 +105,9 @@ export function readXlsxCells(bytes: Uint8Array): BankCell[][] | null {
   const shared = sharedXml === null ? [] : [...sharedXml.matchAll(/<si>([\s\S]*?)<\/si>|<si\/>/gu)].map((m) => itemText(m[1] ?? ""));
   const grid: BankCell[][] = [];
   for (const row of sheet.matchAll(/<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/gu)) {
-    const r = Number(attr(row[1]!, "r"));
+    // `r` is optional in SpreadsheetML: a row without it follows the previous one.
+    const rowRef = attr(row[1]!, "r");
+    const r = rowRef === null ? grid.length + 1 : Number(rowRef);
     if (!Number.isInteger(r) || r < 1) return null;
     if (r > MAX_ROWS) return null;
     const cells: BankCell[] = [];
