@@ -40,3 +40,15 @@ test("G02_EFFECT_BELOW a company role's scope decides what it opens in the compa
   // StudentHub itself has no "below" of its own: its company abilities are already asked at a company below it.
   assert.deepEqual(effect([], { orgId: "root", role: "org-owner", after: "subtree" }).gainedBelow, []);
 });
+
+test("G02_EFFECT_OPERATORS a role on a second operator is previewed at that operator, not the first", () => {
+  const OPS2 = ["root", "root2"];
+  const at = (held: { orgId: string; role: string; scope: string }[], change: { orgId: string; role: string; after: string | null }, orgAncestors: string[] = []) =>
+    [...grantChangeEffect({ held, change, orgAncestors, operatorOrgIds: OPS2 }).gained];
+  // An administrator of the first operator does not give roles on the second: an admin grant there adds that.
+  assert.ok(at([{ orgId: "root", role: "admin", scope: "self" }], { orgId: "root2", role: "admin", after: "self" }).includes("give_operator_roles"));
+  // Control: the same grant again on the first operator adds nothing.
+  assert.deepEqual(at([{ orgId: "root", role: "admin", scope: "self" }], { orgId: "root", role: "admin", after: "self" }), []);
+  // A first administrator grant opens the same on either operator, and what the catalogue's row says.
+  assert.deepEqual(at([], { orgId: "root2", role: "admin", after: "self" }), opens("operator", "admin", "self"));
+});

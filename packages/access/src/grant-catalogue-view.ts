@@ -68,11 +68,13 @@ const CHILD = "catalogue-child-company";
 export interface CapabilityPlace {
   readonly companyId: string;
   readonly companyAncestors: readonly string[];
+  /** The operator organization the StudentHub-wide questions are asked at; the first configured one when absent. */
+  readonly operator?: string;
 }
 
 /** What a set of grants opens, asked of the same rules the platform enforces. Pure. */
 export function capabilitiesAt(grants: readonly HeldGrant[], place: CapabilityPlace, operatorOrgIds: readonly string[]): CatalogueCapability[] {
-  const operator = operatorOrgIds[0];
+  const operator = place.operator ?? operatorOrgIds[0];
   if (operator === undefined) throw new RangeError("capabilities need an operator organization");
   const { companyId: company, companyAncestors } = place;
   const child = { id: CHILD, ancestors: [...companyAncestors, company] };
@@ -161,9 +163,11 @@ export function grantChangeEffect(input: {
   const operatorOrgIds = input.operatorOrgIds ?? DEFAULT_OPERATOR_ORG_IDS;
   const { change } = input;
   const onOperator = operatorOrgIds.includes(change.orgId);
+  // The operator the change is asked at: the changed one, or the one above the changed company.
+  const operator = onOperator ? change.orgId : operatorOrgIds.find((id) => input.orgAncestors.includes(id)) ?? operatorOrgIds[0];
   const place = onOperator
-    ? { companyId: COMPANY, companyAncestors: [change.orgId] }
-    : { companyId: change.orgId, companyAncestors: input.orgAncestors };
+    ? { companyId: COMPANY, companyAncestors: [change.orgId], ...(operator ? { operator } : {}) }
+    : { companyId: change.orgId, companyAncestors: input.orgAncestors, ...(operator ? { operator } : {}) };
   const others = input.held.filter((grant) => !(grant.orgId === change.orgId && grant.role === change.role));
   const after = change.after === null ? others : [...others, { orgId: change.orgId, role: change.role, scope: change.after }];
   const diff = (at: CapabilityPlace, among: readonly CatalogueCapability[]) => {
@@ -179,6 +183,6 @@ export function grantChangeEffect(input: {
   // ask a company directly below the changed one as well.
   const below = onOperator
     ? { gained: Object.freeze([]), lost: Object.freeze([]) }
-    : diff({ companyId: CHILD, companyAncestors: [...input.orgAncestors, change.orgId] }, COMPANY_CAPABILITIES);
+    : diff({ companyId: CHILD, companyAncestors: [...input.orgAncestors, change.orgId], ...(operator ? { operator } : {}) }, COMPANY_CAPABILITIES);
   return Object.freeze({ gained: here.gained, lost: here.lost, gainedBelow: below.gained, lostBelow: below.lost });
 }
