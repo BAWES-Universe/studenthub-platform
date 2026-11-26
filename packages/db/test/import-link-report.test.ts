@@ -68,6 +68,11 @@ test("the link report lists unlinked, not imported, multiply offered, taken and 
   await promoted(p7, mismatch, { email: "mismatch" });
   await link(p8, changed);
   await promoted(p8, changed, { email: "addressChanged", phone: "personWritten" });
+  // Promoted for one person, unlinked, relinked to another and promoted again: listed once.
+  const p10 = await person();
+  await unlink(p7, mismatch);
+  await link(p10, mismatch);
+  await promoted(p10, mismatch, { email: "mismatch", phone: "taken" });
   await link(p9, clean);
   await promoted(p9, clean, { email: "unverifiable", phone: "none", civil: "undecryptable" });
 
@@ -75,8 +80,8 @@ test("the link report lists unlinked, not imported, multiply offered, taken and 
   const mine = (rule: (typeof LINK_REPORT_RULES)[number]) => report.ids[rule].filter((id) => Number(id) >= a && Number(id) < a + 1000);
   assert.deepEqual(mine("link.unlinked"), [String(unlinked)]);
   assert.deepEqual(mine("link.notImported"), [String(gone)]);
-  assert.deepEqual(mine("link.multiplyOffered"), [String(offered)]);
-  assert.deepEqual(mine("link.contactTaken"), [String(taken), String(civilTaken)]);
+  assert.deepEqual(mine("link.multiplyOffered"), [String(mismatch), String(offered)]);
+  assert.deepEqual(mine("link.contactTaken"), [String(taken), String(civilTaken), String(mismatch)]);
   assert.deepEqual(mine("link.emailMismatch"), [String(mismatch), String(changed)]);
 
   // Numeric order across lengths, each id once, and only plain legacy ids.
@@ -88,7 +93,7 @@ test("the link report lists unlinked, not imported, multiply offered, taken and 
   }
   // Nothing but ids and totals: no principal id leaves the report.
   const text = JSON.stringify(report);
-  for (const p of [p1, p2, p3, p4, p5, p6, p7, p8, p9]) assert.ok(!text.includes(p));
+  for (const p of [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10]) assert.ok(!text.includes(p));
 
   const counts = linkReportCounts(report);
   assert.deepEqual(Object.keys(counts.rules), [...LINK_REPORT_RULES]);

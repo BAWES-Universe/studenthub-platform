@@ -12,6 +12,7 @@
 //   already holds (legacy_contact_promotions, outcome taken);
 // - link.emailMismatch: a promoted person whose current address does not hash to the candidate's
 //   verified legacy address, or changed under the promotion (outcome mismatch or addressChanged).
+//   A candidate promoted for more than one principal over time (relinked) is listed once.
 //
 // Links are keyed by principal and legacy id, never by email. The report reads only ids and
 // outcome codes: no name, contact value, digest, address or principal id leaves this module.
@@ -44,9 +45,9 @@ const QUERIES: { readonly [R in LinkReportRule]: string } = {
   "link.multiplyOffered": `SELECT legacy_candidate_id AS id FROM legacy_account_link_events WHERE kind = 'linked'
     GROUP BY legacy_candidate_id HAVING count(DISTINCT principal_id) > 1 ${ORDER}`,
   "link.contactTaken": `SELECT legacy_candidate_id AS id FROM legacy_contact_promotions
-    WHERE 'taken' IN (phone, handle, civil_id) ${ORDER}`,
+    WHERE 'taken' IN (phone, handle, civil_id) GROUP BY legacy_candidate_id ${ORDER}`,
   "link.emailMismatch": `SELECT legacy_candidate_id AS id FROM legacy_contact_promotions
-    WHERE email IN ('mismatch', 'addressChanged') ${ORDER}`,
+    WHERE email IN ('mismatch', 'addressChanged') GROUP BY legacy_candidate_id ${ORDER}`,
 };
 
 const TOTALS = `SELECT (SELECT count(*) FROM legacy_candidate_snapshots)::int AS imported,
