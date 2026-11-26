@@ -95,7 +95,7 @@ test("COMMS_RECRUIT_DISPATCH_PG each recruit event reaches its recipient once: a
 // The worker's own email_delivery work (default batch size), with a sender that delivers.
 function workerRun(port: FakeEmailPort) {
   const emailStore = new PostgresEmailOutboxStore({ pool });
-  return emailDeliveryWork({ recruitDispatch: dispatcher, placementFeed: { dispatch: async () => 0 }, service: new EmailOutboxService(emailStore, port, true, true),
+  return emailDeliveryWork({ recruitDispatch: dispatcher, placementFeed: { dispatch: async () => 0 }, transferPaidFeed: { dispatch: async () => 0 }, service: new EmailOutboxService(emailStore, port, true, true),
     summaryStore: new PostgresMorningSummaryStore({ pool }), spikeStore: new PostgresFiringSpikeStore({ pool }), reminders: new PostgresPersonRemindersStore({ pool }), volumeStore: emailStore, alert: () => undefined });
 }
 
