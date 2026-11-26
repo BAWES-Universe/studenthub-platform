@@ -8,6 +8,7 @@ import {
   grantCatalogue,
   grantCatalogueView,
   grantChangeEffect,
+  effectiveAccess,
   mayOpenAccessAdmin,
   mayPauseAccount,
   parseGrantChange,
@@ -22,6 +23,7 @@ import {
   type PauseRefusal,
   type AccessGrantRow,
   type GrantChangeEffect,
+  type EffectivePlace,
   type AccessGrantService,
   type AccessEventRow,
   type AccessOrganization,
@@ -74,6 +76,7 @@ const SESSION = "__Host-studenthub_session";
 const BODY_LIMIT = 8192;
 const PERSON = /^\/admin\/access\/people\/([^/]+)$/;
 const PAUSE = /^\/admin\/access\/people\/([^/]+)\/(pause|resume)$/;
+const AUDIT = /^\/admin\/access\/people\/([^/]+)\/audit$/;
 
 export const ROLE_NAMES: Readonly<Record<string, string>> = Object.freeze({
   candidate: "Candidate", staff: "Staff", admin: "Administrator",
@@ -280,7 +283,7 @@ export function renderPersonAccess(model: PersonPageModel): string {
   const history = model.history.length === 0 ? `<p class="empty-contexts">No changes recorded on this page yet.</p>`
     : `<div class="directory-table"><table><caption>Changes (latest ${model.history.length})</caption><thead><tr><th>When</th><th>Change</th><th>Organization</th><th>Role</th><th>Scope</th><th>By</th><th>Reason</th></tr></thead><tbody>${model.history.map((event) =>
       `<tr><td>${e(dateText(event.occurredAt))}</td><td>${event.action === "grant" ? "Given" : "Taken away"}</td><td>${e(event.orgName)}</td><td>${e(ROLE_NAMES[event.role] ?? event.role)}</td><td>${e(SCOPE_NAMES[event.scope] ?? event.scope)}</td><td>${e(personName(event.actor))}</td><td>${e(event.reason)}</td></tr>`).join("")}</tbody></table></div>`;
-  return layout(`<p><a class="text-link" href="/admin/access">← Find another person</a></p><div class="profile-heading"><h1>${e(personName(person))}<span class="accent">.</span></h1></div><p>${e(person.email ?? "No email address recorded")}</p>${notice ? `<section class="notice context-notice" role="status"><strong>${e(notice)}</strong></section>` : ""}${renderPauseSection(model)}<section><h2>Roles</h2>${grantRows}</section><section><h2>Give a role</h2>${give}</section><section><h2>History</h2>${history}</section>`, "access");
+  return layout(`<p><a class="text-link" href="/admin/access">← Find another person</a></p><div class="profile-heading"><h1>${e(personName(person))}<span class="accent">.</span></h1></div><p>${e(person.email ?? "No email address recorded")}</p>${notice ? `<section class="notice context-notice" role="status"><strong>${e(notice)}</strong></section>` : ""}${renderPauseSection(model)}<section><h2>Roles</h2>${grantRows}<p><a class="text-link" href="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}/audit`)}">What their access does now →</a></p></section><section><h2>Give a role</h2>${give}</section><section><h2>History</h2>${history}</section>`, "access");
 }
 
 function renderGrantEffect(name: string, effect: GrantChangeEffect): string {
@@ -290,6 +293,33 @@ function renderGrantEffect(name: string, effect: GrantChangeEffect): string {
   const lost = effect.lost.length ? `<p>${e(name)} will no longer be able to:</p>${list(effect.lost)}` : "";
   const none = gained || lost ? "" : `<p>Nothing in the <a class="text-link" href="/admin/access/catalogue">grant catalogue</a> changes for ${e(name)}: their other roles already decide it.</p>`;
   return `<section class="grant-effect"><h2>What changes for them</h2>${gained}${lost}${none}</section>`;
+}
+
+export function renderGrantAudit(input: {
+  readonly person: AccessPerson;
+  readonly places: readonly EffectivePlace[];
+  readonly names: ReadonlyMap<string, string>;
+  readonly pause: AccountPause | null;
+  readonly grantCount: number;
+}): string {
+  const e = escapeHtml;
+  const name = personName(input.person);
+  const back = personHref(input.person.principalId);
+  const source = (grant: { readonly orgId: string; readonly role: string; readonly scope: string }) =>
+    `${ROLE_NAMES[grant.role] ?? grant.role} on ${input.names.get(grant.orgId) ?? grant.orgId}, ${(SCOPE_NAMES[grant.scope] ?? grant.scope).toLowerCase()}`;
+  const paused = input.pause
+    ? `<section class="notice context-notice" role="status"><strong>Access paused</strong> on ${e(dateText(input.pause.pausedAt))} by ${e(personName(input.pause.pausedBy))}. Their next request is signed out and nothing below applies until access is resumed.</section>`
+    : "";
+  const sections = input.places.map((place) => {
+    const title = place.operator ? "On StudentHub, and every company below it" : `On ${input.names.get(place.orgId) ?? place.orgId}`;
+    const body = place.abilities.length === 0
+      ? `<p class="empty-contexts">Nothing in the <a class="text-link" href="/admin/access/catalogue">grant catalogue</a>.</p>`
+      : `<div class="directory-table"><table><caption>${e(title)}</caption><thead><tr><th>Ability</th><th>Because of</th></tr></thead><tbody>${place.abilities.map((ability) =>
+        `<tr><th scope="row">${e(CAPABILITY_TEXT[ability.capability])}</th><td>${ability.from.length ? `<ul>${ability.from.map((grant) => `<li>${e(source(grant))}</li>`).join("")}</ul>` : "Their roles together"}</td></tr>`).join("")}</tbody></table></div>`;
+    return `<section><h2>${e(title)}</h2>${body}</section>`;
+  }).join("");
+  const none = input.grantCount === 0 && !input.pause ? `<p class="empty-contexts" role="status">${e(name)} holds no roles, so nothing below is open to them.</p>` : "";
+  return layout(`<p><a class="text-link" href="${e(back)}">← ${e(name)}</a></p><div class="profile-heading"><div><div class="eyebrow">GRANT AUDIT</div><h1>What ${e(name)}’s access does now<span class="accent">.</span></h1><p>Roles are read again on every request, so this is what their next request gets. Each ability names the roles that give it.</p></div><span class="badge">Read-only</span></div>${paused}${none}${sections}<p><a class="text-link" href="${e(back)}">See their roles and the history of changes</a></p>`, "access");
 }
 
 export function renderGrantReview(input: {
@@ -392,7 +422,9 @@ export async function handleAccess(
   if (isAccount) return handleAccount(req, res, ports, origin, write, path);
   const personMatch = PERSON.exec(path);
   const pauseMatch = PAUSE.exec(path);
+  const auditMatch = AUDIT.exec(path);
   const isAdminPath = path === "/admin/access" || path === "/admin/access/catalogue" || path === "/admin/access/preview" || path === "/admin/access/confirm" || personMatch !== null
+    || auditMatch !== null
     || (pauseMatch !== null && ports?.pauses !== undefined);
   if (!isOwn && !isAdminPath) return false;
   if (!ports) return false;
@@ -464,6 +496,24 @@ export async function handleAccess(
         viewAs: ports.views !== undefined && mayPauseAccount(caller, principalId, callerGrants, pause ? pause.grants : grants, ports.operatorOrgIds),
       } : {}),
     }));
+    return true;
+  }
+
+  if (auditMatch) {
+    if (req.method !== "GET") return false;
+    let principalId: string;
+    try { principalId = decodeURIComponent(auditMatch[1]!); } catch { return false; }
+    if (principalId.includes("\u0000")) return false;
+    const person = await ports.reads.person(principalId);
+    if (!person) return false;
+    const [grants, pause] = await Promise.all([
+      ports.reads.grants(principalId),
+      ports.pauses ? ports.pauses.reads.pause(principalId) : Promise.resolve(undefined),
+    ]);
+    const organizations = await ports.reads.organizations([...new Set(grants.map((grant) => grant.orgId))]);
+    const places = effectiveAccess({ held: grants, organizations, ...(ports.operatorOrgIds ? { operatorOrgIds: ports.operatorOrgIds } : {}) });
+    const names = new Map(grants.map((grant) => [grant.orgId, grant.orgName] as const));
+    write(200, `${personName(person)}: access now`, renderGrantAudit({ person, places, names, pause: pause ?? null, grantCount: grants.length }));
     return true;
   }
 

@@ -165,3 +165,51 @@ export function grantChangeEffect(input: {
     lost: Object.freeze(CATALOGUE_CAPABILITIES.filter((capability) => before.has(capability) && !now.has(capability))),
   });
 }
+
+/**
+ * Access lane G-03: what a person's grants do on their next request, and
+ * which grant gives each ability. Grants are read on every request, so this
+ * is exactly what the next request gets.
+ */
+export interface EffectiveAbility {
+  readonly capability: CatalogueCapability;
+  /** The held grants that give it on their own; empty when only a combination does. */
+  readonly from: readonly HeldGrant[];
+}
+
+export interface EffectivePlace {
+  /** The operator (StudentHub itself, and companies below it) or a company the person holds a grant on. */
+  readonly orgId: string;
+  readonly operator: boolean;
+  readonly abilities: readonly EffectiveAbility[];
+}
+
+export function effectiveAccess(input: {
+  readonly held: readonly HeldGrant[];
+  /** The organizations the person holds grants on, with their ancestors. */
+  readonly organizations: readonly { readonly orgId: string; readonly ancestors: readonly string[] }[];
+  readonly operatorOrgIds?: readonly string[];
+}): readonly EffectivePlace[] {
+  const operatorOrgIds = input.operatorOrgIds ?? DEFAULT_OPERATOR_ORG_IDS;
+  const operator = operatorOrgIds[0];
+  if (operator === undefined) throw new RangeError("effective access needs an operator organization");
+  const places: { orgId: string; operator: boolean; place: CapabilityPlace }[] = [
+    { orgId: operator, operator: true, place: { companyId: COMPANY, companyAncestors: [operator] } },
+  ];
+  for (const org of input.organizations) {
+    if (operatorOrgIds.includes(org.orgId) || places.some((item) => item.orgId === org.orgId)) continue;
+    if (!input.held.some((grant) => grant.orgId === org.orgId)) continue;
+    places.push({ orgId: org.orgId, operator: false, place: { companyId: org.orgId, companyAncestors: org.ancestors } });
+  }
+  return Object.freeze(places.map(({ orgId, operator: isOperator, place }) => {
+    const all = capabilitiesAt(input.held, place, operatorOrgIds);
+    const alone = input.held.map((grant) => [grant, new Set(capabilitiesAt([grant], place, operatorOrgIds))] as const);
+    return Object.freeze({
+      orgId, operator: isOperator,
+      abilities: Object.freeze(all.map((capability) => Object.freeze({
+        capability,
+        from: Object.freeze(alone.filter(([, opens]) => opens.has(capability)).map(([grant]) => grant)),
+      }))),
+    });
+  }));
+}

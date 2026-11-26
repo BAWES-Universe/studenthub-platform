@@ -324,3 +324,23 @@ test("G02_PREVIEW_EFFECT the review page says what the change opens or closes fo
   assert.doesNotMatch(await (await http.post("/admin/access/preview", "admin-1", { ...grantForm, role: "finance" })).text(), /What changes for them/);
   assert.equal(events.length, 0, "previews write nothing");
 });
+
+test("G03_AUDIT_PAGE an administrator sees what a person's access does now and why; everyone else gets the unknown-path 404", async (t) => {
+  const { ports } = world();
+  const http = await serve(t, ports);
+  for (const principalId of [undefined, "candidate-1", "owner-1", "staff-self"]) {
+    await sameAsUnknown(await http.get("/admin/access/people/owner-1/audit", principalId), await http.get("/definitely-unknown", principalId), `${principalId ?? "signed out"} audit`);
+  }
+  await sameAsUnknown(await http.get("/admin/access/people/nobody/audit", "admin-1"), await http.get("/definitely-unknown", "admin-1"), "unknown person audit");
+  assert.equal((await http.post("/admin/access/people/owner-1/audit", "admin-1", {})).status, 404, "the audit page is read-only");
+  const page = await http.get("/admin/access/people/owner-1/audit", "admin-1");
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /What Omar Owner’s access does now/);
+  assert.match(html, /<h2>On StudentHub, and every company below it<\/h2><p class="empty-contexts">Nothing in the <a class="text-link" href="\/admin\/access\/catalogue">grant catalogue<\/a>\.<\/p>/);
+  assert.match(html, /<h2>On Acme &lt;Trading&gt;<\/h2>.*<tr><th scope="row">Change company contacts<\/th><td><ul><li>Organization owner on Acme &lt;Trading&gt;, this organization and its sub-companies<\/li><\/ul><\/td><\/tr>/);
+  // An operator administrator: StudentHub-wide abilities, each with its grant.
+  assert.match(await (await http.get("/admin/access/people/admin-1/audit", "admin-1")).text(), /<tr><th scope="row">Manage blocked addresses<\/th><td><ul><li>Administrator on StudentHub, this organization and its sub-companies<\/li><\/ul><\/td><\/tr>/);
+  // The person page links to it.
+  assert.match(await (await http.get("/admin/access/people/owner-1", "admin-1")).text(), /href="\/admin\/access\/people\/owner-1\/audit">What their access does now →<\/a>/);
+});

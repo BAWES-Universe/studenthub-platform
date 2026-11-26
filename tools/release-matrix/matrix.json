@@ -1390,11 +1390,11 @@
     },
     "G-03": {
       "lane": "access",
-      "subject": "`/access/grants/audit` \u2014 effective grants, provenance, history, next-request result",
+      "subject": "`/admin/access/people/:principalId/audit` \u2014 effective grants, provenance, history, next-request result",
       "gates": {
         "built": {
           "state": "open",
-          "note": "partly built (audit 2026-11-20): authz audit API; no audit page"
+          "note": "built in the grant audit PR; closes at its final code head"
         },
         "verified": {
           "state": "open"
