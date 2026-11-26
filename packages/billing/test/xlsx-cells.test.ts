@@ -131,3 +131,23 @@ test("XLSX_CONTRACT_FIXTURES the AUB and KFH result layouts from the bank-file c
     assert.equal(readBankResultSheet(format, cells).kind, "refused", id);
   }
 });
+
+test("XLSX_WELL_FORMED a truncated or malformed sheet is refused, shared strings are bounded as they are read, and scanning stays linear", () => {
+  const sheet = (xml: string, shared?: string) => cellsOf(zip({ ...book("", shared), "xl/worksheets/sheet1.xml": xml }));
+  const full = `<worksheet><sheetData><row r="1"><c><v>1</v></c></row><row r="3"/><row r="4"><c r="B4"><v>4</v></c></row></sheetData></worksheet>`;
+  assert.deepEqual(sheet(full), [["1"], [], [], [null, "4"]], "empty rows and gaps are kept");
+  for (const cut of [full.indexOf("<row r=\"4\">") + 12, full.indexOf("</row></sheetData>"), full.length - 13, full.length - 1])
+    assert.equal(sheet(full.slice(0, cut)), "unreadable", `cut at ${cut}`);
+  assert.equal(sheet(`<worksheet><sheetData><row r="1"><c><v>1</c></v></row></sheetData></worksheet>`), "unreadable", "crossed tags");
+  assert.equal(sheet(`<worksheet><sheetData><row r="1"><c><v><![CDATA[1]]></v></c></row></sheetData></worksheet>`), "unreadable", "CDATA");
+  assert.equal(sheet(`<worksheet><sheetData></sheetData></worksheet><worksheet/>`), "unreadable", "a second root");
+  assert.equal(sheet(`<worksheet/>`), "unreadable", "no sheetData");
+  assert.equal(sheet(`<worksheet><sheetData><row r="1"><row r="2"/></row></sheetData></worksheet>`), "unreadable", "a row inside a row");
+  assert.deepEqual(sheet(`<?xml version="1.0"?><x:worksheet xmlns:x="ns"><!-- <row r="1"> --><x:sheetData><x:row r="2"><x:c r="A2" t="inlineStr"><x:is><x:t>a &gt; b</x:t></x:is></x:c></x:row></x:sheetData></x:worksheet>`),
+    [[], ["a > b"]], "comments and prefixes are read as XML, not as rows");
+  const empties = `<sst>${"<si/>".repeat(10_010 * 64 + 1)}</sst>`;
+  assert.equal(sheet(full, empties.slice(5, -6)), "too_large", "more shared strings than cells a sheet may hold");
+  const started = Date.now();
+  assert.deepEqual(sheet(`<worksheet><!--${"<row>".repeat(100_000)}--><sheetData><row r="1"><c><v>1</v></c></row></sheetData>${"<!-- <row> -->".repeat(50_000)}</worksheet>`), [["1"]]);
+  assert.ok(Date.now() - started < 2000, `linear scan, took ${Date.now() - started} ms`);
+});

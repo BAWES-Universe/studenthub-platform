@@ -19,6 +19,8 @@ const MAX_ROWS = 10_010;
 export const XLSX_MAX_FIELD_CHARS = 1024;
 /** Characters of cell text across the whole grid (shared strings can repeat one long text many times). */
 const MAX_GRID_CHARS = 2_000_000;
+/** Distinct shared strings: no more than the cells a sheet may hold. */
+const MAX_SHARED_STRINGS = MAX_ROWS * MAX_COLUMNS;
 
 export type XlsxRead =
   | { readonly kind: "cells"; readonly cells: BankCell[][] }
@@ -74,11 +76,6 @@ function text(xml: string): string {
     e.startsWith("#x") ? codePoint(parseInt(e.slice(2), 16))
       : e.startsWith("#") ? codePoint(parseInt(e.slice(1), 10)) : ENTITY[e]!);
 }
-/** All <t> text of one string item, rich-text runs joined; phonetic runs dropped. */
-function itemText(xml: string): string {
-  return [...xml.replace(/<rPh\b[\s\S]*?<\/rPh>/gu, "").matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>|<t(?:\s[^>]*)?\/>/gu)]
-    .map((m) => text(m[1] ?? "")).join("");
-}
 const attr = (tag: string, name: string): string | null => new RegExp(`\\s${name}="([^"]*)"`, "u").exec(tag)?.[1] ?? null;
 
 /** `B12` as column 1 of row 12; null for anything else. */
@@ -105,6 +102,89 @@ function firstSheet(zip: Buffer, all: Map<string, Entry>): string | null {
   return read(zip, all, path.replace(/\/\.\//gu, "/"));
 }
 
+/**
+ * One linear pass over an XML part. Calls `open` for each start tag (and `close` right after a
+ * self-closing one), `close` for each end tag, and `text` for character data inside the root.
+ * Comments and processing instructions are skipped; DOCTYPE, CDATA, mismatched or unclosed tags,
+ * a second root or text outside the root are malformed. False when malformed or a handler refuses,
+ * so a truncated part is never read as a shorter one.
+ */
+interface XmlHandler { open(name: string, tag: string): boolean; close(name: string): boolean; text(raw: string): boolean }
+const localName = (qualified: string) => qualified.slice(qualified.indexOf(":") + 1);
+function scanXml(xml: string, handler: XmlHandler): boolean {
+  const stack: string[] = [];
+  let at = 0, rooted = false;
+  while (at < xml.length) {
+    const lt = xml.indexOf("<", at);
+    const stop = lt < 0 ? xml.length : lt;
+    if (stop > at) {
+      const raw = xml.slice(at, stop);
+      if (stack.length === 0) { if (raw.trim() !== "") return false; }
+      else if (!handler.text(raw)) return false;
+    }
+    if (lt < 0) break;
+    if (xml.startsWith("<!--", lt)) { const end = xml.indexOf("-->", lt + 4); if (end < 0) return false; at = end + 3; continue; }
+    if (xml.startsWith("<?", lt)) { const end = xml.indexOf("?>", lt + 2); if (end < 0) return false; at = end + 2; continue; }
+    if (xml.startsWith("<!", lt)) return false;
+    let gt = lt + 1, quote = "";
+    for (; gt < xml.length; gt++) {
+      const ch = xml[gt];
+      if (quote) { if (ch === quote) quote = ""; } else if (ch === "\"" || ch === "'") quote = ch; else if (ch === ">") break;
+    }
+    if (gt >= xml.length) return false;
+    const inner = xml.slice(lt + 1, gt);
+    at = gt + 1;
+    if (inner.startsWith("/")) {
+      const name = inner.slice(1).trim();
+      if (stack.pop() !== name || !handler.close(localName(name))) return false;
+      continue;
+    }
+    const selfClosing = inner.endsWith("/");
+    const name = /^[A-Za-z_][\w.:-]*/u.exec(inner)?.[0];
+    if (!name || (stack.length === 0 && rooted)) return false;
+    rooted = true;
+    const tag = selfClosing ? inner.slice(0, -1) : inner;
+    if (!handler.open(localName(name), tag)) return false;
+    if (selfClosing) { if (!handler.close(localName(name))) return false; } else stack.push(name);
+  }
+  return rooted && stack.length === 0;
+}
+
+/** Text of a string item (<si> or <is>): every <t>, rich runs joined, phonetic runs dropped. */
+class StringItem {
+  private parts: string[] = []; private size = 0; private collecting = false; private phonetic = 0;
+  open(name: string): void { if (name === "rPh") this.phonetic++; else if (name === "t" && this.phonetic === 0) this.collecting = true; }
+  close(name: string): void { if (name === "rPh") this.phonetic--; else if (name === "t") this.collecting = false; }
+  /** False once the raw text could not fit a field (decoded text is never longer than raw). */
+  text(raw: string): boolean {
+    if (!this.collecting) return true;
+    this.parts.push(raw); this.size += raw.length;
+    return this.size <= XLSX_MAX_FIELD_CHARS * 8;
+  }
+  value(): string { return text(this.parts.join("")); }
+}
+
+/** Shared strings, read incrementally: each item is checked against the field cap, the item count
+ * and the total text before it is kept. */
+function sharedStrings(xml: string): string[] | "unreadable" | "too_large" {
+  const items: string[] = [];
+  let item: StringItem | null = null, total = 0, verdict: "unreadable" | "too_large" = "unreadable";
+  const ok = scanXml(xml, {
+    open(name) {
+      if (name === "si") { if (item) return false; item = new StringItem(); return true; }
+      item?.open(name); return true;
+    },
+    close(name) {
+      if (name !== "si") { item?.close(name); return true; }
+      const value = item!.value(); item = null;
+      if (value.length > XLSX_MAX_FIELD_CHARS || items.length >= MAX_SHARED_STRINGS || (total += value.length) > MAX_GRID_CHARS) { verdict = "too_large"; return false; }
+      items.push(value); return true;
+    },
+    text(raw) { if (item && !item.text(raw)) { verdict = "too_large"; return false; } return true; },
+  });
+  return ok ? items : verdict;
+}
+
 export function readXlsxCells(bytes: Uint8Array): XlsxRead {
   if (bytes.length > XLSX_MAX_BYTES) return refused("too_large");
   if (bytes.length === 0) return refused("unreadable");
@@ -115,41 +195,82 @@ export function readXlsxCells(bytes: Uint8Array): XlsxRead {
   const sheet = firstSheet(zip, all);
   if (sheet === null) return refused("unreadable");
   const sharedXml = read(zip, all, "xl/sharedStrings.xml");
-  const shared = sharedXml === null ? [] : [...sharedXml.matchAll(/<si>([\s\S]*?)<\/si>|<si\/>/gu)].map((m) => itemText(m[1] ?? ""));
+  const shared = sharedXml === null ? [] : sharedStrings(sharedXml);
+  if (!Array.isArray(shared)) return refused(shared);
+
   const grid: BankCell[][] = [];
-  let chars = 0;
-  for (const row of sheet.matchAll(/<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/gu)) {
-    // `r` is optional in SpreadsheetML: a row without it follows the previous one.
-    const rowRef = attr(row[1]!, "r");
-    const r = rowRef === null ? grid.length + 1 : /^[1-9][0-9]{0,6}$/u.test(rowRef) ? Number(rowRef) : NaN;
-    if (!Number.isInteger(r)) return refused("unreadable");
-    // Rows only go forward: a repeated or earlier row number would replace data already read.
-    if (r <= grid.length) return refused("unreadable");
-    if (r > MAX_ROWS) return refused("too_many_rows");
-    const cells: BankCell[] = [];
-    for (const c of (row[2] ?? "").matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/gu)) {
-      const ref = attr(c[1]!, "r"), type = attr(c[1]!, "t") ?? "n", body = c[2] ?? "";
-      const at = ref === null ? { col: cells.length, row: r } : coordinate(ref);
-      // A cell must sit in its own row, after the cells before it.
-      if (at === null || at.row !== r || at.col < cells.length) return refused("unreadable");
-      if (at.col >= MAX_COLUMNS) return refused("unreadable");
-      const v = /<v>([\s\S]*?)<\/v>/u.exec(body)?.[1];
-      let value: BankCell = null;
-      if (type === "s") {
-        const i = v === undefined ? NaN : Number(v);
-        if (!Number.isInteger(i) || i < 0 || i >= shared.length) return refused("unreadable");
-        value = shared[i]!;
-      } else if (type === "inlineStr") value = itemText(/<is>([\s\S]*?)<\/is>/u.exec(body)?.[1] ?? "");
-      else if (v !== undefined) value = text(v); // n, str, b, e: the cached text as written
-      if (typeof value === "string") {
-        if (value.length > XLSX_MAX_FIELD_CHARS) return refused("too_large");
-        if ((chars += value.length) > MAX_GRID_CHARS) return refused("too_large");
+  const path: string[] = [];
+  let verdict: "unreadable" | "too_many_rows" | "too_large" = "unreadable";
+  let sheetData = false, chars = 0, r = 0;
+  let cells: BankCell[] | null = null;
+  let cell: { col: number; type: string; v: string[] | null; vSize: number; inline: StringItem | null } | null = null;
+  const fail = (code: "unreadable" | "too_many_rows" | "too_large") => { verdict = code; return false; };
+  const parent = () => path[path.length - 1];
+  const ok = scanXml(sheet, {
+    open(name, tag) {
+      const within = parent();
+      path.push(name);
+      if (name === "sheetData" && within === "worksheet") { if (sheetData) return false; sheetData = true; return true; }
+      if (name === "row" && within === "sheetData") {
+        // `r` is optional in SpreadsheetML: a row without it follows the previous one.
+        const rowRef = attr(tag, "r");
+        const next = rowRef === null ? grid.length + 1 : /^[1-9][0-9]{0,6}$/u.test(rowRef) ? Number(rowRef) : NaN;
+        // Rows only go forward: a repeated or earlier row number would replace data already read.
+        if (!Number.isInteger(next) || next <= grid.length) return fail("unreadable");
+        if (next > MAX_ROWS) return fail("too_many_rows");
+        r = next; cells = [];
+        return true;
       }
-      while (cells.length < at.col) cells.push(null);
-      cells[at.col] = value;
-    }
-    while (grid.length < r - 1) grid.push([]);
-    grid[r - 1] = cells;
-  }
-  return { kind: "cells", cells: grid };
+      if (name === "row" || name === "c" ? cell !== null || (name === "row" && cells !== null) : false) return false; // no nesting
+      if (name === "c" && within !== "row") return false;
+      if (name === "c" && within === "row" && cells) {
+        const ref = attr(tag, "r");
+        const at = ref === null ? { col: cells.length, row: r } : coordinate(ref);
+        // A cell must sit in its own row, after the cells before it.
+        if (at === null || at.row !== r || at.col < cells.length || at.col >= MAX_COLUMNS) return fail("unreadable");
+        cell = { col: at.col, type: attr(tag, "t") ?? "n", v: null, vSize: 0, inline: null };
+        return true;
+      }
+      if (cell && name === "v" && within === "c") { if (cell.v) return false; cell.v = []; return true; }
+      if (cell && name === "is" && within === "c") { if (cell.inline) return false; cell.inline = new StringItem(); return true; }
+      cell?.inline?.open(name);
+      return true;
+    },
+    close(name) {
+      path.pop();
+      if (cell && name !== "c") { cell.inline?.close(name); return true; }
+      if (cell && name === "c" && cells) {
+        const { col, type, v, inline } = cell; cell = null;
+        const raw = v === null ? undefined : v.join("");
+        let value: BankCell = null;
+        if (type === "s") {
+          const i = raw === undefined ? NaN : Number(raw);
+          if (!Number.isInteger(i) || i < 0 || i >= shared.length) return fail("unreadable");
+          value = shared[i]!;
+        } else if (type === "inlineStr") value = inline ? inline.value() : "";
+        else if (raw !== undefined) value = text(raw); // n, str, b, e: the cached text as written
+        if (typeof value === "string" && (value.length > XLSX_MAX_FIELD_CHARS || (chars += value.length) > MAX_GRID_CHARS)) return fail("too_large");
+        while (cells.length < col) cells.push(null);
+        cells[col] = value;
+        return true;
+      }
+      if (name === "row" && cells) {
+        while (grid.length < r - 1) grid.push([]);
+        grid[r - 1] = cells; cells = null;
+      }
+      return true;
+    },
+    text(raw) {
+      if (!cell) return true;
+      if (cell.inline) { if (!cell.inline.text(raw)) return fail("too_large"); return true; }
+      if (cell.v && parent() === "v") {
+        cell.v.push(raw);
+        if ((cell.vSize += raw.length) > XLSX_MAX_FIELD_CHARS * 8) return fail("too_large");
+      }
+      return true;
+    },
+  });
+  if (!ok) return refused(verdict);
+  // A worksheet without sheetData is not a bank sheet.
+  return sheetData ? { kind: "cells", cells: grid } : refused("unreadable");
 }
