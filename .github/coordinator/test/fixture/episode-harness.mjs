@@ -339,6 +339,8 @@ export function createEpisodeHarness({
       pollRuns: true,
       adapterModules: adapters,
       fetchImpl,
+      // The box-wide cross-card settle lock, kept inside this harness's folder.
+      crossCardSettleLock: join(dir, "cross-card-settle.lock"),
       ...(options.io ?? {}),
     });
     return { code, text: out.join("\n") };

@@ -35,7 +35,7 @@ import { parseActivationArgs, narrowQueueScope, cardQueue, singleRunActivationSt
 import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext, finishedSupervisorStage } from "./supervisor-dispatch.mjs";
-import { cardWorkers, MAX_CARD_WORKERS, workerActivationFiles, workerRunLock } from "./service/credential-delivery.mjs";
+import { cardWorkers, MAX_CARD_WORKERS } from "./service/credential-delivery.mjs";
 import { workerWorkspaceStateDir } from "./service/units.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote, REVIEW_FINDINGS_SUMMARY_MAX } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
@@ -1460,33 +1460,59 @@ export function endedEpisodeSupervisorSockets(env) {
 // once. Workers 1 and 2 started together at 04:00:04, both asked every
 // supervisor, both read the same durable FAILED record and both wrote the same
 // HOLD receipt for attempt b760441e (04:00:55 and 04:00:56). Nothing shared
-// serialized them: each tick holds only its own worker's writer lock. A
-// cross-card lifecycle write therefore has one owner among the running workers:
-// the lowest-numbered card worker whose card run holds its run lock (a
-// coordinator with dispatch on ticks only inside its card run). Worker 1 always
-// owns it; worker N defers while a lower worker's run lock stands. So two
-// workers never both publish the transition, and the receipt still settles on
-// whichever worker is running. A coordinator whose activation path names no
-// card worker (one worker, or a test) owns it as before.
-export function workerOfActivation(activationPath) {
-  const index = workerActivationFiles().indexOf(activationPath);
-  return index >= 0 ? index + 1 : null;
+// serialized them: each tick holds only its own worker's writer lock.
+//
+// A cross-card lifecycle write is therefore published under one box-wide lock
+// every coordinator takes (CROSS_CARD_SETTLE_LOCK, the coordinators share one
+// service user): under it the attempt's thread is read again and the receipt is
+// written only if its newest stage is still the one this tick settles. So a
+// HOLD another worker published, including one whose write threw or timed out
+// after it landed, is seen and never written twice. The lock holds its taker's
+// pid. A lock whose pid no longer runs (a tick that died mid-settle) is taken
+// over by one coordinator at a time, as the landing lock is (card-land.mjs
+// clearStaleLock): an exclusive `${lock}.takeover` marker, a second read, and
+// removal only of the same dead holder. A lock that stays held by a live
+// coordinator past the wait, or that cannot be created at all, leaves the
+// settle to a later tick: nothing is written without it.
+export const CROSS_CARD_SETTLE_LOCK = "/run/lock/shu-cross-card-settle.lock";
+export const CROSS_CARD_SETTLE_LIMITS = Object.freeze({ waitMs: 60_000, pollMs: 200 });
+function pidRunning(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
 }
-// Only a lock confirmed absent (ENOENT) is "not held"; any other lookup error
-// (EACCES, ...) is thrown, so ownsCrossCardSettles counts it as held.
-export function cardRunLockPresent(worker) {
-  try { fs.statSync(workerRunLock(worker)); return true; }
-  catch (error) { if (error?.code === "ENOENT") return false; throw error; }
-}
-export function ownsCrossCardSettles(worker, runLockHeld = cardRunLockPresent) {
-  if (!Number.isInteger(worker) || worker <= 1) return true;
-  for (let lower = 1; lower < worker; lower += 1) {
-    // A lock that cannot be read counts as held: defer rather than write twice.
-    let held = true;
-    try { held = runLockHeld(lower) !== false; } catch { held = true; }
-    if (held) return false;
+function clearStaleSettleLock(file) {
+  let holder;
+  try { holder = String(fs.readFileSync(file, "utf8")).trim(); } catch { return false; }
+  if (!/^[1-9]\d{0,9}$/.test(holder) || pidRunning(Number(holder))) return false;
+  const marker = `${file}.takeover`;
+  try { fs.writeFileSync(marker, String(process.pid), { flag: "wx", mode: 0o600 }); } catch { return false; }
+  try {
+    let again = null;
+    try { again = String(fs.readFileSync(file, "utf8")).trim(); } catch { return true; /* gone: another takeover finished */ }
+    if (again !== holder) return false;
+    try { fs.unlinkSync(file); } catch { return false; }
+    return true;
+  } finally {
+    try { fs.unlinkSync(marker); } catch { /* gone already */ }
   }
-  return true;
+}
+export async function withCrossCardSettleLock(file, fn, { waitMs = CROSS_CARD_SETTLE_LIMITS.waitMs, pollMs = CROSS_CARD_SETTLE_LIMITS.pollMs } = {}) {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    try {
+      fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST") return { taken: false, reason: `${file} cannot be taken (${error?.code ?? "unknown"})` };
+    }
+    if (clearStaleSettleLock(file)) continue;
+    if (Date.now() >= until) return { taken: false, reason: `${file} stayed held by a live coordinator` };
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  try {
+    return { taken: true, value: await fn() };
+  } finally {
+    try { fs.unlinkSync(file); } catch { /* gone already */ }
+  }
 }
 
 // One answer from the supervisors asked. A supervisor that holds the attempt and
@@ -3309,15 +3335,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     // An ended episode's review on another card: asked over status only, and
     // released to HOLD with a durable reason only on positive evidence.
     const settleNow = io.now?.() ?? new Date();
-    // One card worker publishes a cross-card transition (ownsCrossCardSettles).
-    const settleWorker = io.cardWorker ?? workerOfActivation(activationArg.path);
-    const settleOwner = () => ownsCrossCardSettles(settleWorker, io.cardRunLockHeld);
-    let endedReviewsDue = receipts.filter((r) => endedEpisodeReviewDue(r, lifecycleStartReceipts, settleNow));
-    if (endedReviewsDue.length && !settleOwner()) {
-      if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${endedReviewsDue.map(describeReviewHolder).join(", ")} left to a lower card worker — card worker ${settleWorker} defers while that worker's run lock is held`);
-      endedReviewsDue = [];
-    }
-    for (const receipt of endedReviewsDue) {
+    for (const receipt of receipts.filter((r) => endedEpisodeReviewDue(r, lifecycleStartReceipts, settleNow))) {
       const adapter = adapterNameFor(receipt.requested_worker);
       const answers = [];
       // An injected legacy adapter (unit fixtures only) has no socket to choose.
@@ -3337,30 +3355,29 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       const released = nextReceiptState(receipt, { type: "hold",
         reason: `${ENDED_EPISODE_REVIEW}: review from episode ${receipt.episode_id}, which has ended; released on ${disposition.evidence}; verdict not applied` }, { now: io.now });
       if (!released.accepted) continue;
-      // A lower worker's run may have started while the supervisors were asked:
-      // ownership is read again right before the write.
-      if (!settleOwner()) {
-        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} left to a lower card worker — its run lock appeared before the write`);
+      // Every card worker may settle this receipt at once: the fresh read and
+      // the write happen under the box-wide settle lock, and the receipt is
+      // written only while the attempt's newest stage on Linear (its head is
+      // immutable) is still the one settled here (withCrossCardSettleLock).
+      const settled = await withCrossCardSettleLock(io.crossCardSettleLock ?? CROSS_CARD_SETTLE_LOCK, async () => {
+        let fresh;
+        try {
+          fresh = parseReceiptsFromComments(await fetchThreadComments({
+            issueIds: threadIdsFor.get(receipt.issue_id) ?? [linearIssueId], token: linearToken, fetchImpl }))
+            .filter((r) => r.attempt_id === receipt.attempt_id && r.target_sha === receipt.target_sha);
+        } catch (error) {
+          return `its thread could not be read again (${error?.code ?? "unreadable"})`;
+        }
+        if (fresh.length === 0) return "its receipt is missing from the thread";
+        if (fresh.some((r) => r.stage !== receipt.stage)) return `its receipt has already moved to ${fresh.find((r) => r.stage !== receipt.stage).stage}`;
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
+        return null;
+      }, { waitMs: io.crossCardSettleLockWaitMs });
+      const skipped = settled.taken ? settled.value : settled.reason;
+      if (skipped) {
+        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} not written — ${skipped}`);
         continue;
       }
-      // A worker that owned the settle a moment ago (worker 2 before worker 1's
-      // run began) may have written its HOLD after this tick read the board:
-      // the attempt's thread is read again, and a receipt that has moved, or a
-      // thread that cannot be read, is left for the next tick.
-      let moved;
-      try {
-        const fresh = parseReceiptsFromComments(await fetchThreadComments({
-          issueIds: threadIdsFor.get(receipt.issue_id) ?? [linearIssueId], token: linearToken, fetchImpl }))
-          .filter((r) => r.attempt_id === receipt.attempt_id);
-        moved = fresh.length === 0 ? "its receipt is missing from the thread" : fresh.some((r) => r.stage !== receipt.stage) ? "its receipt has already moved" : null;
-      } catch (error) {
-        moved = `its thread could not be read again (${error?.code ?? "unreadable"})`;
-      }
-      if (moved) {
-        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} not written — ${moved}`);
-        continue;
-      }
-      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
       lifecyclePersisted = true;
       lifecycleSlotReleased = true;
       const idx = receipts.indexOf(receipt);

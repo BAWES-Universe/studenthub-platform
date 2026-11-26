@@ -13,6 +13,7 @@ import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import {
   validateActivationRecord,
   singleRunActivationStatus,
@@ -20,9 +21,7 @@ import {
   episodeVerdict,
 } from "../single-run-activation.mjs";
 import { createReceipt, nextReceiptState, validateReceipt, verifyReviewOnlyPull, receiptCommentBody, parseReceiptsFromComments, RECEIPT_IMMUTABLE_FIELDS,
-  foreignReviewReceipt, foreignReviewDisposition, endedEpisodeSupervisorSockets, settledSupervisorAnswer,
-  ownsCrossCardSettles, workerOfActivation, cardRunLockPresent } from "../reconcile.mjs";
-import { workerActivationFile, MAX_CARD_WORKERS } from "../service/credential-delivery.mjs";
+  foreignReviewReceipt, foreignReviewDisposition, endedEpisodeSupervisorSockets, settledSupervisorAnswer } from "../reconcile.mjs";
 import { resolveReviewOnlyLane, fixtureReviewTests } from "../workspace-scope.mjs";
 import { readPullChange, reviewRule, REVIEW_ONLY_VERDICT_RULE, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { REVIEW_ONLY_BRIEF } from "../card-contracts.mjs";
@@ -1185,9 +1184,9 @@ test("SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keep
 
 // SHU-71, 26 Nov: card workers 1 and 2 started together and both coordinators
 // settled the same ended review: two identical HOLD receipts for one attempt, a
-// second apart. A cross-card settle is published by one card worker only
-// (ownsCrossCardSettles), and the attempt's thread is read again right before
-// the write.
+// second apart. The fresh read of the attempt's thread and the HOLD write now
+// happen under one box-wide lock every coordinator takes, and the HOLD is
+// written only while the attempt's newest stage is still the one settled.
 function endedReviewBoard() {
   return import("./fixture/episode-harness.mjs").then(({ createEpisodeHarness }) => {
     const h = createEpisodeHarness({ configOverrides: { workers: { max: 2 }, dispatch_scope: { issue_ids: ["SHU-140"] } },
@@ -1200,82 +1199,103 @@ function endedReviewBoard() {
     const unknown = nextReceiptState(made.receipt, { type: "launch" }).receipt;
     h.comments.push({ body: receiptCommentBody(unknown), createdAt: unknown.last_activity });
     const holds = () => h.comments.filter((c) => c.body.includes(unknown.attempt_id) && c.body.includes("held: ENDED_EPISODE_REVIEW")).length;
-    const failed = (order) => supervisorAnswer(order, { stage: "FAILED", result: null });
-    // Each status answer yields first, so concurrent ticks interleave as two
-    // processes would: both have read the board before either writes.
-    const tick = (io = {}, onStatus = () => {}) => h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET }, io: {
-      supervisorTransport: async ({ request }) => { onStatus(); await new Promise((resolve) => setImmediate(resolve)); return failed(request.order); },
+    const otherHold = () => ({ body: receiptCommentBody(nextReceiptState(unknown, { type: "hold", reason: "ENDED_EPISODE_REVIEW: written by another card worker" }).receipt),
+      createdAt: new Date(Date.parse(unknown.last_activity) + 1000).toISOString() });
+    const lock = join(h.dir, "cross-card-settle.lock");
+    // Every Linear read and status answer yields first, so concurrent ticks
+    // interleave as two processes would: without a shared lock both re-read the
+    // thread before either writes.
+    const yieldFirst = () => new Promise((resolve) => setImmediate(resolve));
+    const fetchImpl = async (url, opts) => { await yieldFirst(); return h.fetchImpl(url, opts); };
+    const tick = (io = {}) => h.runTick({ env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET }, io: {
+      fetchImpl,
+      supervisorTransport: async ({ request }) => { await yieldFirst(); return supervisorAnswer(request.order, { stage: "FAILED", result: null }); },
       ...io } });
-    return { h, unknown, holds, tick };
+    return { h, unknown, holds, otherHold, lock, tick };
   });
 }
+// A pid that ran and has ended: a coordinator that died holding the lock.
+const deadPid = () => { const child = spawnSync(process.execPath, ["-e", ""]); assert.equal(child.status, 0); return child.pid; };
 
-test("CROSS_CARD_SETTLE_ONCE: two card workers reconciling the same ended-episode review at once publish exactly one HOLD", async () => {
+test("CROSS_CARD_SETTLE_RACE: two card workers settling the same ended review at once under the shared lock publish exactly one HOLD", async () => {
   const { h, unknown, holds, tick } = await endedReviewBoard();
   try {
-    // Both card runs hold their run locks, as workers 1 and 2 did at 04:00.
-    const bothRunning = (worker) => worker === 1 || worker === 2;
-    const [one, two] = await Promise.all([
-      tick({ cardWorker: 1, cardRunLockHeld: bothRunning }),
-      tick({ cardWorker: 2, cardRunLockHeld: bothRunning }),
-    ]);
+    const [one, two] = await Promise.all([tick(), tick()]);
     assert.equal(holds(), 1, `exactly one HOLD comment\n--- worker 1\n${one.text}\n--- worker 2\n${two.text}`);
     assert.equal(h.receiptFor(unknown.attempt_id).stage, "HOLD");
-    assert.match(two.text, /ENDED_EPISODE_REVIEW SHU-304 attempt \S+ LAUNCH_UNKNOWN in episode \S+ left to a lower card worker/);
-    assert.match(one.text, /LAUNCH_UNKNOWN -> HOLD \(ENDED_EPISODE_REVIEW/);
-    await Promise.all([tick({ cardWorker: 1, cardRunLockHeld: bothRunning }), tick({ cardWorker: 2, cardRunLockHeld: bothRunning })]);
+    assert.match([one.text, two.text].join("\n"), /ENDED_EPISODE_REVIEW SHU-304 attempt \S+ LAUNCH_UNKNOWN in episode \S+ not written — its receipt has already moved to HOLD/);
+    await Promise.all([tick(), tick()]);
     assert.equal(holds(), 1, "the settled review is not settled again");
   } finally { h.cleanup(); }
+  // Control: the same race with no lock shared between the two ticks publishes
+  // twice, as on 26 Nov. The shared lock is what makes it once.
+  const control = await endedReviewBoard();
+  try {
+    await Promise.all([control.tick({ crossCardSettleLock: join(control.h.dir, "a.lock") }), control.tick({ crossCardSettleLock: join(control.h.dir, "b.lock") })]);
+    assert.equal(control.holds(), 2, "without the shared lock the duplicate is reproduced");
+  } finally { control.h.cleanup(); }
 });
 
-test("CROSS_CARD_SETTLE_REREAD: a HOLD another worker wrote after this tick read the board ends the settle without a second write", async () => {
-  const { h, unknown, holds, tick } = await endedReviewBoard();
+test("CROSS_CARD_SETTLE_HANDOFF: a coordinator that died mid-settle hands off deterministically and the HOLD is published once", async () => {
+  // Died before its write: the next coordinator takes the dead lock over and publishes.
+  const before = await endedReviewBoard();
   try {
-    // Worker 2 owned the settle until worker 1's run began; its HOLD lands
-    // while worker 1's tick is asking the supervisors.
-    const other = nextReceiptState(unknown, { type: "hold", reason: "ENDED_EPISODE_REVIEW: written by another card worker" }).receipt;
-    let landed = false;
-    const run = await tick({ cardWorker: 1 }, () => {
-      if (landed) return;
-      landed = true;
-      h.comments.push({ body: receiptCommentBody(other), createdAt: new Date(Date.parse(unknown.last_activity) + 1000).toISOString() });
-    });
-    assert.equal(holds(), 1, run.text);
-    assert.match(run.text, /ENDED_EPISODE_REVIEW SHU-304 attempt \S+ LAUNCH_UNKNOWN in episode \S+ not written — its receipt has already moved/);
+    fs.writeFileSync(before.lock, String(deadPid()), { mode: 0o600 });
+    const run = await before.tick();
+    assert.equal(before.holds(), 1, run.text);
+    assert.equal(fs.existsSync(before.lock), false, "the lock is released after the settle");
+    assert.equal(fs.existsSync(`${before.lock}.takeover`), false, "the takeover marker is gone");
+  } finally { before.h.cleanup(); }
+  // Died after its write landed: the next coordinator reads it under the lock and writes nothing.
+  const after = await endedReviewBoard();
+  try {
+    fs.writeFileSync(after.lock, String(deadPid()), { mode: 0o600 });
+    after.h.comments.push(after.otherHold());
+    const run = await after.tick({ fetchImpl: async (url, opts) => {
+      // The board this tick read was taken before the other HOLD landed.
+      const { query } = JSON.parse(opts.body);
+      if (query.includes("CoordinatorIssues")) {
+        const saved = after.h.comments.pop();
+        try { return await after.h.fetchImpl(url, opts); } finally { after.h.comments.push(saved); }
+      }
+      return after.h.fetchImpl(url, opts);
+    } });
+    assert.equal(after.holds(), 1, run.text);
+    assert.match(run.text, /not written — its receipt has already moved to HOLD/);
+  } finally { after.h.cleanup(); }
+});
+
+test("CROSS_CARD_SETTLE_UNCERTAIN_PUBLISH: a HOLD write that lands and then fails is read back, never written twice", async () => {
+  const { h, holds, lock, tick } = await endedReviewBoard();
+  try {
+    const lost = async (url, opts) => {
+      const { query } = JSON.parse(opts.body);
+      if (query.includes("commentCreate")) { await h.fetchImpl(url, opts); throw new Error("socket hang up after the write"); }
+      return h.fetchImpl(url, opts);
+    };
+    let failed = null;
+    try { await tick({ fetchImpl: lost }); } catch (error) { failed = error; }
+    assert.ok(failed, "the uncertain write fails the tick");
+    assert.equal(holds(), 1, "the write landed");
+    assert.equal(fs.existsSync(lock), false, "a failed write still releases the lock");
+    const next = await Promise.all([tick(), tick()]);
+    assert.equal(holds(), 1, next.map((r) => r.text).join("\n---\n"));
   } finally { h.cleanup(); }
 });
 
-test("CROSS_CARD_SETTLE_LIVENESS: with no lower worker running, worker 2 settles the review itself", async () => {
-  const { h, unknown, holds, tick } = await endedReviewBoard();
+test("CROSS_CARD_SETTLE_LOCK_UNAVAILABLE: a lock held by a live coordinator past the wait, or one that cannot be created, writes nothing", async () => {
+  const held = await endedReviewBoard();
   try {
-    const run = await tick({ cardWorker: 2, cardRunLockHeld: (worker) => worker === 2 });
-    assert.equal(holds(), 1, run.text);
-    assert.equal(h.receiptFor(unknown.attempt_id).stage, "HOLD");
-  } finally { h.cleanup(); }
-});
-
-test("CROSS_CARD_SETTLE_OWNER: the lowest running card worker owns cross-card writes; a lock that cannot be looked up defers", () => {
-  assert.equal(ownsCrossCardSettles(1, () => true), true, "worker 1 always owns");
-  assert.equal(ownsCrossCardSettles(null, () => true), true, "no card worker named: one coordinator, as before");
-  assert.equal(ownsCrossCardSettles(2, (n) => n === 1), false, "worker 1 running");
-  assert.equal(ownsCrossCardSettles(2, () => false), true, "worker 1 not running");
-  assert.equal(ownsCrossCardSettles(3, (n) => n === 2), false, "worker 2 running");
-  assert.equal(ownsCrossCardSettles(3, () => false), true);
-  assert.equal(ownsCrossCardSettles(2, () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); }), false, "EACCES counts as held");
-  for (let worker = 1; worker <= MAX_CARD_WORKERS; worker += 1) assert.equal(workerOfActivation(workerActivationFile(worker)), worker);
-  assert.equal(workerOfActivation("/tmp/activation.json"), null);
-  assert.equal(workerOfActivation(null), null);
-  // The default probe: absent is not held; any other lookup error is thrown.
-  const statSync = fs.statSync;
+    fs.writeFileSync(held.lock, String(process.pid), { mode: 0o600 });
+    const run = await held.tick({ crossCardSettleLockWaitMs: 50 });
+    assert.equal(held.holds(), 0, run.text);
+    assert.match(run.text, /not written — \S+ stayed held by a live coordinator/);
+    assert.equal(fs.readFileSync(held.lock, "utf8"), String(process.pid), "a live holder's lock is never taken over");
+  } finally { held.h.cleanup(); }
+  const missing = await endedReviewBoard();
   try {
-    fs.statSync = () => { throw Object.assign(new Error("absent"), { code: "ENOENT" }); };
-    assert.equal(cardRunLockPresent(1), false);
-    assert.equal(ownsCrossCardSettles(2), true, "worker 1's lock absent");
-    fs.statSync = () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); };
-    assert.throws(() => cardRunLockPresent(1), { code: "EACCES" });
-    assert.equal(ownsCrossCardSettles(2), false, "worker 1's lock unreadable: defer");
-    fs.statSync = () => ({});
-    assert.equal(cardRunLockPresent(1), true);
-    assert.equal(ownsCrossCardSettles(2), false, "worker 1's lock present");
-  } finally { fs.statSync = statSync; }
+    const run = await missing.tick({ crossCardSettleLock: join(missing.h.dir, "absent", "settle.lock") });
+    assert.equal(missing.holds(), 0, run.text);
+    assert.match(run.text, /not written — \S+ cannot be taken \(ENOENT\)/);
+  } finally { missing.h.cleanup(); }
 });
