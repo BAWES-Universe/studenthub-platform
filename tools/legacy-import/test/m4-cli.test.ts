@@ -848,7 +848,7 @@ test("linkreport reads the target only, writes ids to the private report and cou
     assert.deepEqual([report.target, report.revision, report.artifact, report.invocation], [TARGET, REVISION, ARTIFACT, h.invocation]);
     assert.ok(h.out.some((l) => l === "links imported=5 linked=2 link.unlinked=3 link.notImported=1 link.multiplePrincipals=1 link.contactTaken=0 link.emailMismatch=1"));
     assert.ok(h.out.some((l) => l.startsWith(`m4 linkreport ok invocation=${h.invocation} target=${TARGET}`)));
-    assert.ok(!h.out.join("\n").includes("100"), "no legacy id in the log");
+    assert.ok(!h.out.join("\n").replaceAll(h.invocation, "<invocation>").includes("100"), "no legacy id in the log");
   } finally { cleanup(h); }
 });
 

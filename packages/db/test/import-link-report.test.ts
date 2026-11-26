@@ -119,9 +119,18 @@ test("a valid link row with an id longer than the import's 18 digits is listed, 
 test("the link report reads and writes nothing else: it runs read-only and fails with a fixed code only", async () => {
   const a = await fixtureIds(pool);
   await snapshot(a + 1);
-  const before = (await pool.query("SELECT count(*)::int AS n FROM legacy_account_links")).rows[0].n;
+  const p = await person();
+  await link(p, a + 1);
+  // Scoped to this test's own fixture block, so other suites writing to the same tables cannot move it.
+  const mine = async () => (await pool.query(`SELECT
+      (SELECT count(*) FROM legacy_candidate_snapshots WHERE legacy_candidate_id = $1)::int AS snapshots,
+      (SELECT count(*) FROM legacy_account_links WHERE principal_id = $2)::int AS links,
+      (SELECT count(*) FROM legacy_account_link_events WHERE principal_id = $2)::int AS events,
+      (SELECT count(*) FROM legacy_contact_promotions WHERE principal_id = $2)::int AS promotions`, [String(a + 1), p])).rows[0];
+  const before = await mine();
+  assert.deepEqual(before, { snapshots: 1, links: 1, events: 1, promotions: 0 });
   await readLinkReport(pool);
-  assert.equal((await pool.query("SELECT count(*)::int AS n FROM legacy_account_links")).rows[0].n, before);
+  assert.deepEqual(await mine(), before);
 
   // A database that lacks the tables: one fixed error, no detail or cause.
   const empty = `link_report_${randomUUID().replaceAll("-", "")}`;
