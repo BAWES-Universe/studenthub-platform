@@ -305,3 +305,22 @@ test("A1_GUARDS a confirm that fails with an unknown outcome never claims nothin
   assert.match(html, /The change may or may not have been made/);
   assert.doesNotMatch(html, /Nothing was changed/);
 });
+
+test("G02_PREVIEW_EFFECT the review page says what the change opens or closes for the person, their other roles counted", async (t) => {
+  const { ports, events } = world();
+  const http = await serve(t, ports);
+  // Staff on StudentHub itself opens nothing here; widening to the sub-companies opens the staff abilities.
+  const widen = await (await http.post("/admin/access/preview", "admin-1", { ...grantForm, targetPrincipalId: "staff-self", orgId: "root", role: "staff", scope: "subtree" })).text();
+  assert.match(widen, /<h2>What changes for them<\/h2><p>Sam Staff will be able to:<\/p><ul><li>Open the Access pages<\/li><li>Review company sign-ups<\/li><li>Pause a person and view as them<\/li><li>Operations reports<\/li><li>Give company roles<\/li><li>Give company roles in sub-companies<\/li><li>See company contacts<\/li><li>Change company contacts<\/li><li>Manage store managers<\/li><\/ul><\/section>/);
+  // Taking an owner's role away closes what it opened.
+  const revoke = await (await http.post("/admin/access/preview", "admin-1", { ...grantForm, targetPrincipalId: "owner-1", role: "org-owner", scope: "subtree", action: "revoke" })).text();
+  assert.match(revoke, /Omar Owner will no longer be able to:<\/p><ul><li>See company contacts<\/li><li>Change company contacts<\/li><li>Manage store managers<\/li><\/ul>/);
+  assert.doesNotMatch(revoke, /will be able to:/);
+  // A role whose abilities the person already has opens nothing new.
+  const covered = await (await http.post("/admin/access/preview", "admin-1", grantForm)).text();
+  assert.match(covered, /Nothing in the <a class="text-link" href="\/admin\/access\/catalogue">grant catalogue<\/a> changes for Dana Candidate: their other roles already decide it\./);
+  assert.doesNotMatch(covered, /will (no longer )?be able to:/);
+  // Nothing to change: no effect section.
+  assert.doesNotMatch(await (await http.post("/admin/access/preview", "admin-1", { ...grantForm, role: "finance" })).text(), /What changes for them/);
+  assert.equal(events.length, 0, "previews write nothing");
+});

@@ -61,10 +61,20 @@ const TARGET = "catalogue-target";
 const COMPANY = "catalogue-company";
 const CHILD = "catalogue-child-company";
 
-function opensFor(grant: HeldGrant, operator: string, operatorOrgIds: readonly string[]): CatalogueCapability[] {
-  const grants = [grant];
-  const companyAncestors = grant.orgId === operator ? [operator] : [];
-  const company = grant.orgId === operator ? COMPANY : grant.orgId;
+/**
+ * Where the company-level questions are asked: a real company (with its
+ * ancestors), or, for a grant on the operator, a company directly below it.
+ */
+export interface CapabilityPlace {
+  readonly companyId: string;
+  readonly companyAncestors: readonly string[];
+}
+
+/** What a set of grants opens, asked of the same rules the platform enforces. Pure. */
+export function capabilitiesAt(grants: readonly HeldGrant[], place: CapabilityPlace, operatorOrgIds: readonly string[]): CatalogueCapability[] {
+  const operator = operatorOrgIds[0];
+  if (operator === undefined) throw new RangeError("capabilities need an operator organization");
+  const { companyId: company, companyAncestors } = place;
   const child = { id: CHILD, ancestors: [...companyAncestors, company] };
   const reports = reportAccess(grants, operatorOrgIds);
   const checks: readonly [CatalogueCapability, boolean][] = [
@@ -83,6 +93,13 @@ function opensFor(grant: HeldGrant, operator: string, operatorOrgIds: readonly s
     ["manage_store_managers", mayManageStoreAccess(grants, company, companyAncestors)],
   ];
   return checks.filter(([, allowed]) => allowed).map(([capability]) => capability);
+}
+
+function opensFor(grant: HeldGrant, operator: string, operatorOrgIds: readonly string[]): CatalogueCapability[] {
+  const place = grant.orgId === operator
+    ? { companyId: COMPANY, companyAncestors: [operator] }
+    : { companyId: grant.orgId, companyAncestors: [] };
+  return capabilitiesAt([grant], place, operatorOrgIds);
 }
 
 function givenBy(place: CataloguePlace, role: Role, scope: GrantScope, operator: string, operatorOrgIds: readonly string[]): CatalogueGiver {
@@ -109,4 +126,37 @@ export function grantCatalogueView(operatorOrgIds: readonly string[] = DEFAULT_O
     }
   }
   return Object.freeze({ version: GRANT_CATALOGUE_VERSION, roles: ROLES, scopes: GRANT_SCOPES, rows: Object.freeze(rows) });
+}
+
+/**
+ * Access lane G-02: what one grant change does to a person, for the review
+ * page before it is confirmed. The person's other grants count, so a role
+ * that adds nothing they cannot already do shows no gain.
+ */
+export interface GrantChangeEffect {
+  readonly gained: readonly CatalogueCapability[];
+  readonly lost: readonly CatalogueCapability[];
+}
+
+export function grantChangeEffect(input: {
+  /** Every grant the person holds now. */
+  readonly held: readonly HeldGrant[];
+  /** The change: the role on the organization ends at `after` (null: taken away). */
+  readonly change: { readonly orgId: string; readonly role: string; readonly after: string | null };
+  readonly orgAncestors: readonly string[];
+  readonly operatorOrgIds?: readonly string[];
+}): GrantChangeEffect {
+  const operatorOrgIds = input.operatorOrgIds ?? DEFAULT_OPERATOR_ORG_IDS;
+  const { change } = input;
+  const place = operatorOrgIds.includes(change.orgId)
+    ? { companyId: COMPANY, companyAncestors: [change.orgId] }
+    : { companyId: change.orgId, companyAncestors: input.orgAncestors };
+  const others = input.held.filter((grant) => !(grant.orgId === change.orgId && grant.role === change.role));
+  const after = change.after === null ? others : [...others, { orgId: change.orgId, role: change.role, scope: change.after }];
+  const before = new Set(capabilitiesAt(input.held, place, operatorOrgIds));
+  const now = new Set(capabilitiesAt(after, place, operatorOrgIds));
+  return Object.freeze({
+    gained: Object.freeze(CATALOGUE_CAPABILITIES.filter((capability) => now.has(capability) && !before.has(capability))),
+    lost: Object.freeze(CATALOGUE_CAPABILITIES.filter((capability) => before.has(capability) && !now.has(capability))),
+  });
 }

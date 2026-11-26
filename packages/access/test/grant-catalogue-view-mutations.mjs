@@ -14,7 +14,7 @@ const mutations = [
   ["show finance reports to everyone with any report", "G01_OPENS", "grant-catalogue-view.js",
     '["finance_reports", reports.finance],', '["finance_reports", reports.finance || reports.operations],'],
   ["evaluate operator grants without their company below", "G01_OPENS", "grant-catalogue-view.js",
-    "const companyAncestors = grant.orgId === operator ? [operator] : [];", "const companyAncestors = [];"],
+    "? { companyId: COMPANY, companyAncestors: [operator] }", "? { companyId: COMPANY, companyAncestors: [] }"],
   ["leave out the company rows", "G01_SHAPE", "grant-catalogue-view.js",
     'for (const place of ["operator", "company"]) {', 'for (const place of ["operator"]) {'],
 ];

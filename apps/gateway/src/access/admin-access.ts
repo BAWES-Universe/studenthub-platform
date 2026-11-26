@@ -7,6 +7,7 @@ import {
   REASON_MAX,
   grantCatalogue,
   grantCatalogueView,
+  grantChangeEffect,
   mayOpenAccessAdmin,
   mayPauseAccount,
   parseGrantChange,
@@ -20,6 +21,7 @@ import {
   type AccountPauseStore,
   type PauseRefusal,
   type AccessGrantRow,
+  type GrantChangeEffect,
   type AccessGrantService,
   type AccessEventRow,
   type AccessOrganization,
@@ -281,11 +283,22 @@ export function renderPersonAccess(model: PersonPageModel): string {
   return layout(`<p><a class="text-link" href="/admin/access">← Find another person</a></p><div class="profile-heading"><h1>${e(personName(person))}<span class="accent">.</span></h1></div><p>${e(person.email ?? "No email address recorded")}</p>${notice ? `<section class="notice context-notice" role="status"><strong>${e(notice)}</strong></section>` : ""}${renderPauseSection(model)}<section><h2>Roles</h2>${grantRows}</section><section><h2>Give a role</h2>${give}</section><section><h2>History</h2>${history}</section>`, "access");
 }
 
+function renderGrantEffect(name: string, effect: GrantChangeEffect): string {
+  const e = escapeHtml;
+  const list = (items: readonly CatalogueCapability[]) => `<ul>${items.map((capability) => `<li>${e(CAPABILITY_TEXT[capability])}</li>`).join("")}</ul>`;
+  const gained = effect.gained.length ? `<p>${e(name)} will be able to:</p>${list(effect.gained)}` : "";
+  const lost = effect.lost.length ? `<p>${e(name)} will no longer be able to:</p>${list(effect.lost)}` : "";
+  const none = gained || lost ? "" : `<p>Nothing in the <a class="text-link" href="/admin/access/catalogue">grant catalogue</a> changes for ${e(name)}: their other roles already decide it.</p>`;
+  return `<section class="grant-effect"><h2>What changes for them</h2>${gained}${lost}${none}</section>`;
+}
+
 export function renderGrantReview(input: {
   readonly person: AccessPerson;
   readonly orgName: string;
   readonly request: GrantChangeRequest;
   readonly result: { readonly kind: "unchanged" } | { readonly kind: "change"; readonly before: string | null; readonly after: string | null; readonly token: GrantToken };
+  /** G-02: what the change opens or closes for the person, their other roles counted. */
+  readonly effect?: GrantChangeEffect;
 }): string {
   const e = escapeHtml;
   const { request, person } = input;
@@ -302,7 +315,7 @@ export function renderGrantReview(input: {
   const verb = request.action === "grant"
     ? input.result.before === null ? "Give this role" : "Widen this role to the sub-companies"
     : "Take this role away";
-  return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(personName(person))}’s next request. Confirm within 15 minutes.</p>${facts}<form method="post" action="/admin/access/confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
+  return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(personName(person))}’s next request. Confirm within 15 minutes.</p>${facts}${input.effect ? renderGrantEffect(personName(person), input.effect) : ""}<form method="post" action="/admin/access/confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
 }
 
 /** A confirm whose outcome is unknown: the change may or may not have been made. */
@@ -524,7 +537,7 @@ export async function handleAccess(
         write(refusalStatus(result.reason), "Access", renderAccessRefusal(result.reason, back));
         return true;
       }
-      const [person, org] = await Promise.all([ports.reads.person(request.targetPrincipalId), ports.reads.organization(request.orgId)]);
+      const [person, org, held] = await Promise.all([ports.reads.person(request.targetPrincipalId), ports.reads.organization(request.orgId), ports.reads.grants(request.targetPrincipalId)]);
       if (!person) return false;
       if (!org) {
         write(404, "Access", renderAccessRefusal("unknown_organization", back));
@@ -533,6 +546,10 @@ export async function handleAccess(
       write(200, "Review access change", renderGrantReview({
         person, orgName: org.name, request,
         result: result.kind === "unchanged" ? { kind: "unchanged" } : result,
+        ...(result.kind === "unchanged" ? {} : { effect: grantChangeEffect({
+          held, change: { orgId: request.orgId, role: request.role, after: result.after },
+          orgAncestors: org.ancestors, ...(ports.operatorOrgIds ? { operatorOrgIds: ports.operatorOrgIds } : {}),
+        }) }),
       }));
       return true;
     }
