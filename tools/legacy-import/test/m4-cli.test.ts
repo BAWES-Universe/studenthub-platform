@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { M4_SOURCES, planM4, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
 import { acceptWrite, acquireSharedLock, contactSetDigest, digestKeyFingerprint, main, PROMOTE_BATCH, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
-import { ContactPromotionError, type ContactPromotionResult } from "@studenthub/db/import";
+import { ContactPromotionError, LinkReportError, type ContactPromotionResult, type LinkReport } from "@studenthub/db/import";
 
 // Synthetic legacy rows only. SECRET marks every value that must never reach a receipt or a log.
 const SECRET = "Secret";
@@ -61,9 +61,14 @@ interface FakeDb {
   promoted: Map<string, ContactPromotionResult | Error>;
   /** contactSetDigest over the staged table, as the target would compute it. */
   staged: string;
+  /** Whether the link report's tables are migrated. */
+  linkReportReady: boolean;
+  /** What the link report reads, or an error to throw. */
+  links: LinkReport | Error;
 }
 const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY,
-  promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64) });
+  promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64), linkReportReady: true,
+  links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplyOffered": [], "link.contactTaken": [], "link.emailMismatch": [] } } });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -86,7 +91,7 @@ interface Harness {
   readonly err: string[];
   readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined };
   readonly file: (name: string) => string;
-  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote") => M4Receipt;
+  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport") => M4Receipt;
 }
 
 function harness(opts: HarnessOptions = {}): Harness {
@@ -150,6 +155,13 @@ function harness(opts: HarnessOptions = {}): Harness {
       };
     },
     stagedContacts: async () => { assert.equal(db.writer, me, "the staged set is read under the writer lock"); return db.staged; },
+    linkReportReady: async () => db.linkReportReady,
+    linkReport: async () => {
+      calls.push("linkReport");
+      assert.equal(db.writer, null, "the link report takes no writer lock");
+      if (db.links instanceof Error) throw db.links;
+      return db.links;
+    },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
     close: async () => {
@@ -193,7 +205,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       err.push(line);
     },
   };
-  const receipt = (mode: "plan" | "write" | "keycheck" | "promote") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
+  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
   return { dir, invocation, deps, calls, out, err, state, file, receipt };
 }
 
@@ -813,4 +825,51 @@ test("a promote that fails part way publishes failed with the counts so far and 
     assert.equal(again.receipt("promote").promotion?.promoted, 2, "only the two not yet promoted");
     assert.deepEqual(db.pending, []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+const LINKS: LinkReport = { imported: 5, linked: 2, ids: { "link.unlinked": ["31", "40", "100"], "link.notImported": ["77"], "link.multiplyOffered": ["40"], "link.contactTaken": [], "link.emailMismatch": ["31"] } };
+
+test("linkreport reads the target only, writes ids to the private report and counts only to the receipt", async () => {
+  const db = { ...fakeDb(), links: LINKS };
+  const h = harness({ db, env: { M4_CONTACT_DIGEST_KEY: undefined, M4_CIVIL_ID_ENCRYPTION_KEY: undefined, M4_OPERATOR_ORG_ID: undefined } });
+  try {
+    assert.equal(await main(["linkreport"], h.deps), 0);
+    assert.equal(h.state.reads, 0, "no legacy read");
+    assert.equal(h.state.locked, false, "no refresh lock");
+    assert.deepEqual(h.calls, ["linkReport"]);
+    const r = h.receipt("linkreport");
+    assert.deepEqual([r.kind, r.status, r.target, r.revision, r.artifact], ["linkreport", "ok", TARGET, REVISION, ARTIFACT]);
+    assert.deepEqual(r.links, { imported: 5, linked: 2, rules: { "link.unlinked": 3, "link.notImported": 1, "link.multiplyOffered": 1, "link.contactTaken": 0, "link.emailMismatch": 1 } });
+    for (const id of ["31", "40", "100", "77"]) assert.ok(!JSON.stringify(r).includes(`"${id}"`), "no legacy id in the receipt");
+    const reportFile = path.join(h.file("out"), `${h.invocation}.linkreport.report.json`);
+    assert.equal(statSync(reportFile).mode & 0o777, 0o600);
+    const report = JSON.parse(readFileSync(reportFile, "utf8"));
+    assert.deepEqual([report.imported, report.linked, report.ids], [5, 2, LINKS.ids]);
+    assert.deepEqual([report.target, report.revision, report.artifact, report.invocation], [TARGET, REVISION, ARTIFACT, h.invocation]);
+    assert.ok(h.out.some((l) => l === "links imported=5 linked=2 link.unlinked=3 link.notImported=1 link.multiplyOffered=1 link.contactTaken=0 link.emailMismatch=1"));
+    assert.ok(h.out.some((l) => l.startsWith(`m4 linkreport ok invocation=${h.invocation} target=${TARGET}`)));
+    assert.ok(!h.out.join("\n").includes("100"), "no legacy id in the log");
+  } finally { cleanup(h); }
+});
+
+test("linkreport is refused before any read without a verified build, its target or its schema; a failed read is failed with a fixed code", async () => {
+  const run = async (opts: HarnessOptions, expect: [number, string, string]) => {
+    const h = harness(opts);
+    try {
+      assert.equal(await main(["linkreport"], h.deps), expect[0]);
+      const r = h.receipt("linkreport");
+      assert.deepEqual([r.status, r.code], [expect[1], expect[2]]);
+      assert.equal(r.links, undefined);
+      assert.ok(!existsSync(path.join(h.file("out"), `${h.invocation}.linkreport.report.json`)), "no report");
+      return h.calls;
+    } finally { cleanup(h); }
+  };
+  assert.deepEqual(await run({ env: { M4_TARGET_ID: "not-a-uuid" } }, [2, "refused", "destination"]), []);
+  assert.deepEqual(await run({ env: { M4_DATABASE_URL: undefined } }, [2, "refused", "writeConfig"]), []);
+  assert.deepEqual(await run({ provenance: { clean: false } }, [2, "refused", "provenance"]), []);
+  assert.deepEqual(await run({ provenance: { artifact: "f".repeat(64) } }, [2, "refused", "provenance"]), []);
+  assert.deepEqual(await run({ db: { ...fakeDb(), marker: { environment: "production", targetId: TARGET } } }, [2, "refused", "target"]), []);
+  assert.deepEqual(await run({ env: { M4_TARGET_ID: "22222222-2222-4222-8222-222222222222" } }, [2, "refused", "target"]), []);
+  assert.deepEqual(await run({ db: { ...fakeDb(), linkReportReady: false } }, [2, "refused", "schema"]), []);
+  assert.deepEqual(await run({ db: { ...fakeDb(), links: new LinkReportError() } }, [1, "failed", "m3.link.reportFailed"]), ["linkReport"]);
 });

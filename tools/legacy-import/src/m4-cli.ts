@@ -10,6 +10,7 @@
  *   tools/legacy-import/m4 write
  *   tools/legacy-import/m4 keycheck   (once per target: the civil ID key check)
  *   tools/legacy-import/m4 promote    (after a write: linked people's staged contacts, see `promote`)
+ *   tools/legacy-import/m4 linkreport (M-3: the identity link report for staff, see `linkReport`)
  * (a shell entry that clears the environment and starts Node on tools/legacy-import/m4-launch.mjs).
  * This module is not an entry point: run directly, it evaluates its imports but never calls `main`.
  *
@@ -94,7 +95,7 @@ import { createHash, createHmac } from "node:crypto";
 import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import pg from "pg";
-import { CIVIL_KEY_CHECK, civilKeyOpens, PostgresCatalogueImportStore, ContactPromotionError, PostgresContactPromotion, type ContactPromotionResult, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonContactImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore, personContactDigest } from "@studenthub/db/import";
+import { CIVIL_KEY_CHECK, civilKeyOpens, linkReportCounts, readLinkReport, type LinkReport, PostgresCatalogueImportStore, ContactPromotionError, PostgresContactPromotion, type ContactPromotionResult, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonContactImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore, personContactDigest } from "@studenthub/db/import";
 import { CivilIdVault, PROFILE_PARITY_REVISION } from "@studenthub/profile";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
 import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, lockPathFrom, parseDatabaseUrl } from "./refresh.js";
@@ -170,7 +171,7 @@ export function receipt(report: M4Report): string[] {
 export interface M4Receipt {
   readonly schemaVersion: 2;
   readonly invocation: string;
-  readonly kind: "plan" | "write" | "keycheck" | "promote";
+  readonly kind: "plan" | "write" | "keycheck" | "promote" | "linkreport";
   readonly status: "ok" | "started" | "refused_rows" | "failed" | "refused";
   readonly at: string;
   /** Set once the run got as far as computing them. */
@@ -199,6 +200,8 @@ export interface M4Receipt {
   readonly digestKey?: string;
   /** For `promote`: the accepted write invocation it consumed. */
   readonly acceptedWrite?: string;
+  /** For `linkreport`: totals and counts per rule only; the ids are in the private report. */
+  readonly links?: ReturnType<typeof linkReportCounts>;
 }
 
 /**
@@ -330,6 +333,10 @@ export interface WriteTarget {
   promoter(): ContactPromoter;
   /** contactSetDigest over every staged legacy_candidate_contacts row, read on the writer session. */
   stagedContacts(): Promise<string>;
+  /** Whether the link report's tables are migrated (LINK_REPORT_READY_SQL). */
+  linkReportReady(): Promise<boolean>;
+  /** The M-3 link report, read in one read-only snapshot; needs no writer lock. */
+  linkReport(): Promise<LinkReport>;
   /** Re-checks, on the lock session itself, that it is alive and still holds the lock. */
   stillHeld(): Promise<boolean>;
   /** Whether the lock session was lost or broken at any point. Once true, stays true. */
@@ -357,6 +364,15 @@ export const M4_PROMOTE_REQUIRED_MIGRATION = "0659_drop_principal_email_rekey";
 export const PROMOTION_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '${M4_PROMOTE_REQUIRED_MIGRATION}')
   AND to_regclass('public.legacy_contact_promotions') IS NOT NULL
   AND to_regprocedure('public.principal_email_key(text)') IS NOT NULL AS ready`;
+/**
+ * What `linkreport` reads: the snapshots (0653), the links (0215) and the promotion record (0657),
+ * at the promotion's schema (0659), so its outcome codes are the ones the report names.
+ */
+export const LINK_REPORT_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '${M4_PROMOTE_REQUIRED_MIGRATION}')
+  AND to_regclass('public.legacy_candidate_snapshots') IS NOT NULL
+  AND to_regclass('public.legacy_account_links') IS NOT NULL
+  AND to_regclass('public.legacy_account_link_events') IS NOT NULL
+  AND to_regclass('public.legacy_contact_promotions') IS NOT NULL AS ready`;
 /** How many pending principals `promote` takes at a time. */
 export const PROMOTE_BATCH = 500;
 
@@ -505,6 +521,10 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
       const { rows } = await writer.query<{ id: string; digest: string }>("SELECT legacy_candidate_id AS id, digest FROM legacy_candidate_contacts");
       return contactSetDigest(rows.map((r) => [r.id, r.digest] as const));
     },
+    linkReportReady: async () => {
+      try { return (await pool.query<{ ready: boolean }>(LINK_REPORT_READY_SQL)).rows[0]?.ready === true; } catch { return false; }
+    },
+    linkReport: () => readLinkReport(pool),
     stillHeld: async () => (writer ? writer.fence() : false),
     lost: () => wasLost || (writer?.lost ?? false),
     close: async () => {
@@ -548,7 +568,7 @@ class Refusal extends Error {}
 export async function main(argv: readonly string[], deps: CliDeps): Promise<number> {
   const { env } = deps;
   const mode = argv[0];
-  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote") { deps.error("m4: refused.usage"); return 2; }
+  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote" && mode !== "linkreport") { deps.error("m4: refused.usage"); return 2; }
   const invocation = env.M4_INVOCATION ?? "";
   // Without a fresh, unclaimed name there is nowhere this run's outcome could be published.
   if (!UUID.test(invocation)) { deps.error("m4: refused.invocation"); return 2; }
@@ -560,11 +580,12 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
   let bound: Omit<M4Receipt, "schemaVersion" | "invocation" | "kind" | "status" | "at" | "steps"> = {};
   const confirmed: M4Step[] = [];
   let order: readonly string[] = [];
+  let links: M4Receipt["links"];
   const publish = (status: M4Receipt["status"], code?: string, promotion?: PromotionCounts) => {
     const unconfirmed = status === "failed" && mode !== "promote" ? order.slice(confirmed.length) : undefined;
     writeWhole(receiptPath, { schemaVersion: 2, invocation, kind: mode, status, at: deps.now().toISOString(), ...bound,
       steps: confirmed.map(receiptStep), ...(unconfirmed ? { unconfirmed } : {}), ...(code ? { code } : {}),
-      ...(promotion ? { promotion } : {}) } satisfies M4Receipt);
+      ...(promotion ? { promotion } : {}), ...(links ? { links } : {}) } satisfies M4Receipt);
   };
   const refuse = (code: string): never => { throw new Refusal(code); };
 
@@ -576,6 +597,7 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     if (!/^[0-9a-f]{40}$/.test(revision)) refuse("revision");
     const targetId = env.M4_TARGET_ID ?? "";
     if (mode === "keycheck") return await keycheck(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
+    if (mode === "linkreport") return await linkReport(deps, revision, targetId, publish, reportPath, (b, l) => { bound = b; links = l; }, (t) => { target = t; });
     if (mode === "promote") return await promote(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
     const operator = env.M4_OPERATOR_ORG_ID ?? "";
     if (!UUID.test(targetId) || !ORG_ID.test(operator)) refuse("destination");
@@ -776,5 +798,51 @@ async function promote(deps: CliDeps, revision: string, targetId: string,
   const line = (name: string, m: Record<string, number>) => `${name} ${Object.entries(m).sort().map(([k, n]) => `${k}=${n}`).join(" ")}`.trimEnd();
   for (const l of [line("phone", counts.phone), line("handle", counts.handle), line("civilId", counts.civilId), line("email", counts.email), line("skipped", counts.skipped)]) deps.log(l);
   deps.log(`m4 promote ok invocation=${env.M4_INVOCATION} target=${targetId} revision=${revision} artifact=${artifact} write=${accepted} promoted=${counts.promoted}`);
+  return 0;
+}
+
+/**
+ * `linkreport` (M-3): the identity link report for staff follow-up (readLinkReport): imported
+ * candidates with no link, links to candidates the import does not carry, candidates linked to
+ * more than one person over time, and promoted people whose contact values another person holds or
+ * whose address did not match. It reads the target only, in one read-only snapshot, takes no lock
+ * and writes nothing to the database. The private report (mode 600, never attached anywhere) holds
+ * legacy candidate ids by rule; the receipt holds totals and counts per rule only. Exit 0 when the
+ * report was written, 2 when refused, 1 when the read failed (`m3.link.reportFailed`).
+ */
+async function linkReport(deps: CliDeps, revision: string, targetId: string,
+  publish: (status: M4Receipt["status"], code?: string) => void, reportPath: string,
+  bind: (bound: Omit<M4Receipt, "schemaVersion" | "invocation" | "kind" | "status" | "at" | "steps">, links?: M4Receipt["links"]) => void,
+  track: (target: WriteTarget) => void): Promise<number> {
+  const { env } = deps;
+  const refuse = (code: string): number => {
+    deps.error(`m4: refused.${code}`);
+    try { publish("refused", code); } catch { return 1; }
+    return 2;
+  };
+  if (!UUID.test(targetId)) return refuse("destination");
+  if (!env.M4_DATABASE_URL) return refuse("writeConfig");
+  const artifact = env.M4_ARTIFACT_DIGEST ?? "";
+  const built = deps.provenance();
+  if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
+  const bound = { revision, artifact, target: targetId };
+  bind(bound);
+  const target = deps.target(env);
+  track(target);
+  const marker = await target.marker();
+  if (marker?.environment !== "staging" || marker.targetId !== targetId) return refuse("target");
+  if (!await target.linkReportReady()) return refuse("schema");
+  let report: LinkReport;
+  try { report = await target.linkReport(); } catch {
+    deps.error("m4: m3.link.reportFailed");
+    try { publish("failed", "m3.link.reportFailed"); } catch { /* the exit code still says failed */ }
+    return 1;
+  }
+  const counts = linkReportCounts(report);
+  writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "linkreport", at: deps.now().toISOString(), ...bound, ...report });
+  bind(bound, counts);
+  publish("ok");
+  deps.log(`links imported=${counts.imported} linked=${counts.linked} ${Object.entries(counts.rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
+  deps.log(`m4 linkreport ok invocation=${env.M4_INVOCATION} target=${targetId} revision=${revision} artifact=${artifact}`);
   return 0;
 }
