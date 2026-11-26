@@ -1381,7 +1381,7 @@
       "gates": {
         "built": {
           "state": "open",
-          "note": "partly built (audit 2026-11-20): admin access assigns; no effective preview"
+          "note": "partly built: person and organization search, assign/revoke with preview and the effective preview (what the change opens or closes) on /admin/access; no store search"
         },
         "verified": {
           "state": "open"

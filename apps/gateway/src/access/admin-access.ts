@@ -20,6 +20,7 @@ import {
   type AccountPauseStore,
   type PauseRefusal,
   type AccessGrantRow,
+  type GrantChangeEffect,
   type AccessGrantService,
   type AccessEventRow,
   type AccessOrganization,
@@ -281,11 +282,29 @@ export function renderPersonAccess(model: PersonPageModel): string {
   return layout(`<p><a class="text-link" href="/admin/access">← Find another person</a></p><div class="profile-heading"><h1>${e(personName(person))}<span class="accent">.</span></h1></div><p>${e(person.email ?? "No email address recorded")}</p>${notice ? `<section class="notice context-notice" role="status"><strong>${e(notice)}</strong></section>` : ""}${renderPauseSection(model)}<section><h2>Roles</h2>${grantRows}</section><section><h2>Give a role</h2>${give}</section><section><h2>History</h2>${history}</section>`, "access");
 }
 
+function renderGrantEffect(name: string, orgName: string, effect: GrantChangeEffect): string {
+  const e = escapeHtml;
+  const list = (items: readonly CatalogueCapability[]) => `<ul>${items.map((capability) => `<li>${e(CAPABILITY_TEXT[capability])}</li>`).join("")}</ul>`;
+  const gained = effect.gained.length ? `<p>${e(name)} will be able to:</p>${list(effect.gained)}` : "";
+  const lost = effect.lost.length ? `<p>${e(name)} will no longer be able to:</p>${list(effect.lost)}` : "";
+  const gainedBelow = effect.gainedBelow.length ? `<p>In the companies below ${e(orgName)}, ${e(name)} will be able to:</p>${list(effect.gainedBelow)}` : "";
+  const lostBelow = effect.lostBelow.length ? `<p>In the companies below ${e(orgName)}, ${e(name)} will no longer be able to:</p>${list(effect.lostBelow)}` : "";
+  // The companies below are asked as one company directly below with no roles of
+  // its own: this is the scope's reach, not a list of the real sub-companies.
+  const belowNote = gainedBelow || lostBelow
+    ? `<p class="sidebar-note">“Companies below” shows what this role’s scope reaches. In a particular sub-company, another role ${e(name)} holds there may still give the same.</p>`
+    : "";
+  const none = gained || lost || gainedBelow || lostBelow ? "" : `<p>Nothing in the <a class="text-link" href="/admin/access/catalogue">grant catalogue</a> changes for ${e(name)}: their other roles already decide it.</p>`;
+  return `<section class="grant-effect"><h2>What changes for them</h2>${gained}${lost}${gainedBelow}${lostBelow}${belowNote}${none}</section>`;
+}
+
 export function renderGrantReview(input: {
   readonly person: AccessPerson;
   readonly orgName: string;
   readonly request: GrantChangeRequest;
   readonly result: { readonly kind: "unchanged" } | { readonly kind: "change"; readonly before: string | null; readonly after: string | null; readonly token: GrantToken };
+  /** G-02: what the change opens or closes for the person, their other roles counted. */
+  readonly effect?: GrantChangeEffect;
 }): string {
   const e = escapeHtml;
   const { request, person } = input;
@@ -302,7 +321,7 @@ export function renderGrantReview(input: {
   const verb = request.action === "grant"
     ? input.result.before === null ? "Give this role" : "Widen this role to the sub-companies"
     : "Take this role away";
-  return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(personName(person))}’s next request. Confirm within 15 minutes.</p>${facts}<form method="post" action="/admin/access/confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
+  return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(personName(person))}’s next request. Confirm within 15 minutes.</p>${facts}${input.effect ? renderGrantEffect(personName(person), input.orgName, input.effect) : ""}<form method="post" action="/admin/access/confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
 }
 
 /** A confirm whose outcome is unknown: the change may or may not have been made. */
@@ -533,6 +552,8 @@ export async function handleAccess(
       write(200, "Review access change", renderGrantReview({
         person, orgName: org.name, request,
         result: result.kind === "unchanged" ? { kind: "unchanged" } : result,
+        // The effect comes from the snapshot that issued the token, never a second read.
+        ...(result.kind === "change" && result.effect ? { effect: result.effect } : {}),
       }));
       return true;
     }

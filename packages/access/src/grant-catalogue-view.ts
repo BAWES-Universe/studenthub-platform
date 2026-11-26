@@ -56,15 +56,29 @@ export interface GrantCatalogueView {
   readonly rows: readonly CatalogueRow[];
 }
 
-const CALLER = "catalogue-caller";
-const TARGET = "catalogue-target";
-const COMPANY = "catalogue-company";
-const CHILD = "catalogue-child-company";
+// Synthetic ids hold a space, which no principal or organization id may
+// (grant-change.ts), so a probe can never be mistaken for a real one.
+const CALLER = "catalogue caller";
+const TARGET = "catalogue target";
+const COMPANY = "catalogue company";
+const CHILD = "catalogue child company";
 
-function opensFor(grant: HeldGrant, operator: string, operatorOrgIds: readonly string[]): CatalogueCapability[] {
-  const grants = [grant];
-  const companyAncestors = grant.orgId === operator ? [operator] : [];
-  const company = grant.orgId === operator ? COMPANY : grant.orgId;
+/**
+ * Where the company-level questions are asked: a real company (with its
+ * ancestors), or, for a grant on the operator, a company directly below it.
+ */
+export interface CapabilityPlace {
+  readonly companyId: string;
+  readonly companyAncestors: readonly string[];
+  /** The operator organization the StudentHub-wide questions are asked at; the first configured one when absent. */
+  readonly operator?: string;
+}
+
+/** What a set of grants opens, asked of the same rules the platform enforces. Pure. */
+export function capabilitiesAt(grants: readonly HeldGrant[], place: CapabilityPlace, operatorOrgIds: readonly string[]): CatalogueCapability[] {
+  const operator = place.operator ?? operatorOrgIds[0];
+  if (operator === undefined) throw new RangeError("capabilities need an operator organization");
+  const { companyId: company, companyAncestors } = place;
   const child = { id: CHILD, ancestors: [...companyAncestors, company] };
   const reports = reportAccess(grants, operatorOrgIds);
   // Roles are given only on the Access pages, so a grant that cannot open
@@ -88,6 +102,13 @@ function opensFor(grant: HeldGrant, operator: string, operatorOrgIds: readonly s
     ["manage_store_managers", mayManageStoreAccess(grants, company, companyAncestors)],
   ];
   return checks.filter(([, allowed]) => allowed).map(([capability]) => capability);
+}
+
+function opensFor(grant: HeldGrant, operator: string, operatorOrgIds: readonly string[]): CatalogueCapability[] {
+  const place = grant.orgId === operator
+    ? { companyId: COMPANY, companyAncestors: [operator] }
+    : { companyId: grant.orgId, companyAncestors: [] };
+  return capabilitiesAt([grant], place, operatorOrgIds);
 }
 
 function givenBy(place: CataloguePlace, role: Role, scope: GrantScope, operator: string, operatorOrgIds: readonly string[]): CatalogueGiver {
@@ -114,4 +135,56 @@ export function grantCatalogueView(operatorOrgIds: readonly string[] = DEFAULT_O
     }
   }
   return Object.freeze({ version: GRANT_CATALOGUE_VERSION, roles: ROLES, scopes: GRANT_SCOPES, rows: Object.freeze(rows) });
+}
+
+/**
+ * Access lane G-02: what one grant change does to a person, for the review
+ * page before it is confirmed. The person's other grants count, so a role
+ * that adds nothing they cannot already do shows no gain.
+ */
+export interface GrantChangeEffect {
+  /** At the changed organization (for StudentHub itself: there and at a company below it). */
+  readonly gained: readonly CatalogueCapability[];
+  readonly lost: readonly CatalogueCapability[];
+  /** At a company below the changed company, where only a subtree grant reaches. Empty for StudentHub itself. */
+  readonly gainedBelow: readonly CatalogueCapability[];
+  readonly lostBelow: readonly CatalogueCapability[];
+}
+
+/** The abilities asked at one company; the rest do not depend on where they are asked. */
+export const COMPANY_CAPABILITIES: readonly CatalogueCapability[] = Object.freeze(["read_company_contacts", "change_company_contacts", "manage_store_managers"]);
+
+export function grantChangeEffect(input: {
+  /** Every grant the person holds now. */
+  readonly held: readonly HeldGrant[];
+  /** The change: the role on the organization ends at `after` (null: taken away). */
+  readonly change: { readonly orgId: string; readonly role: string; readonly after: string | null };
+  readonly orgAncestors: readonly string[];
+  readonly operatorOrgIds?: readonly string[];
+}): GrantChangeEffect {
+  const operatorOrgIds = input.operatorOrgIds ?? DEFAULT_OPERATOR_ORG_IDS;
+  const { change } = input;
+  const onOperator = operatorOrgIds.includes(change.orgId);
+  // The operator the change is asked at: the changed one, or the one above the changed company.
+  const operator = onOperator ? change.orgId : operatorOrgIds.find((id) => input.orgAncestors.includes(id)) ?? operatorOrgIds[0];
+  const place = onOperator
+    ? { companyId: COMPANY, companyAncestors: [change.orgId], ...(operator ? { operator } : {}) }
+    : { companyId: change.orgId, companyAncestors: input.orgAncestors, ...(operator ? { operator } : {}) };
+  const others = input.held.filter((grant) => !(grant.orgId === change.orgId && grant.role === change.role));
+  const after = change.after === null ? others : [...others, { orgId: change.orgId, role: change.role, scope: change.after }];
+  const diff = (at: CapabilityPlace, among: readonly CatalogueCapability[]) => {
+    const before = new Set(capabilitiesAt(input.held, at, operatorOrgIds));
+    const now = new Set(capabilitiesAt(after, at, operatorOrgIds));
+    return {
+      gained: Object.freeze(among.filter((capability) => now.has(capability) && !before.has(capability))),
+      lost: Object.freeze(among.filter((capability) => before.has(capability) && !now.has(capability))),
+    };
+  };
+  const here = diff(place, CATALOGUE_CAPABILITIES);
+  // A company grant's scope decides whether it reaches the companies below:
+  // ask a company directly below the changed one as well.
+  const below = onOperator
+    ? { gained: Object.freeze([]), lost: Object.freeze([]) }
+    : diff({ companyId: CHILD, companyAncestors: [...input.orgAncestors, change.orgId], ...(operator ? { operator } : {}) }, COMPANY_CAPABILITIES);
+  return Object.freeze({ gained: here.gained, lost: here.lost, gainedBelow: below.gained, lostBelow: below.lost });
 }
