@@ -22,7 +22,7 @@ export async function prepareTls(directory) {
     '-days', '2', '-subj', '/CN=StudentHub disposable browser acceptance CA',
     '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign']);
   run('openssl', ['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', csr, '-subj', '/CN=localhost']);
-  await writeFile(extensions, 'subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n', { mode: 0o600 });
+  await writeFile(extensions, 'subjectAltName=DNS:localhost,IP:127.0.0.1,DNS:parent.browser.test,DNS:embed.browser.test,DNS:provider.browser.test\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n', { mode: 0o600 });
   run('openssl', ['x509', '-req', '-in', csr, '-CA', ca, '-CAkey', caKey, '-CAcreateserial', '-out', cert,
     '-days', '2', '-sha256', '-extfile', extensions]);
   run('certutil', ['-N', '--empty-password', '-d', `sql:${nss}`]);
