@@ -9,7 +9,7 @@ const ORIGIN = "https://studenthub.example", STAFF = "staff-1", PERSON = "person
 
 async function rig(t: TestContext, wired = true) {
   const subscribed = new Set<string>(), reads: string[] = [];
-  const store = { async counts(day: string) { reads.push(day); return { interviewScheduledToday: 0, companyMoreThen40DaysWithoutPayment: 0, totalExpiredCards: 1, id_need_generated: 3, activeRequests: 4, missingBankInfo: 6, assignedExpiredCivilID: 2, assignedIdleCandidates: 5 }; },
+  const store = { async counts(day: string) { reads.push(day); return { interviewScheduledToday: 0, companyMoreThen40DaysWithoutPayment: 0, totalExpiredCards: 1, id_need_generated: 3, activeRequests: 4, last40daysNoRequest: 7, missingBankInfo: 6, assignedExpiredCivilID: 2, assignedIdleCandidates: 5 }; },
     async sendDay() { return null; }, async isSubscribed(id: string) { return subscribed.has(id); },
     async setSubscribed(id: string, on: boolean) { if (on) subscribed.add(id); else subscribed.delete(id); } };
   const authority = { async isStaff(id: string) { return id === STAFF; } };
@@ -37,7 +37,7 @@ test("REPORTS_MORNING_SUMMARY_HTTP staff see every counter, with not available f
   assert.match(body.day, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(body.subscribed, false);
   assert.deepEqual(body.counters.map(c => c.key), MORNING_SUMMARY_KEYS);
-  assert.deepEqual(body.counters.filter(c => c.value !== null).map(c => [c.key, c.value]), [["interviewScheduledToday", 0], ["companyMoreThen40DaysWithoutPayment", 0], ["totalExpiredCards", 1], ["id_need_generated", 3], ["activeRequests", 4], ["missingBankInfo", 6], ["assignedExpiredCivilID", 2], ["assignedIdleCandidates", 5]]);
+  assert.deepEqual(body.counters.filter(c => c.value !== null).map(c => [c.key, c.value]), [["interviewScheduledToday", 0], ["companyMoreThen40DaysWithoutPayment", 0], ["totalExpiredCards", 1], ["id_need_generated", 3], ["activeRequests", 4], ["last40daysNoRequest", 7], ["missingBankInfo", 6], ["assignedExpiredCivilID", 2], ["assignedIdleCandidates", 5]]);
   const html = await (await x.get("s-staff", "text/html")).text();
   assert.match(html, /<h1>Morning summary<\/h1>/);
   assert.match(html, /Candidates missing bank info<\/td><td>6<\/td>/);
