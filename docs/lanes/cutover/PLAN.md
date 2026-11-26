@@ -139,8 +139,23 @@ Two active rows of one kind whose names normalize the same become one item: the 
   - `document.admission`: the object is not an admitted file for its kind.
   - `document.readFailed`: the read failed. Nothing is known about the object, so retry it later.
 - **Memory and receipt.** Reads run one at a time, so a run holds at most one object in memory. `documentCheckCounts` gives the receipt's counts: documents checked, total bytes and a count per rule.
+
+### M-2 bucket adapter and run input (third slice)
+
+- **Bucket adapter** (`tools/legacy-import/src/m2-bucket.ts`, `legacyBucketReader`). It is the read-only adapter behind `LegacyObjectReader`:
+  - It only ever sends GetObject. There is no list, put, copy, delete, ACL or presigned URL.
+  - Each read asks for `bytes=0-<maxBytes>`, so the store sends at most `maxBytes + 1` bytes. The stream is cut once more than `maxBytes` arrive, whatever the store sends. An object whose stated total is over the limit is `tooLarge` without being read.
+  - Only a 404 is `missing`. A 403 or any other failure is a failed read, because S3 answers 403 for an absent key when the credential lacks ListBucket. The read credential therefore needs GetObject and ListBucket on this bucket only.
+  - A short, broken or bodiless answer is a failed read. Errors leave as a fixed message only.
+  - Keys must have the mapper's shape: one of legacy's three prefixes, no path step, no control character. Any other key is refused before a request.
+  - The bucket, region and credential come from the staging host's run environment, never from the repository.
+- **Run input** (`tools/legacy-import/src/m2-run.ts`). Ownership is decided over every candidate row, so the input is proved complete before any object is read:
+  - One statement reads every candidate row, with M-1's columns and the four document columns.
+  - The table is counted before and after that read, and the read must match both counts (`m2.ownershipIncomplete`).
+  - The run holds the refresh lock and binds the refresh identity, like `m4 plan`, so the input is one known generation.
+  - `planM2` derives M-1's imported people and the documents to check from those same rows.
 - **Next slices (proposed):**
-  - The bucket adapter and an `m4 doccheck` run step on staging, with a private report by legacy id and a counts-only receipt.
+  - An `m4 doccheck` run step on staging. It checks provenance, takes the refresh lock, binds the refresh identity and reads the input as above. It then checks each object through the adapter and writes a private report by legacy id (mode 600, staging host only) and a counts-only receipt.
   - The copy step: read each object again and refuse it unless it still hashes to the recorded sha256. Stage it apart from the person-owned documents, bound to `legacy-candidate:<id>` like the contact slice.
   - Promote it into the person's slot on link, only where the slot is empty. The check and the write happen under the owner and slot lock, and a slot the person cleared on purpose counts as theirs: the import never refills it.
   - Legacy's public objects stay where they are until SHU-54 is fixed.
