@@ -63,6 +63,8 @@ const mutations = [
   ["show paid rows as held or failed", "BANK_STORE_TRANSFER",
     "WHERE r.kind IN ('hold','unpay')", "WHERE r.kind IN ('hold','unpay','pay')"],
   ["hide that an older held page exists", "BANK_STORE_HELD", "const more = held.length > limit;", "const more = false;"],
+  ["read the records in a read-only transaction", "BANK_STORE_RECORDS_PRODUCTION",
+    'const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ";', 'const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";'],
 ];
 const original = await readFile(store, "utf8");
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-concurrency=1",

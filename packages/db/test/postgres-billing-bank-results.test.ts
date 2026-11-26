@@ -398,3 +398,19 @@ test("BANK_STORE_TRANSFER a transfer's lines show the bank payment that paid eac
   assert.equal(await results(complete, policy, async () => false).transfer(actor, t), null);
   assert.equal(await results().transfer({ principalId: "fin", actingAs: true }, t), null);
 });
+
+test("BANK_STORE_RECORDS_PRODUCTION the held and transfer reads work with the production finance gate and settle policy, which lock grants FOR SHARE", async () => {
+  await pool.query("INSERT INTO principals(id) VALUES ('cfin')");
+  await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES ('fin','root','finance','subtree'),('cfin','P','finance','subtree')");
+  const rule = bankResultLifecyclePolicy((grants, orgId, ancestors) => transferInvoiceVoidDecision(grants, orgId, ancestors, ["root"]));
+  const t = await transfer([{ id: "L-1", person: "w1", amount: "10.000" }, { id: "L-2", person: "w2", amount: "20.000" }], "lock", "payment_received");
+  await approve(results(), actor, await submit(aub(["SUCCESS", "REF-1", "x", "L-1"], ["SUCCESS", "REF-9", "x", "L-404"])));
+  const store = results(complete, rule, operatorFinanceGate(["root"]));
+  const held = (await store.held(actor).catch((e) => assert.fail(`held read failed: ${e}`)))!;
+  assert.deepEqual(held.rows.map((r) => [r.rowNumber, r.reason]), [[4, "unmatched"]]);
+  const status = (await store.transfer(actor, t).catch((e) => assert.fail(`transfer read failed: ${e}`)))!;
+  assert.deepEqual(status.lines.map((l) => [l.lineId, l.paid, l.payment?.reference ?? null]), [["L-1", true, "REF-1"], ["L-2", false, null]]);
+  const cfin = { principalId: "cfin", actingAs: false };
+  assert.equal(await store.held(cfin), null, "a company's own finance user is refused at the gate");
+  assert.equal(await results(complete, rule, async () => true).transfer(cfin, t), null, "and, past an open gate, by the settle policy");
+});

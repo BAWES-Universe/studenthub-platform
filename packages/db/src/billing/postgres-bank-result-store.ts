@@ -89,8 +89,9 @@ export interface BankResultTransferLine {
   readonly rows: readonly BankResultLineRow[];
 }
 export interface BankResultTransferStatus { readonly transferId: string; readonly companyId: string; readonly status: string; readonly lines: readonly BankResultTransferLine[] }
-/** The record reads see one snapshot: an apply commits a paid flag and its confirmation together, so a reader never sees one without the other. */
-const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
+/** The record reads see one snapshot: an apply commits a paid flag and its confirmation together, so a reader never sees one without the other.
+ * Not READ ONLY: the finance gate and the per-transfer policy lock grants and organizations FOR SHARE, which a read-only transaction refuses. */
+const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ";
 const TRANSFER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const iso = (v: Date | null) => (v === null ? null : v.toISOString());
