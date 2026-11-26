@@ -8,6 +8,7 @@ import { TypesenseCandidateIndexer, TypesenseCandidateSearchAdapter } from "../s
 const url = process.env.TYPESENSE_URL ?? "http://127.0.0.1:8108";
 const apiKey = process.env.TYPESENSE_API_KEY ?? "shu52-ci-key";
 const collection = "shu57_candidate_parity";
+let baselineCollection = "";
 
 const documents: CandidateSearchDocument[] = [
   candidate("1", "KW", "Gulf Tech", "Atlas Retail", ["typescript"], "female", "complete", "assigned", ["resume"], 90.5),
@@ -26,8 +27,11 @@ test.before(async () => {
   const repeated = await indexer.publish([...documents].reverse());
 
   assert.equal(first.collection, repeated.collection);
+  assert.equal(first.previousCollection, null);
+  assert.equal(repeated.previousCollection, first.collection);
   assert.equal(first.documents, documents.length);
   assert.equal(repeated.documents, documents.length);
+  baselineCollection = first.collection;
 });
 
 test("real Typesense preserves combined filters, multi-select and live alternative counts", async () => {
@@ -57,6 +61,31 @@ test("empty results retain active filters and authorization scope cannot widen",
   assert.deepEqual(result.facets.country.find((option) => option.value === "SA"), {
     value: "SA", count: 0, active: true,
   });
+});
+
+test("a candidate publication can be rolled back without overwriting a newer alias", async () => {
+  const indexer = new TypesenseCandidateIndexer({ url, apiKey, alias: collection });
+  const candidateDocuments = [...documents, candidate(
+    "5", "KW", "Gulf Tech", "Atlas Retail", ["rollback-sentinel"],
+    "not-set", "complete", "assigned", ["resume"], 99,
+  )];
+  const publication = await indexer.publish(candidateDocuments);
+  assert.equal(publication.previousCollection, baselineCollection);
+
+  const adapter = new TypesenseCandidateSearchAdapter({ url, apiKey, collection });
+  const beforeRollback = await adapter.search({
+    scope: { kind: "all" },
+    filters: { skill: ["rollback-sentinel"] },
+  });
+  assert.deepEqual(beforeRollback.hits.map((hit) => hit.id), ["5"]);
+
+  const rolledBack = await indexer.rollback(publication);
+  assert.deepEqual(rolledBack, { alias: collection, restoredCollection: baselineCollection });
+  const afterRollback = await adapter.search({
+    scope: { kind: "all" },
+    filters: { skill: ["rollback-sentinel"] },
+  });
+  assert.equal(afterRollback.total, 0);
 });
 
 function candidate(

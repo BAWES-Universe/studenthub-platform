@@ -9,3 +9,7 @@
 - Non-loopback endpoints must use HTTPS before an API-key header can be constructed.
 
 This package does not index live records, deploy Typesense, change the legacy UI, cut over traffic, or remove Algolia.
+
+The executable validation and guarded rollback sequence for SHU-53 is in
+[`CUTOVER.md`](./CUTOVER.md). It explicitly remains a HOLD for production until
+current account costs, staging capacity, and Khalid's approval are recorded.
