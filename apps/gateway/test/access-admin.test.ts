@@ -125,11 +125,12 @@ test("A1_READ_SITES a signed-out visitor, a non-admin and an unknown person all 
   const http = await serve(t, ports);
   for (const accept of ["text/html", "application/json"]) {
     for (const principalId of [undefined, "candidate-1", "owner-1", "staff-self"]) {
-      for (const path of ["/admin/access", "/admin/access?q=dana%40example.invalid", "/admin/access/people/candidate-1"]) {
+      for (const path of ["/admin/access", "/admin/access?q=dana%40example.invalid", "/admin/access/people/candidate-1", "/admin/access/people/candidate-1/audit"]) {
         await sameAsUnknown(await http.get(path, principalId, accept), await http.get("/definitely-unknown", principalId, accept), `${principalId ?? "signed out"} ${path} ${accept}`);
       }
     }
     await sameAsUnknown(await http.get("/admin/access/people/nobody", "admin-1", accept), await http.get("/definitely-unknown", "admin-1", accept), `unknown person ${accept}`);
+    await sameAsUnknown(await http.get("/admin/access/people/nobody/audit", "admin-1", accept), await http.get("/definitely-unknown", "admin-1", accept), `unknown person audit ${accept}`);
     await sameAsUnknown(await http.get("/admin/access/people/nobody%00x", "admin-1", accept), await http.get("/definitely-unknown", "admin-1", accept), `NUL in a person id ${accept}`);
     await sameAsUnknown(await http.get("/profile/access", undefined, accept), await http.get("/definitely-unknown", undefined, accept), `own list signed out ${accept}`);
   }
@@ -143,6 +144,7 @@ test("A1_READ_SITES a signed-out visitor, a non-admin and an unknown person all 
   // Unconfigured: the paths do not exist.
   const off = await serve(t, undefined);
   await sameAsUnknown(await off.get("/admin/access", "admin-1"), await off.get("/definitely-unknown", "admin-1"), "unconfigured");
+  await sameAsUnknown(await off.get("/admin/access/people/candidate-1/audit", "admin-1"), await off.get("/definitely-unknown", "admin-1"), "unconfigured audit");
   assert.equal(events.length, 0);
 });
 
