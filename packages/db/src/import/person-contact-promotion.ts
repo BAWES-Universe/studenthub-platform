@@ -100,15 +100,21 @@ export class PostgresContactPromotion {
 
   async close(): Promise<void> { if (this.#owns) await this.#pool.end(); }
 
-  /** Linked principals with a staged row and no promotion yet, in id order. */
-  async pending(limit = 500): Promise<readonly string[]> {
+  /**
+   * Linked principals with a staged row and no promotion yet, in id order (COLLATE "C"), strictly
+   * after `after` when given. A caller walks the whole set by passing the last id it was given, so
+   * a principal that stays pending (skipped, say) never stops the walk.
+   */
+  async pending(limit = 500, after?: string): Promise<readonly string[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 10_000) throw new TypeError("limit must be 1 to 10000");
+    if (after !== undefined && (typeof after !== "string" || !PRINCIPAL.test(after))) throw new TypeError("after must be a principal id");
     try {
       const { rows } = await this.#pool.query<{ principal_id: string }>(
         `SELECT l.principal_id FROM legacy_account_links l
            JOIN legacy_candidate_contacts c ON c.legacy_candidate_id = l.legacy_candidate_id
           WHERE NOT EXISTS (SELECT 1 FROM legacy_contact_promotions p WHERE p.principal_id = l.principal_id)
-          ORDER BY l.principal_id COLLATE "C" LIMIT $1`, [limit]);
+            AND ($2::text IS NULL OR l.principal_id COLLATE "C" > $2::text COLLATE "C")
+          ORDER BY l.principal_id COLLATE "C" LIMIT $1`, [limit, after ?? null]);
       return rows.map((r) => r.principal_id);
     } catch {
       throw new ContactPromotionError();
