@@ -19,9 +19,10 @@ const mutations = [
   ["link a transfer by its raw id", "BANK_HTTP_HELD", "`${BANK_RESULTS_PATH}/transfers/${encodeURIComponent(id)}`", "`${BANK_RESULTS_PATH}/transfers/${id}`"],
   ["print a bank reference unescaped", "BANK_HTTP_HELD", "<td>${esc(h.reference ?? \"\")}</td>", "<td>${h.reference ?? \"\"}</td>"],
   ["accept a write on the read pages", "BANK_HTTP_HELD", 'file || read ? "GET"', 'file ? "GET"'],
-  ["show a paid line as unpaid", "BANK_HTTP_TRANSFER", "l.paid ? \"Paid (not from a bank result file)\" : \"Unpaid\"", "\"Unpaid\""],
+  ["show a paid line as unpaid", "BANK_HTTP_TRANSFER", ': "Paid (not from a bank result file)";', ': "Unpaid";'],
   ["ask the store with the still-encoded id", "BANK_HTTP_TRANSFER", "id = decodeURIComponent(segment);", "id = segment;"],
   ["accept any page value", "BANK_HTTP_HELD", "return /^[1-9][0-9]{0,5}$/.test(value) ? Number(value) : undefined;", "return Number(value) || 1;"],
+  ["show a line set back to unpaid as paid", "BANK_HTTP_TRANSFER", 'const paid = !l.paid ? "Unpaid"', 'const paid = false ? "Unpaid"'],
   ["list an applied file's lines without links", "BANK_HTTP_FLOW", "${decisionsTable(file.decisions, file.lineTransfers)}", "${decisionsTable(file.decisions)}"],
   ["link a line by its raw transfer id", "BANK_HTTP_FLOW", "`<a href=\"${esc(transferHref(transfers[lineId]))}#line-", "`<a href=\"${esc(`/finance/bank-results/transfers/${transfers[lineId]}`)}#line-"],
 ];

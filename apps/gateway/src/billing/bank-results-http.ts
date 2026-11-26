@@ -154,8 +154,10 @@ function heldHtml(held: readonly BankResultHeldRow[], page: number, more: boolea
 }
 function transferHtml(t: BankResultTransferStatus): string {
   const rows = t.lines.map(l => {
-    const paid = l.payment ? `Paid: bank reference ${esc(l.payment.reference ?? "none")}, <a href="${BANK_RESULTS_PATH}/${l.payment.fileId}">file</a> row ${l.payment.rowNumber}, ${when(l.payment.recordedAt)} UTC`
-      : l.paid ? "Paid (not from a bank result file)" : "Unpaid";
+    // The current paid flag decides; a confirmation stays recorded after a line is set back to unpaid.
+    const paid = !l.paid ? "Unpaid"
+      : l.payment ? `Paid: bank reference ${esc(l.payment.reference ?? "none")}, <a href="${BANK_RESULTS_PATH}/${l.payment.fileId}">file</a> row ${l.payment.rowNumber}, ${when(l.payment.recordedAt)} UTC`
+      : "Paid (not from a bank result file)";
     const notes = l.rows.map(r => `<a href="${BANK_RESULTS_PATH}/${r.fileId}">${when(r.appliedAt)}</a> row ${r.rowNumber}: ${r.kind === "hold" ? `held. ${holdText(r.reason)}` : `the bank reported a failure${r.reference ? ` (${esc(r.reference)})` : ""}.`}`).join("<br>");
     return `<tr id="line-${esc(l.lineId)}"><td>${esc(l.lineId)}</td><td>${esc(l.personId)}</td><td>${esc(l.currency)} ${esc(l.amount)}</td><td>${paid}</td><td>${notes}</td></tr>`;
   }).join("");

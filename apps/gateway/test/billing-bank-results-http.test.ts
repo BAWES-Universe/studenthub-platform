@@ -24,7 +24,8 @@ const STATUS: BankResultTransferStatus = { transferId: "T1", companyId: "P", sta
   { lineId: "L-2", personId: "w2", amount: "80.000", currency: "KWD", paid: false, payment: null, rows: [
     { fileId: ID, rowNumber: 4, kind: "hold", reason: "amount_mismatch", reference: "REF-2", appliedAt: "2026-11-25T11:00:00.000Z" },
     { fileId: ID, rowNumber: 6, kind: "unpay", reason: null, reference: "Account closed", appliedAt: "2026-11-25T11:00:00.000Z" }] },
-  { lineId: "L-4", personId: "w4", amount: "5.000", currency: "KWD", paid: true, payment: null, rows: [] }] };
+  { lineId: "L-4", personId: "w4", amount: "5.000", currency: "KWD", paid: true, payment: null, rows: [] },
+  { lineId: "L-5", personId: "w5", amount: "7.000", currency: "KWD", paid: false, payment: { reference: "REF-5", fileId: ID, rowNumber: 7, recordedAt: "2026-11-25T11:00:00.000Z" }, rows: [] }] };
 async function xlsx(rows: string[][]): Promise<Buffer> {
   const { default: writeExcelFile } = await import("write-excel-file/node");
   return Buffer.from(await writeExcelFile(rows.map(r => r.map(value => ({ value, type: String }))) as never, { sheet: "R" }).toBuffer());
@@ -176,6 +177,7 @@ test("BANK_HTTP_TRANSFER Finance sees each line of a transfer: paid with which b
   assert.match(html, /<tr id="line-L-1"><td>L-1<\/td><td>w1<\/td><td>KWD 120\.500<\/td><td>Paid: bank reference REF-1, <a href="\/finance\/bank-results\/[0-9a-f-]{36}">file<\/a> row 3/);
   assert.match(html, /<tr id="line-L-2">[\s\S]*?<td>Unpaid<\/td><td>[\s\S]*row 4: held\. The amount differs from the line\.[\s\S]*row 6: the bank reported a failure \(Account closed\)\./);
   assert.match(html, /<tr id="line-L-4">[\s\S]*?Paid \(not from a bank result file\)/);
+  assert.match(html, /<tr id="line-L-5"><td>L-5<\/td><td>w5<\/td><td>KWD 7\.000<\/td><td>Unpaid<\/td>/, "a line set back to unpaid reads unpaid, though its confirmation stays recorded");
   assert.deepEqual(await (await x.call("/finance/bank-results/transfers/T1", { session: FIN })).json(), STATUS);
   assert.equal((await x.call("/finance/bank-results/transfers/T2", { session: FIN })).status, 404, "a transfer the reader may not settle is not found");
   assert.equal((await x.call("/finance/bank-results/transfers/%3Cx%3E", { session: FIN })).status, 404);
