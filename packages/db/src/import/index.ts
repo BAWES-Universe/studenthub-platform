@@ -14,3 +14,5 @@ export { CIVIL_KEY_CHECK, PersonContactImportError, PostgresPersonContactImportS
 export type { CivilIdSealer, PersonContactImportRefusal, PersonContactImportResult, PersonContactImportRow } from "./person-contact-import.js";
 export { CONTACT_PROMOTION_REVISION, ContactPromotionError, PostgresContactPromotion } from "./person-contact-promotion.js";
 export type { CivilIdOutcome, CivilIdResealer, ContactPromotionOutcomes, ContactPromotionResult, EmailOutcome, ProfileValueOutcome } from "./person-contact-promotion.js";
+export { LINK_REPORT_RULES, LinkReportError, linkReportCounts, readLinkReport } from "./link-report.js";
+export type { LinkReport, LinkReportRule } from "./link-report.js";
