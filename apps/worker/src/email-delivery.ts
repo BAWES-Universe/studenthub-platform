@@ -8,7 +8,7 @@ type Delivery = Parameters<typeof deliverWithDailyStaffEmails>;
 
 /**
  * The `email_delivery` job's work, exactly as the worker runs it: dispatch waiting placement events
- * to the feed and waiting recruit events,
+ * and confirmed payments to the feed and waiting recruit events,
  * queue the daily staff emails and the person reminders when the worker can deliver (queueing
  * records the day for good, so a worker that would mark them not sent leaves them due), deliver one batch of due email
  * (`processDue`'s default size, oldest due first), then check the day's volume. An email queued
@@ -17,6 +17,8 @@ type Delivery = Parameters<typeof deliverWithDailyStaffEmails>;
 export function emailDeliveryWork(deps: {
   readonly recruitDispatch: RecruitDispatchPort;
   readonly placementFeed: PlacementFeedPort;
+  readonly transferPaidFeed: PlacementFeedPort;
+  readonly transferInitiatedFeed: PlacementFeedPort;
   readonly service: Delivery[0];
   readonly summaryStore: Delivery[1];
   readonly spikeStore: Delivery[2];
@@ -30,6 +32,6 @@ export function emailDeliveryWork(deps: {
   const delivery = { production: service.production, configured: service.configured,
     processDue: () => service.production && service.configured ? queuePersonRemindersThenDeliver(deps.reminders, () => service.processDue(), now) : service.processDue() };
   return () => deliverAndCheckVolume(
-    () => dispatchPlacementsThen(deps.placementFeed, () => dispatchRecruitThenDeliver(deps.recruitDispatch, () => deliverWithDailyStaffEmails(delivery, deps.summaryStore, deps.spikeStore, now), now), now),
+    () => dispatchPlacementsThen(deps.placementFeed, () => dispatchPlacementsThen(deps.transferPaidFeed, () => dispatchPlacementsThen(deps.transferInitiatedFeed, () => dispatchRecruitThenDeliver(deps.recruitDispatch, () => deliverWithDailyStaffEmails(delivery, deps.summaryStore, deps.spikeStore, now), now), now), now), now),
     deps.volumeStore, deps.alert, now);
 }

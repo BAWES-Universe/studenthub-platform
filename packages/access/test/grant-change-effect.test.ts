@@ -37,6 +37,8 @@ test("G02_EFFECT_BELOW a company role's scope decides what it opens in the compa
   assert.deepEqual(effect(subtree, { orgId: "acme", role: "org-owner", after: "self" }, ["root"]), { ...none, lostBelow: COMPANY });
   // A first self grant opens only the company itself.
   assert.deepEqual(effect([], { orgId: "acme", role: "org-owner", after: "self" }, ["root"]), { ...none, gained: COMPANY });
+  // An organization whose id once matched the probe's is previewed like any other.
+  assert.deepEqual(effect(self.map((grant) => ({ ...grant, orgId: "catalogue-child-company" })), { orgId: "catalogue-child-company", role: "org-owner", after: "subtree" }, ["root"]), { ...none, gainedBelow: COMPANY });
   // StudentHub itself has no "below" of its own: its company abilities are already asked at a company below it.
   assert.deepEqual(effect([], { orgId: "root", role: "org-owner", after: "subtree" }).gainedBelow, []);
 });

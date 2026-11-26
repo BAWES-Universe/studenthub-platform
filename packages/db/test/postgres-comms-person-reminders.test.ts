@@ -131,7 +131,7 @@ test("COMMS_PERSON_REMINDERS_PG the worker queues reminders only when it can del
   const person = await principal("worker"); await profile(person, "Worker Person", "1990-10-01");
   const run = (production: boolean, port: FakeEmailPort) => {
     const emailStore = new PostgresEmailOutboxStore({ pool });
-    return emailDeliveryWork({ recruitDispatch: new PostgresRecruitDispatchStore({ pool }), placementFeed: { dispatch: async () => 0 }, service: new EmailOutboxService(emailStore, port, production, production),
+    return emailDeliveryWork({ recruitDispatch: new PostgresRecruitDispatchStore({ pool }), placementFeed: { dispatch: async () => 0 }, transferPaidFeed: { dispatch: async () => 0 }, transferInitiatedFeed: { dispatch: async () => 0 }, service: new EmailOutboxService(emailStore, port, production, production),
       summaryStore: new PostgresMorningSummaryStore({ pool }), spikeStore: new PostgresFiringSpikeStore({ pool }), reminders: store, volumeStore: emailStore,
       alert: () => undefined, now: () => new Date("2031-10-01T11:00:00Z") })();
   };

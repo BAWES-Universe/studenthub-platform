@@ -6,3 +6,5 @@ export { PostgresRecruitDispatchStore } from "./postgres-recruit-dispatch.js";
 export { PostgresPersonRemindersStore, PERSON_REMINDER_KINDS, CIVIL_ID_EXPIRING_DAYS } from "./postgres-person-reminders-store.js";
 export type { PersonReminderKind } from "./postgres-person-reminders-store.js";
 export { PostgresPlacementFeedStore } from "./postgres-placement-feed.js";
+export { PostgresTransferPaidFeedStore } from "./postgres-transfer-paid-feed.js";
+export { PostgresTransferInitiatedFeedStore } from "./postgres-transfer-initiated-feed.js";

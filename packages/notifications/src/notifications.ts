@@ -5,10 +5,10 @@ import {isStaffMessageKind,renderStaffMessage,type StaffMessageKind} from "../..
 export const RECRUIT_EVENTS=Object.freeze(["invitation.sent","invitation.accepted","invitation.declined","invitation.withdrawn","interview.scheduled","interview.cancelled","application.shortlisted","application.rejected","request_application.received","request_application.accepted","request_application.rejected"] as const);
 export type RecruitEvent=typeof RECRUIT_EVENTS[number];
 type RecruitKind=`recruit.${RecruitEvent}`;
-export const NOTIFICATION_KINDS=Object.freeze(["organization.status_changed","staff.message","work.session_approved","work.session_rejected","work.assigned",...RECRUIT_EVENTS.map(e=>`recruit.${e}` as RecruitKind)] as const);
+export const NOTIFICATION_KINDS=Object.freeze(["organization.status_changed","staff.message","work.session_approved","work.session_rejected","work.assigned","pay.transfer_paid","pay.transfer_initiated",...RECRUIT_EVENTS.map(e=>`recruit.${e}` as RecruitKind)] as const);
 export type NotificationKind=typeof NOTIFICATION_KINDS[number];
-export type NotificationParameters={readonly "organization.status_changed":{readonly status:"active"|"under_review"|"inactive"|"none"};readonly "staff.message":Readonly<Record<string,never>>;readonly "work.session_approved":{readonly workDate:string};readonly "work.session_rejected":{readonly workDate:string};readonly "work.assigned":Readonly<Record<string,never>>}&{readonly [K in RecruitKind]:Readonly<Record<string,never>>};
-export type NotificationSubjectReference={readonly "organization.status_changed":`organization:${string}`;readonly "staff.message":`staff_message:${string}`;readonly "work.session_approved":`work_session:${string}`;readonly "work.session_rejected":`work_session:${string}`;readonly "work.assigned":`work_assignment:${string}`}&{readonly [K in RecruitKind]:`recruit_outbox:${string}`};
+export type NotificationParameters={readonly "organization.status_changed":{readonly status:"active"|"under_review"|"inactive"|"none"};readonly "staff.message":Readonly<Record<string,never>>;readonly "work.session_approved":{readonly workDate:string};readonly "work.session_rejected":{readonly workDate:string};readonly "work.assigned":Readonly<Record<string,never>>;readonly "pay.transfer_paid":Readonly<Record<string,never>>;readonly "pay.transfer_initiated":Readonly<Record<string,never>>}&{readonly [K in RecruitKind]:Readonly<Record<string,never>>};
+export type NotificationSubjectReference={readonly "organization.status_changed":`organization:${string}`;readonly "staff.message":`staff_message:${string}`;readonly "work.session_approved":`work_session:${string}`;readonly "work.session_rejected":`work_session:${string}`;readonly "work.assigned":`work_assignment:${string}`;readonly "pay.transfer_paid":`bank_confirmation:${string}`;readonly "pay.transfer_initiated":`pay_line:${string}`}&{readonly [K in RecruitKind]:`recruit_outbox:${string}`};
 type EventOf<K extends NotificationKind>={readonly id:string;readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly createdAt:Date|string;readonly readAt:Date|string|null};
 export type NotificationEvent<K extends NotificationKind=NotificationKind>={[P in K]:EventOf<P>}[K];
 /** A stored feed row as the registry sees it: any registered kind, its parameters still unchecked. */
@@ -20,8 +20,12 @@ export interface StoredStaffMessage{readonly id:string;readonly kind:StaffMessag
 export interface StoredRecruitEvent{readonly id:string;readonly event:string;readonly requestId:string;readonly positionTitle:string;readonly companyName:string}
 /** One placement of the recipient, with its store and company names and start date as they are now. */
 export interface StoredPlacement{readonly id:string;readonly storeName:string;readonly companyName:string;readonly startDate:string}
+/** One confirmed payment to the recipient: the amount the bank confirmed, and the line's store and the transfer's company as they are now. */
+export interface StoredTransferPayment{readonly id:string;readonly amount:string;readonly currency:string;readonly storeName:string;readonly companyName:string}
+/** A transfer line of the recipient whose payment was received: the line's amount, its store and the transfer's company as they are now. */
+export interface StoredTransferLine{readonly id:string;readonly amount:string;readonly currency:string;readonly storeName:string;readonly companyName:string}
 /** readStaffMessages must return only messages addressed to the recipient; a feed row whose message is missing is not shown. */
-export interface NotificationSubjectStore{readOrganizations(ids:readonly string[]):Promise<readonly NotificationOrganization[]>;liveOrganizationIds(ids:readonly string[]):Promise<ReadonlySet<string>>;readStaffMessages?(recipient:string,ids:readonly string[]):Promise<readonly StoredStaffMessage[]>;/** Only events addressed to the recipient; a feed row whose event is missing is not shown. */readRecruitEvents?(recipient:string,ids:readonly string[]):Promise<readonly StoredRecruitEvent[]>;/** Only the recipient's own placements; a feed row whose placement is missing is not shown. */readPlacements?(recipient:string,ids:readonly string[]):Promise<readonly StoredPlacement[]>}
+export interface NotificationSubjectStore{readOrganizations(ids:readonly string[]):Promise<readonly NotificationOrganization[]>;liveOrganizationIds(ids:readonly string[]):Promise<ReadonlySet<string>>;readStaffMessages?(recipient:string,ids:readonly string[]):Promise<readonly StoredStaffMessage[]>;/** Only events addressed to the recipient; a feed row whose event is missing is not shown. */readRecruitEvents?(recipient:string,ids:readonly string[]):Promise<readonly StoredRecruitEvent[]>;/** Only the recipient's own placements; a feed row whose placement is missing is not shown. */readPlacements?(recipient:string,ids:readonly string[]):Promise<readonly StoredPlacement[]>;/** Only payments on the recipient's own lines; a feed row whose payment is missing is not shown. */readTransferPayments?(recipient:string,ids:readonly string[]):Promise<readonly StoredTransferPayment[]>;/** Only the recipient's own lines, on transfers whose payment was received; a feed row whose line is missing is not shown. */readTransferLines?(recipient:string,ids:readonly string[]):Promise<readonly StoredTransferLine[]>}
 export interface RenderedNotification{readonly id:string;readonly text:string;readonly href:string;readonly createdAt:string;readonly read:boolean}
 export interface NotificationPage{readonly items:readonly RenderedNotification[];readonly unreadCount:number;readonly page:number}
 export interface NotificationLine{readonly text:string;readonly href:string}
@@ -85,6 +89,24 @@ const workDecisionKind=(decision:"approved"|"rejected"):NotificationKindDefiniti
  async render(rows){return new Map(rows.map(row=>{const workDate=(row.parameters as {workDate:string}).workDate;return[row.id,{text:`Your hours for ${workDate} were ${decision}.`,href:workHistoryHref(workDate)}]}))}
 });
 export const workSessionApprovedKind=workDecisionKind("approved"),workSessionRejectedKind=workDecisionKind("rejected");
+const paymentSubject=prefixed("bank_confirmation:",/^[1-9][0-9]{0,18}$/);
+/** The person's pay history (legacy's transfer screen). */
+export const PAY_HISTORY_HREF="/pay";
+/** A paid transfer line (legacy candidate notification type 6, "Transfer paid"): the amount the bank confirmed, where it was earned. */
+export const transferPaidKind:NotificationKindDefinition={
+ kind:"pay.transfer_paid",
+ subject:paymentSubject,
+ parameters:value=>plainObject(value)&&Object.keys(value).length===0,
+ async render(rows,{recipient,subjects}){const ids=[...new Set(rows.map(r=>paymentSubject(r.subjectReference)!))];const payments=subjects.readTransferPayments?await subjects.readTransferPayments(recipient,ids):[];const byId=new Map(payments.map(p=>[p.id,p])),lines=new Map<string,NotificationLine>();for(const row of rows){const p=byId.get(paymentSubject(row.subjectReference)!);if(!p)continue;lines.set(row.id,{text:`${p.currency} ${p.amount} for ${p.storeName}, ${p.companyName} has been transferred to your bank account.`,href:PAY_HISTORY_HREF})}return lines}
+};
+const lineSubject=prefixed("pay_line:",/^[A-Za-z0-9._:-]{1,128}$/);
+/** A transfer whose payment was received (legacy candidate notification type 5, "New transfer initiated"): the line's amount, where it was earned. */
+export const transferInitiatedKind:NotificationKindDefinition={
+ kind:"pay.transfer_initiated",
+ subject:lineSubject,
+ parameters:value=>plainObject(value)&&Object.keys(value).length===0,
+ async render(rows,{recipient,subjects}){const ids=[...new Set(rows.map(r=>lineSubject(r.subjectReference)!))];const found=subjects.readTransferLines?await subjects.readTransferLines(recipient,ids):[];const byId=new Map(found.map(p=>[p.id,p])),lines=new Map<string,NotificationLine>();for(const row of rows){const p=byId.get(lineSubject(row.subjectReference)!);if(!p)continue;lines.set(row.id,{text:`New transfer initiated: ${p.currency} ${p.amount} for ${p.storeName}, ${p.companyName}.`,href:PAY_HISTORY_HREF})}return lines}
+};
 const placementSubject=prefixed("work_assignment:",UUID);
 /** A new placement (legacy candidate notification type 1): where and from when, read from the placement as it is now. Opens the person's work page. */
 export const workAssignedKind:NotificationKindDefinition={
@@ -116,7 +138,7 @@ const recruitKind=(event:RecruitEvent):NotificationKindDefinition=>({
  async render(rows,{recipient,subjects}){const ids=[...new Set(rows.map(r=>recruitSubject(r.subjectReference)!))];const events=subjects.readRecruitEvents?await subjects.readRecruitEvents(recipient,ids):[];const byId=new Map(events.map(e=>[e.id,e])),lines=new Map<string,NotificationLine>();for(const row of rows){const stored=byId.get(recruitSubject(row.subjectReference)!);if(!stored||stored.event!==event)continue;lines.set(row.id,RECRUIT_LINES[event](stored))}return lines}
 });
 export const RECRUIT_KINDS=RECRUIT_EVENTS.map(recruitKind);
-export const NOTIFICATION_REGISTRY=new NotificationKindRegistry([organizationStatusChangedKind,staffMessageKind,workSessionApprovedKind,workSessionRejectedKind,workAssignedKind,...RECRUIT_KINDS]);
+export const NOTIFICATION_REGISTRY=new NotificationKindRegistry([organizationStatusChangedKind,staffMessageKind,workSessionApprovedKind,workSessionRejectedKind,workAssignedKind,transferPaidKind,transferInitiatedKind,...RECRUIT_KINDS]);
 
 export interface NotificationRecordPort{record<K extends NotificationKind>(event:{readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly dedupeKey:string}):Promise<void>}
 export async function recordNotification<K extends NotificationKind>(port:NotificationRecordPort,event:{readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly dedupeKey:string},registry:NotificationKindRegistry=NOTIFICATION_REGISTRY):Promise<void>{if(!registry.accepts(event))throw new TypeError("unknown notification kind or payload");await port.record({...event,dedupeKey:event.dedupeKey})}

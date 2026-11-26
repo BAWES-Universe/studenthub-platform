@@ -2916,7 +2916,8 @@
       "subject": "requirement r1",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "profile snapshots PR #686 at ed49440c, staging run step PR #688 at 3bf7da4e, contact mapper PR #693 at c77c1780, contact store PR #694 at bf144d1a, verified address PR #700 at ebe56efc, contact run step PR #704 at 246910c2, promotion PR #709 at a5038515, promote mode PR #712 at c723d98d"
         },
         "dryRun": {
           "state": "open"
@@ -2954,7 +2955,8 @@
       "subject": "requirement r1",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "link report and m4 linkreport PR #716 at 5b66ff55"
         },
         "dryRun": {
           "state": "open"

@@ -47,7 +47,7 @@ import { coordinatorJournalDirectory } from "./push-broker.mjs";
 import { renderWatchLine } from "./watch-progress.mjs";
 import { resolveCommentContinuations, continuationIssueIds, continuationsOf, mergeCommentThreads } from "./comment-continuations.mjs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1455,6 +1455,32 @@ export function endedEpisodeSupervisorSockets(env) {
   return [...new Set([env?.SHU_SUPERVISOR_SOCKET, ...workers].filter((s) => typeof s === "string" && s.length > 0))];
 }
 
+// SHU-71, 26 Nov: endedEpisodeReviewDue picks receipts OUTSIDE this worker's
+// own lifecycle, so the same ended review is due on every card worker's tick at
+// once. Workers 1 and 2 started together at 04:00:04, both asked every
+// supervisor, both read the same durable FAILED record and both wrote the same
+// HOLD receipt for attempt b760441e (04:00:55 and 04:00:56). Nothing shared
+// serialized them: each tick holds only its own worker's writer lock.
+//
+// A cross-card HOLD is therefore published with an id of its own, derived from
+// the card, the attempt and the head it holds (Linear's CommentCreateInput
+// takes a client-supplied UUID v4 `id`). Every worker that settles the same
+// attempt sends the same id, so Linear holds at most one comment for it however
+// many publish, and a retry after a lost answer sends the same id again: no
+// unresolved-publication state is needed. Before the write the attempt's thread
+// is read again and nothing is sent when that comment, or any later stage for
+// the attempt, is already there. When the write fails, the thread is read back:
+// the comment there under its id means the HOLD was published (its answer was
+// lost, or another worker's write took the id first); otherwise the error
+// stands, and the next tick tries again with the same id.
+export function crossCardHoldCommentId({ issueId, attemptId, targetSha }) {
+  const bytes = Buffer.from(createHash("sha256").update(`coordinator-cross-card-hold\0${issueId}\0${attemptId}\0${targetSha}`).digest().subarray(0, 16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 // One answer from the supervisors asked. A supervisor that holds the attempt and
 // does not report it finished at this head (live, not durable, another head)
 // wins, so the review keeps holding; then a durable COMPLETED/FAILED bound to
@@ -1878,11 +1904,21 @@ export const LINEAR_COMMENT_CREATE_MUTATION = `
     }
   }`;
 
+// A comment published under its own id (crossCardHoldCommentId): every writer
+// of the same record sends the same id.
+export const LINEAR_COMMENT_CREATE_WITH_ID_MUTATION = `
+  mutation CoordinatorPublish($id: String!, $issueId: String!, $body: String!) {
+    commentCreate(input: { id: $id, issueId: $issueId, body: $body }) {
+      success
+      comment { id }
+    }
+  }`;
+
 export const LINEAR_ISSUE_COMMENTS_QUERY = `
   query CoordinatorIssueComments($issueId: String!, $after: String) {
     issue(id: $issueId) {
       comments(first: 100, orderBy: createdAt, after: $after) {
-        nodes { body createdAt user { id displayName } }
+        nodes { id body createdAt user { id displayName } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -3295,7 +3331,63 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       const released = nextReceiptState(receipt, { type: "hold",
         reason: `${ENDED_EPISODE_REVIEW}: review from episode ${receipt.episode_id}, which has ended; released on ${disposition.evidence}; verdict not applied` }, { now: io.now });
       if (!released.accepted) continue;
-      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
+      // Every card worker may settle this receipt at once. The HOLD is
+      // published under its own id (crossCardHoldCommentId), so Linear keeps
+      // at most one, and the thread is read again first so a HOLD already
+      // there, or a later stage, is not sent at all.
+      const holdId = crossCardHoldCommentId({ issueId: receipt.issue_id, attemptId: receipt.attempt_id, targetSha: receipt.target_sha });
+      const readThread = () => fetchThreadComments({ issueIds: threadIdsFor.get(receipt.issue_id) ?? [linearIssueId], token: linearToken, fetchImpl });
+      // The HOLD counts as on the thread only as a comment under its own id
+      // whose receipt is this attempt, at this head, at HOLD.
+      const holdOnThread = (comments) => comments.some((comment) => {
+        if (comment?.id !== holdId) return false;
+        const parsed = parseReceiptCommentBody(comment.body);
+        return parsed?.attempt_id === receipt.attempt_id && parsed?.target_sha === receipt.target_sha && parsed?.stage === "HOLD";
+      });
+      const alreadySettled = (comments) => {
+        if (holdOnThread(comments)) return `its HOLD is already published as comment ${holdId}`;
+        if (comments.some((comment) => comment?.id === holdId)) return `comment ${holdId} on its thread is not this attempt's HOLD at this head`;
+        const fresh = parseReceiptsFromComments(comments).filter((r) => r.attempt_id === receipt.attempt_id && r.target_sha === receipt.target_sha);
+        if (fresh.length === 0) return "its receipt is missing from the thread";
+        const moved = fresh.find((r) => r.stage !== receipt.stage);
+        return moved ? `its receipt has already moved to ${moved.stage}` : null;
+      };
+      let skipped;
+      try { skipped = alreadySettled(await readThread()); }
+      catch (error) { skipped = `its thread could not be read again (${error?.code ?? "unreadable"})`; }
+      if (skipped) {
+        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} not written — ${skipped}`);
+        continue;
+      }
+      // Published only on Linear's positive acknowledgement of this exact id
+      // (success and the returned comment id), or, failing that, on reading
+      // the HOLD back from the thread under its id (holdOnThread): the answer
+      // was lost, or another worker's write took this id first. Otherwise the
+      // tick fails, the slot stays held, and the next tick sends the same id.
+      let answer = null;
+      let failure = null;
+      try {
+        answer = await sendLinear(LINEAR_COMMENT_CREATE_WITH_ID_MUTATION, { id: holdId, issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
+      } catch (error) {
+        // A budget or comment-cap refusal keeps its own handling in main.
+        if (["LINEAR_RATE_LIMITED", "LINEAR_COMMENT_CAP", "LINEAR_QUOTA_UNCLASSIFIED"].includes(error?.code)) throw error;
+        failure = error;
+      }
+      const created = answer?.commentCreate;
+      if (!(created?.success === true && created?.comment?.id === holdId)) {
+        const why = failure
+          ? `its write failed (${failure?.code ?? "unknown"})`
+          : `its write was not acknowledged (success=${String(created?.success)}, id=${created?.comment?.id ?? "none"})`;
+        let published = false;
+        try { published = holdOnThread(await readThread()); } catch { /* unconfirmed below */ }
+        if (!published) {
+          if (failure) throw failure;
+          const err = new Error(`${ENDED_EPISODE_REVIEW} HOLD for ${receipt.issue_id} attempt ${receipt.attempt_id}: ${why}, and comment ${holdId} is not this attempt's HOLD on its thread; slot held`);
+          err.code = "LINEAR_PUBLISH_UNCONFIRMED";
+          throw err;
+        }
+        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} HOLD comment ${holdId} read back after ${why}; published once`);
+      }
       lifecyclePersisted = true;
       lifecycleSlotReleased = true;
       const idx = receipts.indexOf(receipt);

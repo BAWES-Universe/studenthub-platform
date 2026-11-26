@@ -1,5 +1,6 @@
 import type { GrantScope } from "@studenthub/contracts";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
+import { grantChangeEffect, type GrantChangeEffect } from "./grant-catalogue-view.js";
 import {
   decideGrantChange,
   issueGrantToken,
@@ -41,7 +42,15 @@ export type GrantApplyOutcome =
 
 export type GrantPreviewResult =
   | { readonly ok: true; readonly kind: "unchanged"; readonly current: GrantScope | null }
-  | { readonly ok: true; readonly kind: "change"; readonly before: GrantScope | null; readonly after: GrantScope | null; readonly token: GrantToken }
+  | {
+    readonly ok: true; readonly kind: "change"; readonly before: GrantScope | null; readonly after: GrantScope | null; readonly token: GrantToken;
+    /**
+     * G-02: what the change opens or closes for the target, worked out from the
+     * same snapshot as the token's `before` (their grants and the organization's
+     * ancestors), when the store reads the target's grants.
+     */
+    readonly effect?: GrantChangeEffect;
+  }
   | { readonly ok: false; readonly reason: GrantRefusal };
 
 export type GrantConfirmResult = GrantApplyOutcome;
@@ -70,7 +79,15 @@ export function createAccessGrantService(options: {
         secret: options.secret, callerId, request, before: decision.before, now: now(),
         ...(options.entropy ? { entropy: options.entropy } : {}),
       });
-      return { ok: true, kind: "change", before: decision.before, after: decision.after, token };
+      return {
+        ok: true, kind: "change", before: decision.before, after: decision.after, token,
+        ...(snapshot.targetGrants ? {
+          effect: grantChangeEffect({
+            held: snapshot.targetGrants, change: { orgId: request.orgId, role: request.role, after: decision.after },
+            orgAncestors: snapshot.orgAncestors, operatorOrgIds,
+          }),
+        } : {}),
+      };
     },
     async confirm(callerId, request, token, requestId) {
       const verified = verifyGrantToken({ secret: options.secret, token, callerId, request, now: now() });

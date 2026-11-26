@@ -54,8 +54,8 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-734",
-      "SHU-735"
+      "SHU-739",
+      "SHU-740"
     ]
   },
   "adapter_pause_map": {},
@@ -10291,6 +10291,40 @@
         "apps/gateway/src/reports/certificates-http.ts",
         "apps/gateway/test/certificate-detail.test.ts",
         "apps/gateway/test/certificate-detail-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-739",
+      "authorization_ref": "SHU-739",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-05 detail half: the read-only store detail page at /organization/:orgId/stores/:storeId over the existing organizationStores list(); edits only stores-page.ts and its own tests, adds no route. It waits on nothing and shares no path with SHU-740.",
+      "initial_build_paths": [
+        "apps/gateway/src/organizations/stores-page.ts",
+        "apps/gateway/test/organization-store-detail.test.ts",
+        "apps/gateway/test/organization-store-detail-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/organizations/stores-page.ts",
+        "apps/gateway/test/organization-store-detail.test.ts",
+        "apps/gateway/test/organization-store-detail-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-740",
+      "authorization_ref": "SHU-740",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix A-07: the read-only reference data entry page at /reference-data/:catalogue/:id over the existing catalogue resolveHistorical(); edits only reference-data-page.ts and its own tests, adds no route. It waits on nothing and shares no path with SHU-739.",
+      "initial_build_paths": [
+        "apps/gateway/src/reference-data-page.ts",
+        "apps/gateway/test/reference-data-entry.test.ts",
+        "apps/gateway/test/reference-data-entry-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/reference-data-page.ts",
+        "apps/gateway/test/reference-data-entry.test.ts",
+        "apps/gateway/test/reference-data-entry-mutations.mjs"
       ]
     }
   ],
