@@ -208,7 +208,8 @@ export function createEpisodeHarness({
     }
     if (query.includes("CoordinatorIssueComments")) {
       const known = nodes.find((n) => n.id === variables.issueId || n.identifier === variables.issueId);
-      return respond({ issue: { comments: { nodes: known ? [...threadOf(known.id)] : [] } } });
+      // Linear answers with pageInfo; a strict (continued-thread) read needs it.
+      return respond({ issue: { comments: { nodes: known ? [...threadOf(known.id)] : [], pageInfo: { hasNextPage: false, endCursor: null } } } });
     }
     if (query.includes("commentCreate")) {
       const isFixture = nodes.some((n) => n.id === variables.issueId);
