@@ -316,6 +316,10 @@ test("G02_PREVIEW_EFFECT the review page says what the change opens or closes fo
   const revoke = await (await http.post("/admin/access/preview", "admin-1", { ...grantForm, targetPrincipalId: "owner-1", role: "org-owner", scope: "subtree", action: "revoke" })).text();
   assert.match(revoke, /Omar Owner will no longer be able to:<\/p><ul><li>See company contacts<\/li><li>Change company contacts<\/li><li>Manage store managers<\/li><\/ul>/);
   assert.doesNotMatch(revoke, /will be able to:/);
+  assert.match(revoke, /<p>In the companies below Acme &lt;Trading&gt;, Omar Owner will no longer be able to:<\/p><ul><li>See company contacts<\/li><li>Change company contacts<\/li><li>Manage store managers<\/li><\/ul>/);
+  // Widening a company role reaches the companies below it; at the company itself nothing changes.
+  const below = await (await http.post("/admin/access/preview", "admin-1", { ...grantForm, role: "finance", scope: "subtree" })).text();
+  assert.match(below, /<h2>What changes for them<\/h2><p>In the companies below Acme &lt;Trading&gt;, Dana Candidate will be able to:<\/p><ul><li>See company contacts<\/li><\/ul><\/section>/);
   // A role whose abilities the person already has opens nothing new.
   const covered = await (await http.post("/admin/access/preview", "admin-1", grantForm)).text();
   assert.match(covered, /Nothing in the <a class="text-link" href="\/admin\/access\/catalogue">grant catalogue<\/a> changes for Dana Candidate: their other roles already decide it\./);

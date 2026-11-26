@@ -286,13 +286,15 @@ export function renderPersonAccess(model: PersonPageModel): string {
   return layout(`<p><a class="text-link" href="/admin/access">← Find another person</a></p><div class="profile-heading"><h1>${e(personName(person))}<span class="accent">.</span></h1></div><p>${e(person.email ?? "No email address recorded")}</p>${notice ? `<section class="notice context-notice" role="status"><strong>${e(notice)}</strong></section>` : ""}${renderPauseSection(model)}<section><h2>Roles</h2>${grantRows}<p><a class="text-link" href="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}/audit`)}">What their access does now →</a></p></section><section><h2>Give a role</h2>${give}</section><section><h2>History</h2>${history}</section>`, "access");
 }
 
-function renderGrantEffect(name: string, effect: GrantChangeEffect): string {
+function renderGrantEffect(name: string, orgName: string, effect: GrantChangeEffect): string {
   const e = escapeHtml;
   const list = (items: readonly CatalogueCapability[]) => `<ul>${items.map((capability) => `<li>${e(CAPABILITY_TEXT[capability])}</li>`).join("")}</ul>`;
   const gained = effect.gained.length ? `<p>${e(name)} will be able to:</p>${list(effect.gained)}` : "";
   const lost = effect.lost.length ? `<p>${e(name)} will no longer be able to:</p>${list(effect.lost)}` : "";
-  const none = gained || lost ? "" : `<p>Nothing in the <a class="text-link" href="/admin/access/catalogue">grant catalogue</a> changes for ${e(name)}: their other roles already decide it.</p>`;
-  return `<section class="grant-effect"><h2>What changes for them</h2>${gained}${lost}${none}</section>`;
+  const gainedBelow = effect.gainedBelow.length ? `<p>In the companies below ${e(orgName)}, ${e(name)} will be able to:</p>${list(effect.gainedBelow)}` : "";
+  const lostBelow = effect.lostBelow.length ? `<p>In the companies below ${e(orgName)}, ${e(name)} will no longer be able to:</p>${list(effect.lostBelow)}` : "";
+  const none = gained || lost || gainedBelow || lostBelow ? "" : `<p>Nothing in the <a class="text-link" href="/admin/access/catalogue">grant catalogue</a> changes for ${e(name)}: their other roles already decide it.</p>`;
+  return `<section class="grant-effect"><h2>What changes for them</h2>${gained}${lost}${gainedBelow}${lostBelow}${none}</section>`;
 }
 
 export function renderGrantAudit(input: {
@@ -345,7 +347,7 @@ export function renderGrantReview(input: {
   const verb = request.action === "grant"
     ? input.result.before === null ? "Give this role" : "Widen this role to the sub-companies"
     : "Take this role away";
-  return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(personName(person))}’s next request. Confirm within 15 minutes.</p>${facts}${input.effect ? renderGrantEffect(personName(person), input.effect) : ""}<form method="post" action="/admin/access/confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
+  return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(personName(person))}’s next request. Confirm within 15 minutes.</p>${facts}${input.effect ? renderGrantEffect(personName(person), input.orgName, input.effect) : ""}<form method="post" action="/admin/access/confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
 }
 
 /** A confirm whose outcome is unknown: the change may or may not have been made. */
