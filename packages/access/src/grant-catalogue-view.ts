@@ -199,10 +199,12 @@ export interface EffectiveAbility {
 }
 
 export interface EffectivePlace {
-  /** The operator (StudentHub itself, and companies below it) or a company the person holds a grant on. */
+  /** An operator (StudentHub itself, and companies below it) or a company the person holds a grant on. */
   readonly orgId: string;
   readonly operator: boolean;
   readonly abilities: readonly EffectiveAbility[];
+  /** For a company: the company-level abilities that reach the companies below it. Empty for an operator. */
+  readonly below: readonly EffectiveAbility[];
 }
 
 export function effectiveAccess(input: {
@@ -212,25 +214,35 @@ export function effectiveAccess(input: {
   readonly operatorOrgIds?: readonly string[];
 }): readonly EffectivePlace[] {
   const operatorOrgIds = input.operatorOrgIds ?? DEFAULT_OPERATOR_ORG_IDS;
-  const operator = operatorOrgIds[0];
-  if (operator === undefined) throw new RangeError("effective access needs an operator organization");
-  const places: { orgId: string; operator: boolean; place: CapabilityPlace }[] = [
-    { orgId: operator, operator: true, place: { companyId: COMPANY, companyAncestors: [operator] } },
-  ];
+  const first = operatorOrgIds[0];
+  if (first === undefined) throw new RangeError("effective access needs an operator organization");
+  const places: { orgId: string; operator: boolean; place: CapabilityPlace; below: CapabilityPlace | null }[] = [];
+  // Every operator is asked at itself: the first always, any other one the person holds a grant on.
+  for (const operator of operatorOrgIds) {
+    if (operator !== first && !input.held.some((grant) => grant.orgId === operator)) continue;
+    places.push({ orgId: operator, operator: true, place: { companyId: COMPANY, companyAncestors: [operator], operator }, below: null });
+  }
   for (const org of input.organizations) {
     if (operatorOrgIds.includes(org.orgId) || places.some((item) => item.orgId === org.orgId)) continue;
     if (!input.held.some((grant) => grant.orgId === org.orgId)) continue;
-    places.push({ orgId: org.orgId, operator: false, place: { companyId: org.orgId, companyAncestors: org.ancestors } });
-  }
-  return Object.freeze(places.map(({ orgId, operator: isOperator, place }) => {
-    const all = capabilitiesAt(input.held, place, operatorOrgIds);
-    const alone = input.held.map((grant) => [grant, new Set(capabilitiesAt([grant], place, operatorOrgIds))] as const);
-    return Object.freeze({
-      orgId, operator: isOperator,
-      abilities: Object.freeze(all.map((capability) => Object.freeze({
-        capability,
-        from: Object.freeze(alone.filter(([, opens]) => opens.has(capability)).map(([grant]) => grant)),
-      }))),
+    const operator = operatorOrgIds.find((id) => org.ancestors.includes(id)) ?? first;
+    places.push({
+      orgId: org.orgId, operator: false,
+      place: { companyId: org.orgId, companyAncestors: org.ancestors, operator },
+      below: { companyId: CHILD, companyAncestors: [...org.ancestors, org.orgId], operator },
     });
-  }));
+  }
+  const abilitiesAt = (place: CapabilityPlace, among: readonly CatalogueCapability[]) => {
+    const all = new Set(capabilitiesAt(input.held, place, operatorOrgIds));
+    const alone = input.held.map((grant) => [grant, new Set(capabilitiesAt([grant], place, operatorOrgIds))] as const);
+    return Object.freeze(among.filter((capability) => all.has(capability)).map((capability) => Object.freeze({
+      capability,
+      from: Object.freeze(alone.filter(([, opens]) => opens.has(capability)).map(([grant]) => grant)),
+    })));
+  };
+  return Object.freeze(places.map(({ orgId, operator, place, below }) => Object.freeze({
+    orgId, operator,
+    abilities: abilitiesAt(place, CATALOGUE_CAPABILITIES),
+    below: below ? abilitiesAt(below, COMPANY_CAPABILITIES) : Object.freeze([]),
+  })));
 }

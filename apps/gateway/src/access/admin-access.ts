@@ -312,13 +312,18 @@ export function renderGrantAudit(input: {
   const paused = input.pause
     ? `<section class="notice context-notice" role="status"><strong>Access paused</strong> on ${e(dateText(input.pause.pausedAt))} by ${e(personName(input.pause.pausedBy))}. Their next request is signed out and nothing below applies until access is resumed.</section>`
     : "";
+  const table = (caption: string, abilities: EffectivePlace["abilities"]) =>
+    `<div class="directory-table"><table><caption>${e(caption)}</caption><thead><tr><th>Ability</th><th>Because of</th></tr></thead><tbody>${abilities.map((ability) =>
+      `<tr><th scope="row">${e(CAPABILITY_TEXT[ability.capability])}</th><td>${ability.from.length ? `<ul>${ability.from.map((grant) => `<li>${e(source(grant))}</li>`).join("")}</ul>` : "Their roles together"}</td></tr>`).join("")}</tbody></table></div>`;
+  const operators = input.places.filter((place) => place.operator).length;
   const sections = input.places.map((place) => {
-    const title = place.operator ? "On StudentHub, and every company below it" : `On ${input.names.get(place.orgId) ?? place.orgId}`;
+    const name = input.names.get(place.orgId) ?? (operators > 1 ? place.orgId : "StudentHub");
+    const title = place.operator ? `On ${name}, and every company below it` : `On ${name}`;
     const body = place.abilities.length === 0
       ? `<p class="empty-contexts">Nothing in the <a class="text-link" href="/admin/access/catalogue">grant catalogue</a>.</p>`
-      : `<div class="directory-table"><table><caption>${e(title)}</caption><thead><tr><th>Ability</th><th>Because of</th></tr></thead><tbody>${place.abilities.map((ability) =>
-        `<tr><th scope="row">${e(CAPABILITY_TEXT[ability.capability])}</th><td>${ability.from.length ? `<ul>${ability.from.map((grant) => `<li>${e(source(grant))}</li>`).join("")}</ul>` : "Their roles together"}</td></tr>`).join("")}</tbody></table></div>`;
-    return `<section><h2>${e(title)}</h2>${body}</section>`;
+      : table(title, place.abilities);
+    const below = place.below.length === 0 ? "" : `<h3>In the companies below ${e(name)}</h3>${table(`In the companies below ${name}`, place.below)}`;
+    return `<section><h2>${e(title)}</h2>${body}${below}</section>`;
   }).join("");
   const none = input.grantCount === 0 && !input.pause ? `<p class="empty-contexts" role="status">${e(name)} holds no roles, so nothing below is open to them.</p>` : "";
   return layout(`<p><a class="text-link" href="${e(back)}">← ${e(name)}</a></p><div class="profile-heading"><div><div class="eyebrow">GRANT AUDIT</div><h1>What ${e(name)}’s access does now<span class="accent">.</span></h1><p>Roles are read again on every request, so this is what their next request gets. Each ability names the roles that give it.</p></div><span class="badge">Read-only</span></div>${paused}${none}${sections}<p><a class="text-link" href="${e(back)}">See their roles and the history of changes</a></p>`, "access");

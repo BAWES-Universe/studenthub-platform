@@ -18,6 +18,7 @@ try {
     ["leave the audit page unrouted", page, "|| auditMatch !== null", "", "access-admin.test.js", "G03_AUDIT_PAGE"],
     ["name grants by organization id", page, "${input.names.get(grant.orgId) ?? grant.orgId}", "${grant.orgId}", "access-admin.test.js", "G03_AUDIT_PAGE"],
     ["drop the link from the person page", page, "\">What their access does now →</a>", "\"></a>", "access-admin.test.js", "G03_AUDIT_PAGE"],
+    ["leave out the companies below", page, "${body}${below}</section>", "${body}</section>", "access-admin.test.js", "G03_AUDIT_PAGE"],
     ["leave out the pause", page, "const paused = input.pause\n", "const paused = false\n", "access-pause.test.js", "A6_PAGE staff pause"],
   ];
   for (const [, , , , file, pattern] of mutants) assert.equal(run(file, pattern).status, 0, `baseline ${pattern}`);
