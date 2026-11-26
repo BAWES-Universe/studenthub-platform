@@ -159,16 +159,18 @@ test("a database failure rolls the person back and throws only the fixed error",
   await stage([full(a, `p${a}@example.invalid`)]);
   const p = await person(`p${a}@example.invalid`);
   await link(p, a);
-  await pool.query("CREATE OR REPLACE FUNCTION promo_test_refuse() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'value %', NEW.legacy_candidate_id; END $$");
-  await pool.query("CREATE TRIGGER promo_test_refuse BEFORE INSERT ON legacy_contact_promotions FOR EACH ROW WHEN (NEW.legacy_candidate_id = '" + String(a) + "') EXECUTE FUNCTION promo_test_refuse()");
+  // Names carry the fixture id, so runs sharing a database never collide.
+  const fn = `promo_test_refuse_${a}`;
+  await pool.query(`CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'value %', NEW.legacy_candidate_id; END $$`);
+  await pool.query(`CREATE TRIGGER ${fn} BEFORE INSERT ON legacy_contact_promotions FOR EACH ROW WHEN (NEW.legacy_candidate_id = '${a}') EXECUTE FUNCTION ${fn}()`);
   try {
     await assert.rejects(promotion.promote(p), (e: unknown) => e instanceof ContactPromotionError && e.message === "m1.contact.promotionFailed" && e.cause === undefined);
     assert.equal(await profile(p), undefined);
     assert.equal(await civil(p), undefined);
     assert.deepEqual(await verification(p), []);
   } finally {
-    await pool.query("DROP TRIGGER promo_test_refuse ON legacy_contact_promotions");
-    await pool.query("DROP FUNCTION promo_test_refuse()");
+    await pool.query(`DROP TRIGGER ${fn} ON legacy_contact_promotions`);
+    await pool.query(`DROP FUNCTION ${fn}()`);
   }
 });
 
@@ -195,23 +197,26 @@ test("the address decision holds the principal row: an address change in flight 
 });
 
 test("a promoted fact never carries to a spelling outside the ASCII form, even one a locale would fold", async () => {
-  const a = await fixtureIds(pool);
-  await stage([{ candidate_id: a, profile_url: `t${a}`, candidate_email: `k${a}@example.invalid`, candidate_email_verification: 1 }]);
-  const p = await person(`K${a}@example.invalid`);
-  await link(p, a);
-  const result = await promotion.promote(p);
-  assert.equal(result.kind === "promoted" && result.outcomes.email, "promoted");
-  const verifiedNow = async () => (await pool.query(`SELECT ${emailVerifiedSql("$1::text")} AS v`, [p])).rows[0].v as boolean;
-  assert.equal(await verifiedNow(), true);
-  for (const spelling of [`K${a}@example.invalid`, `k${a}@example.İnvalid`, `k${a}@example.invalid `]) {
-    await pool.query("UPDATE principals SET email = $2 WHERE id = $1", [p, spelling]);
-    assert.deepEqual(await verification(p), [], `the fact is dropped for ${JSON.stringify(spelling)}`);
+  // A fresh promoted principal per spelling, so each cleanup check starts from a verified fact.
+  for (const spelling of [(a: number) => `\u212a${a}@example.invalid`, (a: number) => `k${a}@example.\u0130nvalid`, (a: number) => `k${a}@example.invalid\u00a0`]) {
+    const a = await fixtureIds(pool);
+    await stage([{ candidate_id: a, profile_url: `t${a}`, candidate_email: `k${a}@example.invalid`, candidate_email_verification: 1 }]);
+    const p = await person(`K${a}@example.invalid`);
+    await link(p, a);
+    const result = await promotion.promote(p);
+    assert.equal(result.kind === "promoted" && result.outcomes.email, "promoted");
+    const verifiedNow = async () => (await pool.query(`SELECT ${emailVerifiedSql("$1::text")} AS v`, [p])).rows[0].v as boolean;
+    assert.equal(await verifiedNow(), true, "verified before the change");
+    assert.equal((await verification(p)).length, 1);
+    const changed = spelling(a);
+    await pool.query("UPDATE principals SET email = $2 WHERE id = $1", [p, changed]);
+    assert.deepEqual(await verification(p), [], `the fact is dropped for ${JSON.stringify(changed)}`);
     assert.equal(await verifiedNow(), false);
     await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, $2, true, 'legacy_import')", [p, `k${a}@example.invalid`]), /current address/);
-    await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, lower($2), true, 'legacy_import')", [p, spelling]), /check constraint|current address/);
+    await assert.rejects(pool.query("INSERT INTO principal_email_verifications (principal_id, email, verified, source) VALUES ($1, lower($2), true, 'legacy_import')", [p, changed]), /check constraint|current address/);
+    await pool.query("UPDATE principals SET email = $2 WHERE id = $1", [p, `k${a}@example.invalid`]);
+    assert.equal(await verifiedNow(), false, "changing back revives nothing");
   }
-  await pool.query("UPDATE principals SET email = $2 WHERE id = $1", [p, `k${a}@example.invalid`]);
-  assert.equal(await verifiedNow(), false, "changing back revives nothing");
 });
 
 test("the database key and the importer's JavaScript rule agree on every spelling", async () => {

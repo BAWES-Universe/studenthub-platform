@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { createPrincipal } from "@studenthub/contracts";
@@ -233,6 +234,12 @@ test("EV_REKEY_NEGATIVE moving to the ASCII key carries an issuer negative made 
     await put(stale, `ıvan-${tag}@example.com`, false, "oidc");
     await client.query("ALTER TABLE principal_email_verifications ENABLE TRIGGER principal_email_verifications_current_address");
 
+    // Migration 0659 drops the one-off re-key; re-create it from 0658's own text, in this transaction.
+    const sql = await readFile(new globalThis.URL("../../../../packages/db/migrations/0658_principal_email_ascii_key.sql", import.meta.url), "utf8");
+    const start = sql.indexOf("CREATE FUNCTION principal_email_verifications_rekey()");
+    assert.ok(start >= 0, "0658 defines the re-key");
+    const body = sql.slice(start, sql.indexOf("$$;", sql.indexOf("$$", sql.indexOf("AS $$", start) + 5)) + 3);
+    await client.query(body);
     const carried = (await client.query<{ n: number }>("SELECT principal_email_verifications_rekey() AS n")).rows[0]!.n;
     assert.equal(carried, 2);
     await client.query(`ALTER TABLE principal_email_verifications ADD CONSTRAINT principal_email_verifications_email_key
