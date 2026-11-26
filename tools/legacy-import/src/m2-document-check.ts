@@ -79,8 +79,9 @@ type Outcome = { readonly ok: CheckedDocument } | { readonly rule: DocumentCheck
 async function checkOne(row: DocumentSourceRow, reader: LegacyObjectReader): Promise<Outcome> {
   const maxBytes = CANDIDATE_DOCUMENT_ADMISSION[row.kind].maxBytes;
   for (const key of row.keys) {
-    let read: LegacyObjectRead;
+    let read: LegacyObjectRead | null | undefined;
     try { read = await reader.read(key, maxBytes); } catch { return { rule: "document.readFailed" }; }
+    if (read === null || typeof read !== "object") return { rule: "document.readFailed" };
     if (read.kind === "missing") continue;
     if (read.kind === "tooLarge") return { rule: "document.tooLarge" };
     if (read.kind !== "found" || !Buffer.isBuffer(read.bytes)) return { rule: "document.readFailed" };

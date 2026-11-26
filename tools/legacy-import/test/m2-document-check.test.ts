@@ -111,12 +111,12 @@ test("missing, oversized, refused and unreadable objects are issues by rule and 
 
 test("a reader that ignores the size bound or answers nonsense cannot get an object admitted", async () => {
   const over = Buffer.concat([png(7), Buffer.alloc(10 * 1024 * 1024)]);
-  const lying: LegacyObjectReader = { async read(key) { return key.endsWith("over.png") ? { kind: "found", bytes: over } : ({ kind: "found", bytes: "x" } as unknown as LegacyObjectRead); } };
-  const result = await checkLegacyDocuments([row("20", "personal-photo", "photos/over.png"), row("21", "personal-photo", "photos/odd.png")], lying);
-  assert.deepEqual(result.issues, [
-    { rule: "document.tooLarge", legacyId: "20", field: "candidate_personal_photo" },
-    { rule: "document.readFailed", legacyId: "21", field: "candidate_personal_photo" },
-  ]);
+  const answers: Record<string, unknown> = { "photos/over.png": { kind: "found", bytes: over }, "photos/odd.png": { kind: "found", bytes: "x" },
+    "photos/null.png": null, "photos/none.png": undefined, "photos/what.png": { kind: "other" } };
+  const lying: LegacyObjectReader = { async read(key) { return answers[key] as LegacyObjectRead; } };
+  const ids = ["over", "odd", "null", "none", "what"];
+  const result = await checkLegacyDocuments(ids.map((name, i) => row(String(20 + i), "personal-photo", `photos/${name}.png`)), lying);
+  assert.deepEqual(result.issues, ids.map((_, i) => ({ rule: i === 0 ? "document.tooLarge" : "document.readFailed", legacyId: String(20 + i), field: "candidate_personal_photo" })));
 });
 
 test("reads run one at a time, in input order", async () => {
