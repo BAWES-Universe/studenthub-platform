@@ -80,7 +80,7 @@ test("A6_PAGE staff pause and resume a person from the Access page, and the page
   assert.match(after, /Access paused<\/strong> on .* by Sam Staff: Reported for misuse/);
   assert.match(after, /action="\/admin\/access\/people\/candidate-1\/resume"/);
   assert.match(await (await http.get("/admin/access/people/candidate-1/audit", "staff-1")).text(),
-    /<strong>Access paused<\/strong> on .* by Sam Staff\. Their next request is signed out and nothing below applies until access is resumed\./, "G03: the audit page says a paused person's next request gets nothing");
+    /<strong>Access paused<\/strong> on .* by Sam Staff\. While access is paused, their requests are signed out and nothing below applies\./, "G03: the audit page says a paused person's requests get nothing");
   const again = await http.post("/admin/access/people/candidate-1/pause", "staff-1", form("pause"));
   assert.equal(again.status, 409, "a second pause is refused");
   assert.match(await again.text(), /already paused/);

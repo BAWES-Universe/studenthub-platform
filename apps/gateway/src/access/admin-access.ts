@@ -22,7 +22,8 @@ import {
   type PauseRefusal,
   type AccessGrantRow,
   type GrantChangeEffect,
-  type EffectivePlace,
+  type EffectiveAbility,
+  type EffectiveAccess,
   type AccessGrantService,
   type AccessEventRow,
   type AccessOrganization,
@@ -303,7 +304,7 @@ function renderGrantEffect(name: string, orgName: string, effect: GrantChangeEff
 
 export function renderGrantAudit(input: {
   readonly person: AccessPerson;
-  readonly places: readonly EffectivePlace[];
+  readonly access: EffectiveAccess;
   readonly names: ReadonlyMap<string, string>;
   readonly pause: AccountPause | null;
   readonly grantCount: number;
@@ -314,23 +315,25 @@ export function renderGrantAudit(input: {
   const source = (grant: { readonly orgId: string; readonly role: string; readonly scope: string }) =>
     `${ROLE_NAMES[grant.role] ?? grant.role} on ${input.names.get(grant.orgId) ?? grant.orgId}, ${(SCOPE_NAMES[grant.scope] ?? grant.scope).toLowerCase()}`;
   const paused = input.pause
-    ? `<section class="notice context-notice" role="status"><strong>Access paused</strong> on ${e(dateText(input.pause.pausedAt))} by ${e(personName(input.pause.pausedBy))}. Their next request is signed out and nothing below applies until access is resumed.</section>`
+    ? `<section class="notice context-notice" role="status"><strong>Access paused</strong> on ${e(dateText(input.pause.pausedAt))} by ${e(personName(input.pause.pausedBy))}. While access is paused, their requests are signed out and nothing below applies.</section>`
     : "";
-  const table = (caption: string, abilities: EffectivePlace["abilities"]) =>
-    `<div class="directory-table"><table><caption>${e(caption)}</caption><thead><tr><th>Ability</th><th>Because of</th></tr></thead><tbody>${abilities.map((ability) =>
+  const nothing = `<p class="empty-contexts">Nothing in the <a class="text-link" href="/admin/access/catalogue">grant catalogue</a>.</p>`;
+  const table = (caption: string, abilities: readonly EffectiveAbility[]) => abilities.length === 0 ? nothing
+    : `<div class="directory-table"><table><caption>${e(caption)}</caption><thead><tr><th>Ability</th><th>Because of</th></tr></thead><tbody>${abilities.map((ability) =>
       `<tr><th scope="row">${e(CAPABILITY_TEXT[ability.capability])}</th><td>${ability.from.length ? `<ul>${ability.from.map((grant) => `<li>${e(source(grant))}</li>`).join("")}</ul>` : "Their roles together"}</td></tr>`).join("")}</tbody></table></div>`;
-  const operators = input.places.filter((place) => place.operator).length;
-  const sections = input.places.map((place) => {
-    const name = input.names.get(place.orgId) ?? (operators > 1 ? place.orgId : "StudentHub");
-    const title = place.operator ? `On ${name}, and every company below it` : `On ${name}`;
-    const body = place.abilities.length === 0
-      ? `<p class="empty-contexts">Nothing in the <a class="text-link" href="/admin/access/catalogue">grant catalogue</a>.</p>`
-      : table(title, place.abilities);
-    const below = place.below.length === 0 ? "" : `<h3>In the companies below ${e(name)}</h3>${table(`In the companies below ${name}`, place.below)}`;
-    return `<section><h2>${e(title)}</h2>${body}${below}</section>`;
+  const operators = input.access.places.filter((place) => place.operator).length;
+  const everywhere = `<section><h2>Everywhere on StudentHub</h2><p>These do not depend on an organization.</p>${table("Everywhere on StudentHub", input.access.global)}</section>`;
+  const sections = input.access.places.map((place) => {
+    const orgName = input.names.get(place.orgId) ?? (operators > 1 ? place.orgId : "StudentHub");
+    const title = place.operator ? `On ${orgName} itself` : `On ${orgName}`;
+    const below = place.below.length === 0 ? "" : `<h3>In the companies below ${e(orgName)}</h3>${table(`In the companies below ${orgName}`, place.below)}`;
+    return `<section><h2>${e(title)}</h2>${table(title, place.here)}${below}</section>`;
   }).join("");
+  const belowNote = input.access.places.some((place) => place.below.length > 0)
+    ? `<p class="sidebar-note">“Companies below” is asked of a company directly below with no roles of its own: it shows what each role’s scope reaches. In a particular company, another role ${e(name)} holds there may give more.</p>`
+    : "";
   const none = input.grantCount === 0 && !input.pause ? `<p class="empty-contexts" role="status">${e(name)} holds no roles, so nothing below is open to them.</p>` : "";
-  return layout(`<p><a class="text-link" href="${e(back)}">← ${e(name)}</a></p><div class="profile-heading"><div><div class="eyebrow">GRANT AUDIT</div><h1>What ${e(name)}’s access does now<span class="accent">.</span></h1><p>Roles are read again on every request, so this is what their next request gets. Each ability names the roles that give it.</p></div><span class="badge">Read-only</span></div>${paused}${none}${sections}<p><a class="text-link" href="${e(back)}">See their roles and the history of changes</a></p>`, "access");
+  return layout(`<p><a class="text-link" href="${e(back)}">← ${e(name)}</a></p><div class="profile-heading"><div><div class="eyebrow">GRANT AUDIT</div><h1>What ${e(name)}’s access does now<span class="accent">.</span></h1><p>This is what their roles opened when this page was read. Roles are read again on every request, so a change made since then is not shown here. Each ability names the roles that give it.</p></div><span class="badge">Read-only</span></div>${paused}${none}${everywhere}${sections}${belowNote}<p><a class="text-link" href="${e(back)}">See their roles and the history of changes</a></p>`, "access");
 }
 
 export function renderGrantReview(input: {
@@ -522,9 +525,9 @@ export async function handleAccess(
       ports.pauses ? ports.pauses.reads.pause(principalId) : Promise.resolve(undefined),
     ]);
     const organizations = await ports.reads.organizations([...new Set(grants.map((grant) => grant.orgId))]);
-    const places = effectiveAccess({ held: grants, organizations, ...(ports.operatorOrgIds ? { operatorOrgIds: ports.operatorOrgIds } : {}) });
+    const access = effectiveAccess({ held: grants, organizations, ...(ports.operatorOrgIds ? { operatorOrgIds: ports.operatorOrgIds } : {}) });
     const names = new Map(grants.map((grant) => [grant.orgId, grant.orgName] as const));
-    write(200, `${personName(person)}: access now`, renderGrantAudit({ person, places, names, pause: pause ?? null, grantCount: grants.length }));
+    write(200, `${personName(person)}: access now`, renderGrantAudit({ person, access, names, pause: pause ?? null, grantCount: grants.length }));
     return true;
   }
 

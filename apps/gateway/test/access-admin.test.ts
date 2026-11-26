@@ -362,13 +362,50 @@ test("G03_AUDIT_PAGE an administrator sees what a person's access does now and w
   assert.equal(page.status, 200);
   const html = await page.text();
   assert.match(html, /What Omar Owner’s access does now/);
-  assert.match(html, /<h2>On StudentHub, and every company below it<\/h2><p class="empty-contexts">Nothing in the <a class="text-link" href="\/admin\/access\/catalogue">grant catalogue<\/a>\.<\/p>/);
+  // Observed when read, not promised for a later request.
+  assert.match(html, /This is what their roles opened when this page was read\. Roles are read again on every request, so a change made since then is not shown here\./);
+  assert.doesNotMatch(html, /next request gets/);
+  assert.match(html, /<section><h2>Everywhere on StudentHub<\/h2><p>These do not depend on an organization\.<\/p><p class="empty-contexts">Nothing in the <a class="text-link" href="\/admin\/access\/catalogue">grant catalogue<\/a>\.<\/p><\/section>/);
+  assert.match(html, /<section><h2>On StudentHub itself<\/h2><p class="empty-contexts">Nothing in the <a class="text-link" href="\/admin\/access\/catalogue">grant catalogue<\/a>\.<\/p><\/section>/);
   assert.match(html, /<h2>On Acme &lt;Trading&gt;<\/h2>.*<tr><th scope="row">Change company contacts<\/th><td><ul><li>Organization owner on Acme &lt;Trading&gt;, this organization and its sub-companies<\/li><\/ul><\/td><\/tr>/);
   // A subtree company grant reaches the companies below; a self one does not.
   assert.match(html, /<h3>In the companies below Acme &lt;Trading&gt;<\/h3>.*<tr><th scope="row">Manage store managers<\/th><td><ul><li>Organization owner on Acme &lt;Trading&gt;, this organization and its sub-companies<\/li><\/ul><\/td><\/tr>/);
+  assert.match(html, /<p class="sidebar-note">“Companies below” is asked of a company directly below with no roles of its own: it shows what each role’s scope reaches\. In a particular company, another role Omar Owner holds there may give more\.<\/p>/);
   assert.doesNotMatch(await (await http.get("/admin/access/people/candidate-1/audit", "admin-1")).text(), /In the companies below/);
-  // An operator administrator: StudentHub-wide abilities, each with its grant.
-  assert.match(await (await http.get("/admin/access/people/admin-1/audit", "admin-1")).text(), /<tr><th scope="row">Manage blocked addresses<\/th><td><ul><li>Administrator on StudentHub, this organization and its sub-companies<\/li><\/ul><\/td><\/tr>/);
+  // An operator administrator: what holds everywhere is listed once, each with its grant.
+  const admin = await (await http.get("/admin/access/people/admin-1/audit", "admin-1")).text();
+  assert.match(admin, /<h2>Everywhere on StudentHub<\/h2>.*<tr><th scope="row">Manage blocked addresses<\/th><td><ul><li>Administrator on StudentHub, this organization and its sub-companies<\/li><\/ul><\/td><\/tr>.*<h2>On StudentHub itself<\/h2>/);
+  assert.equal(admin.match(/Manage blocked addresses/g)?.length, 1, "listed once");
+  assert.match(admin, /<h2>On StudentHub itself<\/h2><div class="directory-table"><table><caption>On StudentHub itself<\/caption><thead><tr><th>Ability<\/th><th>Because of<\/th><\/tr><\/thead><tbody><tr><th scope="row">Give StudentHub roles<\/th>/);
+  assert.match(admin, /<h3>In the companies below StudentHub<\/h3>.*<tr><th scope="row">Give company roles<\/th>/);
+  // Staff on StudentHub itself only: StudentHub-wide abilities, nothing below.
+  assert.doesNotMatch(await (await http.get("/admin/access/people/staff-self/audit", "admin-1")).text(), /In the companies below/);
   // The person page links to it.
   assert.match(await (await http.get("/admin/access/people/owner-1", "admin-1")).text(), /href="\/admin\/access\/people\/owner-1\/audit">What their access does now →<\/a>/);
+});
+
+test("G03_AUDIT_ROOTS with two operators, each is shown at itself and what holds everywhere is never claimed for one of them", async (t) => {
+  const { ports } = world();
+  const orgs: Record<string, string> = { root: "StudentHub", root2: "Second Hub" };
+  const held = [
+    { orgId: "root", role: "finance", scope: "subtree" },
+    { orgId: "root2", role: "staff", scope: "subtree" },
+  ] as const;
+  const two: AccessPorts = { ...ports, operatorOrgIds: ["root", "root2"], reads: { ...ports.reads,
+    async grants(principalId: string) {
+      return principalId !== "candidate-1" ? ports.reads.grants(principalId) : held.map((grant) => ({ ...grant, orgName: orgs[grant.orgId]!, grantedBy: null, grantedAt: null, reason: null }));
+    },
+    async organizations(orgIds: readonly string[]) { return orgIds.filter((orgId) => orgId in orgs).map((orgId) => ({ orgId, name: orgs[orgId]!, ancestors: [] })); } } };
+  const html = await (await (await serve(t, two)).get("/admin/access/people/candidate-1/audit", "admin-1")).text();
+  // Finance reports: once, under everywhere, from the finance grant.
+  assert.equal(html.match(/Finance reports/g)?.length, 1);
+  assert.match(html, /<h2>Everywhere on StudentHub<\/h2>.*<tr><th scope="row">Finance reports<\/th><td><ul><li>Finance on StudentHub, this organization and its sub-companies<\/li><\/ul><\/td><\/tr>.*<h2>On StudentHub itself<\/h2>/);
+  // The second operator's companies show what the staff grant reaches there, and nothing from the finance grant.
+  const second = html.slice(html.indexOf("<h2>On Second Hub itself</h2>"));
+  assert.match(second, /<h3>In the companies below Second Hub<\/h3>.*<tr><th scope="row">Give company roles<\/th><td><ul><li>Staff on Second Hub, this organization and its sub-companies<\/li><\/ul><\/td><\/tr>/);
+  assert.doesNotMatch(second, /Finance|Operations reports|Open the Access pages/);
+  // The first operator's companies: only what the finance grant reaches.
+  const first = html.slice(html.indexOf("<h2>On StudentHub itself</h2>"), html.indexOf("<h2>On Second Hub itself</h2>"));
+  assert.match(first, /<h3>In the companies below StudentHub<\/h3>.*<tr><th scope="row">See company contacts<\/th><td><ul><li>Finance on StudentHub, this organization and its sub-companies<\/li><\/ul><\/td><\/tr><\/tbody>/);
+  assert.doesNotMatch(first, /Staff on Second Hub/);
 });
