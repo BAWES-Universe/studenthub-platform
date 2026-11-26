@@ -54,8 +54,8 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-698",
-      "SHU-699"
+      "SHU-734",
+      "SHU-735"
     ]
   },
   "adapter_pause_map": {},
@@ -10257,6 +10257,40 @@
         "apps/gateway/src/recruit/interviews-http.ts",
         "apps/gateway/test/recruit-interview-detail.test.ts",
         "apps/gateway/test/recruit-interview-detail-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-734",
+      "authorization_ref": "SHU-734",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 2 (recruit), release matrix C-09: the read-only interview detail page at /recruit/interviews/:id over the existing recruitInterviews mine(); edits only interviews-http.ts and its own tests, adds no route. Re-queues SHU-699, whose landing stopped on a CI runner port clash and whose landing repair ended without a verdict; SHU-699 never lands. It waits on nothing and shares no path with SHU-735.",
+      "initial_build_paths": [
+        "apps/gateway/src/recruit/interviews-http.ts",
+        "apps/gateway/test/recruit-interview-detail.test.ts",
+        "apps/gateway/test/recruit-interview-detail-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/recruit/interviews-http.ts",
+        "apps/gateway/test/recruit-interview-detail.test.ts",
+        "apps/gateway/test/recruit-interview-detail-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-735",
+      "authorization_ref": "SHU-735",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix C-16 detail half: the read-only experience certificate detail page at /profile/certificates/:assignment over the existing certificates own(); edits only certificates-http.ts and its own tests, adds no route. It waits on nothing and shares no path with SHU-734.",
+      "initial_build_paths": [
+        "apps/gateway/src/reports/certificates-http.ts",
+        "apps/gateway/test/certificate-detail.test.ts",
+        "apps/gateway/test/certificate-detail-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/reports/certificates-http.ts",
+        "apps/gateway/test/certificate-detail.test.ts",
+        "apps/gateway/test/certificate-detail-mutations.mjs"
       ]
     }
   ],
