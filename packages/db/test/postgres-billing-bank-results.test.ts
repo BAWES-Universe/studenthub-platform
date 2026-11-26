@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
-import { PostgresBankResultStore, PostgresTransferInvoiceEffects, type BankResultCompletePort } from "@studenthub/db/billing";
+import { PostgresBankResultStore, PostgresTransferInvoiceEffects, operatorFinanceGate, type BankResultCompletePort, type BankResultFileGate } from "@studenthub/db/billing";
 import type { BankCell } from "../../billing/src/bank-results.js";
 import { TransferLifecycleService, type TransferAction } from "../../payroll/src/transfer-lifecycle.js";
 import { PostgresTransferLifecycleStore, type PayLifecyclePolicy } from "../src/payroll/postgres-transfer-lifecycle-store.js";
@@ -21,7 +21,8 @@ const effects = () => new PostgresTransferInvoiceEffects();
 const lifecycle = () => new TransferLifecycleService(new PostgresTransferLifecycleStore(pool, policy, effects()), now);
 const complete: BankResultCompletePort = async (tx, who, id) =>
   (await new TransferLifecycleService(new PostgresTransferLifecycleStore(pool, policy, effects()), now).transitionInTransaction(tx, who, id, "complete")).kind === "changed";
-const results = (port: BankResultCompletePort = complete, rules: PayLifecyclePolicy = policy) => new PostgresBankResultStore(pool, rules, effects(), port);
+const financeGate: BankResultFileGate = async (_client, who) => who === "fin" || who === "fin2";
+const results = (port: BankResultCompletePort = complete, rules: PayLifecyclePolicy = policy, gate: BankResultFileGate = financeGate) => new PostgresBankResultStore(pool, rules, effects(), port, gate);
 const AUB_HEAD = ["Status", "Status Description", "Debit Narrative", "Credit Narrative"];
 const aub = (...rows: BankCell[][]): BankCell[][] => [[], AUB_HEAD, ...rows];
 const sha = (cells: unknown) => createHash("sha256").update(JSON.stringify(cells)).digest("hex");
@@ -175,4 +176,51 @@ test("BANK_STORE_AUTHORIZE an actor who may not complete a named transfer settle
   assert.deepEqual(await rows(fileId), []);
   assert.equal(await status(other), "distributing");
   assert.equal((await pool.query("SELECT status FROM bank_result_files WHERE id=$1", [fileId])).rows[0].status, "pending");
+});
+
+test("BANK_STORE_GATE without finance file permission nothing is stored, no earlier file is named, and a file with no eligible transfer is not applied", async () => {
+  await pool.query("INSERT INTO principals(id) VALUES ('cfin')");
+  const cfin = { principalId: "cfin", actingAs: false };
+  const kfh = [[], [], [], [], [], [], [], [], ["Beneficiary Account", "Amount", "Transfer Currency", "Refrence Number"], ["ACC-1", "10.000", "KWD", "K-1"]];
+  assert.deepEqual(await results().submit(cfin, { format: "kfh", contentSha256: sha(kfh), cells: kfh }), { kind: "refused", code: "forbidden" });
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM bank_result_files")).rows[0].n, 0);
+  const fileId = (await results().submit(actor, { format: "kfh", contentSha256: sha(kfh), cells: kfh })) as { fileId: string };
+  assert.deepEqual(await results().submit(cfin, { format: "kfh", contentSha256: sha(kfh), cells: kfh }), { kind: "refused", code: "forbidden" }, "a duplicate is not disclosed");
+  assert.deepEqual(await results().apply(cfin, fileId.fileId), { kind: "refused", code: "forbidden" }, "no transfer to authorize is not a pass");
+  assert.deepEqual(await results().apply(cfin, randomUUID()), { kind: "refused", code: "forbidden" }, "absence is not disclosed either");
+  assert.equal((await pool.query("SELECT status FROM bank_result_files WHERE id=$1", [fileId.fileId])).rows[0].status, "pending");
+  await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES ('fin','root','finance','subtree'),('cfin','P','finance','subtree')");
+  const gate = operatorFinanceGate(["root"]);
+  const client = await pool.connect();
+  try { assert.deepEqual([await gate(client, "fin"), await gate(client, "cfin")], [true, false]); } finally { client.release(); }
+});
+
+test("BANK_STORE_SCOPED_REPLAY a replayed reference is still caught from history, but a line the actor may not settle is never named", async () => {
+  const theirs = await transfer([{ id: "L-1", person: "w1", amount: "10.000" }], "lock", "payment_received");
+  await transfer([{ id: "L-2", person: "w2", amount: "10.000" }], "lock", "payment_received");
+  await results().apply(actor, await submit(aub(["SUCCESS", "REF-1", "x", "L-1"])));
+  const scoped: PayLifecyclePolicy = { ...policy, authorize: async (_c, who, t) => who.principalId === "fin" || t.id !== theirs };
+  const fin2 = { principalId: "fin2", actingAs: false };
+  await pool.query("INSERT INTO principals(id) VALUES ('fin2')");
+  const cells = aub(["SUCCESS", "REF-1", "again", "L-2"], ["SUCCESS", "REF-1-X", "x", "L-1"]);
+  const second = (await results(complete, scoped).submit(fin2, { format: "aub", contentSha256: sha(cells), cells })) as { fileId: string };
+  const applied = await results(complete, scoped).apply(fin2, second.fileId);
+  assert.deepEqual(applied, { kind: "refused", code: "forbidden" }, "a row naming their line refuses the file");
+  const only = aub(["SUCCESS", "REF-1", "again", "L-2"]);
+  const third = (await results(complete, scoped).submit(fin2, { format: "aub", contentSha256: sha(only), cells: only })) as { fileId: string };
+  const result = await results(complete, scoped).apply(fin2, third.fileId);
+  assert.deepEqual(result.kind === "applied" && result.decisions, [{ kind: "hold", rowNumber: 3, reason: "reference_conflict", lineIds: ["L-2"] }]);
+  assert.deepEqual(await rows(third.fileId), [[3, "hold", "reference_conflict", ["L-2"], "REF-1"]]);
+  assert.deepEqual(await paidLines(), ["L-1"]);
+});
+
+test("BANK_STORE_RACE two files applied at once with one bank reference for different lines settle exactly one", async () => {
+  await transfer([{ id: "L-1", person: "w1", amount: "10.000" }, { id: "L-2", person: "w2", amount: "10.000" }, { id: "L-3", person: "w3", amount: "10.000" }], "lock", "payment_received");
+  const a = await submit(aub(["SUCCESS", "REF-1", "a", "L-1"])), b = await submit(aub(["SUCCESS", "REF-1", "b", "L-2"]));
+  const outcomes = await Promise.all([results().apply(actor, a), results().apply(actor, b)]);
+  assert.deepEqual(outcomes.map((o) => o.kind), ["applied", "applied"]);
+  assert.equal((await paidLines()).length, 1);
+  const kinds = (await pool.query("SELECT kind,reason FROM bank_result_rows ORDER BY kind")).rows.map((r) => `${r.kind}:${r.reason}`);
+  assert.deepEqual(kinds, ["hold:reference_conflict", "pay:null"]);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM bank_result_confirmations WHERE reference='REF-1'")).rows[0].n, 1);
 });

@@ -11,4 +11,4 @@ export { CREDIT_REASON_MAX, PostgresTransferInvoiceVoids, creditReason, type Tra
   from "./postgres-transfer-invoice-voids.js";
 export { PAY_HISTORY_CALCULATION_VERSION, PAY_HISTORY_PAGE_SIZE, PostgresPayHistoryReads, candidateWorked, type PayHistoryDetail, type PayHistoryEntry,
   type PayHistoryPage } from "./postgres-pay-history-reads.js";
-export { PostgresBankResultStore, type BankResultApply, type BankResultCompletePort, type BankResultSubmit } from "./postgres-bank-result-store.js";
+export { PostgresBankResultStore, operatorFinanceGate, type BankResultApply, type BankResultCompletePort, type BankResultFileGate, type BankResultSubmit } from "./postgres-bank-result-store.js";

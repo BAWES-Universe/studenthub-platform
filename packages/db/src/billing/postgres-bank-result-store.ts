@@ -7,6 +7,16 @@ import { PostgresTransferLifecycleTransaction, type PayLifecycleActor, type PayL
 /** Runs the lifecycle `complete` action for a transfer inside the SAME locked
  * transaction (the payroll service's transitionInTransaction). Returns whether
  * the transfer changed. db does not import payroll source, so the caller wires it. */
+/** Whether the actor may handle bank result files at all (upload, look up, apply, read decisions).
+ * Runs on the caller's client, inside the transaction where there is one. */
+export type BankResultFileGate = (client: pg.PoolClient, actorId: string) => Promise<boolean>;
+
+/** StudentHub's own finance users: a `role` grant on one of the operator organizations, read FOR SHARE. */
+export function operatorFinanceGate(operatorOrgIds: readonly string[], role = "finance"): BankResultFileGate {
+  return async (client, actorId) => (await client.query(
+    "SELECT 1 FROM grants WHERE principal_id = $1 AND role = $2 AND org_id = ANY($3::text[]) ORDER BY org_id LIMIT 1 FOR SHARE", [actorId, role, [...operatorOrgIds]])).rowCount === 1;
+}
+
 export type BankResultCompletePort = (tx: PostgresTransferLifecycleTransaction, actor: PayLifecycleActor, transferId: string) => Promise<boolean>;
 
 export type BankResultSubmit =
@@ -31,30 +41,33 @@ const ELIGIBLE: ReadonlySet<string> = new Set(["distributing", "complete"]);
  * written, and a distributing transfer with nothing left unpaid is completed. */
 export class PostgresBankResultStore {
   constructor(private readonly pool: pg.Pool, private readonly policy: PayLifecyclePolicy,
-    private readonly effects: PayLifecycleEffects, private readonly complete: BankResultCompletePort) {}
+    private readonly effects: PayLifecycleEffects, private readonly complete: BankResultCompletePort,
+    private readonly gate: BankResultFileGate) {}
 
   async submit(actor: PayLifecycleActor, input: { readonly format: BankResultFormat; readonly contentSha256: string; readonly cells: readonly (readonly BankCell[])[] }): Promise<BankResultSubmit> {
     if (actor.actingAs !== false || !actor.principalId?.trim()) return { kind: "refused", code: "forbidden" };
     if ((input.format !== "aub" && input.format !== "kfh") || !/^[0-9a-f]{64}$/u.test(input.contentSha256)) return { kind: "refused", code: "invalid_input" };
     const sheet = readBankResultSheet(input.format, input.cells);
     if (sheet.kind === "refused") return { kind: "refused", code: sheet.code, ...(sheet.missing ? { missing: sheet.missing } : {}) };
-    const inserted = await this.pool.query(
-      `INSERT INTO bank_result_files(id,format,content_sha256,uploaded_by,sheet) VALUES(gen_random_uuid(),$1,$2,$3,$4)
-       ON CONFLICT (content_sha256) DO NOTHING RETURNING id`,
-      [input.format, input.contentSha256, actor.principalId, JSON.stringify({ rows: sheet.rows, rejected: sheet.rejected })]);
-    if (inserted.rows[0]) return { kind: "submitted", fileId: inserted.rows[0].id };
-    const existing = await this.pool.query("SELECT id FROM bank_result_files WHERE content_sha256=$1", [input.contentSha256]);
-    return { kind: "duplicate_file", fileId: existing.rows[0].id };
+    return this.transaction(async (client): Promise<BankResultSubmit> => {
+      // The finance gate comes before the duplicate lookup: an earlier file's id is never disclosed to anyone else.
+      if (!await this.gate(client, actor.principalId)) return { kind: "refused", code: "forbidden" };
+      const inserted = await client.query(
+        `INSERT INTO bank_result_files(id,format,content_sha256,uploaded_by,sheet) VALUES(gen_random_uuid(),$1,$2,$3,$4)
+         ON CONFLICT (content_sha256) DO NOTHING RETURNING id`,
+        [input.format, input.contentSha256, actor.principalId, JSON.stringify({ rows: sheet.rows, rejected: sheet.rejected })]);
+      if (inserted.rows[0]) return { kind: "submitted", fileId: inserted.rows[0].id };
+      const existing = await client.query("SELECT id FROM bank_result_files WHERE content_sha256=$1", [input.contentSha256]);
+      return { kind: "duplicate_file", fileId: existing.rows[0].id };
+    }, () => true);
   }
 
-  async apply(actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> {
-    if (actor.actingAs !== false || !actor.principalId?.trim()) return { kind: "refused", code: "forbidden" };
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(fileId)) return { kind: "refused", code: "not_found" };
+  private async transaction<T>(work: (client: pg.PoolClient) => Promise<T>, commit: (result: T) => boolean): Promise<T> {
     const client = await this.pool.connect(); let broken = false;
     try {
       await client.query("BEGIN");
-      const result = await this.applyIn(client, actor, fileId);
-      await client.query(result.kind === "applied" ? "COMMIT" : "ROLLBACK");
+      const result = await work(client);
+      await client.query(commit(result) ? "COMMIT" : "ROLLBACK");
       return result;
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch { broken = true; }
@@ -62,8 +75,16 @@ export class PostgresBankResultStore {
     } finally { client.release(broken); }
   }
 
+  async apply(actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> {
+    if (actor.actingAs !== false || !actor.principalId?.trim()) return { kind: "refused", code: "forbidden" };
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(fileId)) return { kind: "refused", code: "not_found" };
+    return this.transaction((client) => this.applyIn(client, actor, fileId), (result) => result.kind === "applied");
+  }
+
   private async applyIn(client: pg.PoolClient, actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> {
     await client.query("SELECT pg_advisory_xact_lock($1)", [APPLY_LOCK]);
+    // File level first: without finance permission nothing about the file, or its absence, is shown.
+    if (!await this.gate(client, actor.principalId)) return { kind: "refused", code: "forbidden" };
     const file = (await client.query("SELECT status,sheet FROM bank_result_files WHERE id=$1 FOR UPDATE", [fileId])).rows[0];
     if (!file) return { kind: "refused", code: "not_found" };
     if (file.status !== "pending") return { kind: "refused", code: "already_applied" };
@@ -96,8 +117,21 @@ export class PostgresBankResultStore {
       "SELECT line_id,reference,account,amount::text AS amount,currency_code FROM bank_result_confirmations WHERE reference = ANY($1::text[]) ORDER BY id",
       [references])).rows.map((r) => ({ lineId: r.line_id, reference: r.reference, account: r.account, amount: r.amount, currency: r.currency_code }));
 
-    const plan = planBankResult(sheet, lines, recorded);
+    const planned = planBankResult(sheet, lines, recorded);
     const byLine = new Map(lines.map((l) => [l.lineId, l]));
+    // Recorded history is global so a replay is caught anywhere, but a decision names only lines the
+    // actor may see: the candidates (already authorized above) and lines on transfers they may settle.
+    const outside = [...new Set(planned.decisions.flatMap((d) => (d.kind === "hold" ? d.lineIds : [d.lineId])).filter((id) => !byLine.has(id)))];
+    const visible = new Set<string>(byLine.keys());
+    for (const r of (await client.query("SELECT l.id AS line_id,t.id,t.company_id,t.status,t.deleted FROM pay_transfer_lines l JOIN pay_transfers t ON t.id=l.transfer_id WHERE l.id = ANY($1::text[]) ORDER BY l.id", [outside])).rows) {
+      if (await this.policy.authorize(client, actor, { id: r.id, companyId: r.company_id, status: r.status, deleted: r.deleted }, "complete")) visible.add(r.line_id);
+    }
+    const plan = { transferIds: planned.transferIds, decisions: planned.decisions.map((d): BankRowDecision => {
+      if (d.kind === "hold") return { ...d, lineIds: d.lineIds.filter((id) => visible.has(id)) };
+      // A replay of a line the actor may not see is held as a conflict, without naming the line.
+      if (d.kind === "duplicate" && !visible.has(d.lineId)) return { kind: "hold", rowNumber: d.rowNumber, reason: "reference_conflict", lineIds: [] };
+      return d;
+    }) };
     const byRow = new Map(sheet.rows.map((r) => [r.rowNumber, r]));
     for (const d of plan.decisions) {
       const row = byRow.get(d.rowNumber);
