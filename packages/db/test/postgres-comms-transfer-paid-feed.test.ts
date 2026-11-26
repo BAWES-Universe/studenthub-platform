@@ -70,6 +70,11 @@ test("COMMS_TRANSFER_PAID_FEED_RENDER the item shows the confirmed amount and wh
   const id = (await pool.query("SELECT bc.id::text id FROM bank_result_confirmations bc WHERE bc.line_id = $1", [l.id])).rows[0].id;
   assert.deepEqual(await store.readTransferPayments(await principal("other"), [id]), [], "someone else's payment is never read");
   assert.deepEqual(await store.readTransferPayments(l.person, ["0", "x"]), []);
+  // Legacy's number_format(amount, 3): thousands separated by commas.
+  const big = await line("Sultan Co", "Avenues", "1234.500");
+  await confirm(big.id, "1234.5");
+  await drain();
+  assert.deepEqual((await service.list(big.person, 1)).items.map((i) => i.text), ["KWD 1,234.500 for Avenues, Sultan Co has been transferred to your bank account."]);
   await service.markAllRead(l.person);
   assert.equal(await service.count(l.person), 0);
 });
