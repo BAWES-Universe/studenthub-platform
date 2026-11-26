@@ -188,3 +188,83 @@ export function grantChangeEffect(input: {
     : diff({ companyId: CHILD, companyAncestors: [...input.orgAncestors, change.orgId], ...(operator ? { operator } : {}) }, COMPANY_CAPABILITIES);
   return Object.freeze({ gained: here.gained, lost: here.lost, gainedBelow: below.gained, lostBelow: below.lost });
 }
+
+/**
+ * Access lane G-03: what a person's grants open, and which grant gives each
+ * ability. Grants are read again on every request; this is an observation of
+ * the grants as they were read, not a promise about a later request.
+ */
+export interface EffectiveAbility {
+  readonly capability: CatalogueCapability;
+  /** The held grants that give it on their own; empty when only a combination does. */
+  readonly from: readonly HeldGrant[];
+}
+
+/** Abilities that do not depend on an organization: the platform asks them across every operator at once. */
+export const GLOBAL_CAPABILITIES: readonly CatalogueCapability[] = Object.freeze([
+  "access_pages", "review_registrations", "pause_and_view_as", "pause_operator_roles", "manage_ip_blocks", "operations_reports", "finance_reports",
+]);
+/** Asked at an operator itself only. */
+export const OPERATOR_CAPABILITIES: readonly CatalogueCapability[] = Object.freeze(["give_operator_roles"]);
+/** Asked at one company: the company itself, or a representative company below a place. */
+export const SCOPED_COMPANY_CAPABILITIES: readonly CatalogueCapability[] = Object.freeze(["give_company_roles", ...COMPANY_CAPABILITIES]);
+
+export interface EffectivePlace {
+  /** An operator or a company the person holds a grant on. */
+  readonly orgId: string;
+  readonly operator: boolean;
+  /** At the organization itself: StudentHub roles for an operator, the company abilities for a company. */
+  readonly here: readonly EffectiveAbility[];
+  /** At a company directly below it, with no roles of its own: what the scope reaches, not a census of the real companies. */
+  readonly below: readonly EffectiveAbility[];
+}
+
+export interface EffectiveAccess {
+  /** Abilities that hold everywhere, shown once. */
+  readonly global: readonly EffectiveAbility[];
+  readonly places: readonly EffectivePlace[];
+}
+
+export function effectiveAccess(input: {
+  readonly held: readonly HeldGrant[];
+  /** The organizations the person holds grants on, with their ancestors. */
+  readonly organizations: readonly { readonly orgId: string; readonly ancestors: readonly string[] }[];
+  readonly operatorOrgIds?: readonly string[];
+}): EffectiveAccess {
+  const operatorOrgIds = input.operatorOrgIds ?? DEFAULT_OPERATOR_ORG_IDS;
+  const first = operatorOrgIds[0];
+  if (first === undefined) throw new RangeError("effective access needs an operator organization");
+  const places: { orgId: string; operator: boolean; here: CapabilityPlace; hereAmong: readonly CatalogueCapability[]; below: CapabilityPlace }[] = [];
+  // Every operator is asked at itself: the first always, any other one the person holds a grant on.
+  for (const operator of operatorOrgIds) {
+    if (operator !== first && !input.held.some((grant) => grant.orgId === operator)) continue;
+    const directlyBelow = { companyId: COMPANY, companyAncestors: [operator], operator };
+    places.push({ orgId: operator, operator: true, here: directlyBelow, hereAmong: OPERATOR_CAPABILITIES, below: directlyBelow });
+  }
+  for (const org of input.organizations) {
+    if (operatorOrgIds.includes(org.orgId) || places.some((item) => item.orgId === org.orgId)) continue;
+    if (!input.held.some((grant) => grant.orgId === org.orgId)) continue;
+    const operator = operatorOrgIds.find((id) => org.ancestors.includes(id)) ?? first;
+    places.push({
+      orgId: org.orgId, operator: false,
+      here: { companyId: org.orgId, companyAncestors: org.ancestors, operator }, hereAmong: SCOPED_COMPANY_CAPABILITIES,
+      below: { companyId: CHILD, companyAncestors: [...org.ancestors, org.orgId], operator },
+    });
+  }
+  const abilitiesAt = (place: CapabilityPlace, among: readonly CatalogueCapability[]) => {
+    const all = new Set(capabilitiesAt(input.held, place, operatorOrgIds));
+    const alone = input.held.map((grant) => [grant, new Set(capabilitiesAt([grant], place, operatorOrgIds))] as const);
+    return Object.freeze(among.filter((capability) => all.has(capability)).map((capability) => Object.freeze({
+      capability,
+      from: Object.freeze(alone.filter(([, opens]) => opens.has(capability)).map(([grant]) => grant)),
+    })));
+  };
+  return Object.freeze({
+    global: abilitiesAt({ companyId: COMPANY, companyAncestors: [first], operator: first }, GLOBAL_CAPABILITIES),
+    places: Object.freeze(places.map(({ orgId, operator, here, hereAmong, below }) => Object.freeze({
+      orgId, operator,
+      here: abilitiesAt(here, hereAmong),
+      below: abilitiesAt(below, SCOPED_COMPANY_CAPABILITIES),
+    }))),
+  });
+}
