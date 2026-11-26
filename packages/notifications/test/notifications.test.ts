@@ -1,4 +1,4 @@
-import assert from"node:assert/strict";import{test}from"node:test";import{NotificationsService,NotificationKindRegistry,NOTIFICATION_KINDS,NOTIFICATION_REGISTRY,organizationStatusChangedKind,recordNotification,type FeedRow,type NotificationEvent,type NotificationKindDefinition}from"../src/notifications.js";
+import assert from"node:assert/strict";import{test}from"node:test";import{NotificationsService,NotificationKindRegistry,NOTIFICATION_KINDS,NOTIFICATION_REGISTRY,organizationStatusChangedKind,payLinePaidKind,formatPaidAmount,recordNotification,type FeedRow,type NotificationEvent,type NotificationKindDefinition}from"../src/notifications.js";
 import{recordOrganizationStatusChanged}from"@studenthub/db";
 const row=(overrides:Partial<NotificationEvent<"organization.status_changed">>={}):NotificationEvent=>({id:"8b116ac4-6500-48a0-b6ba-2c0d18ce7d91",recipientPrincipalId:"owner",kind:"organization.status_changed",subjectReference:"organization:org",parameters:{status:"inactive"},createdAt:"2026-01-01T00:00:00Z",readAt:null,...overrides});
 test("SHU188_EVENT event recording preserves closed data and deduplicates",async()=>{const stored=new Map<string,unknown>();const port={async record(e:{recipientPrincipalId:string;dedupeKey:string}){stored.set(`${e.recipientPrincipalId}:${e.dedupeKey}`,e)}};const event={recipientPrincipalId:"owner",kind:"organization.status_changed" as const,subjectReference:"organization:org" as const,parameters:{status:"inactive" as const},dedupeKey:"receipt"};await recordNotification(port,event);await recordNotification(port,event);assert.equal(stored.size,1);assert.deepEqual([...stored.values()][0],event)});
@@ -74,4 +74,26 @@ test("COMMS_FEED_RECRUIT each recruit event renders from the request as it is no
  for(const kind of NOTIFICATION_KINDS.filter(k=>k.startsWith("recruit.")))for(const [subjectReference,parameters,ok] of [["recruit_outbox:1",{},true],["recruit_outbox:9223372036854775807",{},true],["recruit_outbox:0",{},false],["recruit_outbox:01",{},false],["recruit_outbox:1",{text:"x"},false],["recruit_outbox:x",{},false],["staff_message:1",{},false]] as const)
   assert.equal(NOTIFICATION_REGISTRY.accepts({kind,subjectReference,parameters}),ok,`${kind} ${subjectReference}`);
  assert.equal(NOTIFICATION_KINDS.filter(k=>k.startsWith("recruit.")).length,11);
+});
+
+test("PAY_PAID_KIND the paid notice is registered with a closed subject and empty parameters, matching migration 0607",()=>{
+ assert.equal(NOTIFICATION_REGISTRY.get("pay.line_paid"),payLinePaidKind);
+ for(const [subjectReference,parameters,ok] of [["bank_confirmation:1",{},true],["bank_confirmation:9223372036854775807",{},true],["bank_confirmation:0",{},false],["bank_confirmation:01",{},false],["bank_confirmation:1",{amount:"1"},false],["bank_confirmation:x",{},false],["pay_line:1",{},false],["bank_confirmation:1",null,false]] as const)
+  assert.equal(NOTIFICATION_REGISTRY.accepts({kind:"pay.line_paid",subjectReference,parameters}),ok,`${subjectReference} ${JSON.stringify(parameters)}`);
+});
+
+test("PAY_PAID_AMOUNT amounts read as legacy number_format(amount, 3)",()=>{
+ assert.deepEqual(["0","0.5","120.500","1000","1234567.125","007.1"].map(formatPaidAmount),["0.000","0.500","120.500","1,000.000","1,234,567.125","7.100"]);
+ for(const bad of ["","-1","1.2345","1e3"," 1","1,000"])assert.equal(formatPaidAmount(bad),null,bad);
+});
+
+test("PAY_PAID_RENDER legacy's words with the line's amount, store and company, opening the line in pay history; a confirmation the reader does not return is left out",async()=>{
+ const asked:unknown[]=[];
+ const subjects={...emptySubjects,async readPaidLines(recipient:string,ids:readonly string[]){asked.push([recipient,[...ids]]);return[{id:"7",lineId:"L/1",amount:"1234.5",currencyCode:"KWD",storeName:"Shop P",companyName:"P legal"},{id:"8",lineId:"L-2",amount:"bad",currencyCode:"KWD",storeName:"S",companyName:"C"}]}};
+ const rows=[feedRow("a","pay.line_paid","bank_confirmation:7",{}),feedRow("b","pay.line_paid","bank_confirmation:7",{}),feedRow("c","pay.line_paid","bank_confirmation:8",{}),feedRow("d","pay.line_paid","bank_confirmation:9",{})];
+ const lines=await payLinePaidKind.render(rows,{recipient:"person",subjects,authz:noGrants});
+ assert.deepEqual(asked,[["person",["7","8","9"]]],"subjects are read once per page, for the recipient");
+ const line={text:"Transfer paid: KWD 1,234.500 has been transferred to your bank account (Shop P, P legal).",href:"/pay/L%2F1"};
+ assert.deepEqual([...lines],[["a",line],["b",line]]);
+ assert.equal((await payLinePaidKind.render(rows,{recipient:"person",subjects:emptySubjects,authz:noGrants})).size,0,"no reader, nothing shown");
 });

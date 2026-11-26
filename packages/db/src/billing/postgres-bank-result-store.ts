@@ -205,9 +205,11 @@ export class PostgresBankResultStore {
     for (const transfer of locked.values()) {
       if (!await tx.authorize(actor, transfer, "complete")) return { kind: "refused", code: "forbidden" };
     }
-    const lines: BankCandidateLine[] = (await client.query(
-      "SELECT id,transfer_id,paid,candidate_total::text AS amount,currency_code FROM pay_transfer_lines WHERE id = ANY($1::text[]) AND transfer_id = ANY($2::text[]) ORDER BY id",
-      [lineRefs, [...locked.keys()]])).rows.map((r) => ({
+    const lineRows = (await client.query(
+      "SELECT id,transfer_id,paid,candidate_total::text AS amount,currency_code,person_id FROM pay_transfer_lines WHERE id = ANY($1::text[]) AND transfer_id = ANY($2::text[]) ORDER BY id",
+      [lineRefs, [...locked.keys()]])).rows;
+    const people = new Map(lineRows.map((r) => [r.id as string, r.person_id as string]));
+    const lines: BankCandidateLine[] = lineRows.map((r) => ({
       // No beneficiary account is held on a pay line yet: a row without an echoed id finds no line.
       lineId: r.id, transferId: r.transfer_id, paid: r.paid, paidAmount: r.amount, currency: r.currency_code, beneficiaryAccount: null,
     }));
@@ -237,9 +239,16 @@ export class PostgresBankResultStore {
       const line = byLine.get(d.lineId)!;
       const paid = await client.query("UPDATE pay_transfer_lines SET paid=true WHERE id=$1 AND transfer_id=$2 AND NOT paid", [d.lineId, d.transferId]);
       if (paid.rowCount !== 1) throw new Error("bank_result_line_changed");
+      const confirmation = (await client.query(
+        "INSERT INTO bank_result_confirmations(reference,line_id,file_id,row_number,account,amount,currency_code) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id::text",
+        [d.reference, d.lineId, fileId, d.rowNumber, row!.account, row!.amount ?? line.paidAmount, row!.currency ?? line.currency])).rows[0].id as string;
+      // F6: the person's paid notice, one per paid line and payment, in this transaction so a
+      // rolled-back apply leaves none. A line is marked paid once (`AND NOT paid` above), so the
+      // confirmation is unique to it; the dedupe key makes a retried insert a no-op all the same.
       await client.query(
-        "INSERT INTO bank_result_confirmations(reference,line_id,file_id,row_number,account,amount,currency_code) VALUES($1,$2,$3,$4,$5,$6,$7)",
-        [d.reference, d.lineId, fileId, d.rowNumber, row!.account, row!.amount ?? line.paidAmount, row!.currency ?? line.currency]);
+        `INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key)
+         VALUES($1,'pay.line_paid',$2,'{}'::jsonb,$3) ON CONFLICT(recipient_principal_id,dedupe_key) DO NOTHING`,
+        [people.get(d.lineId), `bank_confirmation:${confirmation}`, `pay_line_paid:${confirmation}`]);
     }
     const completed: string[] = [];
     for (const id of plan.transferIds) {
