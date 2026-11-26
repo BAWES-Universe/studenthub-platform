@@ -45,7 +45,7 @@ function tempConfig() {
     pilot_repo: "BAWES-Universe/studenthub-platform",
     team: "SHU",
     max_dispatch: 1,
-    enable_dispatch: true,
+    dispatch_scope_mode: "bounded", enable_dispatch: true,
     adapter_pause_map: {},
     wake_actor_allowlist: ["BAWES"],
     linear_callback_actor_ids: [TRUSTED_CALLBACK_ACTOR],
