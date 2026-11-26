@@ -1,5 +1,8 @@
 import pg from "pg";
-import { PostgresPayHistoryReads, PostgresTransferInvoiceReads, PostgresTransferInvoiceVoids } from "@studenthub/db/billing";
+import { PostgresBankResultStore, PostgresPayHistoryReads, PostgresTransferInvoiceEffects, PostgresTransferInvoiceReads, PostgresTransferInvoiceVoids, bankResultLifecyclePolicy, operatorFinanceGate } from "@studenthub/db/billing";
+import { TransferLifecycleService } from "../../../../packages/payroll/src/transfer-lifecycle.js";
+import { TRANSFER_INVOICE_VOID_ROLE } from "../../../../packages/billing/src/transfer-invoice-access.js";
+import { createBankResultsHttp, type BankResultsHttp } from "../billing/bank-results-http.js";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 import { transferInvoiceReadDecision, transferInvoiceVoidDecision } from "../../../../packages/billing/src/transfer-invoice-access.js";
 import { createInvoicesHttp, type InvoicesHttp } from "../billing/invoices-http.js";
@@ -15,7 +18,7 @@ type Access = ReturnType<typeof wireAccess>["services"];
  * BILLING_BANK_INFO (JSON) adds the bank block to unpaid invoices. StudentHub's finance users
  * void invoices with credit notes (F4.7) through same-origin posts from the gateway origin. All share one pool.
  */
-export function wireBilling(settings: WiringSettings, access: Access, env: Readonly<Record<string, string | undefined>>): Wired<{ readonly invoices: InvoicesHttp; readonly payHistory: PayHistoryHttp }> {
+export function wireBilling(settings: WiringSettings, access: Access, env: Readonly<Record<string, string | undefined>>): Wired<{ readonly invoices: InvoicesHttp; readonly payHistory: PayHistoryHttp; readonly bankResults: BankResultsHttp }> {
   const bank = invoiceBankInfo(env.BILLING_BANK_INFO);
   const pool = new pg.Pool({ connectionString: settings.databaseUrl });
   const reads = new PostgresTransferInvoiceReads({ pool,
@@ -26,10 +29,26 @@ export function wireBilling(settings: WiringSettings, access: Access, env: Reado
   const voids = new PostgresTransferInvoiceVoids({ pool, decision: voidDecision });
   const voidReads = new PostgresTransferInvoiceReads({ pool, decision: voidDecision });
   const origin = settings.callbackUrl ? new URL(settings.callbackUrl).origin : "";
+  // F5 bank result files: StudentHub finance settles transfers; the same rule as a void, decided again
+  // per transfer inside the apply, and `complete` runs through the pay lifecycle on the same lock.
+  const bankPolicy = bankResultLifecyclePolicy(voidDecision);
+  const bankEffects = new PostgresTransferInvoiceEffects();
+  // Only transitionInTransaction is used, on the apply's own locked transaction; a standalone transition is refused.
+  const lifecycle = new TransferLifecycleService({ transaction: async () => { throw new Error("bank_results_use_the_apply_transaction"); } }, () => new Date());
+  const fileGate = operatorFinanceGate(DEFAULT_OPERATOR_ORG_IDS, TRANSFER_INVOICE_VOID_ROLE);
+  const bankStore = new PostgresBankResultStore(pool, bankPolicy, bankEffects,
+    async (tx, actor, transferId) => (await lifecycle.transitionInTransaction(tx, actor, transferId, "complete")).kind === "changed",
+    fileGate);
+  // The page shows itself only to the same central file authority the store enforces.
+  const operatorFinance = async (viewer: string) => {
+    const client = await pool.connect();
+    try { return await fileGate(client, viewer); } finally { client.release(); }
+  };
   return {
     services: {
       invoices: createInvoicesHttp({ sessions: access.loginStore.sessions, reads, ...(bank ? { bank } : {}),
         voids: { reads: voidReads, credit: input => voids.credit(input), origin } }),
+      bankResults: createBankResultsHttp({ sessions: access.loginStore.sessions, store: bankStore, allowed: operatorFinance, origin }),
       payHistory: createPayHistoryHttp({ sessions: access.loginStore.sessions, reads: new PostgresPayHistoryReads({ pool }) }),
     },
     async close() { await pool.end(); },

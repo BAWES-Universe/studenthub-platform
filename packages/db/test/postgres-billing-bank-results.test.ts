@@ -3,7 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 import pg from "pg";
 import { runMigrations } from "@studenthub/db";
-import { PostgresBankResultStore, PostgresTransferInvoiceEffects, operatorFinanceGate, type BankResultCompletePort, type BankResultFileGate } from "@studenthub/db/billing";
+import { PostgresBankResultStore, PostgresTransferInvoiceEffects, bankResultLifecyclePolicy, operatorFinanceGate, type BankResultCompletePort, type BankResultFileGate } from "@studenthub/db/billing";
+import { transferInvoiceVoidDecision } from "../../billing/src/transfer-invoice-access.js";
 import type { BankCell } from "../../billing/src/bank-results.js";
 import { TransferLifecycleService, type TransferAction } from "../../payroll/src/transfer-lifecycle.js";
 import { PostgresTransferLifecycleStore, type PayLifecyclePolicy } from "../src/payroll/postgres-transfer-lifecycle-store.js";
@@ -176,6 +177,47 @@ test("BANK_STORE_AUTHORIZE an actor who may not complete a named transfer settle
   assert.deepEqual(await rows(fileId), []);
   assert.equal(await status(other), "distributing");
   assert.equal((await pool.query("SELECT status FROM bank_result_files WHERE id=$1", [fileId])).rows[0].status, "pending");
+});
+
+test("BANK_STORE_PREVIEW a preview shows what apply would do and writes nothing; the file page then lists every recorded decision", async () => {
+  const t = await transfer([{ id: "L-1", person: "w1", amount: "10.000" }], "lock", "payment_received");
+  const fileId = await submit(aub(["SUCCESS", "REF-1", "x", "L-1"], ["BAD", "x", "x", "L-9"]));
+  const preview = await results().preview(actor, fileId);
+  assert.equal(preview.kind, "applied");
+  assert.deepEqual(preview.kind === "applied" && [preview.decisions.map((d) => d.kind), preview.completedTransferIds], [["pay", "hold"], [t]]);
+  assert.deepEqual(await paidLines(), []);
+  assert.equal(await status(t), "distributing");
+  const pending = await results().file(actor, fileId);
+  assert.deepEqual(pending && [pending.status, pending.rowCount, pending.decisions, pending.uploadedBy, pending.appliedAt], ["pending", 2, [], "fin", null]);
+  await results().apply(actor, fileId);
+  const applied = await results().file(actor, fileId);
+  assert.deepEqual(applied && [applied.status, applied.appliedBy, applied.decisions], ["applied", "fin", [
+    { rowNumber: 3, kind: "pay", reason: null, lineIds: ["L-1"], reference: "REF-1" },
+    { rowNumber: 4, kind: "hold", reason: "rejected_row", lineIds: [], reference: null }]]);
+  assert.deepEqual((await results().files(actor))!.map((f) => [f.fileId, f.status]), [[fileId, "applied"]]);
+  assert.equal(await results().file(actor, randomUUID()), null);
+  assert.equal(await results().file(actor, "nope"), null);
+  const outsider = { principalId: "w1", actingAs: false };
+  assert.deepEqual([await results().files(outsider), await results().file(outsider, fileId)], [null, null], "the read side needs finance file permission too");
+  assert.equal((await results().preview(outsider, fileId)).kind, "refused");
+});
+
+test("BANK_STORE_POLICY the production rule lets StudentHub finance settle a company's transfer and refuses that company's own finance user", async () => {
+  for (const id of ["cfin"]) await pool.query("INSERT INTO principals(id) VALUES($1)", [id]);
+  await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES ('fin','root','finance','subtree'),('cfin','P','finance','subtree')");
+  const rule = bankResultLifecyclePolicy((grants, orgId, ancestors) => transferInvoiceVoidDecision(grants, orgId, ancestors, ["root"]));
+  const port: BankResultCompletePort = async (tx, who, id) =>
+    (await new TransferLifecycleService({ transaction: async () => { throw new Error("unused"); } }, now).transitionInTransaction(tx, who, id, "complete")).kind === "changed";
+  const t = await transfer([{ id: "L-1", person: "w1", amount: "10.000" }], "lock", "payment_received");
+  const fileId = await submit(aub(["SUCCESS", "REF-1", "x", "L-1"]));
+  // Past a (deliberately open) file gate, the per-transfer rule alone still refuses the company's own finance user.
+  assert.deepEqual(await results(port, rule, async () => true).apply({ principalId: "cfin", actingAs: false }, fileId), { kind: "refused", code: "forbidden" });
+  assert.deepEqual(await paidLines(), []);
+  assert.equal((await results(port, rule).apply(actor, fileId)).kind, "applied");
+  assert.deepEqual(await paidLines(), ["L-1"]);
+  assert.equal(await status(t), "complete");
+  const history = await pool.query("SELECT actor_id FROM pay_transfer_lifecycle_history WHERE transfer_id=$1 AND action='complete'", [t]);
+  assert.deepEqual(history.rows, [{ actor_id: "fin" }]);
 });
 
 test("BANK_STORE_GATE without finance file permission nothing is stored, no earlier file is named, and a file with no eligible transfer is not applied", async () => {

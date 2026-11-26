@@ -52,6 +52,20 @@ export type BankResultApply =
 
 type ReadSheet = Extract<BankSheetResult, { kind: "read" }>;
 
+export interface BankResultFileEntry {
+  readonly fileId: string; readonly format: BankResultFormat; readonly status: "pending" | "applied"; readonly rowCount: number;
+  readonly uploadedBy: string; readonly uploadedAt: string; readonly appliedBy: string | null; readonly appliedAt: string | null;
+}
+export interface BankResultRecordedRow {
+  readonly rowNumber: number; readonly kind: BankRowDecision["kind"]; readonly reason: string | null; readonly lineIds: readonly string[]; readonly reference: string | null;
+}
+export interface BankResultFileDetail extends BankResultFileEntry { readonly decisions: readonly BankResultRecordedRow[] }
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+const iso = (v: Date | null) => (v === null ? null : v.toISOString());
+interface FileRow { id: string; format: BankResultFormat; status: "pending" | "applied"; row_count: string | number; uploaded_by: string; uploaded_at: Date; applied_by: string | null; applied_at: Date | null }
+const entry = (r: FileRow): BankResultFileEntry => ({ fileId: r.id, format: r.format, status: r.status, rowCount: Number(r.row_count),
+  uploadedBy: r.uploaded_by, uploadedAt: iso(r.uploaded_at)!, appliedBy: r.applied_by, appliedAt: iso(r.applied_at) });
+
 /** All result-file applies are serialised: recorded confirmations are read and
  * written by one apply at a time. The unique reference index still refuses a race. */
 const APPLY_LOCK = 7_350_575;
@@ -84,6 +98,39 @@ export class PostgresBankResultStore {
     }, () => true);
   }
 
+  /** What applying the file now would do, from the same locked transaction as apply, then rolled back. */
+  async preview(actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> { return this.run(actor, fileId, true); }
+
+  async apply(actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> { return this.run(actor, fileId, false); }
+
+  /** The most recent files, newest first; null without finance file permission. */
+  async files(actor: PayLifecycleActor, limit = 50): Promise<readonly BankResultFileEntry[] | null> {
+    if (actor.actingAs !== false || !actor.principalId?.trim()) return null;
+    return this.transaction(async (client) => !await this.gate(client, actor.principalId) ? null
+      : (await client.query(`SELECT id,format,status,uploaded_by,uploaded_at,applied_by,applied_at,jsonb_array_length(sheet->'rows')+jsonb_array_length(sheet->'rejected') AS row_count
+        FROM bank_result_files ORDER BY uploaded_at DESC, id LIMIT $1`, [Math.min(Math.max(1, limit), 200)])).rows.map(entry), () => true);
+  }
+
+  /** One file, with the decision recorded for each row once it is applied; null without finance file permission. */
+  async file(actor: PayLifecycleActor, fileId: string): Promise<BankResultFileDetail | null> {
+    if (actor.actingAs !== false || !actor.principalId?.trim() || !UUID.test(fileId)) return null;
+    return this.transaction(async (client) => {
+      if (!await this.gate(client, actor.principalId)) return null;
+      const row = (await client.query(`SELECT id,format,status,uploaded_by,uploaded_at,applied_by,applied_at,jsonb_array_length(sheet->'rows')+jsonb_array_length(sheet->'rejected') AS row_count
+        FROM bank_result_files WHERE id=$1`, [fileId])).rows[0];
+      if (!row) return null;
+      const decisions = (await client.query("SELECT row_number,kind,reason,line_ids,reference FROM bank_result_rows WHERE file_id=$1 ORDER BY row_number", [fileId])).rows
+        .map((r) => ({ rowNumber: r.row_number, kind: r.kind, reason: r.reason, lineIds: r.line_ids, reference: r.reference }));
+      return { ...entry(row), decisions };
+    }, () => true);
+  }
+
+  private async run(actor: PayLifecycleActor, fileId: string, dryRun: boolean): Promise<BankResultApply> {
+    if (actor.actingAs !== false || !actor.principalId?.trim()) return { kind: "refused", code: "forbidden" };
+    if (!UUID.test(fileId)) return { kind: "refused", code: "not_found" };
+    return this.transaction((client) => this.applyIn(client, actor, fileId), (result) => result.kind === "applied" && !dryRun);
+  }
+
   private async transaction<T>(work: (client: pg.PoolClient) => Promise<T>, commit: (result: T) => boolean): Promise<T> {
     const client = await this.pool.connect(); let broken = false;
     try {
@@ -95,12 +142,6 @@ export class PostgresBankResultStore {
       try { await client.query("ROLLBACK"); } catch { broken = true; }
       throw error;
     } finally { client.release(broken); }
-  }
-
-  async apply(actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> {
-    if (actor.actingAs !== false || !actor.principalId?.trim()) return { kind: "refused", code: "forbidden" };
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(fileId)) return { kind: "refused", code: "not_found" };
-    return this.transaction((client) => this.applyIn(client, actor, fileId), (result) => result.kind === "applied");
   }
 
   private async applyIn(client: pg.PoolClient, actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> {
@@ -176,4 +217,28 @@ export class PostgresBankResultStore {
     await client.query("UPDATE bank_result_files SET status='applied',applied_by=$2,applied_at=clock_timestamp() WHERE id=$1", [fileId, actor.principalId]);
     return { kind: "applied", decisions: plan.decisions, completedTransferIds: completed };
   }
+}
+
+/** The lifecycle policy for settling transfers from a bank result file: only `complete`, decided
+ * inside the apply transaction on the transfer's company. The actor's grants and the company's
+ * ancestor rows are locked FOR SHARE, as a void is, so a grant revoked while the apply waits is seen.
+ * `decision` is the billing rule (StudentHub finance on an operator organization above the company). */
+export function bankResultLifecyclePolicy(decision: (grants: readonly { org_id: string; role: string; scope: string }[], orgId: string, ancestors: readonly string[]) => boolean): PayLifecyclePolicy {
+  return {
+    async authorize(client, actor, transfer, action) {
+      if (action !== "complete" || actor.actingAs !== false) return false;
+      const chain = async () => (await client.query<{ id: string }>(`WITH RECURSIVE chain(id, parent_org_id, depth) AS (
+          SELECT id, parent_org_id, 0 FROM organizations WHERE id = $1
+          UNION ALL SELECT o.id, o.parent_org_id, c.depth + 1 FROM organizations o JOIN chain c ON o.id = c.parent_org_id WHERE c.depth < 64)
+        SELECT id FROM chain ORDER BY depth`, [transfer.companyId])).rows.map((row) => row.id);
+      const before = await chain();
+      await client.query("SELECT id FROM organizations WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE", [before]);
+      const grants = (await client.query<{ org_id: string; role: string; scope: string }>(
+        "SELECT org_id, role, scope FROM grants WHERE principal_id = $1 ORDER BY org_id, role, scope FOR SHARE", [actor.principalId])).rows;
+      const after = await chain();
+      if (after[0] !== transfer.companyId || after.some((id) => !before.includes(id))) return false;
+      return decision(grants, transfer.companyId, after.slice(1));
+    },
+    async unassignedPersonIds() { throw new Error("bank_result_policy_lock_unsupported"); },
+  };
 }

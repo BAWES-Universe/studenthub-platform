@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import { deflateRawSync } from "node:zlib";
+import { test } from "node:test";
+import { readBankResultSheet } from "../src/bank-results.js";
+import { XLSX_MAX_BYTES, readXlsxCells } from "../src/xlsx-cells.js";
+
+// Synthetic workbooks only: statuses, references and line ids are made up.
+type Cell = { value: string | number | null; type?: StringConstructor | NumberConstructor } | null;
+async function workbook(rows: (string | number | null)[][]): Promise<Uint8Array> {
+  const { default: writeExcelFile } = await import("write-excel-file/node");
+  const data: Cell[][] = rows.map((row) => row.map((value) => (value === null ? null : { value, type: typeof value === "number" ? Number : String })));
+  return new Uint8Array(await writeExcelFile(data as never, { sheet: "Result" }).toBuffer());
+}
+
+/** A minimal zip of named text entries, deflated or stored. */
+function zip(files: Record<string, string>, stored = false): Uint8Array {
+  const locals: Buffer[] = [], centrals: Buffer[] = [];
+  let offset = 0;
+  for (const [name, content] of Object.entries(files)) {
+    const raw = Buffer.from(content, "utf8"), body = stored ? raw : deflateRawSync(raw), nameBytes = Buffer.from(name, "utf8");
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(stored ? 0 : 8, 8);
+    local.writeUInt32LE(body.length, 18); local.writeUInt32LE(raw.length, 22); local.writeUInt16LE(nameBytes.length, 26);
+    const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(stored ? 0 : 8, 10);
+    central.writeUInt32LE(body.length, 20); central.writeUInt32LE(raw.length, 24); central.writeUInt16LE(nameBytes.length, 28); central.writeUInt32LE(offset, 42);
+    locals.push(local, nameBytes, body); centrals.push(central, nameBytes);
+    offset += 30 + nameBytes.length + body.length;
+  }
+  const dir = Buffer.concat(centrals), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(Object.keys(files).length, 8); end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+  return new Uint8Array(Buffer.concat([...locals, dir, end]));
+}
+const book = (sheet: string, shared?: string, sheetPath = "worksheets/sheet1.xml") => ({
+  "xl/workbook.xml": `<workbook xmlns:r="r"><sheets><sheet name="A" sheetId="1" r:id="rId7"/></sheets></workbook>`,
+  "xl/_rels/workbook.xml.rels": `<Relationships><Relationship Id="rId1" Target="styles.xml"/><Relationship Id="rId7" Target="${sheetPath}"/></Relationships>`,
+  [`xl/${sheetPath}`]: `<worksheet><sheetData>${sheet}</sheetData></worksheet>`,
+  ...(shared === undefined ? {} : { "xl/sharedStrings.xml": `<sst>${shared}</sst>` }),
+});
+
+test("XLSX_ROUNDTRIP a workbook a spreadsheet program writes reads back as the AUB layout the bank result reader expects", async () => {
+  const bytes = await workbook([
+    [null, null, null, null],
+    ["Status", "Status Description", "Debit Narrative", "Credit Narrative"],
+    ["SUCCESS", "REF-1", "Salary", "L-1"],
+    ["FAIL", "Account closed", "Salary", "L-2"],
+  ]);
+  const cells = readXlsxCells(bytes);
+  assert.ok(cells);
+  assert.deepEqual(cells.slice(1), [["Status", "Status Description", "Debit Narrative", "Credit Narrative"],
+    ["SUCCESS", "REF-1", "Salary", "L-1"], ["FAIL", "Account closed", "Salary", "L-2"]]);
+  const sheet = readBankResultSheet("aub", cells);
+  assert.equal(sheet.kind, "read");
+  assert.deepEqual(sheet.kind === "read" && sheet.rows.map((r) => [r.rowNumber, r.outcome, r.reference, r.lineRef]),
+    [[3, "success", "REF-1", "L-1"], [4, "fail", "Account closed", "L-2"]]);
+});
+
+test("XLSX_CELLS shared, inline and rich strings, numbers, gaps and entities keep their place and their text", () => {
+  const cells = readXlsxCells(zip(book(
+    `<row r="2"><c r="A2" t="s"><v>0</v></c><c r="C2" t="inlineStr"><is><t>in &amp; out</t></is></c></row>`
+    + `<row r="4"><c r="B4"><v>120.5</v></c><c r="D4" t="s"><v>1</v></c><c r="E4" t="b"><v>1</v></c><c r="F4"/></row>`,
+    `<si><t>Status</t></si><si><r><t>RE</t></r><r><t xml:space="preserve">F-&#x31;</t></r><rPh><t>x</t></rPh></si>`)));
+  assert.deepEqual(cells, [[], ["Status", null, "in & out"], [], [null, "120.5", null, "REF-1", "1", null]]);
+  assert.deepEqual(readXlsxCells(zip(book(`<row r="1"><c r="A1" t="s"><v>0</v></c></row>`, "<si><t>stored</t></si>"), true)), [["stored"]]);
+  assert.deepEqual(readXlsxCells(zip(book(`<row r="1"><c r="A1"><v>7</v></c></row>`, undefined, "worksheets/other.xml"))), [["7"]]);
+});
+
+test("XLSX_REFUSED anything that is not a readable, bounded workbook is refused, not guessed", () => {
+  assert.equal(readXlsxCells(new Uint8Array()), null);
+  assert.equal(readXlsxCells(new TextEncoder().encode("Status,Reference\nSUCCESS,REF-1\n")), null);
+  assert.equal(readXlsxCells(new Uint8Array(XLSX_MAX_BYTES + 1)), null);
+  const files = book(`<row r="1"><c r="A1" t="s"><v>0</v></c></row>`, "<si><t>x</t></si>");
+  const { ["xl/_rels/workbook.xml.rels"]: _rels, ...noRels } = files;
+  assert.equal(readXlsxCells(zip(noRels)), null, "no relationships");
+  assert.equal(readXlsxCells(zip(book(`<row r="1"><c r="A1" t="s"><v>3</v></c></row>`, "<si><t>x</t></si>"))), null, "shared index out of range");
+  assert.equal(readXlsxCells(zip(book(`<row r="1"><c r="ZZ1"><v>1</v></c></row>`))), null, "too many columns");
+  assert.equal(readXlsxCells(zip(book(`<row r="20000"><c r="A20000"><v>1</v></c></row>`))), null, "too many rows");
+  const bomb = Buffer.from(zip({ ...files, "xl/sharedStrings.xml": `<sst><si><t>${"a".repeat(21 * 1024 * 1024)}</t></si></sst>` }));
+  assert.ok(bomb.length < XLSX_MAX_BYTES);
+  assert.equal(readXlsxCells(bomb), null, "an entry that inflates past its cap");
+});
