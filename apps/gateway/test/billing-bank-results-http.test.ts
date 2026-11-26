@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import test, { type TestContext } from "node:test";
 import type { BankResultApply, BankResultFileDetail, BankResultHeldRow, BankResultSubmit, BankResultTransferStatus } from "@studenthub/db/billing";
 import { AUB_RESULT_COLUMNS } from "../../../packages/billing/src/bank-results.js";
-import { createBankResultsHttp, handleBankResults, reviewOf, uploadForm, type BankResultsStore } from "../src/billing/bank-results-http.js";
+import { createBankResultsHttp, handleBankResults, reviewOf, transferIdOf, uploadForm, type BankResultsStore } from "../src/billing/bank-results-http.js";
 
 // Synthetic people, files, references and line ids only.
 const FIN = "f".repeat(43), COMPANY_FIN = "c".repeat(43);
@@ -17,7 +17,7 @@ const PREVIEW: Extract<BankResultApply, { kind: "review" }> = { kind: "review", 
   { kind: "hold", rowNumber: 4, reason: "reference_conflict", lineIds: ["L-2", "<L-3>"] }] };
 
 const HELD: BankResultHeldRow[] = [
-  { fileId: ID, format: "kfh", appliedAt: "2026-11-25T11:00:00.000Z", rowNumber: 4, reason: "ambiguous", reference: "REF-<9>", lines: [{ lineId: "L-2", transferId: "T 1", paid: false }, { lineId: "L-3", transferId: "T1", paid: true }] },
+  { fileId: ID, format: "kfh", appliedAt: "2026-11-25T11:00:00.000Z", rowNumber: 4, reason: "ambiguous", reference: "REF-<9>", lines: [{ lineId: "L-2", transferId: "T:1", paid: false }, { lineId: "L-3", transferId: "T1", paid: true }] },
   { fileId: ID, format: "aub", appliedAt: "2026-11-25T11:00:00.000Z", rowNumber: 5, reason: "unmatched", reference: null, lines: [] }];
 const STATUS: BankResultTransferStatus = { transferId: "T1", companyId: "P", status: "distributing", lines: [
   { lineId: "L-1", personId: "w1", amount: "120.500", currency: "KWD", paid: true, payment: { reference: "REF-1", fileId: ID, rowNumber: 3, recordedAt: "2026-11-25T11:00:00.000Z" }, rows: [] },
@@ -154,7 +154,7 @@ test("BANK_HTTP_HELD Finance sees every held row with why it was held and the cu
   const html = await page.text();
   assert.match(html, /More than one line matches; choose by hand\./);
   assert.match(html, /REF-&lt;9&gt;/); assert.doesNotMatch(html, /REF-<9>/);
-  assert.match(html, /<a href="\/finance\/bank-results\/transfers\/T%201#line-L-2">L-2<\/a> \(unpaid\)/);
+  assert.match(html, /<a href="\/finance\/bank-results\/transfers\/T%3A1#line-L-2">L-2<\/a> \(unpaid\)/);
   assert.match(html, /<a href="\/finance\/bank-results\/transfers\/T1#line-L-3">L-3<\/a> \(paid\)/);
   assert.match(html, /No line waiting for payment matches this row\.<\/td><td><\/td><td>No line found/);
   assert.deepEqual(await (await x.call("/finance/bank-results/held", { session: FIN })).json(), { held: HELD });
@@ -174,5 +174,8 @@ test("BANK_HTTP_TRANSFER Finance sees each line of a transfer: paid with which b
   assert.equal((await x.call("/finance/bank-results/transfers/T2", { session: FIN })).status, 404, "a transfer the reader may not settle is not found");
   assert.equal((await x.call("/finance/bank-results/transfers/%3Cx%3E", { session: FIN })).status, 404);
   assert.equal((await x.call("/finance/bank-results/transfers/T1/x", { session: FIN })).status, 404);
-  assert.deepEqual(x.calls.filter(c => c.startsWith("transfer")), ["transfer:fin:false:T1", "transfer:fin:false:T1", "transfer:fin:false:T2"]);
+  assert.equal((await x.call("/finance/bank-results/transfers/T%3A1", { session: FIN })).status, 404, "an encoded id is decoded before the store is asked");
+  assert.equal((await x.call("/finance/bank-results/transfers/%E0%A4%A", { session: FIN })).status, 404, "a malformed escape is not found");
+  assert.deepEqual(x.calls.filter(c => c.startsWith("transfer")), ["transfer:fin:false:T1", "transfer:fin:false:T1", "transfer:fin:false:T2", "transfer:fin:false:T:1"]);
+  assert.equal(transferIdOf("T%3A1"), "T:1"); assert.equal(transferIdOf("T%201"), undefined); assert.equal(transferIdOf("%E0%A4%A"), undefined);
 });

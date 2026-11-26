@@ -91,7 +91,13 @@ export function createBankResultsHttp(ports: { sessions: Pick<SessionStore, "get
 const FILE = /^\/finance\/bank-results\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const APPLY = /^\/finance\/bank-results\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/apply$/;
 const HELD = `${BANK_RESULTS_PATH}/held`;
-const TRANSFER = /^\/finance\/bank-results\/transfers\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})$/;
+const TRANSFER = /^\/finance\/bank-results\/transfers\/([^/]+)$/;
+/** The transfer id in a transfer page path, decoded as the links on these pages encode it; undefined when it is not one. */
+export function transferIdOf(segment: string): string | undefined {
+  let id: string;
+  try { id = decodeURIComponent(segment); } catch { return undefined; }
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id) ? id : undefined;
+}
 const transferHref = (id: string) => `${BANK_RESULTS_PATH}/transfers/${encodeURIComponent(id)}`;
 const UPLOAD_LIMIT = XLSX_MAX_BYTES + 16 * 1024;
 const esc = (v: string) => v.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -228,7 +234,8 @@ export function uploadForm(body: Buffer, contentType: string | undefined): { for
 export async function handleBankResults(req: IncomingMessage, res: ServerResponse, service: BankResultsHttp | undefined): Promise<boolean> {
   const path = new URL(req.url ?? "/", "http://gateway.invalid").pathname;
   const list = path === BANK_RESULTS_PATH, file = list ? null : FILE.exec(path), applying = list || file ? null : APPLY.exec(path);
-  const heldPage = path === HELD, transfer = TRANSFER.exec(path), read = heldPage || !!transfer;
+  const heldPage = path === HELD, transferPath = TRANSFER.exec(path), transfer = transferPath ? transferIdOf(transferPath[1]!) : undefined;
+  const read = heldPage || transfer !== undefined;
   if (!list && !file && !applying && !path.startsWith(`${BANK_RESULTS_PATH}/`)) return false;
   const post = req.method === "POST";
   try {
@@ -248,7 +255,7 @@ export async function handleBankResults(req: IncomingMessage, res: ServerRespons
       writeHtml(res, 200, pageDocument("Held bank rows", heldHtml(held)), { "cache-control": "no-store" }); return true;
     }
     if (transfer) {
-      const status = await service.transfer(viewer, transfer[1]!);
+      const status = await service.transfer(viewer, transfer);
       if (!status) return notFound(req, res);
       if (!wantsHtml(req.headers.accept)) return json(res, 200, status);
       writeHtml(res, 200, pageDocument("Transfer pay status", transferHtml(status)), { "cache-control": "no-store" }); return true;
