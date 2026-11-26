@@ -3337,8 +3337,16 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       // there, or a later stage, is not sent at all.
       const holdId = crossCardHoldCommentId({ issueId: receipt.issue_id, attemptId: receipt.attempt_id, targetSha: receipt.target_sha });
       const readThread = () => fetchThreadComments({ issueIds: threadIdsFor.get(receipt.issue_id) ?? [linearIssueId], token: linearToken, fetchImpl });
+      // The HOLD counts as on the thread only as a comment under its own id
+      // whose receipt is this attempt, at this head, at HOLD.
+      const holdOnThread = (comments) => comments.some((comment) => {
+        if (comment?.id !== holdId) return false;
+        const parsed = parseReceiptCommentBody(comment.body);
+        return parsed?.attempt_id === receipt.attempt_id && parsed?.target_sha === receipt.target_sha && parsed?.stage === "HOLD";
+      });
       const alreadySettled = (comments) => {
-        if (comments.some((comment) => comment?.id === holdId)) return `its HOLD is already published as comment ${holdId}`;
+        if (holdOnThread(comments)) return `its HOLD is already published as comment ${holdId}`;
+        if (comments.some((comment) => comment?.id === holdId)) return `comment ${holdId} on its thread is not this attempt's HOLD at this head`;
         const fresh = parseReceiptsFromComments(comments).filter((r) => r.attempt_id === receipt.attempt_id && r.target_sha === receipt.target_sha);
         if (fresh.length === 0) return "its receipt is missing from the thread";
         const moved = fresh.find((r) => r.stage !== receipt.stage);
@@ -3351,19 +3359,34 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} not written — ${skipped}`);
         continue;
       }
+      // Published only on Linear's positive acknowledgement of this exact id
+      // (success and the returned comment id), or, failing that, on reading
+      // the HOLD back from the thread under its id (holdOnThread): the answer
+      // was lost, or another worker's write took this id first. Otherwise the
+      // tick fails, the slot stays held, and the next tick sends the same id.
+      let answer = null;
+      let failure = null;
       try {
-        await sendLinear(LINEAR_COMMENT_CREATE_WITH_ID_MUTATION, { id: holdId, issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
+        answer = await sendLinear(LINEAR_COMMENT_CREATE_WITH_ID_MUTATION, { id: holdId, issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
       } catch (error) {
         // A budget or comment-cap refusal keeps its own handling in main.
         if (["LINEAR_RATE_LIMITED", "LINEAR_COMMENT_CAP", "LINEAR_QUOTA_UNCLASSIFIED"].includes(error?.code)) throw error;
-        // The answer was lost, or another worker's write took this id first
-        // (Linear refuses a second comment with one id): the comment under its
-        // id in the thread means the HOLD is published. Otherwise the error
-        // stands, and the next tick sends the same id again.
+        failure = error;
+      }
+      const created = answer?.commentCreate;
+      if (!(created?.success === true && created?.comment?.id === holdId)) {
+        const why = failure
+          ? `its write failed (${failure?.code ?? "unknown"})`
+          : `its write was not acknowledged (success=${String(created?.success)}, id=${created?.comment?.id ?? "none"})`;
         let published = false;
-        try { published = (await readThread()).some((comment) => comment?.id === holdId); } catch { /* the write's own error stands */ }
-        if (!published) throw error;
-        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} HOLD comment ${holdId} read back after its write failed (${error?.code ?? "unknown"}); published once`);
+        try { published = holdOnThread(await readThread()); } catch { /* unconfirmed below */ }
+        if (!published) {
+          if (failure) throw failure;
+          const err = new Error(`${ENDED_EPISODE_REVIEW} HOLD for ${receipt.issue_id} attempt ${receipt.attempt_id}: ${why}, and comment ${holdId} is not this attempt's HOLD on its thread; slot held`);
+          err.code = "LINEAR_PUBLISH_UNCONFIRMED";
+          throw err;
+        }
+        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} HOLD comment ${holdId} read back after ${why}; published once`);
       }
       lifecyclePersisted = true;
       lifecycleSlotReleased = true;

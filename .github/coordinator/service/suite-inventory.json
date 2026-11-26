@@ -2786,6 +2786,8 @@
     "CROSS_CARD_SETTLE_RACE: two card workers settling the same ended review at once publish exactly one HOLD",
     "CROSS_CARD_SETTLE_LOST_BEFORE_VISIBLE: a HOLD committed but not yet visible is never published a second time",
     "CROSS_CARD_SETTLE_UNCERTAIN_PUBLISH: a HOLD write that lands and then fails is read back as published, never written twice",
+    "CROSS_CARD_PUBLISH_UNACKNOWLEDGED: success false, another comment id, or no comment id never frees the slot",
+    "CROSS_CARD_PUBLISH_MISMATCHED_READBACK: the HOLD's id on the thread with another attempt, head or stage never frees the slot",
     "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
     "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
     "SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick",
@@ -22484,6 +22486,14 @@
     },
     {
       "name": "CROSS_CARD_SETTLE_UNCERTAIN_PUBLISH: a HOLD write that lands and then fails is read back as published, never written twice",
+      "capabilities": []
+    },
+    {
+      "name": "CROSS_CARD_PUBLISH_UNACKNOWLEDGED: success false, another comment id, or no comment id never frees the slot",
+      "capabilities": []
+    },
+    {
+      "name": "CROSS_CARD_PUBLISH_MISMATCHED_READBACK: the HOLD's id on the thread with another attempt, head or stage never frees the slot",
       "capabilities": []
     },
     {

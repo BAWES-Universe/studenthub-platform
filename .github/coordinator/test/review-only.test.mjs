@@ -1244,7 +1244,8 @@ test("CROSS_CARD_SETTLE_RACE: two card workers settling the same ended review at
       assert.ok(id, "the HOLD is sent with an id");
       return control.h.fetchImpl(url, { ...opts, body: JSON.stringify({ query, variables: rest }) });
     });
-    await Promise.all([control.tick({ fetchImpl: ignoreId }), control.tick({ fetchImpl: ignoreId })]);
+    // Each tick then fails: Linear did not acknowledge the id it was sent.
+    await Promise.allSettled([control.tick({ fetchImpl: ignoreId }), control.tick({ fetchImpl: ignoreId })]);
     assert.equal(control.holds(), 2, "without the id the duplicate is reproduced");
   } finally { control.h.cleanup(); }
 });
@@ -1301,4 +1302,62 @@ test("CROSS_CARD_SETTLE_UNCERTAIN_PUBLISH: a HOLD write that lands and then fail
     const next = await Promise.all([tick(), tick()]);
     assert.equal(holds(), 1, next.map((r) => r.text).join("\n---\n"));
   } finally { h.cleanup(); }
+});
+
+// A HOLD is published only on Linear's positive acknowledgement of its own id,
+// or on reading back that id carrying this attempt, this head and HOLD.
+// Anything else fails the tick with the slot still held.
+async function unconfirmedPublish(answerCreate) {
+  const { h, unknown, holdId, tick, through, isCreate } = await endedReviewBoard();
+  const out = [];
+  const create = through(async (url, opts) => {
+    if (!isCreate(opts)) return h.fetchImpl(url, opts);
+    const { variables } = JSON.parse(opts.body);
+    return { status: 200, ok: true, json: async () => answerCreate({ h, unknown, holdId, variables }) };
+  });
+  let failed = null;
+  try { await tick({ fetchImpl: create, stdout: (line) => out.push(line) }); } catch (error) { failed = error; }
+  const text = out.join("\n");
+  h.cleanup();
+  return { failed, text, unknown };
+}
+const heldNotPublished = ({ failed, text }, label) => {
+  assert.ok(failed, `${label}: the tick fails`);
+  assert.doesNotMatch(text, /published once/, `${label}: never logged as published`);
+  assert.doesNotMatch(text, /-> HOLD \(ENDED_EPISODE_REVIEW/, `${label}: the slot is not freed`);
+};
+// A comment written under the HOLD's id whose receipt is changed by `edit`.
+const storedUnderId = (edit) => ({ h, unknown, variables }) => {
+  const hold = nextReceiptState(unknown, { type: "hold", reason: "ENDED_EPISODE_REVIEW: test" }).receipt;
+  h.comments.push({ id: variables.id, body: receiptCommentBody(edit(hold, unknown)), createdAt: new Date().toISOString() });
+  return { errors: [{ message: "duplicate id" }] };
+};
+
+test("CROSS_CARD_PUBLISH_UNACKNOWLEDGED: success false, another comment id, or no comment id never frees the slot", async () => {
+  for (const [label, answerCreate] of [
+    ["success false", () => ({ data: { commentCreate: { success: false, comment: null } } })],
+    ["another comment id", () => ({ data: { commentCreate: { success: true, comment: { id: "00000000-0000-4000-8000-000000000000" } } } })],
+    ["another comment id, with a HOLD stored under it", ({ h, unknown }) => {
+      const hold = nextReceiptState(unknown, { type: "hold", reason: "ENDED_EPISODE_REVIEW: test" }).receipt;
+      h.comments.push({ id: "00000000-0000-4000-8000-000000000000", body: receiptCommentBody(hold), createdAt: new Date().toISOString() });
+      return { data: { commentCreate: { success: true, comment: { id: "00000000-0000-4000-8000-000000000000" } } } };
+    }],
+    ["no comment id", () => ({ data: { commentCreate: { success: true, comment: null } } })],
+  ]) {
+    const result = await unconfirmedPublish(answerCreate);
+    heldNotPublished(result, label);
+    assert.equal(result.failed.code, "LINEAR_PUBLISH_UNCONFIRMED", `${label}: ${result.failed.message}`);
+  }
+});
+
+test("CROSS_CARD_PUBLISH_MISMATCHED_READBACK: the HOLD's id on the thread with another attempt, head or stage never frees the slot", async () => {
+  for (const [label, edit] of [
+    ["another attempt", (hold) => ({ ...hold, attempt_id: "00000000-0000-4000-8000-0000000000aa" })],
+    ["another head", (hold) => ({ ...hold, target_sha: "b".repeat(40) })],
+    ["not HOLD", (hold, unknown) => unknown],
+  ]) {
+    const result = await unconfirmedPublish(storedUnderId(edit));
+    heldNotPublished(result, label);
+    assert.match(result.failed.message, /duplicate id/, `${label}: the write's own error stands`);
+  }
 });
