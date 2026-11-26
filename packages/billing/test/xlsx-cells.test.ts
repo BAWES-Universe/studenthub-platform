@@ -167,3 +167,24 @@ test("XLSX_CUT_TAG a start tag cut short after valid result rows refuses the who
   assert.deepEqual(sheetRead.kind === "read" && sheetRead.rows.map((r) => r.lineRef), ["L-1", "L-2"]);
   assert.equal(read(`<row r="4" <c r="A4"/>`), "unreadable");
 });
+
+test("XLSX_CELL_CONTENT a cell whose markup carries a value must read as that value: duplicate attributes, a type its markup contradicts, or content that decodes to nothing refuse the sheet", () => {
+  const sheet = (cell: string, shared = "<si><t>x</t></si><si><t></t></si><si><t> </t></si>") =>
+    cellsOf(zip(book(`<row r="2"><c r="A2" t="inlineStr"><is><t>SUCCESS</t></is></c></row><row r="3">${cell}</row>`, shared)));
+  assert.deepEqual(sheet(`<c r="A3" s="1"/><c r="B3" t="s"><v>0</v></c>`), [[], ["SUCCESS"], [null, "x"]], "a styled empty cell stays empty");
+  for (const bad of [
+    `<c r="A3" t="n" t="inlineStr"><is><t>SUCCESS</t></is></c>`,
+    `<c r="A3" r="B3"><v>1</v></c>`,
+    `<c r="A3" t="n"><is><t>SUCCESS</t></is></c>`,
+    `<c r="A3" t="inlineStr"><v>1</v></c>`,
+    `<c r="A3" t="inlineStr"><is><t>a</t></is><v>1</v></c>`,
+    `<c r="A3" t="inlineStr"/>`,
+    `<c r="A3" t="zz"><v>1</v></c>`,
+    `<c r="A3"><v></v></c>`,
+    `<c r="A3"><v> </v></c>`,
+    `<c r="A3" t="inlineStr"><is><t></t></is></c>`,
+    `<c r="A3" t="inlineStr"><is><rPh><t>x</t></rPh></is></c>`,
+    `<c r="A3" t="s"><v>1</v></c>`,
+    `<c r="A3" t="s"><v>2</v></c>`,
+  ]) assert.equal(sheet(bad), "unreadable", bad);
+});

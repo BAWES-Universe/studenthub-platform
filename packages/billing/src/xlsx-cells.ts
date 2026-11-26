@@ -111,6 +111,8 @@ function firstSheet(zip: Buffer, all: Map<string, Entry>): string | null {
  */
 interface XmlHandler { open(name: string, tag: string): boolean; close(name: string): boolean; text(raw: string): boolean }
 const START_TAG = /^[A-Za-z_][\w.:-]*(?:\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"[^"<]*"|'[^'<]*'))*\s*\/?$/u;
+/** SpreadsheetML cell types; anything else is not a cell this reader understands. */
+const CELL_TYPES: ReadonlySet<string> = new Set(["n", "s", "str", "inlineStr", "b", "e", "d"]);
 const localName = (qualified: string) => qualified.slice(qualified.indexOf(":") + 1);
 function scanXml(xml: string, handler: XmlHandler): boolean {
   const stack: string[] = [];
@@ -143,6 +145,9 @@ function scanXml(xml: string, handler: XmlHandler): boolean {
     }
     // A start tag is a name and well-formed attributes only: a stray `<` (a tag cut short) is malformed.
     if (!START_TAG.test(inner)) return false;
+    // An attribute named twice is ambiguous (which `t` or `r` did the writer mean?): never pick one.
+    const names = [...inner.matchAll(/\s([A-Za-z_][\w.:-]*)\s*=/gu)].map((m) => m[1]);
+    if (new Set(names).size !== names.length) return false;
     const selfClosing = inner.endsWith("/");
     const name = /^[A-Za-z_][\w.:-]*/u.exec(inner)![0];
     if (stack.length === 0 && rooted) return false;
@@ -245,6 +250,8 @@ export function readXlsxCells(bytes: Uint8Array): XlsxRead {
       if (cell && name !== "c") { cell.inline?.close(name); return true; }
       if (cell && name === "c" && cells) {
         const { col, type, v, inline } = cell; cell = null;
+        // The markup must agree with the declared type: an inline string only in `<is>`, every other value only in `<v>`.
+        if (!CELL_TYPES.has(type) || (type === "inlineStr") !== (inline !== null) || (type === "inlineStr" && v !== null)) return fail("unreadable");
         const raw = v === null ? undefined : v.join("");
         let value: BankCell = null;
         if (type === "s") {
@@ -253,6 +260,8 @@ export function readXlsxCells(bytes: Uint8Array): XlsxRead {
           value = shared[i]!;
         } else if (type === "inlineStr") value = inline ? inline.value() : "";
         else if (raw !== undefined) value = text(raw); // n, str, b, e: the cached text as written
+        // A cell that carries a value never reads as empty: content that decodes to nothing is refused, not skipped.
+        if ((v !== null || inline !== null) && (typeof value !== "string" || value.trim() === "")) return fail("unreadable");
         if (typeof value === "string" && (value.length > XLSX_MAX_FIELD_CHARS || (chars += value.length) > MAX_GRID_CHARS)) return fail("too_large");
         while (cells.length < col) cells.push(null);
         cells[col] = value;
