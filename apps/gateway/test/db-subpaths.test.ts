@@ -45,7 +45,7 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
     types: "./dist/comms/index.d.ts", import: "./dist/comms/index.js",
   });
   const comms = await moduleFor("@studenthub/db/comms");
-  assert.deepEqual(Object.keys(comms).sort(), ["CIVIL_ID_EXPIRING_DAYS", "PERSON_REMINDER_KINDS", "PostgresPersonRemindersStore", "PostgresPlacementFeedStore", "PostgresRecruitDispatchStore", "PostgresStaffMessagesStore", "PostgresTransferPaidFeedStore", "recordWorkSessionDecision", "retractWorkSessionDecision"]);
+  assert.deepEqual(Object.keys(comms).sort(), ["CIVIL_ID_EXPIRING_DAYS", "PERSON_REMINDER_KINDS", "PostgresPersonRemindersStore", "PostgresPlacementFeedStore", "PostgresRecruitDispatchStore", "PostgresStaffMessagesStore", "PostgresTransferInitiatedFeedStore", "PostgresTransferPaidFeedStore", "recordWorkSessionDecision", "retractWorkSessionDecision"]);
   assert.equal(typeof comms.PostgresStaffMessagesStore, "function");
   // Reports is subpath-only too (reports lane, migrations 0600 to 0649).
   assert.deepEqual(manifest.exports["./reports"], { types: "./dist/reports/index.d.ts", import: "./dist/reports/index.js" });
