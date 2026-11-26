@@ -353,3 +353,45 @@ test("BANK_STORE_RACE two files naming one bank reference on lines of different 
   assert.deepEqual(kinds, ["pay:null"], "the changed file wrote nothing");
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM bank_result_confirmations WHERE reference='REF-1'")).rows[0].n, 1);
 });
+
+test("BANK_STORE_HELD held rows of applied files list newest first with each named line's transfer and paid flag, scoped to the reader", async () => {
+  const mine = await transfer([{ id: "L-1", person: "w1", amount: "10.000" }, { id: "L-2", person: "w2", amount: "20.000" }], "lock", "payment_received");
+  const theirs = await transfer([{ id: "L-3", person: "w3", amount: "30.000" }], "lock", "payment_received");
+  const first = await submit(aub(["SUCCESS", "REF-1", "x", "L-1"], ["SUCCESS", "REF-9", "x", "L-404"]));
+  await approve(results(), actor, first);
+  const second = await submit(aub(["SUCCESS", "REF-1", "elsewhere", "L-3"], ["SUCCESS", "REF-2", "x", "L-2"]));
+  await approve(results(), actor, second);
+  await submit(aub(["SUCCESS", "REF-7", "x", "L-404"]));
+  const scoped: PayLifecyclePolicy = { ...policy, authorize: async (_c, who, t) => who.principalId === "fin" || t.id !== theirs };
+  const held = async (who: string) => (await results(complete, scoped).held({ principalId: who, actingAs: false }))!
+    .map((h) => [h.fileId === second ? "second" : "first", h.rowNumber, h.reason, h.reference, h.lines.map((l) => [l.lineId, l.transferId === mine ? "mine" : "theirs", l.paid])]);
+  assert.deepEqual(await held("fin"), [
+    ["second", 3, "reference_conflict", "REF-1", [["L-1", "mine", true], ["L-3", "theirs", false]]],
+    ["first", 4, "unmatched", "REF-9", []]], "paid rows and a file not applied yet list nothing");
+  assert.deepEqual(await held("fin2"), [
+    ["second", 3, "reference_conflict", "REF-1", [["L-1", "mine", true]]],
+    ["first", 4, "unmatched", "REF-9", []]], "a line the reader may not settle is not named");
+  assert.equal(await results(complete, scoped, async () => false).held(actor), null);
+  assert.equal(await results().held({ principalId: "fin", actingAs: true }), null);
+});
+
+test("BANK_STORE_TRANSFER a transfer's lines show the bank payment that paid each and every held or failed row naming it, only to a reader who may settle it", async () => {
+  const t = await transfer([{ id: "L-1", person: "w1", amount: "10.000" }, { id: "L-2", person: "w2", amount: "20.000" }, { id: "L-3", person: "w3", amount: "30.000" }], "lock", "payment_received");
+  const first = await submit(aub(["SUCCESS", "REF-1", "x", "L-1"], ["FAIL", "Account closed", "x", "L-2"]));
+  await approve(results(), actor, first);
+  const second = await submit(aub(["SUCCESS", "REF-1", "elsewhere", "L-3"]));
+  await approve(results(), actor, second);
+  const status = (await results().transfer(actor, t))!;
+  assert.deepEqual([status.transferId, status.companyId, status.status], [t, "P", "distributing"]);
+  assert.deepEqual(status.lines.map((l) => [l.lineId, l.personId, l.amount, l.currency, l.paid, l.payment && [l.payment.reference, l.payment.fileId === first, l.payment.rowNumber],
+    l.rows.map((r) => [r.fileId === first ? "first" : "second", r.rowNumber, r.kind, r.reason, r.reference])]), [
+    ["L-1", "w1", "10.000", "KWD", true, ["REF-1", true, 3], [["second", 3, "hold", "reference_conflict", "REF-1"]]],
+    ["L-2", "w2", "20.000", "KWD", false, null, [["first", 4, "unpay", null, "Account closed"]]],
+    ["L-3", "w3", "30.000", "KWD", false, null, [["second", 3, "hold", "reference_conflict", "REF-1"]]]]);
+  const denied: PayLifecyclePolicy = { ...policy, authorize: async (_c, who) => who.principalId === "fin" };
+  assert.equal(await results(complete, denied).transfer({ principalId: "fin2", actingAs: false }, t), null, "a transfer the reader may not settle is not shown");
+  assert.equal(await results().transfer(actor, "missing"), null);
+  assert.equal(await results().transfer(actor, "<bad>"), null);
+  assert.equal(await results(complete, policy, async () => false).transfer(actor, t), null);
+  assert.equal(await results().transfer({ principalId: "fin", actingAs: true }, t), null);
+});

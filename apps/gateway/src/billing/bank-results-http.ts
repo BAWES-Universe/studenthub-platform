@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import type { BankResultApply, BankResultFileDetail, BankResultFileEntry, BankResultSubmit } from "@studenthub/db/billing";
+import type { BankResultApply, BankResultFileDetail, BankResultFileEntry, BankResultHeldRow, BankResultSubmit, BankResultTransferStatus } from "@studenthub/db/billing";
 import type { BankCell, BankHoldReason, BankResultFormat, BankRowDecision } from "../../../../packages/billing/src/bank-results.js";
 import { XLSX_MAX_BYTES, XLSX_MAX_FIELD_CHARS, readXlsxCells } from "../../../../packages/billing/src/xlsx-cells.js";
 import { MAX_BANK_RESULT_ROWS } from "../../../../packages/billing/src/bank-results.js";
@@ -18,6 +18,11 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
  * POST /finance/bank-results/<id>/apply (form field `review`, the identity of the preview shown) applies
  * it once, and only if applying it would still do exactly what was reviewed; otherwise nothing is
  * written and the fresh review is shown (409).
+ *
+ * GET /finance/bank-results/held lists every held row of the applied files, with the lines each
+ * names and whether they are paid now. GET /finance/bank-results/transfers/<id> shows each line of
+ * one transfer: paid with which bank reference and file, and every held or failed row naming it.
+ * These are how Finance finds held and paid lines from the ordinary records.
  *
  * Only StudentHub's own finance users (a finance grant on an operator organization) reach any of
  * this; everyone else, a company's finance users included, gets not found before any file is read.
@@ -37,6 +42,8 @@ export const BANK_RESULTS_PATH = "/finance/bank-results";
 export interface BankResultsStore {
   files(actor: { principalId: string; actingAs: boolean }): Promise<readonly BankResultFileEntry[] | null>;
   file(actor: { principalId: string; actingAs: boolean }, fileId: string): Promise<BankResultFileDetail | null>;
+  held(actor: { principalId: string; actingAs: boolean }): Promise<readonly BankResultHeldRow[] | null>;
+  transfer(actor: { principalId: string; actingAs: boolean }, transferId: string): Promise<BankResultTransferStatus | null>;
   submit(actor: { principalId: string; actingAs: boolean }, input: { format: BankResultFormat; contentSha256: string; cells: BankCell[][] }): Promise<BankResultSubmit>;
   preview(actor: { principalId: string; actingAs: boolean }, fileId: string): Promise<BankResultApply>;
   apply(actor: { principalId: string; actingAs: boolean }, fileId: string, reviewId: string): Promise<BankResultApply>;
@@ -50,6 +57,8 @@ export interface BankResultsHttp {
   readonly applyEnabled: boolean;
   files(viewer: string): Promise<readonly BankResultFileEntry[] | null>;
   file(viewer: string, fileId: string): Promise<BankResultFileDetail | null>;
+  held(viewer: string): Promise<readonly BankResultHeldRow[] | null>;
+  transfer(viewer: string, transferId: string): Promise<BankResultTransferStatus | null>;
   submit(viewer: string, format: BankResultFormat, bytes: Buffer): Promise<BankResultSubmit | { readonly kind: "workbook_refused"; readonly code: "unreadable" | "too_many_rows" | "too_large" }>;
   preview(viewer: string, fileId: string): Promise<BankResultApply>;
   /** Applies only the reviewed outcome; a changed outcome comes back as a fresh review with nothing written. */
@@ -67,6 +76,8 @@ export function createBankResultsHttp(ports: { sessions: Pick<SessionStore, "get
     applyEnabled: ports.applyEnabled === true,
     files: (viewer) => ports.store.files(actor(viewer)),
     file: (viewer, id) => ports.store.file(actor(viewer), id),
+    held: (viewer) => ports.store.held(actor(viewer)),
+    transfer: (viewer, id) => ports.store.transfer(actor(viewer), id),
     async submit(viewer, format, bytes) {
       const read = readXlsxCells(bytes);
       if (read.kind === "refused") return { kind: "workbook_refused", code: read.code };
@@ -79,6 +90,9 @@ export function createBankResultsHttp(ports: { sessions: Pick<SessionStore, "get
 
 const FILE = /^\/finance\/bank-results\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const APPLY = /^\/finance\/bank-results\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/apply$/;
+const HELD = `${BANK_RESULTS_PATH}/held`;
+const TRANSFER = /^\/finance\/bank-results\/transfers\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})$/;
+const transferHref = (id: string) => `${BANK_RESULTS_PATH}/transfers/${encodeURIComponent(id)}`;
 const UPLOAD_LIMIT = XLSX_MAX_BYTES + 16 * 1024;
 const esc = (v: string) => v.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const FORMAT_NAME: Readonly<Record<BankResultFormat, string>> = { aub: "AUB result file", kfh: "KFH transfer report" };
@@ -104,10 +118,31 @@ function decisionsTable(rows: readonly Shown[]): string {
 }
 function listHtml(files: readonly BankResultFileEntry[]): string {
   const rows = files.map(f => `<tr><td><a href="${BANK_RESULTS_PATH}/${f.fileId}">${esc(f.uploadedAt.slice(0, 16).replace("T", " "))}</a></td><td>${esc(FORMAT_NAME[f.format])}</td><td>${f.rowCount}</td><td>${f.status === "applied" ? "Applied" : "Not applied yet"}</td></tr>`).join("");
-  return `<main><h1>Bank result files</h1><p>Upload the result file the bank returns after a salary transfer. Nothing is marked paid until you review the file and apply it.</p>`
+  return `<main><h1>Bank result files</h1><p>Upload the result file the bank returns after a salary transfer. Nothing is marked paid until you review the file and apply it.</p><p><a href="${HELD}">Held bank rows</a></p>`
     + `<form method="post" enctype="multipart/form-data" action="${BANK_RESULTS_PATH}"><label>Bank <select name="format"><option value="aub">${FORMAT_NAME.aub}</option><option value="kfh">${FORMAT_NAME.kfh}</option></select></label> `
     + `<label>File <input type="file" name="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label> <button>Upload</button></form>`
     + (files.length ? `<table><thead><tr><th>Uploaded (UTC)</th><th>Bank</th><th>Rows</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No files uploaded yet.</p>") + "</main>";
+}
+const when = (iso: string) => esc(iso.slice(0, 16).replace("T", " "));
+const holdText = (reason: string | null) => (reason ? esc(HOLD[reason as BankHoldReason] ?? reason) : "");
+function heldHtml(held: readonly BankResultHeldRow[]): string {
+  const rows = held.map(h => `<tr><td><a href="${BANK_RESULTS_PATH}/${h.fileId}">${when(h.appliedAt)}</a></td><td>${esc(FORMAT_NAME[h.format])}</td><td>${h.rowNumber}</td>`
+    + `<td>${holdText(h.reason)}</td><td>${esc(h.reference ?? "")}</td><td>${h.lines.length ? h.lines.map(l =>
+      `<a href="${esc(transferHref(l.transferId))}#line-${esc(l.lineId)}">${esc(l.lineId)}</a> (${l.paid ? "paid" : "unpaid"})`).join("<br>") : "No line found"}</td></tr>`).join("");
+  return `<main><h1>Held bank rows</h1><p>Rows of applied bank result files that were held for a person. A held row changed nothing; settle the line it names by hand or with a corrected file.</p>`
+    + (held.length ? `<table><thead><tr><th>Applied (UTC)</th><th>Bank</th><th>Row</th><th>Why held</th><th>Bank reference</th><th>Lines</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No rows are held.</p>")
+    + `<p><a href="${BANK_RESULTS_PATH}">All bank result files</a></p></main>`;
+}
+function transferHtml(t: BankResultTransferStatus): string {
+  const rows = t.lines.map(l => {
+    const paid = l.payment ? `Paid: bank reference ${esc(l.payment.reference ?? "none")}, <a href="${BANK_RESULTS_PATH}/${l.payment.fileId}">file</a> row ${l.payment.rowNumber}, ${when(l.payment.recordedAt)} UTC`
+      : l.paid ? "Paid (not from a bank result file)" : "Unpaid";
+    const notes = l.rows.map(r => `<a href="${BANK_RESULTS_PATH}/${r.fileId}">${when(r.appliedAt)}</a> row ${r.rowNumber}: ${r.kind === "hold" ? `held. ${holdText(r.reason)}` : `the bank reported a failure${r.reference ? ` (${esc(r.reference)})` : ""}.`}`).join("<br>");
+    return `<tr id="line-${esc(l.lineId)}"><td>${esc(l.lineId)}</td><td>${esc(l.personId)}</td><td>${esc(l.currency)} ${esc(l.amount)}</td><td>${paid}</td><td>${notes}</td></tr>`;
+  }).join("");
+  return `<main><h1>Transfer pay status</h1><p>Transfer ${esc(t.transferId)}, company ${esc(t.companyId)}, ${esc(t.status)}.</p>`
+    + (t.lines.length ? `<table><thead><tr><th>Line</th><th>Person</th><th>Amount</th><th>Paid</th><th>Held or failed rows</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>The transfer has no lines.</p>")
+    + `<p><a href="${HELD}">Held bank rows</a> · <a href="${BANK_RESULTS_PATH}">All bank result files</a></p></main>`;
 }
 function fileHtml(file: BankResultFileDetail, preview: BankResultApply | null, applyEnabled: boolean): string {
   const head = `<main><h1>Bank result file</h1><p>${esc(FORMAT_NAME[file.format])}, uploaded ${esc(file.uploadedAt.slice(0, 16).replace("T", " "))} UTC, ${file.rowCount} rows.</p>`;
@@ -193,18 +228,31 @@ export function uploadForm(body: Buffer, contentType: string | undefined): { for
 export async function handleBankResults(req: IncomingMessage, res: ServerResponse, service: BankResultsHttp | undefined): Promise<boolean> {
   const path = new URL(req.url ?? "/", "http://gateway.invalid").pathname;
   const list = path === BANK_RESULTS_PATH, file = list ? null : FILE.exec(path), applying = list || file ? null : APPLY.exec(path);
+  const heldPage = path === HELD, transfer = TRANSFER.exec(path), read = heldPage || !!transfer;
   if (!list && !file && !applying && !path.startsWith(`${BANK_RESULTS_PATH}/`)) return false;
   const post = req.method === "POST";
   try {
     if (!service) { req.resume(); return unavailable(req, res); }
-    if (!list && !file && !applying) { req.resume(); return notFound(req, res); }
-    const allowedMethods = applying ? "POST" : file ? "GET" : "GET, POST";
+    if (!list && !file && !applying && !read) { req.resume(); return notFound(req, res); }
+    const allowedMethods = applying ? "POST" : file || read ? "GET" : "GET, POST";
     if (!allowedMethods.split(", ").includes(req.method ?? "")) { req.resume(); res.writeHead(405, { allow: allowedMethods }); res.end(); return true; }
     // A write is refused from any other origin before the session or the body is looked at.
     if (post && (!service.origin || !sameOrigin(req, service.origin))) { req.resume(); return reply(req, res, 403, "forbidden", "Not allowed", "This request was not sent from StudentHub."); }
     const viewer = await service.viewer(sessionCookie(req.headers.cookie));
     if (!viewer) { req.resume(); return reply(req, res, 401, "unauthorized", "Sign in", "Sign in to see bank result files."); }
     if (!await service.allowed(viewer)) { req.resume(); return notFound(req, res); }
+    if (heldPage) {
+      const held = await service.held(viewer);
+      if (!held) return notFound(req, res);
+      if (!wantsHtml(req.headers.accept)) return json(res, 200, { held });
+      writeHtml(res, 200, pageDocument("Held bank rows", heldHtml(held)), { "cache-control": "no-store" }); return true;
+    }
+    if (transfer) {
+      const status = await service.transfer(viewer, transfer[1]!);
+      if (!status) return notFound(req, res);
+      if (!wantsHtml(req.headers.accept)) return json(res, 200, status);
+      writeHtml(res, 200, pageDocument("Transfer pay status", transferHtml(status)), { "cache-control": "no-store" }); return true;
+    }
     if (list && !post) {
       const files = await service.files(viewer);
       if (!files) return notFound(req, res);

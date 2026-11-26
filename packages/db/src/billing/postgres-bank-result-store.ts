@@ -74,6 +74,22 @@ export interface BankResultRecordedRow {
   readonly rowNumber: number; readonly kind: BankRowDecision["kind"]; readonly reason: string | null; readonly lineIds: readonly string[]; readonly reference: string | null;
 }
 export interface BankResultFileDetail extends BankResultFileEntry { readonly decisions: readonly BankResultRecordedRow[] }
+/** A held row of an applied file, with the lines it names that the reader may settle, each with its transfer and current paid flag. */
+export interface BankResultHeldRow {
+  readonly fileId: string; readonly format: BankResultFormat; readonly appliedAt: string; readonly rowNumber: number;
+  readonly reason: string; readonly reference: string | null;
+  readonly lines: readonly { readonly lineId: string; readonly transferId: string; readonly paid: boolean }[];
+}
+/** A bank result row recorded against a line: held for a person, or a failure the bank reported. */
+export interface BankResultLineRow { readonly fileId: string; readonly rowNumber: number; readonly kind: "hold" | "unpay"; readonly reason: string | null; readonly reference: string | null; readonly appliedAt: string }
+/** One line of a transfer as the bank results record it: paid with which bank payment, and every held or failed row naming it. */
+export interface BankResultTransferLine {
+  readonly lineId: string; readonly personId: string; readonly amount: string; readonly currency: string; readonly paid: boolean;
+  readonly payment: { readonly reference: string | null; readonly fileId: string; readonly rowNumber: number; readonly recordedAt: string } | null;
+  readonly rows: readonly BankResultLineRow[];
+}
+export interface BankResultTransferStatus { readonly transferId: string; readonly companyId: string; readonly status: string; readonly lines: readonly BankResultTransferLine[] }
+const TRANSFER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const iso = (v: Date | null) => (v === null ? null : v.toISOString());
 interface FileRow { id: string; format: BankResultFormat; status: "pending" | "applied"; row_count: string | number; uploaded_by: string; uploaded_at: Date; applied_by: string | null; applied_at: Date | null }
@@ -140,6 +156,45 @@ export class PostgresBankResultStore {
       const decisions = recorded.map((r) => ({ rowNumber: r.row_number, kind: r.kind, reason: r.reason,
         lineIds: (r.line_ids as string[]).filter((id) => visible.has(id)), reference: r.reference }));
       return { ...entry(row), decisions };
+    }, () => true);
+  }
+
+  /** Held rows of applied files, newest first, naming only lines the reader may settle now; null without finance file permission. */
+  async held(actor: PayLifecycleActor, limit = 200): Promise<readonly BankResultHeldRow[] | null> {
+    if (actor.actingAs !== false || !actor.principalId?.trim()) return null;
+    return this.transaction(async (client) => {
+      if (!await this.gate(client, actor.principalId)) return null;
+      const held = (await client.query(`SELECT r.file_id,f.format,f.applied_at,r.row_number,r.reason,r.reference,r.line_ids
+        FROM bank_result_rows r JOIN bank_result_files f ON f.id=r.file_id WHERE r.kind='hold'
+        ORDER BY f.applied_at DESC, r.file_id, r.row_number LIMIT $1`, [Math.min(Math.max(1, limit), 500)])).rows;
+      const visible = await this.visibleLines(client, actor, [...new Set(held.flatMap((r) => r.line_ids as string[]))]);
+      const lines = new Map((await client.query("SELECT id,transfer_id,paid FROM pay_transfer_lines WHERE id = ANY($1::text[])", [[...visible]])).rows
+        .map((r) => [r.id as string, { lineId: r.id as string, transferId: r.transfer_id as string, paid: r.paid as boolean }]));
+      return held.map((r) => ({ fileId: r.file_id, format: r.format, appliedAt: iso(r.applied_at)!, rowNumber: r.row_number, reason: r.reason, reference: r.reference,
+        lines: (r.line_ids as string[]).flatMap((id) => (lines.has(id) ? [lines.get(id)!] : [])) }));
+    }, () => true);
+  }
+
+  /** Every line of one transfer as the bank results record it; null without finance file permission, or
+   * when the transfer is missing or the reader may not settle it (the two are not told apart). */
+  async transfer(actor: PayLifecycleActor, transferId: string): Promise<BankResultTransferStatus | null> {
+    if (actor.actingAs !== false || !actor.principalId?.trim() || !TRANSFER_ID.test(transferId)) return null;
+    return this.transaction(async (client) => {
+      if (!await this.gate(client, actor.principalId)) return null;
+      const t = (await client.query("SELECT id,company_id,status,deleted FROM pay_transfers WHERE id=$1", [transferId])).rows[0];
+      if (!t || !await this.policy.authorize(client, actor, { id: t.id, companyId: t.company_id, status: t.status, deleted: t.deleted }, "complete")) return null;
+      const lines = (await client.query("SELECT id,person_id,candidate_total::text AS amount,currency_code,paid FROM pay_transfer_lines WHERE transfer_id=$1 ORDER BY id", [transferId])).rows;
+      const ids = lines.map((l) => l.id as string);
+      const payments = new Map((await client.query("SELECT line_id,reference,file_id,row_number,recorded_at FROM bank_result_confirmations WHERE line_id = ANY($1::text[]) ORDER BY id", [ids])).rows
+        .map((r) => [r.line_id as string, { reference: r.reference as string | null, fileId: r.file_id as string, rowNumber: r.row_number as number, recordedAt: iso(r.recorded_at)! }]));
+      const rows = new Map<string, BankResultLineRow[]>();
+      for (const r of (await client.query(`SELECT u.line_id,r.file_id,r.row_number,r.kind,r.reason,r.reference,f.applied_at
+        FROM bank_result_rows r CROSS JOIN LATERAL unnest(r.line_ids) AS u(line_id) JOIN bank_result_files f ON f.id=r.file_id
+        WHERE r.kind IN ('hold','unpay') AND u.line_id = ANY($1::text[]) ORDER BY f.applied_at, r.file_id, r.row_number`, [ids])).rows) {
+        rows.set(r.line_id, [...rows.get(r.line_id) ?? [], { fileId: r.file_id, rowNumber: r.row_number, kind: r.kind, reason: r.reason, reference: r.reference, appliedAt: iso(r.applied_at)! }]);
+      }
+      return { transferId: t.id, companyId: t.company_id, status: t.status, lines: lines.map((l) => ({ lineId: l.id, personId: l.person_id, amount: l.amount, currency: l.currency_code,
+        paid: l.paid, payment: payments.get(l.id) ?? null, rows: rows.get(l.id) ?? [] })) };
     }, () => true);
   }
 
