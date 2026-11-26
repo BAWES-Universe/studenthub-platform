@@ -73,7 +73,11 @@ export interface BankResultFileEntry {
 export interface BankResultRecordedRow {
   readonly rowNumber: number; readonly kind: BankRowDecision["kind"]; readonly reason: string | null; readonly lineIds: readonly string[]; readonly reference: string | null;
 }
-export interface BankResultFileDetail extends BankResultFileEntry { readonly decisions: readonly BankResultRecordedRow[] }
+/** `lineTransfers` gives the transfer of each line the decisions name, so the page can link a line to its transfer record. */
+export interface BankResultFileDetail extends BankResultFileEntry {
+  readonly decisions: readonly BankResultRecordedRow[];
+  readonly lineTransfers: Readonly<Record<string, string>>;
+}
 /** A held row of an applied file, with the lines it names that the reader may settle, each with its transfer and current paid flag. */
 export interface BankResultHeldRow {
   readonly fileId: string; readonly format: BankResultFormat; readonly appliedAt: string; readonly rowNumber: number;
@@ -158,7 +162,9 @@ export class PostgresBankResultStore {
       const visible = await this.visibleLines(client, actor, [...new Set(recorded.flatMap((r) => r.line_ids as string[]))]);
       const decisions = recorded.map((r) => ({ rowNumber: r.row_number, kind: r.kind, reason: r.reason,
         lineIds: (r.line_ids as string[]).filter((id) => visible.has(id)), reference: r.reference }));
-      return { ...entry(row), decisions };
+      const lineTransfers: Record<string, string> = Object.create(null);
+      for (const l of (await client.query("SELECT id,transfer_id FROM pay_transfer_lines WHERE id = ANY($1::text[]) ORDER BY id", [[...visible]])).rows) lineTransfers[l.id] = l.transfer_id;
+      return { ...entry(row), decisions, lineTransfers };
     }, () => true);
   }
 

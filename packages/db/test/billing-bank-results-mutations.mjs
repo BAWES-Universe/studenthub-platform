@@ -65,6 +65,10 @@ const mutations = [
   ["hide that an older held page exists", "BANK_STORE_HELD", "const more = held.length > limit;", "const more = false;"],
   ["read the records in a read-only transaction", "BANK_STORE_RECORDS_PRODUCTION",
     'const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ";', 'const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";'],
+  ["name the transfer of a line the reader may not settle", "BANK_STORE_READER_SCOPED",
+    "WHERE id = ANY($1::text[]) ORDER BY id\", [[...visible]]", "WHERE id = ANY($1::text[]) ORDER BY id\", [recorded.flatMap((r) => r.line_ids)]"],
+  ["give a file page no transfer links", "BANK_HTTP_RECORDS_PRODUCTION",
+    "lineTransfers[l.id] = l.transfer_id;", "void l;"],
 ];
 const original = await readFile(store, "utf8");
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-concurrency=1",

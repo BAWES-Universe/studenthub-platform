@@ -126,10 +126,13 @@ const HOLD: Readonly<Record<BankHoldReason, string>> = {
 type Shown = { rowNumber: number; kind: BankRowDecision["kind"]; reason: string | null; lineIds: readonly string[] };
 const KIND: Readonly<Record<BankRowDecision["kind"], string>> = { pay: "Marks the line paid", unpay: "Failed: the line stays unpaid", duplicate: "Already recorded from an earlier file", hold: "Held for a person" };
 
-function decisionsTable(rows: readonly Shown[]): string {
+/** A line id, linked to its transfer's record when the line's transfer is known. */
+const lineLink = (lineId: string, transfers: Readonly<Record<string, string>>) => Object.hasOwn(transfers, lineId)
+  ? `<a href="${esc(transferHref(transfers[lineId]!))}#line-${esc(lineId)}">${esc(lineId)}</a>` : esc(lineId);
+function decisionsTable(rows: readonly Shown[], transfers: Readonly<Record<string, string>> = {}): string {
   if (!rows.length) return "<p>The file has no rows.</p>";
   return `<table><thead><tr><th>Row</th><th>Outcome</th><th>Line</th><th>Why held</th></tr></thead><tbody>${rows.map(r =>
-    `<tr><td>${r.rowNumber}</td><td>${esc(KIND[r.kind])}</td><td>${esc(r.lineIds.join(", "))}</td><td>${r.reason ? esc(HOLD[r.reason as BankHoldReason] ?? r.reason) : ""}</td></tr>`).join("")}</tbody></table>`;
+    `<tr><td>${r.rowNumber}</td><td>${esc(KIND[r.kind])}</td><td>${r.lineIds.map(id => lineLink(id, transfers)).join(", ")}</td><td>${r.reason ? esc(HOLD[r.reason as BankHoldReason] ?? r.reason) : ""}</td></tr>`).join("")}</tbody></table>`;
 }
 function listHtml(files: readonly BankResultFileEntry[]): string {
   const rows = files.map(f => `<tr><td><a href="${BANK_RESULTS_PATH}/${f.fileId}">${esc(f.uploadedAt.slice(0, 16).replace("T", " "))}</a></td><td>${esc(FORMAT_NAME[f.format])}</td><td>${f.rowCount}</td><td>${f.status === "applied" ? "Applied" : "Not applied yet"}</td></tr>`).join("");
@@ -163,7 +166,7 @@ function transferHtml(t: BankResultTransferStatus): string {
 function fileHtml(file: BankResultFileDetail, preview: BankResultApply | null, applyEnabled: boolean): string {
   const head = `<main><h1>Bank result file</h1><p>${esc(FORMAT_NAME[file.format])}, uploaded ${esc(file.uploadedAt.slice(0, 16).replace("T", " "))} UTC, ${file.rowCount} rows.</p>`;
   const back = `<p><a href="${BANK_RESULTS_PATH}">All bank result files</a></p></main>`;
-  if (file.status === "applied") return `${head}<p>Applied ${esc((file.appliedAt ?? "").slice(0, 16).replace("T", " "))} UTC.</p>${decisionsTable(file.decisions)}${back}`;
+  if (file.status === "applied") return `${head}<p>Applied ${esc((file.appliedAt ?? "").slice(0, 16).replace("T", " "))} UTC.</p>${decisionsTable(file.decisions, file.lineTransfers)}${back}`;
   if (!preview || (preview.kind !== "review" && preview.kind !== "changed")) return `${head}<p>You can't settle the transfers in this file.</p>${back}`;
   const changed = preview.kind === "changed" ? `<p role="alert">What this file would do changed since you reviewed it, so nothing was applied. Review it again below.</p>` : "";
   const pays = preview.decisions.filter(d => d.kind === "pay").length;

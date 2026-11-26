@@ -10,7 +10,7 @@ import { createBankResultsHttp, handleBankResults, reviewOf, transferIdOf, uploa
 const FIN = "f".repeat(43), COMPANY_FIN = "c".repeat(43);
 const ORIGIN = "https://studenthub.example";
 const ID = "0f0e0d0c-0b0a-4908-8706-050403020100";
-const PENDING: BankResultFileDetail = { fileId: ID, format: "aub", status: "pending", rowCount: 2, uploadedBy: "fin", uploadedAt: "2026-11-25T10:00:00.000Z", appliedBy: null, appliedAt: null, decisions: [] };
+const PENDING: BankResultFileDetail = { fileId: ID, format: "aub", status: "pending", rowCount: 2, uploadedBy: "fin", uploadedAt: "2026-11-25T10:00:00.000Z", appliedBy: null, appliedAt: null, decisions: [], lineTransfers: {} };
 const REVIEW = "a".repeat(64), FRESH = "b".repeat(64);
 const PREVIEW: Extract<BankResultApply, { kind: "review" }> = { kind: "review", reviewId: REVIEW, completedTransferIds: ["T1"], decisions: [
   { kind: "pay", rowNumber: 3, lineId: "L-1", transferId: "T1", reference: "REF-1" },
@@ -50,7 +50,7 @@ async function rig(t: TestContext, applyEnabled: boolean | "unset" = true) {
       calls.push(`apply:${actor.principalId}:${id}:${reviewId.slice(0, 4)}`);
       if (file?.status === "applied") return { kind: "refused", code: "already_applied" };
       if (reviewId !== REVIEW) return { ...PREVIEW, kind: "changed", reviewId: FRESH, completedTransferIds: [] };
-      file = { ...PENDING, status: "applied", appliedBy: "fin", appliedAt: "2026-11-25T11:00:00.000Z", decisions: [{ rowNumber: 3, kind: "pay", reason: null, lineIds: ["L-1"], reference: "REF-1" }] };
+      file = { ...PENDING, status: "applied", appliedBy: "fin", appliedAt: "2026-11-25T11:00:00.000Z", decisions: [{ rowNumber: 3, kind: "pay", reason: null, lineIds: ["L-1", "L-9"], reference: "REF-1" }], lineTransfers: { "L-1": "T:1" } };
       return { ...PREVIEW, kind: "applied" };
     },
   };
@@ -94,6 +94,7 @@ test("BANK_HTTP_FLOW StudentHub finance uploads a workbook, reviews the preview,
   assert.equal(applied.status, 303);
   const after = await (await x.call(`/finance/bank-results/${ID}`, { session: FIN, accept: "text/html" })).text();
   assert.match(after, /Applied 2026-11-25 11:00 UTC/); assert.match(after, /Marks the line paid/); assert.doesNotMatch(after, /Apply this file/);
+  assert.match(after, /<td><a href="\/finance\/bank-results\/transfers\/T%3A1#line-L-1">L-1<\/a>, L-9<\/td>/, "a paid line links to its transfer's record; a line without a known transfer stays plain");
   assert.equal((await x.call(`/finance/bank-results/${ID}/apply`, { session: FIN, method: "POST", type: "application/json", body: JSON.stringify({ review: REVIEW }) })).status, 409);
   assert.deepEqual(x.calls.filter(c => c.startsWith("preview") || c.startsWith("apply")),
     [`preview:fin:${ID}`, `apply:fin:${ID}:cccc`, `apply:fin:${ID}:aaaa`, `apply:fin:${ID}:aaaa`], "an applied file is not previewed; a missing review never reaches the store");

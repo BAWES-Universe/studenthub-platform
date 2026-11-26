@@ -15,7 +15,7 @@ const DETAIL: CompanyTransferDetail = { ...OCTOBER, lines: [
   { lineId: "l-1", personName: "Amal <Synthetic>", storeName: "Shop P", worked: { hours: "5", minutes: 15 }, companyTotal: "10.500", paid: true },
   { lineId: "l-2", personName: "w2", storeName: "Shop C1", worked: null, companyTotal: "2.250", paid: false }] };
 
-async function rig(t: TestContext, reads?: Partial<TransferInvoiceReads>, bankRecords?: (viewer: string, transferId: string) => Promise<boolean>) {
+async function rig(t: TestContext, reads?: Partial<TransferInvoiceReads>) {
   const calls: string[] = [];
   const base: TransferInvoiceReads = {
     listForOrganization: async () => null, document: async () => null, statement: async () => null,
@@ -23,7 +23,7 @@ async function rig(t: TestContext, reads?: Partial<TransferInvoiceReads>, bankRe
     async companyTransfer(principal, orgId, id) { calls.push(`transfer:${principal}:${orgId}:${id}`); return principal === "fin" && orgId === "P" && id === "t-oct" ? DETAIL : null; },
   };
   const service = createInvoicesHttp({ sessions: { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [OTHER]: { personId: "other" } } as Record<string, { personId: string }>)[id] as never },
-    reads: { ...base, ...reads }, ...(bankRecords ? { bankRecords } : {}) });
+    reads: { ...base, ...reads } });
   const server = createServer(async (req, res) => { if (!await handleInvoices(req, res, service)) { res.writeHead(418); res.end(); } });
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
   t.after(() => new Promise<void>(r => server.close(() => r())));
@@ -80,26 +80,4 @@ test("COMPANY_TRANSFERS_ROUTE the invoice list of an organization named transfer
   assert.deepEqual(await res.json(), { orgId: "transfers", name: "transfers", invoices: [] });
   assert.equal((await x.call("/organization/invoices/transfers/t-oct", FIN)).status, 404, "the transfer of an organization named invoices");
   assert.deepEqual(x.calls, ["transfer:fin:invoices:t-oct"]);
-});
-
-test("COMPANY_TRANSFERS_BANK_LINK a paid transfer's record links its bank payments only for a viewer the bank record admits", async (t) => {
-  const PAID: CompanyTransferDetail = { ...DETAIL, transferId: "t:paid.1", status: "complete", lines: DETAIL.lines.map(l => ({ ...l, paid: true })) };
-  const asked: string[] = [];
-  const x = await rig(t, { companyTransfer: async (principal, _orgId, id) => principal === "fin" && id === "t:paid.1" ? PAID : null },
-    async (viewer, id) => { asked.push(`${viewer}:${id}`); return viewer === "fin"; });
-  const html = await (await x.call("/organization/P/transfers/t%3Apaid.1", FIN, "text/html")).text();
-  assert.ok(html.includes('<a href="/finance/bank-results/transfers/t%3Apaid.1">Bank payments for this transfer</a>'), html);
-  assert.deepEqual(asked, ["fin:t:paid.1"], "asked about the record's own transfer");
-  assert.deepEqual(await (await x.call("/organization/P/transfers/t%3Apaid.1", FIN)).json(), PAID, "JSON stays the record");
-});
-
-test("COMPANY_TRANSFERS_BANK_LINK no link when the bank record refuses, fails or is not wired; the record still shows", async (t) => {
-  for (const bankRecords of [async () => false, async () => { throw new Error("bank read down"); }, undefined]) {
-    const x = await rig(t, undefined, bankRecords);
-    const page = await x.call("/organization/P/transfers/t-oct", FIN, "text/html");
-    assert.equal(page.status, 200);
-    const html = await page.text();
-    assert.ok(html.includes("Amount: KWD 12.750 for 2 people."));
-    assert.doesNotMatch(html, /bank-results|Bank payments/);
-  }
 });

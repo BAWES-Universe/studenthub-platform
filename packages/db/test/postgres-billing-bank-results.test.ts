@@ -245,6 +245,9 @@ test("BANK_STORE_READER_SCOPED a file's recorded decisions name only the lines t
   const lines = async (who: string) => (await results(complete, scoped).file({ principalId: who, actingAs: false }, fileId))!.decisions.map((d) => [d.rowNumber, d.kind, d.lineIds]);
   assert.deepEqual(await lines("fin"), [[3, "pay", ["L-1"]], [4, "pay", ["L-2"]]]);
   assert.deepEqual(await lines("fin2"), [[3, "pay", []], [4, "pay", ["L-2"]]], "the applying actor's view is not reused");
+  const transfersOf = async (who: string) => Object.keys((await results(complete, scoped).file({ principalId: who, actingAs: false }, fileId))!.lineTransfers);
+  assert.deepEqual(await transfersOf("fin"), ["L-1", "L-2"]);
+  assert.deepEqual(await transfersOf("fin2"), ["L-2"], "a line's transfer is named only to a reader who may settle it");
 });
 
 test("BANK_STORE_POLICY the production rule lets StudentHub finance settle a company's transfer and refuses that company's own finance user", async () => {
@@ -419,7 +422,7 @@ test("BANK_STORE_RECORDS_PRODUCTION the held and transfer reads work with the pr
   assert.equal(await results(complete, rule, async () => true).transfer(cfin, t), null, "and, past an open gate, by the settle policy");
 });
 
-test("BANK_HTTP_RECORDS_PRODUCTION both record pages, wired as production with the real gate and settle rule on PostgreSQL: allowed, refused, and an unknown transfer indistinguishable from a refused one", async (t) => {
+test("BANK_HTTP_RECORDS_PRODUCTION the record pages, wired as production with the real gate and settle rule on PostgreSQL: a Finance-only session clicks from the file list to a paid-only transfer; refused, and unknown reads as refused", async (t) => {
   await pool.query("INSERT INTO principals(id) VALUES ('cfin')");
   await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES ('fin','root','finance','subtree'),('cfin','P','finance','subtree')");
   const paidOnly = await transfer([{ id: "L-1", person: "w1", amount: "10.000" }], "lock", "payment_received");
@@ -438,7 +441,16 @@ test("BANK_HTTP_RECORDS_PRODUCTION both record pages, wired as production with t
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
   t.after(() => new Promise<void>(r => server.close(() => r())));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const get = (path: string, session: string) => fetch(base + path, { headers: { cookie: `__Host-studenthub_session=${session}`, accept: "application/json" } });
+  const get = (path: string, session: string, accept = "application/json") => fetch(base + path, { headers: { cookie: `__Host-studenthub_session=${session}`, accept } });
+  const page = async (path: string) => { const r = await get(path, S_FIN, "text/html"); assert.equal(r.status, 200, path); return r.text(); };
+  const href = (html: string, pattern: RegExp) => { const m = pattern.exec(html); assert.ok(m, `no link ${pattern} in ${html}`); return m[1]!.replaceAll("&amp;", "&"); };
+
+  // The acceptance journey: fin holds one grant only, Finance on the central operator. Ordinary pages, ordinary links.
+  assert.deepEqual((await pool.query("SELECT org_id,role,scope FROM grants WHERE principal_id='fin'")).rows, [{ org_id: "root", role: "finance", scope: "subtree" }]);
+  const fileHref = href(await page("/finance/bank-results"), /<a href="(\/finance\/bank-results\/[0-9a-f-]{36})">/);
+  const transferHref = href(await page(fileHref), /<a href="(\/finance\/bank-results\/transfers\/[^"#]+)#line-L-1">L-1<\/a>/);
+  assert.equal(decodeURIComponent(transferHref.split("/").pop()!), paidOnly, "the paid line links to its own transfer");
+  assert.match(await page(transferHref), /<tr id="line-L-1"><td>L-1<\/td>[\s\S]*?Paid: bank reference REF-1/);
 
   const heldPage = await get("/finance/bank-results/held", S_FIN);
   assert.equal(heldPage.status, 200, await heldPage.clone().text());
