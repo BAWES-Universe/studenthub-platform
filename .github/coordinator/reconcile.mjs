@@ -35,7 +35,7 @@ import { parseActivationArgs, narrowQueueScope, cardQueue, singleRunActivationSt
 import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext, finishedSupervisorStage } from "./supervisor-dispatch.mjs";
-import { cardWorkers, MAX_CARD_WORKERS } from "./service/credential-delivery.mjs";
+import { cardWorkers, MAX_CARD_WORKERS, workerActivationFiles, workerRunLock } from "./service/credential-delivery.mjs";
 import { workerWorkspaceStateDir } from "./service/units.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote, REVIEW_FINDINGS_SUMMARY_MAX } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
@@ -1453,6 +1453,34 @@ export function endedEpisodeReviewDue(receipt, lifecycleReceipts, now) {
 export function endedEpisodeSupervisorSockets(env) {
   const workers = Array.from({ length: MAX_CARD_WORKERS }, (_, i) => path.join(workerWorkspaceStateDir(i + 1), "supervisor.sock"));
   return [...new Set([env?.SHU_SUPERVISOR_SOCKET, ...workers].filter((s) => typeof s === "string" && s.length > 0))];
+}
+
+// SHU-71, 26 Nov: endedEpisodeReviewDue picks receipts OUTSIDE this worker's
+// own lifecycle, so the same ended review is due on every card worker's tick at
+// once. Workers 1 and 2 started together at 04:00:04, both asked every
+// supervisor, both read the same durable FAILED record and both wrote the same
+// HOLD receipt for attempt b760441e (04:00:55 and 04:00:56). Nothing shared
+// serialized them: each tick holds only its own worker's writer lock. A
+// cross-card lifecycle write therefore has one owner among the running workers:
+// the lowest-numbered card worker whose card run holds its run lock (a
+// coordinator with dispatch on ticks only inside its card run). Worker 1 always
+// owns it; worker N defers while a lower worker's run lock stands. So two
+// workers never both publish the transition, and the receipt still settles on
+// whichever worker is running. A coordinator whose activation path names no
+// card worker (one worker, or a test) owns it as before.
+export function workerOfActivation(activationPath) {
+  const index = workerActivationFiles().indexOf(activationPath);
+  return index >= 0 ? index + 1 : null;
+}
+export function ownsCrossCardSettles(worker, runLockHeld = (n) => fs.existsSync(workerRunLock(n))) {
+  if (!Number.isInteger(worker) || worker <= 1) return true;
+  for (let lower = 1; lower < worker; lower += 1) {
+    // A lock that cannot be read counts as held: defer rather than write twice.
+    let held = true;
+    try { held = runLockHeld(lower) !== false; } catch { held = true; }
+    if (held) return false;
+  }
+  return true;
 }
 
 // One answer from the supervisors asked. A supervisor that holds the attempt and
@@ -3275,7 +3303,15 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     // An ended episode's review on another card: asked over status only, and
     // released to HOLD with a durable reason only on positive evidence.
     const settleNow = io.now?.() ?? new Date();
-    for (const receipt of receipts.filter((r) => endedEpisodeReviewDue(r, lifecycleStartReceipts, settleNow))) {
+    // One card worker publishes a cross-card transition (ownsCrossCardSettles).
+    const settleWorker = io.cardWorker ?? workerOfActivation(activationArg.path);
+    const settleOwner = () => ownsCrossCardSettles(settleWorker, io.cardRunLockHeld);
+    let endedReviewsDue = receipts.filter((r) => endedEpisodeReviewDue(r, lifecycleStartReceipts, settleNow));
+    if (endedReviewsDue.length && !settleOwner()) {
+      if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${endedReviewsDue.map(describeReviewHolder).join(", ")} left to a lower card worker — card worker ${settleWorker} defers while that worker's run lock is held`);
+      endedReviewsDue = [];
+    }
+    for (const receipt of endedReviewsDue) {
       const adapter = adapterNameFor(receipt.requested_worker);
       const answers = [];
       // An injected legacy adapter (unit fixtures only) has no socket to choose.
@@ -3295,6 +3331,12 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       const released = nextReceiptState(receipt, { type: "hold",
         reason: `${ENDED_EPISODE_REVIEW}: review from episode ${receipt.episode_id}, which has ended; released on ${disposition.evidence}; verdict not applied` }, { now: io.now });
       if (!released.accepted) continue;
+      // A lower worker's run may have started while the supervisors were asked:
+      // ownership is read again right before the write.
+      if (!settleOwner()) {
+        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} left to a lower card worker — its run lock appeared before the write`);
+        continue;
+      }
       await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
       lifecyclePersisted = true;
       lifecycleSlotReleased = true;
