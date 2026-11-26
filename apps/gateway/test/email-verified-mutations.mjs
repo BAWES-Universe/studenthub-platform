@@ -24,7 +24,9 @@ try {
     ["sign in although the stale answer could not be vetoed", "EMAIL_VERIFIED_BEST_EFFORT",
       "throw vetoError;", ""],
     ["keep the old answer when the write fails", "EMAIL_VERIFIED_BEST_EFFORT",
-      "await dependencies.identities.vetoEmailVerification?.(identity.personId);", ""],
+      "await veto.call(dependencies.identities, identity.personId);", ""],
+    ["sign in when the store records but cannot veto", "EMAIL_VERIFIED_PAIRED",
+      'throw new Error("email verification recorded without a veto");\n                            await veto.call(', "\n                            await veto?.call("],
   ];
   const original = readFileSync(gatewayFile, "utf8");
   for (const [name, token, from, to] of mutants) {
