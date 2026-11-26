@@ -1357,7 +1357,7 @@
     },
     "G-01": {
       "lane": "access",
-      "subject": "`/access/grants/catalogue` \u2014 roles, capabilities, scopes, versions",
+      "subject": "`/admin/access/catalogue` \u2014 roles, capabilities, scopes, versions",
       "served": [
         {
           "route": "/admin/access/catalogue",
@@ -1368,7 +1368,7 @@
       "gates": {
         "built": {
           "state": "done",
-          "evidence": "PR #715 at 46881fa06cbb38bcf366cb375ced8c2d9aa0265c"
+          "evidence": "PR #715 at 1289672d6a1d5c95054ed89fbf646884cf68b6d4"
         },
         "verified": {
           "state": "open"
