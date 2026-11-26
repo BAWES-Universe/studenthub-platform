@@ -66,6 +66,8 @@ export function createEpisodeHarness({
   };
   const nodes = [node, ...extraNodes, ...threadNodes];
   const comments = [];
+  // Every client-supplied comment id Linear has committed, visible or not.
+  const commentIds = new Set();
   const threads = new Map(threadNodes.map((entry) => [entry.id, []]));
   const threadOf = (id) => threads.get(id) ?? comments;
   const pauses = [];
@@ -208,7 +210,8 @@ export function createEpisodeHarness({
     }
     if (query.includes("CoordinatorIssueComments")) {
       const known = nodes.find((n) => n.id === variables.issueId || n.identifier === variables.issueId);
-      return respond({ issue: { comments: { nodes: known ? [...threadOf(known.id)] : [] } } });
+      // Linear answers with pageInfo; a strict (continued-thread) read needs it.
+      return respond({ issue: { comments: { nodes: known ? [...threadOf(known.id)] : [], pageInfo: { hasNextPage: false, endCursor: null } } } });
     }
     if (query.includes("commentCreate")) {
       const isFixture = nodes.some((n) => n.id === variables.issueId);
@@ -216,6 +219,14 @@ export function createEpisodeHarness({
         || (settleSupport && variables.issueId === summaryIssueId);
       if (!isFixture && !isEntity) throw new Error(`non-UUID comment write (${variables.issueId})`);
       const body = String(variables.body ?? "");
+      // A client-supplied id names one comment: a second create with it is
+      // refused (the error's wording is this fixture's, not Linear's).
+      if (typeof variables.id === "string") {
+        if (commentIds.has(variables.id)) return { status: 200, ok: true, json: async () => ({ errors: [{ message: "duplicate id" }] }) };
+        commentIds.add(variables.id);
+        threadOf(variables.issueId).push({ id: variables.id, body, createdAt: new Date().toISOString() });
+        return respond({ commentCreate: { success: true, comment: { id: variables.id } } });
+      }
       if (isEntity) {
         const list = entityComments.get(variables.issueId) ?? [];
         list.push({ body, createdAt: new Date().toISOString() });
@@ -369,6 +380,7 @@ export function createEpisodeHarness({
     nodeId,
     nodes,
     comments,
+    commentIds,
     threads,
     pauses,
     incidentIssues,
