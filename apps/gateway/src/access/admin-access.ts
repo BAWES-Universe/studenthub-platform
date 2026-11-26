@@ -6,6 +6,7 @@ import {
   mediaType,
   REASON_MAX,
   grantCatalogue,
+  grantCatalogueView,
   mayOpenAccessAdmin,
   mayPauseAccount,
   parseGrantChange,
@@ -28,6 +29,9 @@ import {
   type GrantOption,
   type GrantRefusal,
   type GrantToken,
+  type GrantCatalogueView,
+  type CatalogueCapability,
+  type CatalogueGiver,
   type OwnAccessRow,
 } from "../../../../packages/access/src/index.js";
 
@@ -35,6 +39,7 @@ import {
  * Access lane A1: the admin Access pages and the person's own read-only list.
  *
  * GET  /admin/access                      find a person (exact email or name prefix)
+ * GET  /admin/access/catalogue           G-01: every role at every scope, who gives it, what it opens
  * GET  /admin/access/people/{principalId} their grants, history, and the grant forms
  * POST /admin/access/preview              review one change, with a single-use token
  * POST /admin/access/confirm              apply it
@@ -159,6 +164,35 @@ function layout(main: string, current: "access" | "own" | "account"): string {
 
 // --- Rendering -----------------------------------------------------------------
 
+const CAPABILITY_TEXT: Readonly<Record<CatalogueCapability, string>> = Object.freeze({
+  access_pages: "Open the Access pages",
+  review_registrations: "Review company sign-ups",
+  pause_and_view_as: "Pause a person and view as them",
+  pause_operator_roles: "Pause StudentHub staff and administrators",
+  manage_ip_blocks: "Manage blocked addresses",
+  operations_reports: "Operations reports",
+  finance_reports: "Finance reports",
+  give_operator_roles: "Give StudentHub roles",
+  give_company_roles: "Give company roles",
+  give_company_roles_below: "Give company roles in sub-companies",
+  read_company_contacts: "See company contacts",
+  change_company_contacts: "Change company contacts",
+  manage_store_managers: "Manage store managers",
+});
+const GIVER_TEXT: Readonly<Record<CatalogueGiver, string>> = Object.freeze({
+  operator_admins: "StudentHub administrators",
+  operator_staff_and_admins: "StudentHub staff and administrators",
+  not_on_access_pages: "Not given on the Access pages",
+});
+
+export function renderGrantCatalogue(view: GrantCatalogueView): string {
+  const e = escapeHtml;
+  const table = (place: "operator" | "company", caption: string) =>
+    `<div class="directory-table"><table><caption>${caption}</caption><thead><tr><th>Role</th><th>Scope</th><th>Given by</th><th>Opens</th></tr></thead><tbody>${view.rows.filter((row) => row.place === place).map((row) =>
+      `<tr><th scope="row">${e(ROLE_NAMES[row.role] ?? row.role)}</th><td>${e(SCOPE_NAMES[row.scope] ?? row.scope)}</td><td>${e(GIVER_TEXT[row.givenBy])}</td><td>${row.opens.length ? `<ul>${row.opens.map((capability) => `<li>${e(CAPABILITY_TEXT[capability])}</li>`).join("")}</ul>` : "Nothing on these pages"}</td></tr>`).join("")}</tbody></table></div>`;
+  return layout(`<p><a class="text-link" href="/admin/access">← Access</a></p><div class="profile-heading"><div><div class="eyebrow">CATALOGUE VERSION ${view.version}</div><h1>Grant catalogue<span class="accent">.</span></h1><p>Every role at every scope: who can give it here, and what it opens. Each cell is worked out from the same rules the platform enforces.</p></div><span class="badge">Read-only</span></div><section><h2>Roles and scopes</h2><p>Roles: ${view.roles.map((role) => e(ROLE_NAMES[role] ?? role)).join(", ")}.</p><p>Scopes: ${view.scopes.map((scope) => e(SCOPE_NAMES[scope] ?? scope)).join("; ")}.</p></section><section><h2>On StudentHub</h2>${table("operator", "Roles on StudentHub itself")}</section><section><h2>On a company</h2>${table("company", "Roles on a company")}</section><section class="next-note"><p>Company owners can also invite their team from the company’s Team page. A role marked “Not given on the Access pages” is never offered here.</p></section>`, "access");
+}
+
 export function renderAccessSearch(query: string, people: readonly AccessPerson[] | undefined): string {
   const e = escapeHtml;
   const form = `<form class="directory-filters" method="get" action="/admin/access" role="search"><label>Email address or name<input type="search" name="q" minlength="3" maxlength="254" value="${e(query)}" required></label><button class="sign-out" type="submit">Find</button></form>`;
@@ -167,7 +201,7 @@ export function renderAccessSearch(query: string, people: readonly AccessPerson[
     : people.length === 0 ? `<p class="empty-contexts" role="status">No one matches “${e(query)}”.</p>`
       : `<div class="directory-table"><table><caption>People (${people.length}${people.length === 25 ? ", first 25" : ""})</caption><thead><tr><th>Name</th><th>Email address</th></tr></thead><tbody>${people.map((person) =>
         `<tr><th scope="row"><a class="text-link" href="${e(personHref(person.principalId))}">${e(personName(person))}</a></th><td>${e(person.email ?? "Not recorded")}</td></tr>`).join("")}</tbody></table></div>`;
-  return layout(`<div class="profile-heading"><h1>Access<span class="accent">.</span></h1></div><p>Find a person to see and change the roles they hold.</p>${form}${hint}${results}`, "access");
+  return layout(`<div class="profile-heading"><h1>Access<span class="accent">.</span></h1></div><p>Find a person to see and change the roles they hold.</p>${form}${hint}${results}<p><a class="text-link" href="/admin/access/catalogue">See what each role opens →</a></p>`, "access");
 }
 
 export interface PersonPageModel {
@@ -345,7 +379,7 @@ export async function handleAccess(
   if (isAccount) return handleAccount(req, res, ports, origin, write, path);
   const personMatch = PERSON.exec(path);
   const pauseMatch = PAUSE.exec(path);
-  const isAdminPath = path === "/admin/access" || path === "/admin/access/preview" || path === "/admin/access/confirm" || personMatch !== null
+  const isAdminPath = path === "/admin/access" || path === "/admin/access/catalogue" || path === "/admin/access/preview" || path === "/admin/access/confirm" || personMatch !== null
     || (pauseMatch !== null && ports?.pauses !== undefined);
   if (!isOwn && !isAdminPath) return false;
   if (!ports) return false;
@@ -362,6 +396,12 @@ export async function handleAccess(
 
   const callerGrants = await ports.reads.callerGrants(caller);
   if (!mayOpenAccessAdmin(callerGrants, ports.operatorOrgIds)) return false;
+
+  if (path === "/admin/access/catalogue") {
+    if (req.method !== "GET") return false;
+    write(200, "Grant catalogue", renderGrantCatalogue(grantCatalogueView(ports.operatorOrgIds)));
+    return true;
+  }
 
   if (path === "/admin/access") {
     if (req.method !== "GET") return false;

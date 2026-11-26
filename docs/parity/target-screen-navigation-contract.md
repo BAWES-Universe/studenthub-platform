@@ -160,7 +160,7 @@ The old permission-section pages are evidence of what failed: unversioned string
 
 | ID | Target route / screen | Navigation | Grant expression | Policy / endpoint family | Primary owner | Origin/design |
 |---|---|---|---|---|---|---|
-| `G-01` | `/access/grants/catalogue` — roles, capabilities, scopes, versions | Grant catalogue | `admin:grant-admin` | `grants.catalogue.read`; server returns delegable subset | I1 / SHU-150 | New; read-only catalogue with role/capability descriptions and scope rules |
+| `G-01` | `/admin/access/catalogue` — roles, capabilities, scopes, versions | Grant catalogue | `admin:grant-admin` | `grants.catalogue.read`; server returns delegable subset | I1 / SHU-150 | New; read-only catalogue with role/capability descriptions and scope rules |
 | `G-02` | `/access/grants/assign` — principal/org/store search, effective preview, assign/revoke | Assign & revoke | `admin:grant-admin` plus allowed target scope | `grants.preview/assign/revoke`; commit is audited and transactional | I1 / SHU-150 | New; cannot self-escalate or delegate from mere role possession |
 | `G-03` | `/access/grants/audit` — effective grants, provenance, history, next-request result | Grant audit | `admin:grant-admin` | `grants.effective/audit`; private fields minimized | I1 / SHU-150 | New; exposes revocation result and why access is/is not effective |
 
