@@ -2,20 +2,30 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test, { type TestContext } from "node:test";
-import type { BankResultApply, BankResultFileDetail, BankResultSubmit } from "@studenthub/db/billing";
+import type { BankResultApply, BankResultFileDetail, BankResultHeldRow, BankResultSubmit, BankResultTransferStatus } from "@studenthub/db/billing";
 import { AUB_RESULT_COLUMNS } from "../../../packages/billing/src/bank-results.js";
-import { createBankResultsHttp, handleBankResults, reviewOf, uploadForm, type BankResultsStore } from "../src/billing/bank-results-http.js";
+import { createBankResultsHttp, handleBankResults, reviewOf, transferIdOf, uploadForm, type BankResultsStore } from "../src/billing/bank-results-http.js";
 
 // Synthetic people, files, references and line ids only.
 const FIN = "f".repeat(43), COMPANY_FIN = "c".repeat(43);
 const ORIGIN = "https://studenthub.example";
 const ID = "0f0e0d0c-0b0a-4908-8706-050403020100";
-const PENDING: BankResultFileDetail = { fileId: ID, format: "aub", status: "pending", rowCount: 2, uploadedBy: "fin", uploadedAt: "2026-11-25T10:00:00.000Z", appliedBy: null, appliedAt: null, decisions: [] };
+const PENDING: BankResultFileDetail = { fileId: ID, format: "aub", status: "pending", rowCount: 2, uploadedBy: "fin", uploadedAt: "2026-11-25T10:00:00.000Z", appliedBy: null, appliedAt: null, decisions: [], lineTransfers: {} };
 const REVIEW = "a".repeat(64), FRESH = "b".repeat(64);
 const PREVIEW: Extract<BankResultApply, { kind: "review" }> = { kind: "review", reviewId: REVIEW, completedTransferIds: ["T1"], decisions: [
   { kind: "pay", rowNumber: 3, lineId: "L-1", transferId: "T1", reference: "REF-1" },
   { kind: "hold", rowNumber: 4, reason: "reference_conflict", lineIds: ["L-2", "<L-3>"] }] };
 
+const HELD: BankResultHeldRow[] = [
+  { fileId: ID, format: "kfh", appliedAt: "2026-11-25T11:00:00.000Z", rowNumber: 4, reason: "ambiguous", reference: "REF-<9>", lines: [{ lineId: "L-2", transferId: "T:1", paid: false }, { lineId: "L-3", transferId: "T1", paid: true }] },
+  { fileId: ID, format: "aub", appliedAt: "2026-11-25T11:00:00.000Z", rowNumber: 5, reason: "unmatched", reference: null, lines: [] }];
+const STATUS: BankResultTransferStatus = { transferId: "T1", companyId: "P", status: "distributing", lines: [
+  { lineId: "L-1", personId: "w1", amount: "120.500", currency: "KWD", paid: true, payment: { reference: "REF-1", fileId: ID, rowNumber: 3, recordedAt: "2026-11-25T11:00:00.000Z" }, rows: [] },
+  { lineId: "L-2", personId: "w2", amount: "80.000", currency: "KWD", paid: false, payment: null, rows: [
+    { fileId: ID, rowNumber: 4, kind: "hold", reason: "amount_mismatch", reference: "REF-2", appliedAt: "2026-11-25T11:00:00.000Z" },
+    { fileId: ID, rowNumber: 6, kind: "unpay", reason: null, reference: "Account closed", appliedAt: "2026-11-25T11:00:00.000Z" }] },
+  { lineId: "L-4", personId: "w4", amount: "5.000", currency: "KWD", paid: true, payment: null, rows: [] },
+  { lineId: "L-5", personId: "w5", amount: "7.000", currency: "KWD", paid: false, payment: { reference: "REF-5", fileId: ID, rowNumber: 7, recordedAt: "2026-11-25T11:00:00.000Z" }, rows: [] }] };
 async function xlsx(rows: string[][]): Promise<Buffer> {
   const { default: writeExcelFile } = await import("write-excel-file/node");
   return Buffer.from(await writeExcelFile(rows.map(r => r.map(value => ({ value, type: String }))) as never, { sheet: "R" }).toBuffer());
@@ -30,6 +40,8 @@ async function rig(t: TestContext, applyEnabled: boolean | "unset" = true) {
   const store: BankResultsStore = {
     async files(actor) { calls.push(`files:${actor.principalId}`); return file ? [file] : []; },
     async file(actor, id) { calls.push(`file:${actor.principalId}:${id}`); return id === ID ? file : null; },
+    async held(actor, page) { calls.push(`held:${actor.principalId}:${actor.actingAs}:${page}`); return { rows: page === 1 ? HELD : [], more: page === 1 }; },
+    async transfer(actor, id) { calls.push(`transfer:${actor.principalId}:${actor.actingAs}:${id}`); return id === "T1" ? STATUS : null; },
     async submit(actor, input): Promise<BankResultSubmit> {
       calls.push(`submit:${actor.principalId}:${actor.actingAs}:${input.format}:${input.contentSha256.length}:${JSON.stringify(input.cells[2])}`);
       return { kind: "submitted", fileId: ID };
@@ -39,7 +51,7 @@ async function rig(t: TestContext, applyEnabled: boolean | "unset" = true) {
       calls.push(`apply:${actor.principalId}:${id}:${reviewId.slice(0, 4)}`);
       if (file?.status === "applied") return { kind: "refused", code: "already_applied" };
       if (reviewId !== REVIEW) return { ...PREVIEW, kind: "changed", reviewId: FRESH, completedTransferIds: [] };
-      file = { ...PENDING, status: "applied", appliedBy: "fin", appliedAt: "2026-11-25T11:00:00.000Z", decisions: [{ rowNumber: 3, kind: "pay", reason: null, lineIds: ["L-1"], reference: "REF-1" }] };
+      file = { ...PENDING, status: "applied", appliedBy: "fin", appliedAt: "2026-11-25T11:00:00.000Z", decisions: [{ rowNumber: 3, kind: "pay", reason: null, lineIds: ["L-1", "L-9"], reference: "REF-1" }], lineTransfers: { "L-1": "T:1" } };
       return { ...PREVIEW, kind: "applied" };
     },
   };
@@ -83,6 +95,7 @@ test("BANK_HTTP_FLOW StudentHub finance uploads a workbook, reviews the preview,
   assert.equal(applied.status, 303);
   const after = await (await x.call(`/finance/bank-results/${ID}`, { session: FIN, accept: "text/html" })).text();
   assert.match(after, /Applied 2026-11-25 11:00 UTC/); assert.match(after, /Marks the line paid/); assert.doesNotMatch(after, /Apply this file/);
+  assert.match(after, /<td><a href="\/finance\/bank-results\/transfers\/T%3A1#line-L-1">L-1<\/a>, L-9<\/td>/, "a paid line links to its transfer's record; a line without a known transfer stays plain");
   assert.equal((await x.call(`/finance/bank-results/${ID}/apply`, { session: FIN, method: "POST", type: "application/json", body: JSON.stringify({ review: REVIEW }) })).status, 409);
   assert.deepEqual(x.calls.filter(c => c.startsWith("preview") || c.startsWith("apply")),
     [`preview:fin:${ID}`, `apply:fin:${ID}:cccc`, `apply:fin:${ID}:aaaa`, `apply:fin:${ID}:aaaa`], "an applied file is not previewed; a missing review never reaches the store");
@@ -94,7 +107,7 @@ test("BANK_HTTP_FLOW StudentHub finance uploads a workbook, reviews the preview,
 
 test("BANK_HTTP_GATE a company's finance user, a signed-out caller and another origin reach nothing, before any file is read", async (t) => {
   const x = await rig(t);
-  for (const path of ["/finance/bank-results", `/finance/bank-results/${ID}`]) {
+  for (const path of ["/finance/bank-results", `/finance/bank-results/${ID}`, "/finance/bank-results/held", "/finance/bank-results/transfers/T1"]) {
     assert.equal((await x.call(path, { session: COMPANY_FIN })).status, 404, path);
     assert.equal((await x.call(path)).status, 401, path);
   }
@@ -133,4 +146,44 @@ test("BANK_HTTP_APPLY_OFF apply is off unless switched on: the page previews wit
   assert.equal(refused.status, 409); assert.deepEqual(await refused.json(), { error: "apply_disabled" });
   assert.deepEqual(x.calls.filter(c => c.startsWith("apply")), [], "the store is never asked to apply");
   assert.equal((await x.upload(FIN, "aub", await AUB())).status, 303, "upload still works");
+});
+
+test("BANK_HTTP_HELD Finance sees every held row with why it was held and the current state of each line it names, linked to its transfer", async (t) => {
+  const x = await rig(t);
+  assert.match(await (await x.call("/finance/bank-results", { session: FIN, accept: "text/html" })).text(), /href="\/finance\/bank-results\/held">Held bank rows</);
+  const page = await x.call("/finance/bank-results/held", { session: FIN, accept: "text/html" });
+  assert.equal(page.status, 200); assert.equal(page.headers.get("cache-control"), "no-store");
+  const html = await page.text();
+  assert.match(html, /More than one line matches; choose by hand\./);
+  assert.match(html, /REF-&lt;9&gt;/); assert.doesNotMatch(html, /REF-<9>/);
+  assert.match(html, /<a href="\/finance\/bank-results\/transfers\/T%3A1#line-L-2">L-2<\/a> \(unpaid\)/);
+  assert.match(html, /<a href="\/finance\/bank-results\/transfers\/T1#line-L-3">L-3<\/a> \(paid\)/);
+  assert.match(html, /No line waiting for payment matches this row\.<\/td><td><\/td><td>No line found/);
+  assert.match(html, /<a href="\/finance\/bank-results\/held\?page=2">Older held rows<\/a>/); assert.doesNotMatch(html, /Newer held rows/);
+  assert.deepEqual(await (await x.call("/finance/bank-results/held", { session: FIN })).json(), { held: HELD, page: 1, more: true });
+  const older = await (await x.call("/finance/bank-results/held?page=2", { session: FIN, accept: "text/html" })).text();
+  assert.match(older, /No older held rows\./); assert.match(older, /<a href="\/finance\/bank-results\/held">Newer held rows<\/a>/); assert.doesNotMatch(older, /Older held rows/);
+  for (const bad of ["?page=0", "?page=x", "?page=1&page=2", "?other=1", "?page=1e3"])
+    assert.equal((await x.call(`/finance/bank-results/held${bad}`, { session: FIN })).status, 404, bad);
+  assert.deepEqual(x.calls.filter(c => c.startsWith("held")), ["held:fin:false:1", "held:fin:false:1", "held:fin:false:2"]);
+  assert.equal((await x.call("/finance/bank-results/held", { session: FIN, method: "POST" })).status, 405);
+});
+
+test("BANK_HTTP_TRANSFER Finance sees each line of a transfer: paid with which bank payment, or unpaid with every held or failed row", async (t) => {
+  const x = await rig(t);
+  const page = await x.call("/finance/bank-results/transfers/T1", { session: FIN, accept: "text/html" });
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /<tr id="line-L-1"><td>L-1<\/td><td>w1<\/td><td>KWD 120\.500<\/td><td>Paid: bank reference REF-1, <a href="\/finance\/bank-results\/[0-9a-f-]{36}">file<\/a> row 3/);
+  assert.match(html, /<tr id="line-L-2">[\s\S]*?<td>Unpaid<\/td><td>[\s\S]*row 4: held\. The amount differs from the line\.[\s\S]*row 6: the bank reported a failure \(Account closed\)\./);
+  assert.match(html, /<tr id="line-L-4">[\s\S]*?Paid \(not from a bank result file\)/);
+  assert.match(html, /<tr id="line-L-5"><td>L-5<\/td><td>w5<\/td><td>KWD 7\.000<\/td><td>Unpaid<\/td>/, "a line set back to unpaid reads unpaid, though its confirmation stays recorded");
+  assert.deepEqual(await (await x.call("/finance/bank-results/transfers/T1", { session: FIN })).json(), STATUS);
+  assert.equal((await x.call("/finance/bank-results/transfers/T2", { session: FIN })).status, 404, "a transfer the reader may not settle is not found");
+  assert.equal((await x.call("/finance/bank-results/transfers/%3Cx%3E", { session: FIN })).status, 404);
+  assert.equal((await x.call("/finance/bank-results/transfers/T1/x", { session: FIN })).status, 404);
+  assert.equal((await x.call("/finance/bank-results/transfers/T%3A1", { session: FIN })).status, 404, "an encoded id is decoded before the store is asked");
+  assert.equal((await x.call("/finance/bank-results/transfers/%E0%A4%A", { session: FIN })).status, 404, "a malformed escape is not found");
+  assert.deepEqual(x.calls.filter(c => c.startsWith("transfer")), ["transfer:fin:false:T1", "transfer:fin:false:T1", "transfer:fin:false:T2", "transfer:fin:false:T:1"]);
+  assert.equal(transferIdOf("T%3A1"), "T:1"); assert.equal(transferIdOf("T%201"), undefined); assert.equal(transferIdOf("%E0%A4%A"), undefined);
 });
