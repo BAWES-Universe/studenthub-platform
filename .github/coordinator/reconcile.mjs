@@ -30,7 +30,7 @@ export { consumeMergeReadiness, routineMergeEnabledFor };
 
 import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane, ROLE_REVIEW } from "./launch-vocabulary.mjs";
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
-import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid, ciBeforeReviewSettings, ciBeforeReviewApplies, ciBeforeReviewDecision, ciReviseCount, ciReviseOrder } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid, ciBeforeReviewSettings, ciBeforeReviewApplies, ciBeforeReviewDecision, ciReviseCount, ciReviseOrder, retryAttemptFor } from "./review-routing.mjs";
 import { parseActivationArgs, narrowQueueScope, cardQueue, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal, repairFromActivation } from "./single-run-activation.mjs";
 import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
@@ -3103,6 +3103,8 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
             successor, terminal, settings: ciSettings, config, githubToken, fetchImpl, io,
             lineage: targetReceipts.filter((r) => receiptInEpisodeScope(r, activationEpisodeScope)),
           });
+          // A CI revise that replaced the review retries under its own id too.
+          successor = retryAttemptFor(successor, targetReceipts);
         }
         singleRunActivation = {
           ...singleRunActivation,
@@ -4089,6 +4091,17 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     }
   }
 
+  if (launchRole === ROLE_REVIEW) {
+    const fresh = await freshReviewHolder(null);
+    if (fresh.unread) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — the review gate could not read every card again (${fresh.unread}); nothing is written`);
+      return 2;
+    }
+    if (fresh.holder) {
+      if (io.stdout) io.stdout(`dispatch: no reservation — ${candidate.id}: a review is already running — the reviewer sandbox runs one review at a time (held by ${describeReviewHolder(fresh.holder)}, read again before reserving)`);
+      return 0;
+    }
+  }
   const { ok: reservedOk, receipt, errors } = createReceipt({
     receipt_version: successor || !LEGACY_LANE_NAMES.includes(requested_worker) ? RECEIPT_VERSION_ROLE_AUTHORITY : "1.0.0",
     reserved_at: nowIso(io.now?.()),
@@ -4131,6 +4144,35 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
 
   return continueReservedLaunch({ receipt, candidate, successor, adapter, linearIssueId });
 
+  // The review gate (selectNextReservation, resumeReservation) reads the other
+  // cards' receipts from this tick's first board read. With more than one card
+  // worker, the workers' ticks start together and each takes a while before it
+  // reserves, so two cards' reviews were both selected before either was
+  // reserved (SHU-734 and SHU-735 at 14:31Z on 26 Nov) and the second found the
+  // reviewer sandbox held (REVIEW_SANDBOX_BUSY). Just before a review is
+  // reserved or launched, every card's receipts are read again, read only, and
+  // another active review on any card holds it. Returns { holder }, { unread }
+  // (fail closed) or {}. One worker's ticks are serialized: its first read is
+  // already current, so nothing is read again.
+  async function freshReviewHolder(ownAttemptId) {
+    if (cardWorkers(config) <= 1 || !linearToken) return {};
+    let board;
+    try {
+      board = await fetchLinearBoard({ token: linearToken, repo: config.pilot_repo, team: config.team ?? "SHU",
+        repoLabelMap: config.repo_label_map, fetchImpl, readComments: true, commentContinuations: config.comment_continuations });
+    } catch (error) {
+      if (error?.code === "LINEAR_RATE_LIMITED") throw error; // the tick HOLDs; nothing was claimed
+      return { unread: error?.message ?? "the board read failed" };
+    }
+    for (const issue of board.issues) {
+      const read = board.commentsByIssue.get(issue.id);
+      if (!read || read.error) return { unread: `${issue.id}: ${read?.error ?? "the board read carried no comment thread for this card"}` };
+      const holder = parseReceiptsFromComments(read.comments).find((r) => r.attempt_id !== ownAttemptId && reviewHoldsSandbox(r));
+      if (holder) return { holder };
+    }
+    return {};
+  }
+
   // A stranded reservation passes the same pre-launch gates a fresh one passed
   // before it was written, then continues exactly where its tick stopped.
   async function resumeReservation(receipt) {
@@ -4156,6 +4198,14 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     if (holder) {
       if (io.stdout) io.stdout(`dispatch: reservation ${receipt.attempt_id} on ${receipt.issue_id} waits — another review is active (${describeReviewHolder(holder)})`);
       return 0;
+    }
+    if (role === ROLE_REVIEW) {
+      const fresh = await freshReviewHolder(receipt.attempt_id);
+      if (fresh.unread) return held(`the review gate could not read every card again (${fresh.unread})`);
+      if (fresh.holder) {
+        if (io.stdout) io.stdout(`dispatch: reservation ${receipt.attempt_id} on ${receipt.issue_id} waits — another review is active (${describeReviewHolder(fresh.holder)}, read again before launching)`);
+        return 0;
+      }
     }
     const tmpRefusal = tmpFloorRefusal(io);
     if (tmpRefusal) return held(tmpRefusal);

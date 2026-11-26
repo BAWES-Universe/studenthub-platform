@@ -313,6 +313,121 @@ test("a review that failed before running (busy reviewer sandbox) routes the sam
   assert.equal(verdict.successor?.target_sha, SHA_WRITE, "at the same built head");
 });
 
+// 26 Nov: a review on the box found the reviewer sandbox held by another card's
+// review (REVIEW_SANDBOX_BUSY) and was "retried" every few minutes from 14:59Z
+// to 18:30Z under its one attempt id. The supervisor binds an attempt id to one
+// durable run, answered every resubmission with the failed run, and nothing ever
+// launched again; folded by attempt id, the card held one FAILED, so the cap of
+// three never ended it. This adapter keeps the supervisor's binding: a second
+// submission of a known attempt is answered with its stored run.
+test("REVIEW_RETRY_FRESH_ATTEMPT: a review that found the sandbox busy relaunches under a new attempt id each round, and the retry cap ends it", async () => {
+  const h = createEpisodeHarness();
+  const runs = new Map(); // attempt_id -> run id, never rebound
+  const submissions = [];
+  h.adapters["claude-code"] = {
+    async launchBuilder(o) {
+      submissions.push(o.attempt_id);
+      if (!runs.has(o.attempt_id)) {
+        runs.set(o.attempt_id, `supervisor_${o.attempt_id}`);
+        h.launched.push({ lane: "claude-code", attempt_id: o.attempt_id, target_sha: o.target_sha });
+      }
+      return { stage: "RUNNING", external_run_id: runs.get(o.attempt_id) };
+    },
+    async monitorRun() { return { stage: "FAILED", error_code: "REVIEW_SANDBOX_BUSY" }; },
+  };
+  const reviews = () => h.launched.filter((l) => l.lane === "claude-code");
+  try {
+    await h.runTick();
+    const build = h.latestFor("codex-builder");
+    await h.runTick();
+    h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+    h.completeRun(build.external_run_id);
+    await h.runTick();
+    assert.equal(h.receiptFor(build.attempt_id).verdict_stage, "BUILD_READY");
+
+    const routed = routing.freshAttempt(build.attempt_id, "review", 1);
+    const expected = [routed, routing.freshAttempt(routed, routing.RETRY_ATTEMPT_STAGE, 1), routing.freshAttempt(routed, routing.RETRY_ATTEMPT_STAGE, 2)];
+    for (const [round, attempt] of expected.entries()) {
+      let t = await h.runTick();
+      assert.equal(reviews().length, round + 1, `REVIEW_RETRY_RELAUNCHES round ${round + 1}\n${t.text}`);
+      assert.equal(reviews()[round].attempt_id, attempt, `REVIEW_RETRY_NEW_ATTEMPT round ${round + 1}`);
+      t = await h.runTick();
+      assert.equal(h.receiptFor(attempt).stage, "FAILED", t.text);
+      assert.equal(h.receiptFor(attempt).error_code, "REVIEW_SANDBOX_BUSY");
+    }
+    assert.equal(new Set(submissions).size, submissions.length, "REVIEW_RETRY_NEVER_RESUBMITS_AN_ATTEMPT");
+    assert.equal(h.receipts().filter((r) => r.stage === "FAILED").length, 3, "every round is a FAILED of its own");
+
+    // The third FAILED is the cap: the episode ends and nothing launches again.
+    for (let i = 0; i < 3; i++) {
+      const t = await h.runTick();
+      assert.match(t.text, /retryable failures exhausted \(3\/3\)/, "REVIEW_RETRY_CAP_ENDS_THE_EPISODE");
+    }
+    assert.equal(reviews().length, 3, "REVIEW_RETRY_CAPPED");
+    assert.equal(submissions.length, 3);
+  } finally {
+    h.cleanup();
+  }
+  // The id is the routed one until that attempt FAILED, and never a FAILED one.
+  const order = { ...successorOrder() };
+  assert.equal(routing.retryAttemptFor(order, []), order);
+  const failedOnce = [receipt({ attempt: order.attempt_id, stage: "FAILED", verdict: null })];
+  const retried = routing.retryAttemptFor(order, failedOnce);
+  assert.equal(retried.attempt_id, routing.freshAttempt(order.attempt_id, "retry", 1));
+  assert.equal(routing.retryAttemptFor(retried, failedOnce), retried, "re-applied on the same receipts it names the same attempt");
+  assert.equal(routing.retryAttemptFor(order, [{ ...failedOnce[0], stage: "RUNNING" }]), order, "only a FAILED attempt is retried under a new id");
+});
+
+// 26 Nov 14:31Z: workers 1 and 2 ticked together and each read the board before
+// the other reserved, so SHU-734's and SHU-735's reviews both started; the second
+// found the sandbox held. The gate now reads every card again just before it
+// reserves a review.
+test("REVIEW_GATE_CROSS_CARD: with two card workers, a review running on another card holds a review launch on this card", async () => {
+  const otherCard = { id: "11111111-aaaa-4bbb-8ccc-000000000090", identifier: OTHER, title: "another card", state: { name: "In Progress" },
+    priorityLabel: "High", labels: { nodes: [{ name: "repo:platform" }] }, assignee: null, delegate: null, parent: null, relations: { nodes: [] } };
+  const h = createEpisodeHarness({ configOverrides: { workers: { max: 2 }, dispatch_scope: { issue_ids: [TARGET] } }, threadNodes: [otherCard] });
+  const made = reconcile.createReceipt({ receipt_version: "1.1.0", issue_id: OTHER, authorization_ref: OTHER, requested_worker: "codex-verifier",
+    role: "review", runtime: "codex-cli", repo: "BAWES-Universe/studenthub-platform", branch: `coordinator/${OTHER}`, target_sha: SHA_WRITE,
+    workspace_scope: "full", scope_phase: "review", episode_id: "shu-090-run-20260910T115500Z" });
+  assert.ok(made.ok, JSON.stringify(made.errors));
+  const launched = reconcile.nextReceiptState(made.receipt, { type: "launch" }).receipt;
+  const running = reconcile.nextReceiptState(launched, { type: "worker_ack", external_run_id: "supervisor_other" }).receipt;
+  assert.equal(running.stage, "RUNNING");
+  const otherThread = h.threads.get(otherCard.id);
+  try {
+    await h.runTick();
+    const build = h.latestFor("codex-builder");
+    await h.runTick();
+    h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+    h.completeRun(build.external_run_id);
+    await h.runTick();
+
+    // The other worker reserves and launches its review after this tick's first
+    // board read, while this tick is still deciding.
+    let boardReads = 0;
+    const racing = async (url, opts) => {
+      const answer = await h.fetchImpl(url, opts);
+      if (!String(url).includes("api.github.com") && String(opts?.body ?? "").includes("CoordinatorIssues") && ++boardReads === 1) {
+        otherThread.push({ body: reconcile.receiptCommentBody(running), createdAt: running.last_activity });
+      }
+      return answer;
+    };
+    let t = await h.runTick({ io: { fetchImpl: racing } });
+    assert.equal(t.code, 0, t.text);
+    assert.equal(h.triggers["claude-code"], 0, `REVIEW_GATE_CROSS_CARD_HOLDS\n${t.text}`);
+    assert.equal(h.receipts().some((r) => r.requested_worker === "claude-verifier"), false, "no review is reserved beside the running one");
+    assert.match(t.text, new RegExp(`one review at a time \\(held by ${OTHER} attempt ${running.attempt_id} RUNNING`), "the line names the other card's review");
+
+    // Once that review ends, this card's review goes.
+    const ended = reconcile.nextReceiptState(running, { type: "hold", reason: "ended" }).receipt;
+    otherThread.push({ body: reconcile.receiptCommentBody(ended), createdAt: new Date(Date.parse(running.last_activity) + 1000).toISOString() });
+    t = await h.runTick();
+    assert.equal(h.triggers["claude-code"], 1, `REVIEW_GATE_CROSS_CARD_RELEASES\n${t.text}`);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("SHU-225 I4: the successor is the same issue as the activation target and the committed scope", () => {
   const selection = reconcile.selectNextReservation({
     ready: [readyIssue()],
