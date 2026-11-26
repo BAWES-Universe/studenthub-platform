@@ -89,6 +89,8 @@ export interface BankResultTransferLine {
   readonly rows: readonly BankResultLineRow[];
 }
 export interface BankResultTransferStatus { readonly transferId: string; readonly companyId: string; readonly status: string; readonly lines: readonly BankResultTransferLine[] }
+/** The record reads see one snapshot: an apply commits a paid flag and its confirmation together, so a reader never sees one without the other. */
+const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
 const TRANSFER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const iso = (v: Date | null) => (v === null ? null : v.toISOString());
@@ -159,20 +161,24 @@ export class PostgresBankResultStore {
     }, () => true);
   }
 
-  /** Held rows of applied files, newest first, naming only lines the reader may settle now; null without finance file permission. */
-  async held(actor: PayLifecycleActor, limit = 200): Promise<readonly BankResultHeldRow[] | null> {
-    if (actor.actingAs !== false || !actor.principalId?.trim()) return null;
+  /** One page of held rows of applied files, newest first, naming only lines the reader may settle now; `more`
+   * when an older page exists. Held rows are only ever added at the newest end, so a later page may repeat a row
+   * after new files are applied but never skips one. Null without finance file permission. */
+  async held(actor: PayLifecycleActor, page = 1, size = 100): Promise<{ readonly rows: readonly BankResultHeldRow[]; readonly more: boolean } | null> {
+    if (actor.actingAs !== false || !actor.principalId?.trim() || !Number.isSafeInteger(page) || page < 1) return null;
+    const limit = Math.min(Math.max(1, size), 500);
     return this.transaction(async (client) => {
       if (!await this.gate(client, actor.principalId)) return null;
       const held = (await client.query(`SELECT r.file_id,f.format,f.applied_at,r.row_number,r.reason,r.reference,r.line_ids
         FROM bank_result_rows r JOIN bank_result_files f ON f.id=r.file_id WHERE r.kind='hold'
-        ORDER BY f.applied_at DESC, r.file_id, r.row_number LIMIT $1`, [Math.min(Math.max(1, limit), 500)])).rows;
+        ORDER BY f.applied_at DESC, r.file_id, r.row_number LIMIT $1 OFFSET $2`, [limit + 1, (page - 1) * limit])).rows;
+      const more = held.length > limit; held.length = Math.min(held.length, limit);
       const visible = await this.visibleLines(client, actor, [...new Set(held.flatMap((r) => r.line_ids as string[]))]);
       const lines = new Map((await client.query("SELECT id,transfer_id,paid FROM pay_transfer_lines WHERE id = ANY($1::text[])", [[...visible]])).rows
         .map((r) => [r.id as string, { lineId: r.id as string, transferId: r.transfer_id as string, paid: r.paid as boolean }]));
-      return held.map((r) => ({ fileId: r.file_id, format: r.format, appliedAt: iso(r.applied_at)!, rowNumber: r.row_number, reason: r.reason, reference: r.reference,
-        lines: (r.line_ids as string[]).flatMap((id) => (lines.has(id) ? [lines.get(id)!] : [])) }));
-    }, () => true);
+      return { more, rows: held.map((r) => ({ fileId: r.file_id, format: r.format, appliedAt: iso(r.applied_at)!, rowNumber: r.row_number, reason: r.reason, reference: r.reference,
+        lines: (r.line_ids as string[]).flatMap((id) => (lines.has(id) ? [lines.get(id)!] : [])) })) };
+    }, () => true, SNAPSHOT);
   }
 
   /** Every line of one transfer as the bank results record it; null without finance file permission, or
@@ -195,7 +201,7 @@ export class PostgresBankResultStore {
       }
       return { transferId: t.id, companyId: t.company_id, status: t.status, lines: lines.map((l) => ({ lineId: l.id, personId: l.person_id, amount: l.amount, currency: l.currency_code,
         paid: l.paid, payment: payments.get(l.id) ?? null, rows: rows.get(l.id) ?? [] })) };
-    }, () => true);
+    }, () => true, SNAPSHOT);
   }
 
   private async run(actor: PayLifecycleActor, fileId: string, reviewId: string | null): Promise<BankResultApply> {
@@ -222,10 +228,10 @@ export class PostgresBankResultStore {
     return visible;
   }
 
-  private async transaction<T>(work: (client: pg.PoolClient) => Promise<T>, commit: (result: T) => boolean): Promise<T> {
+  private async transaction<T>(work: (client: pg.PoolClient) => Promise<T>, commit: (result: T) => boolean, begin = "BEGIN"): Promise<T> {
     const client = await this.pool.connect(); let broken = false;
     try {
-      await client.query("BEGIN");
+      await client.query(begin);
       const result = await work(client);
       await client.query(commit(result) ? "COMMIT" : "ROLLBACK");
       return result;

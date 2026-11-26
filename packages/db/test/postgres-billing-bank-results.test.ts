@@ -363,7 +363,7 @@ test("BANK_STORE_HELD held rows of applied files list newest first with each nam
   await approve(results(), actor, second);
   await submit(aub(["SUCCESS", "REF-7", "x", "L-404"]));
   const scoped: PayLifecyclePolicy = { ...policy, authorize: async (_c, who, t) => who.principalId === "fin" || t.id !== theirs };
-  const held = async (who: string) => (await results(complete, scoped).held({ principalId: who, actingAs: false }))!
+  const held = async (who: string) => (await results(complete, scoped).held({ principalId: who, actingAs: false }))!.rows
     .map((h) => [h.fileId === second ? "second" : "first", h.rowNumber, h.reason, h.reference, h.lines.map((l) => [l.lineId, l.transferId === mine ? "mine" : "theirs", l.paid])]);
   assert.deepEqual(await held("fin"), [
     ["second", 3, "reference_conflict", "REF-1", [["L-1", "mine", true], ["L-3", "theirs", false]]],
@@ -371,6 +371,9 @@ test("BANK_STORE_HELD held rows of applied files list newest first with each nam
   assert.deepEqual(await held("fin2"), [
     ["second", 3, "reference_conflict", "REF-1", [["L-1", "mine", true]]],
     ["first", 4, "unmatched", "REF-9", []]], "a line the reader may not settle is not named");
+  const page = async (n: number) => { const p = (await results().held(actor, n, 1))!; return [p.rows.map((r) => [r.fileId === second ? "second" : "first", r.rowNumber]), p.more]; };
+  assert.deepEqual([await page(1), await page(2), await page(3)], [[[["second", 3]], true], [[["first", 4]], false], [[], false]], "every held row is reachable a page at a time");
+  assert.equal(await results().held(actor, 0), null);
   assert.equal(await results(complete, scoped, async () => false).held(actor), null);
   assert.equal(await results().held({ principalId: "fin", actingAs: true }), null);
 });

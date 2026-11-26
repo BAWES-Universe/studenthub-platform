@@ -21,6 +21,7 @@ const mutations = [
   ["accept a write on the read pages", "BANK_HTTP_HELD", 'file || read ? "GET"', 'file ? "GET"'],
   ["show a paid line as unpaid", "BANK_HTTP_TRANSFER", "l.paid ? \"Paid (not from a bank result file)\" : \"Unpaid\"", "\"Unpaid\""],
   ["ask the store with the still-encoded id", "BANK_HTTP_TRANSFER", "id = decodeURIComponent(segment);", "id = segment;"],
+  ["accept any page value", "BANK_HTTP_HELD", "return /^[1-9][0-9]{0,5}$/.test(value) ? Number(value) : undefined;", "return Number(value) || 1;"],
 ];
 const original = await readFile(handler, "utf8");
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap",

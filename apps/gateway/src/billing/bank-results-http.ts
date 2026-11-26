@@ -19,8 +19,9 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
  * it once, and only if applying it would still do exactly what was reviewed; otherwise nothing is
  * written and the fresh review is shown (409).
  *
- * GET /finance/bank-results/held lists every held row of the applied files, with the lines each
- * names and whether they are paid now. GET /finance/bank-results/transfers/<id> shows each line of
+ * GET /finance/bank-results/held lists the held rows of the applied files, newest first, 100 a page
+ * (`?page=N`, with a link to the older page while one exists), with the lines each names and whether
+ * they are paid now. GET /finance/bank-results/transfers/<id> shows each line of
  * one transfer: paid with which bank reference and file, and every held or failed row naming it.
  * These are how Finance finds held and paid lines from the ordinary records.
  *
@@ -42,7 +43,7 @@ export const BANK_RESULTS_PATH = "/finance/bank-results";
 export interface BankResultsStore {
   files(actor: { principalId: string; actingAs: boolean }): Promise<readonly BankResultFileEntry[] | null>;
   file(actor: { principalId: string; actingAs: boolean }, fileId: string): Promise<BankResultFileDetail | null>;
-  held(actor: { principalId: string; actingAs: boolean }): Promise<readonly BankResultHeldRow[] | null>;
+  held(actor: { principalId: string; actingAs: boolean }, page: number): Promise<{ readonly rows: readonly BankResultHeldRow[]; readonly more: boolean } | null>;
   transfer(actor: { principalId: string; actingAs: boolean }, transferId: string): Promise<BankResultTransferStatus | null>;
   submit(actor: { principalId: string; actingAs: boolean }, input: { format: BankResultFormat; contentSha256: string; cells: BankCell[][] }): Promise<BankResultSubmit>;
   preview(actor: { principalId: string; actingAs: boolean }, fileId: string): Promise<BankResultApply>;
@@ -57,7 +58,7 @@ export interface BankResultsHttp {
   readonly applyEnabled: boolean;
   files(viewer: string): Promise<readonly BankResultFileEntry[] | null>;
   file(viewer: string, fileId: string): Promise<BankResultFileDetail | null>;
-  held(viewer: string): Promise<readonly BankResultHeldRow[] | null>;
+  held(viewer: string, page: number): Promise<{ readonly rows: readonly BankResultHeldRow[]; readonly more: boolean } | null>;
   transfer(viewer: string, transferId: string): Promise<BankResultTransferStatus | null>;
   submit(viewer: string, format: BankResultFormat, bytes: Buffer): Promise<BankResultSubmit | { readonly kind: "workbook_refused"; readonly code: "unreadable" | "too_many_rows" | "too_large" }>;
   preview(viewer: string, fileId: string): Promise<BankResultApply>;
@@ -76,7 +77,7 @@ export function createBankResultsHttp(ports: { sessions: Pick<SessionStore, "get
     applyEnabled: ports.applyEnabled === true,
     files: (viewer) => ports.store.files(actor(viewer)),
     file: (viewer, id) => ports.store.file(actor(viewer), id),
-    held: (viewer) => ports.store.held(actor(viewer)),
+    held: (viewer, page) => ports.store.held(actor(viewer), page),
     transfer: (viewer, id) => ports.store.transfer(actor(viewer), id),
     async submit(viewer, format, bytes) {
       const read = readXlsxCells(bytes);
@@ -91,6 +92,14 @@ export function createBankResultsHttp(ports: { sessions: Pick<SessionStore, "get
 const FILE = /^\/finance\/bank-results\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const APPLY = /^\/finance\/bank-results\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/apply$/;
 const HELD = `${BANK_RESULTS_PATH}/held`;
+/** `page` absent is 1; otherwise one plain positive integer, and no other query parameter. */
+export function pageOf(query: URLSearchParams): number | undefined {
+  const keys = [...query.keys()];
+  if (!keys.length) return 1;
+  if (keys.length !== 1 || keys[0] !== "page") return undefined;
+  const value = query.get("page")!;
+  return /^[1-9][0-9]{0,5}$/.test(value) ? Number(value) : undefined;
+}
 const TRANSFER = /^\/finance\/bank-results\/transfers\/([^/]+)$/;
 /** The transfer id in a transfer page path, decoded as the links on these pages encode it; undefined when it is not one. */
 export function transferIdOf(segment: string): string | undefined {
@@ -131,12 +140,13 @@ function listHtml(files: readonly BankResultFileEntry[]): string {
 }
 const when = (iso: string) => esc(iso.slice(0, 16).replace("T", " "));
 const holdText = (reason: string | null) => (reason ? esc(HOLD[reason as BankHoldReason] ?? reason) : "");
-function heldHtml(held: readonly BankResultHeldRow[]): string {
+function heldHtml(held: readonly BankResultHeldRow[], page: number, more: boolean): string {
   const rows = held.map(h => `<tr><td><a href="${BANK_RESULTS_PATH}/${h.fileId}">${when(h.appliedAt)}</a></td><td>${esc(FORMAT_NAME[h.format])}</td><td>${h.rowNumber}</td>`
     + `<td>${holdText(h.reason)}</td><td>${esc(h.reference ?? "")}</td><td>${h.lines.length ? h.lines.map(l =>
       `<a href="${esc(transferHref(l.transferId))}#line-${esc(l.lineId)}">${esc(l.lineId)}</a> (${l.paid ? "paid" : "unpaid"})`).join("<br>") : "No line found"}</td></tr>`).join("");
   return `<main><h1>Held bank rows</h1><p>Rows of applied bank result files that were held for a person. A held row changed nothing; settle the line it names by hand or with a corrected file.</p>`
-    + (held.length ? `<table><thead><tr><th>Applied (UTC)</th><th>Bank</th><th>Row</th><th>Why held</th><th>Bank reference</th><th>Lines</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No rows are held.</p>")
+    + (held.length ? `<table><thead><tr><th>Applied (UTC)</th><th>Bank</th><th>Row</th><th>Why held</th><th>Bank reference</th><th>Lines</th></tr></thead><tbody>${rows}</tbody></table>` : page > 1 ? "<p>No older held rows.</p>" : "<p>No rows are held.</p>")
+    + `<p>${page > 1 ? `<a href="${HELD}${page > 2 ? `?page=${page - 1}` : ""}">Newer held rows</a> ` : ""}${more ? `<a href="${HELD}?page=${page + 1}">Older held rows</a>` : ""}</p>`
     + `<p><a href="${BANK_RESULTS_PATH}">All bank result files</a></p></main>`;
 }
 function transferHtml(t: BankResultTransferStatus): string {
@@ -249,10 +259,12 @@ export async function handleBankResults(req: IncomingMessage, res: ServerRespons
     if (!viewer) { req.resume(); return reply(req, res, 401, "unauthorized", "Sign in", "Sign in to see bank result files."); }
     if (!await service.allowed(viewer)) { req.resume(); return notFound(req, res); }
     if (heldPage) {
-      const held = await service.held(viewer);
+      const page = pageOf(new URL(req.url ?? "/", "http://gateway.invalid").searchParams);
+      if (page === undefined) return notFound(req, res);
+      const held = await service.held(viewer, page);
       if (!held) return notFound(req, res);
-      if (!wantsHtml(req.headers.accept)) return json(res, 200, { held });
-      writeHtml(res, 200, pageDocument("Held bank rows", heldHtml(held)), { "cache-control": "no-store" }); return true;
+      if (!wantsHtml(req.headers.accept)) return json(res, 200, { held: held.rows, page, more: held.more });
+      writeHtml(res, 200, pageDocument("Held bank rows", heldHtml(held.rows, page, held.more)), { "cache-control": "no-store" }); return true;
     }
     if (transfer) {
       const status = await service.transfer(viewer, transfer);

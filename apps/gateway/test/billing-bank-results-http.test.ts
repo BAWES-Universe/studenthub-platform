@@ -39,7 +39,7 @@ async function rig(t: TestContext, applyEnabled: boolean | "unset" = true) {
   const store: BankResultsStore = {
     async files(actor) { calls.push(`files:${actor.principalId}`); return file ? [file] : []; },
     async file(actor, id) { calls.push(`file:${actor.principalId}:${id}`); return id === ID ? file : null; },
-    async held(actor) { calls.push(`held:${actor.principalId}:${actor.actingAs}`); return HELD; },
+    async held(actor, page) { calls.push(`held:${actor.principalId}:${actor.actingAs}:${page}`); return { rows: page === 1 ? HELD : [], more: page === 1 }; },
     async transfer(actor, id) { calls.push(`transfer:${actor.principalId}:${actor.actingAs}:${id}`); return id === "T1" ? STATUS : null; },
     async submit(actor, input): Promise<BankResultSubmit> {
       calls.push(`submit:${actor.principalId}:${actor.actingAs}:${input.format}:${input.contentSha256.length}:${JSON.stringify(input.cells[2])}`);
@@ -157,8 +157,13 @@ test("BANK_HTTP_HELD Finance sees every held row with why it was held and the cu
   assert.match(html, /<a href="\/finance\/bank-results\/transfers\/T%3A1#line-L-2">L-2<\/a> \(unpaid\)/);
   assert.match(html, /<a href="\/finance\/bank-results\/transfers\/T1#line-L-3">L-3<\/a> \(paid\)/);
   assert.match(html, /No line waiting for payment matches this row\.<\/td><td><\/td><td>No line found/);
-  assert.deepEqual(await (await x.call("/finance/bank-results/held", { session: FIN })).json(), { held: HELD });
-  assert.deepEqual(x.calls.filter(c => c.startsWith("held")), ["held:fin:false", "held:fin:false"]);
+  assert.match(html, /<a href="\/finance\/bank-results\/held\?page=2">Older held rows<\/a>/); assert.doesNotMatch(html, /Newer held rows/);
+  assert.deepEqual(await (await x.call("/finance/bank-results/held", { session: FIN })).json(), { held: HELD, page: 1, more: true });
+  const older = await (await x.call("/finance/bank-results/held?page=2", { session: FIN, accept: "text/html" })).text();
+  assert.match(older, /No older held rows\./); assert.match(older, /<a href="\/finance\/bank-results\/held">Newer held rows<\/a>/); assert.doesNotMatch(older, /Older held rows/);
+  for (const bad of ["?page=0", "?page=x", "?page=1&page=2", "?other=1", "?page=1e3"])
+    assert.equal((await x.call(`/finance/bank-results/held${bad}`, { session: FIN })).status, 404, bad);
+  assert.deepEqual(x.calls.filter(c => c.startsWith("held")), ["held:fin:false:1", "held:fin:false:1", "held:fin:false:2"]);
   assert.equal((await x.call("/finance/bank-results/held", { session: FIN, method: "POST" })).status, 405);
 });
 

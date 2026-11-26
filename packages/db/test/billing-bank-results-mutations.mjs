@@ -62,6 +62,7 @@ const mutations = [
     "            if (!await this.gate(client, actor.principalId))\n                return null;\n            const t =", "            const t ="],
   ["show paid rows as held or failed", "BANK_STORE_TRANSFER",
     "WHERE r.kind IN ('hold','unpay')", "WHERE r.kind IN ('hold','unpay','pay')"],
+  ["hide that an older held page exists", "BANK_STORE_HELD", "const more = held.length > limit;", "const more = false;"],
 ];
 const original = await readFile(store, "utf8");
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-concurrency=1",
