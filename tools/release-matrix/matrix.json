@@ -1367,8 +1367,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "built in PR #715; closes at its final code head"
+          "state": "done",
+          "evidence": "PR #715 at 1289672d6a1d5c95054ed89fbf646884cf68b6d4"
         },
         "verified": {
           "state": "open"
