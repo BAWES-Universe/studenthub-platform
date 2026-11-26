@@ -126,11 +126,23 @@ Two active rows of one kind whose names normalize the same become one item: the 
 - A value that cannot name one object safely is `document.badKey` and is not recorded. That covers a non-string, a `.`, `..` or empty path segment, a backslash, a control or format character, or more than 960 bytes. A CV value with outer spaces or a leading slash is also held as `document.badKey`, never rewritten, because legacy keys it verbatim.
 - One object, one owner. Every candidate row claims the keys legacy could resolve its values to, with legacy's own lenient rules and every probe, including archived, duplicate-id and unimported rows and rows with no usable id. An object any other row claims is recorded for no imported person (`document.sharedObject`, naming the lowest other usable legacy id, or none). Only the two first distinct claimants are kept per key, so a placeholder name shared by many rows stays cheap.
 - Object names can hold personal words, so they stay in memory. Issues carry legacy ids, rule codes and column names only.
+### M-2 document check (second slice: is each object there, admitted, and what it hashes to)
+
+`tools/legacy-import/src/m2-document-check.ts` takes the mapped documents and checks each object in legacy's permanent bucket, read-only. Nothing is copied or stored.
+
+- **Read-only port.** The bucket is reached through `LegacyObjectReader.read(key, maxBytes)`, which answers `found` with the bytes, `missing`, or `tooLarge`. It must read at most `maxBytes + 1` bytes and never write, copy or delete. This slice holds no credential and no bucket name. The adapter is a later slice: staging only, with credentials outside the repository.
+- **Legacy's probe order.** The first key that holds an object is the object. A later key is never read once one is found.
+- **Admission.** Each object passes the platform's own `validateCandidateContent`: a PNG or JPEG for a photo or civil ID, a PDF for a CV, 10 MB at most. The type is checked by content, never by name. A recorded document carries the key that held it (in memory only), its type, its size and its sha256.
+- **Issues.** Each issue gives the legacy id, the column and one rule code, never a key, byte or error detail:
+  - `document.missing`: no probed key holds an object.
+  - `document.tooLarge`: the object is over the kind's limit.
+  - `document.admission`: the object is not an admitted file for its kind.
+  - `document.readFailed`: the read failed. Nothing is known about the object, so retry it later.
+- **Memory and receipt.** Reads run one at a time, so a run holds at most one object in memory. `documentCheckCounts` gives the receipt's counts: documents checked, total bytes and a count per rule.
 - **Next slices (proposed):**
-  - A read-only fetch port on legacy's permanent bucket, with no credential in the repo and a staging-only setting.
-  - Each object checked by `validateCandidateContent` (admission, 10 MB, PNG, JPEG or PDF by content), with its sha256 recorded.
-  - Staging apart from the person-owned documents, bound to `legacy-candidate:<id>` like the contact slice, then promoted into the person's slot on link, only where the slot is empty. The check and the write happen under the owner and slot lock, and a slot the person cleared on purpose counts as theirs: the import never refills it.
-  - A refused object (`document.missing`, `document.admission`, `document.tooLarge`) is reported by legacy id and rule, never copied.
+  - The bucket adapter and an `m4 doccheck` run step on staging, with a private report by legacy id and a counts-only receipt.
+  - The copy step: read each object again and refuse it unless it still hashes to the recorded sha256. Stage it apart from the person-owned documents, bound to `legacy-candidate:<id>` like the contact slice.
+  - Promote it into the person's slot on link, only where the slot is empty. The check and the write happen under the owner and slot lock, and a slot the person cleared on purpose counts as theirs: the import never refills it.
   - Legacy's public objects stay where they are until SHU-54 is fixed.
 
 ## M-3 identity link report
