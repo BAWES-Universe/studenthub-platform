@@ -223,18 +223,18 @@ export class PostgresLoginStore {
     await this.#pool.query("DELETE FROM login_sessions WHERE id = $1", [storedToken(id)]);
   }
 
-  // Access lane (migration 0410): the issuer's answer is kept only for the person's
-  // current address, normalised, and always replaces what was recorded for it
+  // Access lane (migrations 0410, 0658): the issuer's answer is kept only for the person's
+  // current address, by its principal_email_key (ASCII only, locale-independent; an address
+  // with no key records nothing), and always replaces what was recorded for it
   // (a legacy import only ever inserts). One statement; nothing for another address.
   // FOR SHARE OF p makes an address change wait for this write (or this write wait
   // for the change and then skip); the table's trigger enforces the same for any writer.
   async #recordEmailVerification(personId: string, email: string, verified: boolean): Promise<void> {
     await this.#pool.query(
       `INSERT INTO principal_email_verifications (principal_id, email, verified, source, recorded_at)
-       SELECT p.id, lower(btrim($2::text)), $3::boolean, 'oidc', now()
+       SELECT p.id, principal_email_key($2::text), $3::boolean, 'oidc', now()
          FROM principals p
-        WHERE p.id = $1::text AND p.email IS NOT NULL AND lower(btrim(p.email)) = lower(btrim($2::text))
-           AND btrim($2::text) <> ''
+        WHERE p.id = $1::text AND principal_email_key(p.email) = principal_email_key($2::text)
         FOR SHARE OF p
        ON CONFLICT (principal_id, email)
        DO UPDATE SET verified = EXCLUDED.verified, source = 'oidc', recorded_at = EXCLUDED.recorded_at`,
@@ -248,9 +248,9 @@ export class PostgresLoginStore {
   async #vetoEmailVerification(personId: string): Promise<void> {
     await this.#pool.query(
       `INSERT INTO principal_email_verifications (principal_id, email, verified, source, recorded_at)
-       SELECT p.id, lower(btrim(p.email)), false, 'oidc', now()
+       SELECT p.id, principal_email_key(p.email), false, 'oidc', now()
          FROM principals p
-        WHERE p.id = $1::text AND p.email IS NOT NULL AND btrim(p.email) <> ''
+        WHERE p.id = $1::text AND principal_email_key(p.email) IS NOT NULL
        FOR SHARE OF p
        ON CONFLICT (principal_id, email)
        DO UPDATE SET verified = false, source = 'oidc', recorded_at = EXCLUDED.recorded_at`,
