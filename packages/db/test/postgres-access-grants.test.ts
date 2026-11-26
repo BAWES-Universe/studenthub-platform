@@ -52,6 +52,7 @@ test("A1_ATOMIC one confirm writes the grant, the audit row and the event; the n
   assert.equal(denied.kind, "denied");
   const preview = await writes().preview(staff, change({ targetPrincipalId: target, orgId: acme }));
   if (!preview.ok || preview.kind !== "change") throw new Error(`expected a change: ${JSON.stringify(preview)}`);
+  assert.deepEqual(preview.effect, { gained: ["read_company_contacts"], lost: [], gainedBelow: [], lostBelow: [] }, "G-02: the preview's effect comes from its own snapshot");
   assert.deepEqual(await events(target), [], "a preview writes nothing");
   assert.deepEqual(await writes().confirm(staff, change({ targetPrincipalId: target, orgId: acme }), preview.token), { kind: "applied", before: null, after: "self" });
   const allowed = await resolveActiveContext({ kind: "principal", principalId: target }, { orgId: acme, role: "recruiter" }, authz);
@@ -64,6 +65,7 @@ test("A1_ATOMIC one confirm writes the grant, the audit row and the event; the n
   const revoke = change({ targetPrincipalId: target, orgId: acme, action: "revoke", reason: "Left the company" });
   const review = await writes().preview(staff, revoke);
   if (!review.ok || review.kind !== "change") throw new Error("expected a change");
+  assert.deepEqual(review.effect, { gained: [], lost: ["read_company_contacts"], gainedBelow: [], lostBelow: [] }, "G-02: the snapshot's grants include the one being taken away");
   assert.deepEqual(await writes().confirm(staff, revoke, review.token), { kind: "applied", before: "self", after: null });
   assert.equal((await resolveActiveContext({ kind: "principal", principalId: target }, { orgId: acme, role: "recruiter" }, authz)).kind, "denied");
   assert.deepEqual((await events(target)).map((row) => [row.action, row.scope, row.reason]), [["grant", "self", "Joined the hiring team"], ["revoke", "self", "Left the company"]]);
