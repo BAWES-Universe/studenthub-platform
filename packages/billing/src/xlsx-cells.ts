@@ -76,7 +76,6 @@ function text(xml: string): string {
     e.startsWith("#x") ? codePoint(parseInt(e.slice(2), 16))
       : e.startsWith("#") ? codePoint(parseInt(e.slice(1), 10)) : ENTITY[e]!);
 }
-const attr = (tag: string, name: string): string | null => new RegExp(`\\s${name}="([^"]*)"`, "u").exec(tag)?.[1] ?? null;
 
 /** `B12` as column 1 of row 12; null for anything else. */
 function coordinate(ref: string): { readonly col: number; readonly row: number } | null {
@@ -92,11 +91,16 @@ function firstSheet(zip: Buffer, all: Map<string, Entry>): string | null {
   const workbook = read(zip, all, "xl/workbook.xml");
   const rels = read(zip, all, "xl/_rels/workbook.xml.rels");
   if (!workbook || !rels) return null;
-  const sheet = /<sheet\b[^>]*>/u.exec(workbook)?.[0];
-  const id = sheet ? attr(sheet, "r:id") : null;
-  if (!id) return null;
-  const rel = [...rels.matchAll(/<Relationship\b[^>]*>/gu)].map((m) => m[0]).find((r) => attr(r, "Id") === id);
-  const target = rel ? attr(rel, "Target") : null;
+  let id: string | null = null;
+  if (!scanXml(workbook, { open(name, attrs) { if (name === "sheet" && id === null) id = attrs.get("r:id") ?? ""; return true; }, close: () => true, text: () => true }) || !id) return null;
+  const targets = new Map<string, string>();
+  const relsOk = scanXml(rels, { open(name, attrs) {
+    if (name !== "Relationship") return true;
+    const key = attrs.get("Id"), target = attrs.get("Target");
+    if (key === undefined || target === undefined || targets.has(key)) return false;
+    targets.set(key, target); return true;
+  }, close: () => true, text: () => true });
+  const target = relsOk ? targets.get(id) : undefined;
   if (!target) return null;
   const path = target.startsWith("/") ? target.slice(1) : `xl/${target}`;
   return read(zip, all, path.replace(/\/\.\//gu, "/"));
@@ -109,8 +113,24 @@ function firstSheet(zip: Buffer, all: Map<string, Entry>): string | null {
  * a second root or text outside the root are malformed. False when malformed or a handler refuses,
  * so a truncated part is never read as a shorter one.
  */
-interface XmlHandler { open(name: string, tag: string): boolean; close(name: string): boolean; text(raw: string): boolean }
-const START_TAG = /^[A-Za-z_][\w.:-]*(?:\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"[^"<]*"|'[^'<]*'))*\s*\/?$/u;
+interface XmlHandler { open(name: string, attrs: ReadonlyMap<string, string>): boolean; close(name: string): boolean; text(raw: string): boolean }
+const TAG_NAME = /^[A-Za-z_][\w.:-]*/u;
+const ATTRIBUTE = /\s+([A-Za-z_][\w.:-]*)\s*=\s*(?:"([^"<]*)"|'([^'<]*)')/uy;
+/** The one attribute grammar: either quote style, spaces around `=`, values decoded; null when anything else is in the
+ * tag (a stray `<`, an unquoted value) or an attribute is named twice (which one did the writer mean?). */
+function attributes(rest: string): Map<string, string> | null {
+  const map = new Map<string, string>();
+  let at = 0;
+  for (;;) {
+    ATTRIBUTE.lastIndex = at;
+    const match = ATTRIBUTE.exec(rest);
+    if (!match) break;
+    if (map.has(match[1]!)) return null;
+    map.set(match[1]!, text(match[2] ?? match[3] ?? ""));
+    at = ATTRIBUTE.lastIndex;
+  }
+  return /^\s*$/u.test(rest.slice(at)) ? map : null;
+}
 /** SpreadsheetML cell types; anything else is not a cell this reader understands. */
 const CELL_TYPES: ReadonlySet<string> = new Set(["n", "s", "str", "inlineStr", "b", "e", "d"]);
 const localName = (qualified: string) => qualified.slice(qualified.indexOf(":") + 1);
@@ -144,16 +164,14 @@ function scanXml(xml: string, handler: XmlHandler): boolean {
       continue;
     }
     // A start tag is a name and well-formed attributes only: a stray `<` (a tag cut short) is malformed.
-    if (!START_TAG.test(inner)) return false;
-    // An attribute named twice is ambiguous (which `t` or `r` did the writer mean?): never pick one.
-    const names = [...inner.matchAll(/\s([A-Za-z_][\w.:-]*)\s*=/gu)].map((m) => m[1]);
-    if (new Set(names).size !== names.length) return false;
     const selfClosing = inner.endsWith("/");
-    const name = /^[A-Za-z_][\w.:-]*/u.exec(inner)![0];
+    const body = selfClosing ? inner.slice(0, -1) : inner;
+    const name = TAG_NAME.exec(body)?.[0];
+    const attrs = name === undefined ? null : attributes(body.slice(name.length));
+    if (name === undefined || attrs === null) return false;
     if (stack.length === 0 && rooted) return false;
     rooted = true;
-    const tag = selfClosing ? inner.slice(0, -1) : inner;
-    if (!handler.open(localName(name), tag)) return false;
+    if (!handler.open(localName(name), attrs)) return false;
     if (selfClosing) { if (!handler.close(localName(name))) return false; } else stack.push(name);
   }
   return rooted && stack.length === 0;
@@ -216,13 +234,13 @@ export function readXlsxCells(bytes: Uint8Array): XlsxRead {
   const fail = (code: "unreadable" | "too_many_rows" | "too_large") => { verdict = code; return false; };
   const parent = () => path[path.length - 1];
   const ok = scanXml(sheet, {
-    open(name, tag) {
+    open(name, attrs) {
       const within = parent();
       path.push(name);
       if (name === "sheetData" && within === "worksheet") { if (sheetData) return false; sheetData = true; return true; }
       if (name === "row" && within === "sheetData") {
         // `r` is optional in SpreadsheetML: a row without it follows the previous one.
-        const rowRef = attr(tag, "r");
+        const rowRef = attrs.get("r") ?? null;
         const next = rowRef === null ? grid.length + 1 : /^[1-9][0-9]{0,6}$/u.test(rowRef) ? Number(rowRef) : NaN;
         // Rows only go forward: a repeated or earlier row number would replace data already read.
         if (!Number.isInteger(next) || next <= grid.length) return fail("unreadable");
@@ -233,11 +251,11 @@ export function readXlsxCells(bytes: Uint8Array): XlsxRead {
       if (name === "row" || name === "c" ? cell !== null || (name === "row" && cells !== null) : false) return false; // no nesting
       if (name === "c" && within !== "row") return false;
       if (name === "c" && within === "row" && cells) {
-        const ref = attr(tag, "r");
+        const ref = attrs.get("r") ?? null;
         const at = ref === null ? { col: cells.length, row: r } : coordinate(ref);
         // A cell must sit in its own row, after the cells before it.
         if (at === null || at.row !== r || at.col < cells.length || at.col >= MAX_COLUMNS) return fail("unreadable");
-        cell = { col: at.col, type: attr(tag, "t") ?? "n", v: null, vSize: 0, inline: null };
+        cell = { col: at.col, type: attrs.get("t") ?? "n", v: null, vSize: 0, inline: null };
         return true;
       }
       if (cell && name === "v" && within === "c") { if (cell.v) return false; cell.v = []; return true; }

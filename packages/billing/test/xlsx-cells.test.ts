@@ -188,3 +188,20 @@ test("XLSX_CELL_CONTENT a cell whose markup carries a value must read as that va
     `<c r="A3" t="s"><v>2</v></c>`,
   ]) assert.equal(sheet(bad), "unreadable", bad);
 });
+
+test("XLSX_ATTRIBUTES every attribute is read by one grammar: either quote style and spaces around = mean the same, anything else refuses", () => {
+  const sheet = (rows: string) => cellsOf(zip(book(rows, "<si><t>shared</t></si>")));
+  const same = [["shared", "7"], [null, "x y"]];
+  assert.deepEqual(sheet(`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"><v>7</v></c></row><row r="2"><c r="B2" t="inlineStr"><is><t>x y</t></is></c></row>`), same);
+  assert.deepEqual(sheet(`<row r='1'><c r='A1' t='s'><v>0</v></c><c r = "B1" ><v>7</v></c></row><row  r =  '2' ><c r='B2' t = 'inlineStr'><is><t>x y</t></is></c></row>`), same, "single quotes and spaced =");
+  assert.deepEqual(sheet(`<row r="1"><c r="A1" t='s'><v>0</v></c><c r="B1"><v>7</v></c></row><row r="2"><c r='B2' t="inlineStr"><is><t>x y</t></is></c></row>`), same, "mixed");
+  for (const bad of [`<row r=1><c><v>1</v></c></row>`, `<row r="1" r='1'><c><v>1</v></c></row>`, `<row r="1"><c t='s' t="s"><v>0</v></c></row>`, `<row r="1"x="2"><c><v>1</v></c></row>`])
+    assert.equal(sheet(bad), "unreadable", bad);
+  const files = book(`<row r="1"><c><v>1</v></c></row>`);
+  const quoted = { ...files,
+    "xl/workbook.xml": `<workbook xmlns:r="r"><sheets><sheet name='A' sheetId = '1' r:id = 'rId7'/></sheets></workbook>`,
+    "xl/_rels/workbook.xml.rels": `<Relationships><Relationship Id='rId1' Target='styles.xml'/><Relationship Target = 'worksheets/sheet1.xml' Id = "rId7"/></Relationships>` };
+  assert.deepEqual(cellsOf(zip(quoted)), [["1"]], "the workbook and its relationships use the same grammar");
+  assert.equal(cellsOf(zip({ ...quoted, "xl/_rels/workbook.xml.rels": `<Relationships><Relationship Id="rId7" Target="worksheets/sheet1.xml"/><Relationship Id="rId7" Target="worksheets/other.xml"/></Relationships>` })),
+    "unreadable", "one relationship id twice");
+});
