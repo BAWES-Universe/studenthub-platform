@@ -6,8 +6,11 @@
 //   to yet (legacy_account_links);
 // - link.notImported: a link to a candidate the import does not carry (archived or quarantined in
 //   legacy, or not imported yet), so the person sees no imported profile;
-// - link.multiplyOffered: a candidate that has been linked to more than one principal over time
-//   (legacy_account_link_events), for example linked, unlinked, then linked to someone else;
+// - link.multiplePrincipals: historical links only: a candidate whose link history
+//   (legacy_account_link_events) names more than one principal, for example linked, unlinked,
+//   then linked to someone else. This is the contract's "offered to more than one person" as far
+//   as the platform can observe it: an offer that was never accepted leaves no record, so it is
+//   not counted;
 // - link.contactTaken: a promoted person whose staged phone, handle or civil ID another person
 //   already holds (legacy_contact_promotions, outcome taken);
 // - link.emailMismatch: a promoted person whose current address does not hash to the candidate's
@@ -21,7 +24,7 @@
 
 import type { Pool as PgPool } from "pg";
 
-export const LINK_REPORT_RULES = ["link.unlinked", "link.notImported", "link.multiplyOffered", "link.contactTaken", "link.emailMismatch"] as const;
+export const LINK_REPORT_RULES = ["link.unlinked", "link.notImported", "link.multiplePrincipals", "link.contactTaken", "link.emailMismatch"] as const;
 export type LinkReportRule = (typeof LINK_REPORT_RULES)[number];
 
 export interface LinkReport {
@@ -29,11 +32,14 @@ export interface LinkReport {
   readonly imported: number;
   /** Imported candidates with a link. */
   readonly linked: number;
-  /** Legacy candidate ids per rule, in numeric order, each id at most once per rule. */
+  /** Legacy candidate ids per rule (the link tables' id contract), in numeric order, each id at most once per rule. */
   readonly ids: { readonly [R in LinkReportRule]: readonly string[] };
 }
 
-const LEGACY_ID = /^[1-9][0-9]{0,17}$/;
+// The owning id contract of the link tables (migration 0215): positive digits, no length limit.
+// It contains the import's narrower 1-18 digit form, so every rule accepts any id a link row may
+// hold, and a long id in a link row never breaks the report.
+const LEGACY_ID = /^[1-9][0-9]*$/;
 /** Numeric order for digit strings without a leading zero. */
 const ORDER = "ORDER BY length(legacy_candidate_id), legacy_candidate_id COLLATE \"C\"";
 
@@ -42,7 +48,7 @@ const QUERIES: { readonly [R in LinkReportRule]: string } = {
     WHERE NOT EXISTS (SELECT 1 FROM legacy_account_links l WHERE l.legacy_candidate_id = s.legacy_candidate_id) ${ORDER}`,
   "link.notImported": `SELECT l.legacy_candidate_id AS id FROM legacy_account_links l
     WHERE NOT EXISTS (SELECT 1 FROM legacy_candidate_snapshots s WHERE s.legacy_candidate_id = l.legacy_candidate_id) ${ORDER}`,
-  "link.multiplyOffered": `SELECT legacy_candidate_id AS id FROM legacy_account_link_events WHERE kind = 'linked'
+  "link.multiplePrincipals": `SELECT legacy_candidate_id AS id FROM legacy_account_link_events WHERE kind = 'linked'
     GROUP BY legacy_candidate_id HAVING count(DISTINCT principal_id) > 1 ${ORDER}`,
   "link.contactTaken": `SELECT legacy_candidate_id AS id FROM legacy_contact_promotions
     WHERE 'taken' IN (phone, handle, civil_id) GROUP BY legacy_candidate_id ${ORDER}`,

@@ -44,7 +44,7 @@ const promoted = async (principalId: string, id: number, o: { phone?: string; ha
   [principalId, String(id), o.phone ?? "promoted", o.handle ?? "promoted", o.civil ?? "promoted", o.email ?? "promoted"]);
 };
 
-test("the link report lists unlinked, not imported, multiply offered, taken and mismatched records by legacy id only", async () => {
+test("the link report lists unlinked, not imported, linked to several principals, taken and mismatched records by legacy id only", async () => {
   const a = await fixtureIds(pool);
   const [unlinked, linked, gone, offered, taken, civilTaken, mismatch, changed, clean] = [a + 2, a + 10, a + 3, a + 100, a + 4, a + 5, a + 6, a + 7, a + 8];
   for (const id of [unlinked, linked, offered, taken, civilTaken, mismatch, changed, clean]) await snapshot(id);
@@ -80,14 +80,14 @@ test("the link report lists unlinked, not imported, multiply offered, taken and 
   const mine = (rule: (typeof LINK_REPORT_RULES)[number]) => report.ids[rule].filter((id) => Number(id) >= a && Number(id) < a + 1000);
   assert.deepEqual(mine("link.unlinked"), [String(unlinked)]);
   assert.deepEqual(mine("link.notImported"), [String(gone)]);
-  assert.deepEqual(mine("link.multiplyOffered"), [String(mismatch), String(offered)]);
+  assert.deepEqual(mine("link.multiplePrincipals"), [String(mismatch), String(offered)]);
   assert.deepEqual(mine("link.contactTaken"), [String(taken), String(civilTaken), String(mismatch)]);
   assert.deepEqual(mine("link.emailMismatch"), [String(mismatch), String(changed)]);
 
   // Numeric order across lengths, each id once, and only plain legacy ids.
   for (const rule of LINK_REPORT_RULES) {
     const ids = report.ids[rule];
-    assert.ok(ids.every((id) => /^[1-9][0-9]{0,17}$/.test(id)));
+    assert.ok(ids.every((id) => /^[1-9][0-9]*$/.test(id)));
     assert.equal(new Set(ids).size, ids.length);
     for (let i = 1; i < ids.length; i++) assert.ok(BigInt(ids[i - 1]!) < BigInt(ids[i]!), `${rule} in numeric order`);
   }
@@ -99,6 +99,21 @@ test("the link report lists unlinked, not imported, multiply offered, taken and 
   assert.deepEqual(Object.keys(counts.rules), [...LINK_REPORT_RULES]);
   assert.ok(counts.imported >= 8 && counts.linked >= 7 && counts.linked <= counts.imported);
   for (const rule of LINK_REPORT_RULES) assert.equal(counts.rules[rule], report.ids[rule].length);
+});
+
+test("a valid link row with an id longer than the import's 18 digits is listed, never a failed report", async () => {
+  const a = await fixtureIds(pool);
+  const long = `${a}${"0".repeat(12)}7`;
+  assert.ok(long.length > 18);
+  const p = await person(), q = await person();
+  await pool.query("INSERT INTO legacy_account_links (principal_id, legacy_candidate_id, linked_by_ref, method) VALUES ($1, $2, $3, 'staff')", [p, long, "a".repeat(64)]);
+  for (const who of [p, q]) {
+    await pool.query("INSERT INTO legacy_account_link_events (principal_id, legacy_candidate_id, kind, actor_ref, method) VALUES ($1, $2, 'linked', $3, 'staff')", [who, long, "a".repeat(64)]);
+  }
+  const report = await readLinkReport(pool);
+  assert.ok(report.ids["link.notImported"].includes(long));
+  assert.ok(report.ids["link.multiplePrincipals"].includes(long));
+  assert.equal(report.ids["link.notImported"].at(-1)!.length >= long.length, true, "numeric order puts it after shorter ids");
 });
 
 test("the link report reads and writes nothing else: it runs read-only and fails with a fixed code only", async () => {

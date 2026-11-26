@@ -68,7 +68,7 @@ interface FakeDb {
 }
 const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY,
   promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64), linkReportReady: true,
-  links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplyOffered": [], "link.contactTaken": [], "link.emailMismatch": [] } } });
+  links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplePrincipals": [], "link.contactTaken": [], "link.emailMismatch": [] } } });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -827,7 +827,7 @@ test("a promote that fails part way publishes failed with the counts so far and 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-const LINKS: LinkReport = { imported: 5, linked: 2, ids: { "link.unlinked": ["31", "40", "100"], "link.notImported": ["77"], "link.multiplyOffered": ["40"], "link.contactTaken": [], "link.emailMismatch": ["31"] } };
+const LINKS: LinkReport = { imported: 5, linked: 2, ids: { "link.unlinked": ["31", "40", "100"], "link.notImported": ["77"], "link.multiplePrincipals": ["40"], "link.contactTaken": [], "link.emailMismatch": ["31"] } };
 
 test("linkreport reads the target only, writes ids to the private report and counts only to the receipt", async () => {
   const db = { ...fakeDb(), links: LINKS };
@@ -839,14 +839,14 @@ test("linkreport reads the target only, writes ids to the private report and cou
     assert.deepEqual(h.calls, ["linkReport"]);
     const r = h.receipt("linkreport");
     assert.deepEqual([r.kind, r.status, r.target, r.revision, r.artifact], ["linkreport", "ok", TARGET, REVISION, ARTIFACT]);
-    assert.deepEqual(r.links, { imported: 5, linked: 2, rules: { "link.unlinked": 3, "link.notImported": 1, "link.multiplyOffered": 1, "link.contactTaken": 0, "link.emailMismatch": 1 } });
+    assert.deepEqual(r.links, { imported: 5, linked: 2, rules: { "link.unlinked": 3, "link.notImported": 1, "link.multiplePrincipals": 1, "link.contactTaken": 0, "link.emailMismatch": 1 } });
     for (const id of ["31", "40", "100", "77"]) assert.ok(!JSON.stringify(r).includes(`"${id}"`), "no legacy id in the receipt");
     const reportFile = path.join(h.file("out"), `${h.invocation}.linkreport.report.json`);
     assert.equal(statSync(reportFile).mode & 0o777, 0o600);
     const report = JSON.parse(readFileSync(reportFile, "utf8"));
     assert.deepEqual([report.imported, report.linked, report.ids], [5, 2, LINKS.ids]);
     assert.deepEqual([report.target, report.revision, report.artifact, report.invocation], [TARGET, REVISION, ARTIFACT, h.invocation]);
-    assert.ok(h.out.some((l) => l === "links imported=5 linked=2 link.unlinked=3 link.notImported=1 link.multiplyOffered=1 link.contactTaken=0 link.emailMismatch=1"));
+    assert.ok(h.out.some((l) => l === "links imported=5 linked=2 link.unlinked=3 link.notImported=1 link.multiplePrincipals=1 link.contactTaken=0 link.emailMismatch=1"));
     assert.ok(h.out.some((l) => l.startsWith(`m4 linkreport ok invocation=${h.invocation} target=${TARGET}`)));
     assert.ok(!h.out.join("\n").includes("100"), "no legacy id in the log");
   } finally { cleanup(h); }

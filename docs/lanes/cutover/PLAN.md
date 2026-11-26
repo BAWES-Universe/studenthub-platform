@@ -117,10 +117,10 @@ Two active rows of one kind whose names normalize the same become one item: the 
 
 Q14-L gives each person a self-service link (legacy sign-in) and staff a manual one. M-3 adds the bulk report staff follow up from (`readLinkReport`, `@studenthub/db/import`; `tools/legacy-import/m4 linkreport`). Links stay keyed by principal and legacy id, never by email, and nothing here links anyone.
 
-- **Rules.** Each lists legacy candidate ids, in numeric order, each id once:
+- **Rules.** Each lists legacy candidate ids, in numeric order, each id once. Ids follow the link tables' own contract (positive digits, any length, migration 0215), which contains the import's 1 to 18 digit form, so a valid link row with a longer id is listed like any other and never fails the report:
   - `link.unlinked`: an imported candidate (`legacy_candidate_snapshots`) no principal is linked to yet.
   - `link.notImported`: a link to a candidate the import does not carry (archived or quarantined in legacy, or not imported yet), so the person sees no imported profile.
-  - `link.multiplyOffered`: a candidate linked to more than one principal over time (`legacy_account_link_events`, kind `linked`, distinct principals), for example linked, unlinked and then linked to someone else. One person relinking is not counted.
+  - `link.multiplePrincipals`: historical links only: a candidate whose link history (`legacy_account_link_events`, kind `linked`) names more than one principal, for example linked, unlinked and then linked to someone else. One person relinking is not counted. This is the contract's "offered to more than one person" as far as the platform can observe it; an offer nobody accepted leaves no record and is not counted.
   - `link.contactTaken`: a promoted person whose staged phone, handle or civil ID another person already holds (`legacy_contact_promotions` outcome `taken`).
   - `link.emailMismatch`: a promoted person whose current address did not hash to the candidate's verified legacy address, or changed under the promotion (`mismatch`, `addressChanged`), a sign the link may name the wrong person.
 - **Reading.** One read-only, repeatable-read transaction on the target, so the lists and totals describe one moment. It reads ids and outcome codes only: no name, contact value, digest, address or principal id. Any failure is `m3.link.reportFailed`, with no detail.
