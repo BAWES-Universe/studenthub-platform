@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type pg from "pg";
 import { planBankResult, readBankResultSheet, type BankCell, type BankCandidateLine, type BankRecordedPayment, type BankResultFormat,
   type BankRowDecision, type BankSheetResult } from "@studenthub/billing";
@@ -44,11 +45,24 @@ export type BankResultCompletePort = (tx: PostgresTransferLifecycleTransaction, 
 export type BankResultSubmit =
   | { readonly kind: "submitted"; readonly fileId: string }
   | { readonly kind: "duplicate_file"; readonly fileId: string }
-  | { readonly kind: "refused"; readonly code: "forbidden" | "invalid_input" | "missing_headers" | "no_rows"; readonly missing?: readonly string[] };
+  | { readonly kind: "refused"; readonly code: "forbidden" | "invalid_input" | "missing_headers" | "duplicate_headers" | "no_rows" | "too_many_rows"; readonly missing?: readonly string[] };
 
+/** What applying a file decides, as the actor sees it, with the identity of exactly that outcome. */
+export interface BankResultReview { readonly decisions: readonly BankRowDecision[]; readonly completedTransferIds: readonly string[]; readonly reviewId: string }
 export type BankResultApply =
-  | { readonly kind: "applied"; readonly decisions: readonly BankRowDecision[]; readonly completedTransferIds: readonly string[] }
+  /** Applied exactly as reviewed. */
+  | ({ readonly kind: "applied" } & BankResultReview)
+  /** A preview: nothing written. Apply with its reviewId. */
+  | ({ readonly kind: "review" } & BankResultReview)
+  /** The outcome is no longer the reviewed one: nothing written; this is the fresh review. */
+  | ({ readonly kind: "changed" } & BankResultReview)
   | { readonly kind: "refused"; readonly code: "forbidden" | "not_found" | "already_applied" };
+type Planned = { readonly kind: "planned"; readonly decisions: readonly BankRowDecision[]; readonly completedTransferIds: readonly string[] }
+  | Extract<BankResultApply, { kind: "refused" }>;
+
+/** The review identity: the file and every decision and completion the actor was shown, nothing else. */
+const reviewIdOf = (fileId: string, decisions: readonly BankRowDecision[], completedTransferIds: readonly string[]) =>
+  createHash("sha256").update(JSON.stringify({ fileId, decisions, completedTransferIds })).digest("hex");
 
 type ReadSheet = Extract<BankSheetResult, { kind: "read" }>;
 
@@ -99,9 +113,10 @@ export class PostgresBankResultStore {
   }
 
   /** What applying the file now would do, from the same locked transaction as apply, then rolled back. */
-  async preview(actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> { return this.run(actor, fileId, true); }
+  async preview(actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> { return this.run(actor, fileId, null); }
 
-  async apply(actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> { return this.run(actor, fileId, false); }
+  /** Applies the file only if the outcome is still the reviewed one (`reviewId` from preview); otherwise nothing is written. */
+  async apply(actor: PayLifecycleActor, fileId: string, reviewId: string): Promise<BankResultApply> { return this.run(actor, fileId, reviewId); }
 
   /** The most recent files, newest first; null without finance file permission. */
   async files(actor: PayLifecycleActor, limit = 50): Promise<readonly BankResultFileEntry[] | null> {
@@ -119,16 +134,37 @@ export class PostgresBankResultStore {
       const row = (await client.query(`SELECT id,format,status,uploaded_by,uploaded_at,applied_by,applied_at,jsonb_array_length(sheet->'rows')+jsonb_array_length(sheet->'rejected') AS row_count
         FROM bank_result_files WHERE id=$1`, [fileId])).rows[0];
       if (!row) return null;
-      const decisions = (await client.query("SELECT row_number,kind,reason,line_ids,reference FROM bank_result_rows WHERE file_id=$1 ORDER BY row_number", [fileId])).rows
-        .map((r) => ({ rowNumber: r.row_number, kind: r.kind, reason: r.reason, lineIds: r.line_ids, reference: r.reference }));
+      const recorded = (await client.query("SELECT row_number,kind,reason,line_ids,reference FROM bank_result_rows WHERE file_id=$1 ORDER BY row_number", [fileId])).rows;
+      // Recorded rows name the lines the APPLYING actor could see; this reader sees only lines on transfers they may settle now.
+      const visible = await this.visibleLines(client, actor, [...new Set(recorded.flatMap((r) => r.line_ids as string[]))]);
+      const decisions = recorded.map((r) => ({ rowNumber: r.row_number, kind: r.kind, reason: r.reason,
+        lineIds: (r.line_ids as string[]).filter((id) => visible.has(id)), reference: r.reference }));
       return { ...entry(row), decisions };
     }, () => true);
   }
 
-  private async run(actor: PayLifecycleActor, fileId: string, dryRun: boolean): Promise<BankResultApply> {
+  private async run(actor: PayLifecycleActor, fileId: string, reviewId: string | null): Promise<BankResultApply> {
     if (actor.actingAs !== false || !actor.principalId?.trim()) return { kind: "refused", code: "forbidden" };
     if (!UUID.test(fileId)) return { kind: "refused", code: "not_found" };
-    return this.transaction((client) => this.applyIn(client, actor, fileId), (result) => result.kind === "applied" && !dryRun);
+    return this.transaction(async (client): Promise<BankResultApply> => {
+      const planned = await this.applyIn(client, actor, fileId);
+      if (planned.kind !== "planned") return planned;
+      const review = { decisions: planned.decisions, completedTransferIds: planned.completedTransferIds,
+        reviewId: reviewIdOf(fileId, planned.decisions, planned.completedTransferIds) };
+      if (reviewId === null) return { kind: "review", ...review };
+      if (reviewId !== review.reviewId) return { kind: "changed", ...review };
+      return { kind: "applied", ...review };
+    }, (result) => result.kind === "applied");
+  }
+
+  /** The lines, of those given, on transfers the actor may settle now (policy decided in the caller's transaction). */
+  private async visibleLines(client: pg.PoolClient, actor: PayLifecycleActor, lineIds: readonly string[]): Promise<Set<string>> {
+    const visible = new Set<string>(), decided = new Map<string, boolean>();
+    for (const r of (await client.query("SELECT l.id AS line_id,t.id,t.company_id,t.status,t.deleted FROM pay_transfer_lines l JOIN pay_transfers t ON t.id=l.transfer_id WHERE l.id = ANY($1::text[]) ORDER BY l.id", [lineIds])).rows) {
+      if (!decided.has(r.id)) decided.set(r.id, await this.policy.authorize(client, actor, { id: r.id, companyId: r.company_id, status: r.status, deleted: r.deleted }, "complete"));
+      if (decided.get(r.id)) visible.add(r.line_id);
+    }
+    return visible;
   }
 
   private async transaction<T>(work: (client: pg.PoolClient) => Promise<T>, commit: (result: T) => boolean): Promise<T> {
@@ -144,7 +180,7 @@ export class PostgresBankResultStore {
     } finally { client.release(broken); }
   }
 
-  private async applyIn(client: pg.PoolClient, actor: PayLifecycleActor, fileId: string): Promise<BankResultApply> {
+  private async applyIn(client: pg.PoolClient, actor: PayLifecycleActor, fileId: string): Promise<Planned> {
     await client.query("SELECT pg_advisory_xact_lock($1)", [APPLY_LOCK]);
     // File level first: without finance permission nothing about the file, or its absence, is shown.
     if (!await this.gate(client, actor.principalId)) return { kind: "refused", code: "forbidden" };
@@ -185,10 +221,7 @@ export class PostgresBankResultStore {
     // Recorded history is global so a replay is caught anywhere, but a decision names only lines the
     // actor may see: the candidates (already authorized above) and lines on transfers they may settle.
     const outside = [...new Set(planned.decisions.flatMap((d) => (d.kind === "hold" ? d.lineIds : [d.lineId])).filter((id) => !byLine.has(id)))];
-    const visible = new Set<string>(byLine.keys());
-    for (const r of (await client.query("SELECT l.id AS line_id,t.id,t.company_id,t.status,t.deleted FROM pay_transfer_lines l JOIN pay_transfers t ON t.id=l.transfer_id WHERE l.id = ANY($1::text[]) ORDER BY l.id", [outside])).rows) {
-      if (await this.policy.authorize(client, actor, { id: r.id, companyId: r.company_id, status: r.status, deleted: r.deleted }, "complete")) visible.add(r.line_id);
-    }
+    const visible = new Set<string>([...byLine.keys(), ...await this.visibleLines(client, actor, outside)]);
     const plan = { transferIds: planned.transferIds, decisions: planned.decisions.map((d): BankRowDecision => {
       if (d.kind === "hold") return { ...d, lineIds: d.lineIds.filter((id) => visible.has(id)) };
       // A replay of a line the actor may not see is held as a conflict, without naming the line.
@@ -215,7 +248,7 @@ export class PostgresBankResultStore {
       completed.push(id);
     }
     await client.query("UPDATE bank_result_files SET status='applied',applied_by=$2,applied_at=clock_timestamp() WHERE id=$1", [fileId, actor.principalId]);
-    return { kind: "applied", decisions: plan.decisions, completedTransferIds: completed };
+    return { kind: "planned", decisions: plan.decisions, completedTransferIds: completed };
   }
 }
 

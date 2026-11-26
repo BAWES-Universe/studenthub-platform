@@ -3,14 +3,16 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test, { type TestContext } from "node:test";
 import type { BankResultApply, BankResultFileDetail, BankResultSubmit } from "@studenthub/db/billing";
-import { createBankResultsHttp, handleBankResults, uploadForm, type BankResultsStore } from "../src/billing/bank-results-http.js";
+import { AUB_RESULT_COLUMNS } from "../../../packages/billing/src/bank-results.js";
+import { createBankResultsHttp, handleBankResults, reviewOf, uploadForm, type BankResultsStore } from "../src/billing/bank-results-http.js";
 
 // Synthetic people, files, references and line ids only.
 const FIN = "f".repeat(43), COMPANY_FIN = "c".repeat(43);
 const ORIGIN = "https://studenthub.example";
 const ID = "0f0e0d0c-0b0a-4908-8706-050403020100";
 const PENDING: BankResultFileDetail = { fileId: ID, format: "aub", status: "pending", rowCount: 2, uploadedBy: "fin", uploadedAt: "2026-11-25T10:00:00.000Z", appliedBy: null, appliedAt: null, decisions: [] };
-const PREVIEW: BankResultApply = { kind: "applied", completedTransferIds: ["T1"], decisions: [
+const REVIEW = "a".repeat(64), FRESH = "b".repeat(64);
+const PREVIEW: Extract<BankResultApply, { kind: "review" }> = { kind: "review", reviewId: REVIEW, completedTransferIds: ["T1"], decisions: [
   { kind: "pay", rowNumber: 3, lineId: "L-1", transferId: "T1", reference: "REF-1" },
   { kind: "hold", rowNumber: 4, reason: "reference_conflict", lineIds: ["L-2", "<L-3>"] }] };
 
@@ -18,7 +20,9 @@ async function xlsx(rows: string[][]): Promise<Buffer> {
   const { default: writeExcelFile } = await import("write-excel-file/node");
   return Buffer.from(await writeExcelFile(rows.map(r => r.map(value => ({ value, type: String }))) as never, { sheet: "R" }).toBuffer());
 }
-const AUB = () => xlsx([[""], ["Status", "Status Description", "Debit Narrative", "Credit Narrative"], ["SUCCESS", "REF-1", "x", "L-1"]]);
+const AUB_FIRST = ["Status", "Status Description", "Debit Narrative", "Credit Narrative"];
+const AUB_HEAD = [...AUB_FIRST, ...AUB_RESULT_COLUMNS.filter((c) => !AUB_FIRST.includes(c))];
+const AUB = () => xlsx([[""], AUB_HEAD, ["SUCCESS", "REF-1", "x", "L-1"]]);
 
 async function rig(t: TestContext) {
   const calls: string[] = [];
@@ -31,11 +35,12 @@ async function rig(t: TestContext) {
       return { kind: "submitted", fileId: ID };
     },
     async preview(actor, id) { calls.push(`preview:${actor.principalId}:${id}`); return PREVIEW; },
-    async apply(actor, id) {
-      calls.push(`apply:${actor.principalId}:${id}`);
+    async apply(actor, id, reviewId) {
+      calls.push(`apply:${actor.principalId}:${id}:${reviewId.slice(0, 4)}`);
       if (file?.status === "applied") return { kind: "refused", code: "already_applied" };
+      if (reviewId !== REVIEW) return { ...PREVIEW, kind: "changed", reviewId: FRESH, completedTransferIds: [] };
       file = { ...PENDING, status: "applied", appliedBy: "fin", appliedAt: "2026-11-25T11:00:00.000Z", decisions: [{ rowNumber: 3, kind: "pay", reason: null, lineIds: ["L-1"], reference: "REF-1" }] };
-      return PREVIEW;
+      return { ...PREVIEW, kind: "applied" };
     },
   };
   const sessions = { get: async (id: string) => ({ [FIN]: { personId: "fin" }, [COMPANY_FIN]: { personId: "company-fin" } } as Record<string, { personId: string }>)[id] as never };
@@ -67,13 +72,24 @@ test("BANK_HTTP_FLOW StudentHub finance uploads a workbook, reviews the preview,
   const page = await (await x.call(`/finance/bank-results/${ID}`, { session: FIN, accept: "text/html" })).text();
   assert.match(page, /marks 1 line paid and completes 1 transfer/);
   assert.match(page, /This bank reference is already used/); assert.match(page, /L-2, &lt;L-3&gt;/); assert.doesNotMatch(page, /<L-3>/);
-  assert.match(page, new RegExp(`action="/finance/bank-results/${ID}/apply"`));
-  const applied = await x.call(`/finance/bank-results/${ID}/apply`, { session: FIN, method: "POST", accept: "text/html", type: "application/x-www-form-urlencoded", body: "" });
+  assert.match(page, new RegExp(`action="/finance/bank-results/${ID}/apply"><input type="hidden" name="review" value="${REVIEW}">`));
+  const form = (review: string) => x.call(`/finance/bank-results/${ID}/apply`, { session: FIN, method: "POST", accept: "text/html", type: "application/x-www-form-urlencoded", body: `review=${review}` });
+  const stale = await form("c".repeat(64));
+  assert.equal(stale.status, 409, "a review that no longer matches applies nothing and shows the fresh review");
+  const again = await stale.text();
+  assert.match(again, /changed since you reviewed it/); assert.match(again, new RegExp(`name="review" value="${FRESH}"`)); assert.match(again, /completes 0 transfers/);
+  assert.equal((await x.call(`/finance/bank-results/${ID}/apply`, { session: FIN, method: "POST", type: "application/x-www-form-urlencoded", body: "" })).status, 400, "no review, no apply");
+  const applied = await form(REVIEW);
   assert.equal(applied.status, 303);
   const after = await (await x.call(`/finance/bank-results/${ID}`, { session: FIN, accept: "text/html" })).text();
   assert.match(after, /Applied 2026-11-25 11:00 UTC/); assert.match(after, /Marks the line paid/); assert.doesNotMatch(after, /Apply this file/);
-  assert.equal((await x.call(`/finance/bank-results/${ID}/apply`, { session: FIN, method: "POST" })).status, 409);
-  assert.deepEqual(x.calls.filter(c => c.startsWith("preview") || c.startsWith("apply")), [`preview:fin:${ID}`, `apply:fin:${ID}`, `apply:fin:${ID}`], "an applied file is not previewed");
+  assert.equal((await x.call(`/finance/bank-results/${ID}/apply`, { session: FIN, method: "POST", type: "application/json", body: JSON.stringify({ review: REVIEW }) })).status, 409);
+  assert.deepEqual(x.calls.filter(c => c.startsWith("preview") || c.startsWith("apply")),
+    [`preview:fin:${ID}`, `apply:fin:${ID}:cccc`, `apply:fin:${ID}:aaaa`, `apply:fin:${ID}:aaaa`], "an applied file is not previewed; a missing review never reaches the store");
+  assert.equal(reviewOf(Buffer.from(`review=${REVIEW}&review=${REVIEW}`), "application/x-www-form-urlencoded"), undefined, "one review only");
+  assert.equal(reviewOf(Buffer.from(`review=${REVIEW}&x=1`), "application/x-www-form-urlencoded"), undefined);
+  assert.equal(reviewOf(Buffer.from(`review=${REVIEW.toUpperCase()}`), "application/x-www-form-urlencoded"), undefined);
+  assert.equal(reviewOf(Buffer.from(JSON.stringify({ review: REVIEW })), "application/json"), REVIEW);
 });
 
 test("BANK_HTTP_GATE a company's finance user, a signed-out caller and another origin reach nothing, before any file is read", async (t) => {
@@ -95,6 +111,8 @@ test("BANK_HTTP_GATE a company's finance user, a signed-out caller and another o
 test("BANK_HTTP_INPUT a file that is not a readable workbook, a wrong bank layout or a malformed form is refused without storing", async (t) => {
   const x = await rig(t);
   assert.equal((await x.upload(FIN, "aub", Buffer.from("Status,Reference\nSUCCESS,REF-1\n"))).status, 422);
+  const long = await x.upload(FIN, "aub", await xlsx([[""], AUB_HEAD, ["SUCCESS", "R".repeat(1025), "x", "L-1"]]));
+  assert.equal(long.status, 422); assert.match(await long.text(), /at most 1024 characters a cell/);
   assert.equal((await x.upload(FIN, "swift", await AUB())).status, 400);
   assert.equal((await x.call("/finance/bank-results", { session: FIN, method: "POST", type: "application/json", body: "{}" })).status, 400);
   assert.deepEqual(x.calls.filter(c => c.startsWith("submit")), []);

@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
 import type { BankResultApply, BankResultFileDetail, BankResultFileEntry, BankResultSubmit } from "@studenthub/db/billing";
-import type { BankHoldReason, BankResultFormat, BankRowDecision } from "../../../../packages/billing/src/bank-results.js";
-import { XLSX_MAX_BYTES, readXlsxCells } from "../../../../packages/billing/src/xlsx-cells.js";
+import type { BankCell, BankHoldReason, BankResultFormat, BankRowDecision } from "../../../../packages/billing/src/bank-results.js";
+import { XLSX_MAX_BYTES, XLSX_MAX_FIELD_CHARS, readXlsxCells } from "../../../../packages/billing/src/xlsx-cells.js";
+import { MAX_BANK_RESULT_ROWS } from "../../../../packages/billing/src/bank-results.js";
 import { sameOrigin, sessionCookie } from "../recruit/http-common.js";
 import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 
@@ -14,7 +15,9 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
  * one .xlsx result file (multipart `format` aub|kfh and `file`); the same content twice opens the
  * first upload. GET /finance/bank-results/<id> shows what applying the file would do (a preview in
  * the same locked transaction, rolled back) or, once applied, the decision recorded for each row.
- * POST /finance/bank-results/<id>/apply applies it once.
+ * POST /finance/bank-results/<id>/apply (form field `review`, the identity of the preview shown) applies
+ * it once, and only if applying it would still do exactly what was reviewed; otherwise nothing is
+ * written and the fresh review is shown (409).
  *
  * Only StudentHub's own finance users (a finance grant on an operator organization) reach any of
  * this; everyone else, a company's finance users included, gets not found before any file is read.
@@ -24,9 +27,9 @@ export const BANK_RESULTS_PATH = "/finance/bank-results";
 export interface BankResultsStore {
   files(actor: { principalId: string; actingAs: boolean }): Promise<readonly BankResultFileEntry[] | null>;
   file(actor: { principalId: string; actingAs: boolean }, fileId: string): Promise<BankResultFileDetail | null>;
-  submit(actor: { principalId: string; actingAs: boolean }, input: { format: BankResultFormat; contentSha256: string; cells: ReturnType<typeof readXlsxCells> & object }): Promise<BankResultSubmit>;
+  submit(actor: { principalId: string; actingAs: boolean }, input: { format: BankResultFormat; contentSha256: string; cells: BankCell[][] }): Promise<BankResultSubmit>;
   preview(actor: { principalId: string; actingAs: boolean }, fileId: string): Promise<BankResultApply>;
-  apply(actor: { principalId: string; actingAs: boolean }, fileId: string): Promise<BankResultApply>;
+  apply(actor: { principalId: string; actingAs: boolean }, fileId: string, reviewId: string): Promise<BankResultApply>;
 }
 export interface BankResultsHttp {
   viewer(sessionId: string | undefined): Promise<string | undefined>;
@@ -35,9 +38,10 @@ export interface BankResultsHttp {
   readonly origin: string | undefined;
   files(viewer: string): Promise<readonly BankResultFileEntry[] | null>;
   file(viewer: string, fileId: string): Promise<BankResultFileDetail | null>;
-  submit(viewer: string, format: BankResultFormat, bytes: Buffer): Promise<BankResultSubmit | { readonly kind: "unreadable" }>;
+  submit(viewer: string, format: BankResultFormat, bytes: Buffer): Promise<BankResultSubmit | { readonly kind: "workbook_refused"; readonly code: "unreadable" | "too_many_rows" | "too_large" }>;
   preview(viewer: string, fileId: string): Promise<BankResultApply>;
-  apply(viewer: string, fileId: string): Promise<BankResultApply>;
+  /** Applies only the reviewed outcome; a changed outcome comes back as a fresh review with nothing written. */
+  apply(viewer: string, fileId: string, reviewId: string): Promise<BankResultApply>;
 }
 
 export function createBankResultsHttp(ports: { sessions: Pick<SessionStore, "get">; store: BankResultsStore; allowed(viewer: string): Promise<boolean>; origin: string | undefined }): BankResultsHttp {
@@ -51,12 +55,12 @@ export function createBankResultsHttp(ports: { sessions: Pick<SessionStore, "get
     files: (viewer) => ports.store.files(actor(viewer)),
     file: (viewer, id) => ports.store.file(actor(viewer), id),
     async submit(viewer, format, bytes) {
-      const cells = readXlsxCells(bytes);
-      if (!cells) return { kind: "unreadable" };
-      return ports.store.submit(actor(viewer), { format, contentSha256: createHash("sha256").update(bytes).digest("hex"), cells });
+      const read = readXlsxCells(bytes);
+      if (read.kind === "refused") return { kind: "workbook_refused", code: read.code };
+      return ports.store.submit(actor(viewer), { format, contentSha256: createHash("sha256").update(bytes).digest("hex"), cells: read.cells });
     },
     preview: (viewer, id) => ports.store.preview(actor(viewer), id),
-    apply: (viewer, id) => ports.store.apply(actor(viewer), id),
+    apply: (viewer, id, reviewId) => ports.store.apply(actor(viewer), id, reviewId),
   };
 }
 
@@ -96,11 +100,12 @@ function fileHtml(file: BankResultFileDetail, preview: BankResultApply | null): 
   const head = `<main><h1>Bank result file</h1><p>${esc(FORMAT_NAME[file.format])}, uploaded ${esc(file.uploadedAt.slice(0, 16).replace("T", " "))} UTC, ${file.rowCount} rows.</p>`;
   const back = `<p><a href="${BANK_RESULTS_PATH}">All bank result files</a></p></main>`;
   if (file.status === "applied") return `${head}<p>Applied ${esc((file.appliedAt ?? "").slice(0, 16).replace("T", " "))} UTC.</p>${decisionsTable(file.decisions)}${back}`;
-  if (!preview || preview.kind !== "applied") return `${head}<p>You can't settle the transfers in this file.</p>${back}`;
+  if (!preview || (preview.kind !== "review" && preview.kind !== "changed")) return `${head}<p>You can't settle the transfers in this file.</p>${back}`;
+  const changed = preview.kind === "changed" ? `<p role="alert">What this file would do changed since you reviewed it, so nothing was applied. Review it again below.</p>` : "";
   const pays = preview.decisions.filter(d => d.kind === "pay").length;
   const shown = preview.decisions.map(d => ({ rowNumber: d.rowNumber, kind: d.kind, reason: d.kind === "hold" ? d.reason : null, lineIds: d.kind === "hold" ? d.lineIds : [d.lineId] }));
-  return `${head}<p>Applying this file marks ${pays} ${pays === 1 ? "line" : "lines"} paid and completes ${preview.completedTransferIds.length} ${preview.completedTransferIds.length === 1 ? "transfer" : "transfers"}. Held rows change nothing.</p>`
-    + decisionsTable(shown) + `<form method="post" action="${BANK_RESULTS_PATH}/${file.fileId}/apply"><button>Apply this file</button></form>${back}`;
+  return `${head}${changed}<p>Applying this file marks ${pays} ${pays === 1 ? "line" : "lines"} paid and completes ${preview.completedTransferIds.length} ${preview.completedTransferIds.length === 1 ? "transfer" : "transfers"}. Held rows change nothing.</p>`
+    + decisionsTable(shown) + `<form method="post" action="${BANK_RESULTS_PATH}/${file.fileId}/apply"><input type="hidden" name="review" value="${esc(preview.reviewId)}"><button>Apply this file</button></form>${back}`;
 }
 
 function json(res: ServerResponse, status: number, body: unknown): true {
@@ -125,6 +130,24 @@ async function bytes(req: IncomingMessage, limit: number): Promise<Buffer | unde
     chunks.push(b);
   }
   return Buffer.concat(chunks);
+}
+const WORKBOOK_REFUSED: Readonly<Record<"unreadable" | "too_many_rows" | "too_large", string>> = {
+  unreadable: "The file is not an .xlsx workbook that can be read, or its rows or cells are out of order or repeated.",
+  too_many_rows: `The file has more rows than a bank result file can have. Split it and upload each part.`,
+  too_large: `A cell or the whole sheet holds more text than a bank result file can have (at most ${XLSX_MAX_FIELD_CHARS} characters a cell).`,
+};
+/** The review identity an apply approves: `review=<64 hex>` as a form, or `{"review":"<64 hex>"}` as JSON. */
+export function reviewOf(body: Buffer | undefined, contentType: string | undefined): string | undefined {
+  if (!body) return undefined;
+  let review: unknown;
+  if (contentType?.startsWith("application/x-www-form-urlencoded")) {
+    const form = new URLSearchParams(body.toString("utf8"));
+    if ([...form.keys()].some((k) => k !== "review") || form.getAll("review").length !== 1) return undefined;
+    review = form.get("review");
+  } else if (contentType?.startsWith("application/json")) {
+    try { const parsed = JSON.parse(body.toString("utf8")); review = parsed && typeof parsed === "object" && Object.keys(parsed).length === 1 ? parsed.review : undefined; } catch { return undefined; }
+  }
+  return typeof review === "string" && /^[0-9a-f]{64}$/u.test(review) ? review : undefined;
 }
 /** Exactly the fields `format` and `file` of a multipart form; anything else is refused. */
 export function uploadForm(body: Buffer, contentType: string | undefined): { format: BankResultFormat; file: Buffer } | undefined {
@@ -179,19 +202,30 @@ export async function handleBankResults(req: IncomingMessage, res: ServerRespons
       const form = uploadForm(body, req.headers["content-type"]);
       if (!form) return reply(req, res, 400, "invalid_request", "Invalid upload", "Choose the bank and one .xlsx file.");
       const result = await service.submit(viewer, form.format, form.file);
-      if (result.kind === "unreadable") return reply(req, res, 422, "unreadable", "Not a workbook", "The file is not an .xlsx workbook that can be read.");
-      if (result.kind === "refused") return reply(req, res, 422, result.code, "Not a bank result file", result.code === "missing_headers"
-        ? `The file is missing the columns ${(result.missing ?? []).join(", ")}. Check the bank you chose.` : "The file has no rows to read.");
+      if (result.kind === "workbook_refused") return reply(req, res, 422, result.code, "Not a readable bank file", WORKBOOK_REFUSED[result.code]);
+      if (result.kind === "refused") return reply(req, res, result.code === "forbidden" ? 403 : 422, result.code, "Not a bank result file", result.code === "missing_headers"
+        ? `The file is missing the columns ${(result.missing ?? []).join(", ")}. Check the bank you chose.`
+        : result.code === "duplicate_headers" ? `The file names the columns ${(result.missing ?? []).join(", ")} more than once.`
+        : result.code === "too_many_rows" ? `The file has more than ${MAX_BANK_RESULT_ROWS} rows. Split it and upload each part.`
+        : result.code === "no_rows" ? "The file has no rows to read." : "The file could not be read.");
       if (wantsHtml(req.headers.accept)) return seeOther(res, `${BANK_RESULTS_PATH}/${result.fileId}`);
       return json(res, result.kind === "submitted" ? 201 : 200, result);
     }
     const id = (file ?? applying)![1]!;
     if (applying) {
-      req.resume();
-      const result = await service.apply(viewer, id);
+      const reviewId = reviewOf(await bytes(req, 1024), req.headers["content-type"]);
+      if (!reviewId) return reply(req, res, 400, "invalid_request", "Review the file first", "Open the file and review what applying it does, then apply it.");
+      const result = await service.apply(viewer, id, reviewId);
       if (result.kind === "refused") return result.code === "already_applied"
         ? reply(req, res, 409, "already_applied", "Already applied", "This file was already applied.")
         : result.code === "forbidden" ? reply(req, res, 403, "forbidden", "Not allowed", "You can't settle the transfers in this file.") : notFound(req, res);
+      if (result.kind === "changed") {
+        // Nothing was written: show the fresh review to approve again.
+        if (!wantsHtml(req.headers.accept)) return json(res, 409, { error: "review_changed", review: result });
+        const detail = await service.file(viewer, id);
+        if (!detail) return notFound(req, res);
+        writeHtml(res, 409, pageDocument("Bank result file", fileHtml(detail, result)), { "cache-control": "no-store" }); return true;
+      }
       if (wantsHtml(req.headers.accept) || req.headers["content-type"]?.startsWith("application/x-www-form-urlencoded")) return seeOther(res, `${BANK_RESULTS_PATH}/${id}`);
       return json(res, 200, result);
     }
