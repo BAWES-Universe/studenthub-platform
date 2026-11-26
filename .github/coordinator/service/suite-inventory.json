@@ -2782,10 +2782,10 @@
     "SHU71_ENDED_EPISODE_OWNING_SUPERVISOR: the worker that ran the review answers for it, whichever worker ticks",
     "COMMENT_CONTINUATIONS_FIXTURE: b760441e's history stays on the full SHU-304, one terminal receipt lands on SHU-711, a re-tick writes nothing, and a real 429 still backs off",
     "SHU71_ENDED_EPISODE_REVIEW_HELD: without positive evidence the review keeps the gate and nothing is written",
-    "CROSS_CARD_SETTLE_RACE: two card workers settling the same ended review at once under the shared lock publish exactly one HOLD",
-    "CROSS_CARD_SETTLE_HANDOFF: a coordinator that died mid-settle hands off deterministically and the HOLD is published once",
-    "CROSS_CARD_SETTLE_UNCERTAIN_PUBLISH: a HOLD write that lands and then fails is read back, never written twice",
-    "CROSS_CARD_SETTLE_LOCK_UNAVAILABLE: a lock held by a live coordinator past the wait, or one that cannot be created, writes nothing",
+    "CROSS_CARD_HOLD_ID: the HOLD's comment id is a stable UUID v4 bound to card, attempt and head",
+    "CROSS_CARD_SETTLE_RACE: two card workers settling the same ended review at once publish exactly one HOLD",
+    "CROSS_CARD_SETTLE_LOST_BEFORE_VISIBLE: a HOLD committed but not yet visible is never published a second time",
+    "CROSS_CARD_SETTLE_UNCERTAIN_PUBLISH: a HOLD write that lands and then fails is read back as published, never written twice",
     "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
     "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
     "SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick",
@@ -22471,19 +22471,19 @@
       "capabilities": []
     },
     {
-      "name": "CROSS_CARD_SETTLE_RACE: two card workers settling the same ended review at once under the shared lock publish exactly one HOLD",
+      "name": "CROSS_CARD_HOLD_ID: the HOLD's comment id is a stable UUID v4 bound to card, attempt and head",
       "capabilities": []
     },
     {
-      "name": "CROSS_CARD_SETTLE_HANDOFF: a coordinator that died mid-settle hands off deterministically and the HOLD is published once",
+      "name": "CROSS_CARD_SETTLE_RACE: two card workers settling the same ended review at once publish exactly one HOLD",
       "capabilities": []
     },
     {
-      "name": "CROSS_CARD_SETTLE_UNCERTAIN_PUBLISH: a HOLD write that lands and then fails is read back, never written twice",
+      "name": "CROSS_CARD_SETTLE_LOST_BEFORE_VISIBLE: a HOLD committed but not yet visible is never published a second time",
       "capabilities": []
     },
     {
-      "name": "CROSS_CARD_SETTLE_LOCK_UNAVAILABLE: a lock held by a live coordinator past the wait, or one that cannot be created, writes nothing",
+      "name": "CROSS_CARD_SETTLE_UNCERTAIN_PUBLISH: a HOLD write that lands and then fails is read back as published, never written twice",
       "capabilities": []
     },
     {

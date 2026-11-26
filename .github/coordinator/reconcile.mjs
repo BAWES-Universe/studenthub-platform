@@ -47,7 +47,7 @@ import { coordinatorJournalDirectory } from "./push-broker.mjs";
 import { renderWatchLine } from "./watch-progress.mjs";
 import { resolveCommentContinuations, continuationIssueIds, continuationsOf, mergeCommentThreads } from "./comment-continuations.mjs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1462,57 +1462,23 @@ export function endedEpisodeSupervisorSockets(env) {
 // HOLD receipt for attempt b760441e (04:00:55 and 04:00:56). Nothing shared
 // serialized them: each tick holds only its own worker's writer lock.
 //
-// A cross-card lifecycle write is therefore published under one box-wide lock
-// every coordinator takes (CROSS_CARD_SETTLE_LOCK, the coordinators share one
-// service user): under it the attempt's thread is read again and the receipt is
-// written only if its newest stage is still the one this tick settles. So a
-// HOLD another worker published, including one whose write threw or timed out
-// after it landed, is seen and never written twice. The lock holds its taker's
-// pid. A lock whose pid no longer runs (a tick that died mid-settle) is taken
-// over by one coordinator at a time, as the landing lock is (card-land.mjs
-// clearStaleLock): an exclusive `${lock}.takeover` marker, a second read, and
-// removal only of the same dead holder. A lock that stays held by a live
-// coordinator past the wait, or that cannot be created at all, leaves the
-// settle to a later tick: nothing is written without it.
-export const CROSS_CARD_SETTLE_LOCK = "/run/lock/shu-cross-card-settle.lock";
-export const CROSS_CARD_SETTLE_LIMITS = Object.freeze({ waitMs: 60_000, pollMs: 200 });
-function pidRunning(pid) {
-  try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; }
-}
-function clearStaleSettleLock(file) {
-  let holder;
-  try { holder = String(fs.readFileSync(file, "utf8")).trim(); } catch { return false; }
-  if (!/^[1-9]\d{0,9}$/.test(holder) || pidRunning(Number(holder))) return false;
-  const marker = `${file}.takeover`;
-  try { fs.writeFileSync(marker, String(process.pid), { flag: "wx", mode: 0o600 }); } catch { return false; }
-  try {
-    let again = null;
-    try { again = String(fs.readFileSync(file, "utf8")).trim(); } catch { return true; /* gone: another takeover finished */ }
-    if (again !== holder) return false;
-    try { fs.unlinkSync(file); } catch { return false; }
-    return true;
-  } finally {
-    try { fs.unlinkSync(marker); } catch { /* gone already */ }
-  }
-}
-export async function withCrossCardSettleLock(file, fn, { waitMs = CROSS_CARD_SETTLE_LIMITS.waitMs, pollMs = CROSS_CARD_SETTLE_LIMITS.pollMs } = {}) {
-  const until = Date.now() + waitMs;
-  for (;;) {
-    try {
-      fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
-      break;
-    } catch (error) {
-      if (error?.code !== "EEXIST") return { taken: false, reason: `${file} cannot be taken (${error?.code ?? "unknown"})` };
-    }
-    if (clearStaleSettleLock(file)) continue;
-    if (Date.now() >= until) return { taken: false, reason: `${file} stayed held by a live coordinator` };
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-  try {
-    return { taken: true, value: await fn() };
-  } finally {
-    try { fs.unlinkSync(file); } catch { /* gone already */ }
-  }
+// A cross-card HOLD is therefore published with an id of its own, derived from
+// the card, the attempt and the head it holds (Linear's CommentCreateInput
+// takes a client-supplied UUID v4 `id`). Every worker that settles the same
+// attempt sends the same id, so Linear holds at most one comment for it however
+// many publish, and a retry after a lost answer sends the same id again: no
+// unresolved-publication state is needed. Before the write the attempt's thread
+// is read again and nothing is sent when that comment, or any later stage for
+// the attempt, is already there. When the write fails, the thread is read back:
+// the comment there under its id means the HOLD was published (its answer was
+// lost, or another worker's write took the id first); otherwise the error
+// stands, and the next tick tries again with the same id.
+export function crossCardHoldCommentId({ issueId, attemptId, targetSha }) {
+  const bytes = Buffer.from(createHash("sha256").update(`coordinator-cross-card-hold\0${issueId}\0${attemptId}\0${targetSha}`).digest().subarray(0, 16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 // One answer from the supervisors asked. A supervisor that holds the attempt and
@@ -1938,11 +1904,21 @@ export const LINEAR_COMMENT_CREATE_MUTATION = `
     }
   }`;
 
+// A comment published under its own id (crossCardHoldCommentId): every writer
+// of the same record sends the same id.
+export const LINEAR_COMMENT_CREATE_WITH_ID_MUTATION = `
+  mutation CoordinatorPublish($id: String!, $issueId: String!, $body: String!) {
+    commentCreate(input: { id: $id, issueId: $issueId, body: $body }) {
+      success
+      comment { id }
+    }
+  }`;
+
 export const LINEAR_ISSUE_COMMENTS_QUERY = `
   query CoordinatorIssueComments($issueId: String!, $after: String) {
     issue(id: $issueId) {
       comments(first: 100, orderBy: createdAt, after: $after) {
-        nodes { body createdAt user { id displayName } }
+        nodes { id body createdAt user { id displayName } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -3355,28 +3331,39 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       const released = nextReceiptState(receipt, { type: "hold",
         reason: `${ENDED_EPISODE_REVIEW}: review from episode ${receipt.episode_id}, which has ended; released on ${disposition.evidence}; verdict not applied` }, { now: io.now });
       if (!released.accepted) continue;
-      // Every card worker may settle this receipt at once: the fresh read and
-      // the write happen under the box-wide settle lock, and the receipt is
-      // written only while the attempt's newest stage on Linear (its head is
-      // immutable) is still the one settled here (withCrossCardSettleLock).
-      const settled = await withCrossCardSettleLock(io.crossCardSettleLock ?? CROSS_CARD_SETTLE_LOCK, async () => {
-        let fresh;
-        try {
-          fresh = parseReceiptsFromComments(await fetchThreadComments({
-            issueIds: threadIdsFor.get(receipt.issue_id) ?? [linearIssueId], token: linearToken, fetchImpl }))
-            .filter((r) => r.attempt_id === receipt.attempt_id && r.target_sha === receipt.target_sha);
-        } catch (error) {
-          return `its thread could not be read again (${error?.code ?? "unreadable"})`;
-        }
+      // Every card worker may settle this receipt at once. The HOLD is
+      // published under its own id (crossCardHoldCommentId), so Linear keeps
+      // at most one, and the thread is read again first so a HOLD already
+      // there, or a later stage, is not sent at all.
+      const holdId = crossCardHoldCommentId({ issueId: receipt.issue_id, attemptId: receipt.attempt_id, targetSha: receipt.target_sha });
+      const readThread = () => fetchThreadComments({ issueIds: threadIdsFor.get(receipt.issue_id) ?? [linearIssueId], token: linearToken, fetchImpl });
+      const alreadySettled = (comments) => {
+        if (comments.some((comment) => comment?.id === holdId)) return `its HOLD is already published as comment ${holdId}`;
+        const fresh = parseReceiptsFromComments(comments).filter((r) => r.attempt_id === receipt.attempt_id && r.target_sha === receipt.target_sha);
         if (fresh.length === 0) return "its receipt is missing from the thread";
-        if (fresh.some((r) => r.stage !== receipt.stage)) return `its receipt has already moved to ${fresh.find((r) => r.stage !== receipt.stage).stage}`;
-        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
-        return null;
-      }, { waitMs: io.crossCardSettleLockWaitMs });
-      const skipped = settled.taken ? settled.value : settled.reason;
+        const moved = fresh.find((r) => r.stage !== receipt.stage);
+        return moved ? `its receipt has already moved to ${moved.stage}` : null;
+      };
+      let skipped;
+      try { skipped = alreadySettled(await readThread()); }
+      catch (error) { skipped = `its thread could not be read again (${error?.code ?? "unreadable"})`; }
       if (skipped) {
         if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} not written — ${skipped}`);
         continue;
+      }
+      try {
+        await sendLinear(LINEAR_COMMENT_CREATE_WITH_ID_MUTATION, { id: holdId, issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
+      } catch (error) {
+        // A budget or comment-cap refusal keeps its own handling in main.
+        if (["LINEAR_RATE_LIMITED", "LINEAR_COMMENT_CAP", "LINEAR_QUOTA_UNCLASSIFIED"].includes(error?.code)) throw error;
+        // The answer was lost, or another worker's write took this id first
+        // (Linear refuses a second comment with one id): the comment under its
+        // id in the thread means the HOLD is published. Otherwise the error
+        // stands, and the next tick sends the same id again.
+        let published = false;
+        try { published = (await readThread()).some((comment) => comment?.id === holdId); } catch { /* the write's own error stands */ }
+        if (!published) throw error;
+        if (io.stdout) io.stdout(`lifecycle: ${ENDED_EPISODE_REVIEW} ${describeReviewHolder(receipt)} HOLD comment ${holdId} read back after its write failed (${error?.code ?? "unknown"}); published once`);
       }
       lifecyclePersisted = true;
       lifecycleSlotReleased = true;
