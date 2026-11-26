@@ -64,7 +64,7 @@ export interface GrantSnapshot {
   readonly current: GrantScope | null;
   /** Number of admin grants held directly on the organization. */
   readonly adminCount: number;
-  /** G-02: every grant the target holds, read with `current`, for the review page's effect. */
+  /** G-02: every grant the target holds, read with `current` and `orgAncestors`, for the review page's effect. */
   readonly targetGrants?: readonly HeldGrant[];
 }
 

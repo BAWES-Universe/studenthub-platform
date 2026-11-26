@@ -1,6 +1,6 @@
 import type { GrantScope } from "@studenthub/contracts";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
-import type { HeldGrant } from "./grant-catalogue.js";
+import { grantChangeEffect, type GrantChangeEffect } from "./grant-catalogue-view.js";
 import {
   decideGrantChange,
   issueGrantToken,
@@ -44,8 +44,12 @@ export type GrantPreviewResult =
   | { readonly ok: true; readonly kind: "unchanged"; readonly current: GrantScope | null }
   | {
     readonly ok: true; readonly kind: "change"; readonly before: GrantScope | null; readonly after: GrantScope | null; readonly token: GrantToken;
-    /** G-02: the target's grants from the same snapshot the token's `before` came from, when the store reads them. */
-    readonly targetGrants?: readonly HeldGrant[];
+    /**
+     * G-02: what the change opens or closes for the target, worked out from the
+     * same snapshot as the token's `before` (their grants and the organization's
+     * ancestors), when the store reads the target's grants.
+     */
+    readonly effect?: GrantChangeEffect;
   }
   | { readonly ok: false; readonly reason: GrantRefusal };
 
@@ -77,7 +81,12 @@ export function createAccessGrantService(options: {
       });
       return {
         ok: true, kind: "change", before: decision.before, after: decision.after, token,
-        ...(snapshot.targetGrants ? { targetGrants: snapshot.targetGrants } : {}),
+        ...(snapshot.targetGrants ? {
+          effect: grantChangeEffect({
+            held: snapshot.targetGrants, change: { orgId: request.orgId, role: request.role, after: decision.after },
+            orgAncestors: snapshot.orgAncestors, operatorOrgIds,
+          }),
+        } : {}),
       };
     },
     async confirm(callerId, request, token, requestId) {

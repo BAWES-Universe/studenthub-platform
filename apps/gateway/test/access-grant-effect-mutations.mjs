@@ -15,9 +15,10 @@ try {
     { encoding: "utf8", timeout: 60_000 });
   assert.equal(run().status, 0, "grant effect mutation baseline");
   const page = "dist/apps/gateway/src/access/admin-access.js";
+  const service = "dist/packages/access/src/grant-service.js";
   const mutants = [
-    ["ignore the roles the person already holds", page, "held: result.targetGrants, change:", "held: [], change:"],
-    ["treat a removal as keeping the scope", page, "after: result.after }", "after: request.scope }"],
+    ["ignore the roles the person already holds", service, "held: snapshot.targetGrants,", "held: [],"],
+    ["treat a removal as keeping the scope", service, "after: decision.after },", "after: request.scope },"],
     ["leave the effect off the review page", page, "${input.effect ? renderGrantEffect(", "${false ? renderGrantEffect("],
     ["leave out what changes in the companies below", page, "${gained}${lost}${gainedBelow}${lostBelow}${belowNote}${none}", "${gained}${lost}${belowNote}${none}"],
   ];

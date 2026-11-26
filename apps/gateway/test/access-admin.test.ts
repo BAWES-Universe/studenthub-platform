@@ -326,7 +326,10 @@ test("G02_PREVIEW_EFFECT the review page says what the change opens or closes fo
   assert.match(covered, /Nothing in the <a class="text-link" href="\/admin\/access\/catalogue">grant catalogue<\/a> changes for Dana Candidate: their other roles already decide it\./);
   assert.doesNotMatch(covered, /will (no longer )?be able to:/);
   // The effect comes from the preview's own snapshot, never from a second read of the person's grants.
-  const stale = { ...ports, reads: { ...ports.reads, async grants() { throw new Error("the preview must not re-read grants"); } } };
+  // A second read that disagrees (grants refused, ancestry emptied) cannot skew it.
+  const stale = { ...ports, reads: { ...ports.reads,
+    async grants() { throw new Error("the preview must not re-read grants"); },
+    async organization(orgId: string) { const org = await ports.reads.organization(orgId); return org && { ...org, ancestors: ["skewed"] }; } } };
   const fromSnapshot = await (await (await serve(t, stale)).post("/admin/access/preview", "admin-1", grantForm)).text();
   assert.match(fromSnapshot, /Nothing in the <a class="text-link" href="\/admin\/access\/catalogue">grant catalogue<\/a> changes for Dana Candidate/);
   // Nothing to change: no effect section.

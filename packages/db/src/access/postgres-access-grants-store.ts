@@ -74,7 +74,21 @@ export class PostgresAccessGrantsStore {
   // --- Writes ---------------------------------------------------------------
 
   async snapshot(callerId: string, change: AccessGrantChange): Promise<AccessGrantSnapshotRow> {
-    return this.#snapshot(this.#pool, callerId, change, false);
+    // One read-only repeatable-read transaction: the current scope, the
+    // target's other grants and the organization's ancestors that the
+    // preview's token and its effect come from are one state.
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const snapshot = await this.#snapshot(client, callerId, change, false);
+      await client.query("COMMIT");
+      return snapshot;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   /**

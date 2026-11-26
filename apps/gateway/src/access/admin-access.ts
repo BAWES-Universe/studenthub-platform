@@ -7,7 +7,6 @@ import {
   REASON_MAX,
   grantCatalogue,
   grantCatalogueView,
-  grantChangeEffect,
   mayOpenAccessAdmin,
   mayPauseAccount,
   parseGrantChange,
@@ -554,10 +553,7 @@ export async function handleAccess(
         person, orgName: org.name, request,
         result: result.kind === "unchanged" ? { kind: "unchanged" } : result,
         // The effect comes from the snapshot that issued the token, never a second read.
-        ...(result.kind === "unchanged" || !result.targetGrants ? {} : { effect: grantChangeEffect({
-          held: result.targetGrants, change: { orgId: request.orgId, role: request.role, after: result.after },
-          orgAncestors: org.ancestors, ...(ports.operatorOrgIds ? { operatorOrgIds: ports.operatorOrgIds } : {}),
-        }) }),
+        ...(result.kind === "change" && result.effect ? { effect: result.effect } : {}),
       }));
       return true;
     }
