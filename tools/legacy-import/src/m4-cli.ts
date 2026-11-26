@@ -487,10 +487,7 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     const revision = env.M4_REVISION ?? "";
     if (!/^[0-9a-f]{40}$/.test(revision)) refuse("revision");
     const targetId = env.M4_TARGET_ID ?? "";
-    if (mode === "keycheck") return await keycheck(deps, revision, targetId, (status, code) => {
-      bound = { revision, target: targetId };
-      publish(status, code);
-    }, (t) => { target = t; });
+    if (mode === "keycheck") return await keycheck(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
     const operator = env.M4_OPERATOR_ORG_ID ?? "";
     if (!UUID.test(targetId) || !ORG_ID.test(operator)) refuse("destination");
     const expected = env.M4_EXPECTED_PLAN ?? "";
@@ -578,7 +575,8 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
  * Exit 0 when the check was set or the key opens it; 2 when refused (a mismatch is `civilKey`).
  */
 async function keycheck(deps: CliDeps, revision: string, targetId: string,
-  publish: (status: M4Receipt["status"], code?: string) => void, track: (target: WriteTarget) => void): Promise<number> {
+  publish: (status: M4Receipt["status"], code?: string) => void,
+  bind: (bound: { revision: string; artifact: string; target: string }) => void, track: (target: WriteTarget) => void): Promise<number> {
   const { env } = deps;
   const refuse = (code: string): number => {
     deps.error(`m4: refused.${code}`);
@@ -592,6 +590,9 @@ async function keycheck(deps: CliDeps, revision: string, targetId: string,
   const artifact = env.M4_ARTIFACT_DIGEST ?? "";
   const built = deps.provenance();
   if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
+  // From here every receipt names the verified build and the target it ran against: the evidence
+  // a staging write's review requires that the check was provisioned by this exact artifact.
+  bind({ revision, artifact, target: targetId });
   const target = deps.target(env);
   track(target);
   const marker = await target.marker();
@@ -600,6 +601,6 @@ async function keycheck(deps: CliDeps, revision: string, targetId: string,
   const result = await target.provisionCivilKeyCheck(key, targetId);
   if (result === "mismatch") return refuse("civilKey");
   publish("ok");
-  deps.log(`m4 keycheck ok invocation=${env.M4_INVOCATION} check=${result === "set" ? "set" : "matched"}`);
+  deps.log(`m4 keycheck ok invocation=${env.M4_INVOCATION} target=${targetId} revision=${revision} artifact=${artifact} check=${result === "set" ? "set" : "matched"}`);
   return 0;
 }

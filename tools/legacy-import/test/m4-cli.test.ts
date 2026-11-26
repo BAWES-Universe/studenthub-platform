@@ -611,12 +611,14 @@ test("keycheck provisions the target's check once, confirms the same key, and re
       const r = h.receipt("keycheck" as "plan");
       assert.equal(h.state.reads, 0);
       assert.ok(![CIVIL_KEY, DIGEST_KEY, Buffer.alloc(32, 9).toString("base64")].some((k) => JSON.stringify(r).includes(k) || h.out.join().includes(k)));
-      return { code, status: r.status, rcode: r.code, out: h.out, err: h.err };
+      return { code, status: r.status, rcode: r.code, out: h.out, err: h.err, receipt: r };
     } finally { cleanup(h); }
   };
   const first = await run({});
   assert.deepEqual([first.code, first.status], [0, "ok"]);
-  assert.ok(first.out.some((l) => l.endsWith("check=set")));
+  assert.ok(first.out.some((l) => l.endsWith(`target=${TARGET} revision=${REVISION} artifact=${ARTIFACT} check=set`)));
+  assert.deepEqual([first.receipt.kind, first.receipt.target, first.receipt.revision, first.receipt.artifact], ["keycheck", TARGET, REVISION, ARTIFACT],
+    "the receipt names the target and the exact verified build");
   assert.equal(db.civilKeyCheck, CIVIL_KEY);
   const again = await run({});
   assert.deepEqual([again.code, again.status], [0, "ok"]);
@@ -629,4 +631,14 @@ test("keycheck provisions the target's check once, confirms the same key, and re
   assert.deepEqual([elsewhere.code, elsewhere.rcode], [2, "target"]);
   const noKey = await run({ M4_CIVIL_ID_ENCRYPTION_KEY: undefined });
   assert.deepEqual([noKey.code, noKey.rcode], [2, "contactKeys"]);
+});
+
+test("a keycheck refused for provenance names no build: an unverified revision or artifact is never bound", async () => {
+  const h = harness({ db: { ...fakeDb(), civilKeyCheck: null }, provenance: { artifact: "f".repeat(64) } });
+  try {
+    assert.equal(await main(["keycheck"], h.deps), 2);
+    const r = h.receipt("keycheck" as "plan");
+    assert.deepEqual([r.status, r.code, r.revision, r.artifact, r.target], ["refused", "provenance", undefined, undefined, undefined]);
+    assert.deepEqual(h.calls, []);
+  } finally { cleanup(h); }
 });
