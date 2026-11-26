@@ -290,8 +290,13 @@ function renderGrantEffect(name: string, orgName: string, effect: GrantChangeEff
   const lost = effect.lost.length ? `<p>${e(name)} will no longer be able to:</p>${list(effect.lost)}` : "";
   const gainedBelow = effect.gainedBelow.length ? `<p>In the companies below ${e(orgName)}, ${e(name)} will be able to:</p>${list(effect.gainedBelow)}` : "";
   const lostBelow = effect.lostBelow.length ? `<p>In the companies below ${e(orgName)}, ${e(name)} will no longer be able to:</p>${list(effect.lostBelow)}` : "";
+  // The companies below are asked as one company directly below with no roles of
+  // its own: this is the scope's reach, not a list of the real sub-companies.
+  const belowNote = gainedBelow || lostBelow
+    ? `<p class="sidebar-note">“Companies below” shows what this role’s scope reaches. In a particular sub-company, another role ${e(name)} holds there may still give the same.</p>`
+    : "";
   const none = gained || lost || gainedBelow || lostBelow ? "" : `<p>Nothing in the <a class="text-link" href="/admin/access/catalogue">grant catalogue</a> changes for ${e(name)}: their other roles already decide it.</p>`;
-  return `<section class="grant-effect"><h2>What changes for them</h2>${gained}${lost}${gainedBelow}${lostBelow}${none}</section>`;
+  return `<section class="grant-effect"><h2>What changes for them</h2>${gained}${lost}${gainedBelow}${lostBelow}${belowNote}${none}</section>`;
 }
 
 export function renderGrantReview(input: {
@@ -539,7 +544,7 @@ export async function handleAccess(
         write(refusalStatus(result.reason), "Access", renderAccessRefusal(result.reason, back));
         return true;
       }
-      const [person, org, held] = await Promise.all([ports.reads.person(request.targetPrincipalId), ports.reads.organization(request.orgId), ports.reads.grants(request.targetPrincipalId)]);
+      const [person, org] = await Promise.all([ports.reads.person(request.targetPrincipalId), ports.reads.organization(request.orgId)]);
       if (!person) return false;
       if (!org) {
         write(404, "Access", renderAccessRefusal("unknown_organization", back));
@@ -548,8 +553,9 @@ export async function handleAccess(
       write(200, "Review access change", renderGrantReview({
         person, orgName: org.name, request,
         result: result.kind === "unchanged" ? { kind: "unchanged" } : result,
-        ...(result.kind === "unchanged" ? {} : { effect: grantChangeEffect({
-          held, change: { orgId: request.orgId, role: request.role, after: result.after },
+        // The effect comes from the snapshot that issued the token, never a second read.
+        ...(result.kind === "unchanged" || !result.targetGrants ? {} : { effect: grantChangeEffect({
+          held: result.targetGrants, change: { orgId: request.orgId, role: request.role, after: result.after },
           orgAncestors: org.ancestors, ...(ports.operatorOrgIds ? { operatorOrgIds: ports.operatorOrgIds } : {}),
         }) }),
       }));

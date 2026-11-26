@@ -56,10 +56,12 @@ export interface GrantCatalogueView {
   readonly rows: readonly CatalogueRow[];
 }
 
-const CALLER = "catalogue-caller";
-const TARGET = "catalogue-target";
-const COMPANY = "catalogue-company";
-const CHILD = "catalogue-child-company";
+// Synthetic ids hold a space, which no principal or organization id may
+// (grant-change.ts), so a probe can never be mistaken for a real one.
+const CALLER = "catalogue caller";
+const TARGET = "catalogue target";
+const COMPANY = "catalogue company";
+const CHILD = "catalogue child company";
 
 /**
  * Where the company-level questions are asked: a real company (with its

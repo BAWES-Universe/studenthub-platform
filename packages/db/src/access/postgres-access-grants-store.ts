@@ -27,6 +27,8 @@ export interface AccessGrantSnapshotRow {
   readonly orgAncestors: readonly string[];
   readonly current: Scope | null;
   readonly adminCount: number;
+  /** Every grant the target holds; `current` is taken from the same read when nothing is locked. */
+  readonly targetGrants: readonly { readonly orgId: string; readonly role: string; readonly scope: string }[];
 }
 
 export type AccessGrantStoreDecision<R extends string = string> =
@@ -178,9 +180,16 @@ export class PostgresAccessGrantsStore {
     const target = await db.query("SELECT 1 FROM principals WHERE id = $1", [change.targetPrincipalId]);
     const live = await organizationLive(db, change.orgId, lock);
     const ancestors = live ? await ancestorsOf(db, [change.orgId]) : new Map<string, string[]>();
-    const current = await db.query<{ scope: Scope }>(
-      `SELECT scope FROM grants WHERE principal_id = $1 AND org_id = $2 AND role = $3${lock ? " FOR UPDATE" : ""}`,
-      [change.targetPrincipalId, change.orgId, change.role]);
+    const held = await db.query<{ org_id: string; role: string; scope: Scope }>(
+      "SELECT org_id, role, scope FROM grants WHERE principal_id = $1 ORDER BY id", [change.targetPrincipalId]);
+    // A preview takes `current` from the same read as the target's grants, so the
+    // review page's effect and the token's `before` describe one state. Apply
+    // locks the row and re-reads it.
+    const current = lock
+      ? (await db.query<{ scope: Scope }>(
+        "SELECT scope FROM grants WHERE principal_id = $1 AND org_id = $2 AND role = $3 FOR UPDATE",
+        [change.targetPrincipalId, change.orgId, change.role])).rows[0]?.scope ?? null
+      : held.rows.find((row) => row.org_id === change.orgId && row.role === change.role)?.scope ?? null;
     const admins = await db.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM grants WHERE org_id = $1 AND role = 'admin'", [change.orgId]);
     return Object.freeze({
@@ -188,7 +197,8 @@ export class PostgresAccessGrantsStore {
       targetExists: Boolean(target.rowCount),
       orgLive: live,
       orgAncestors: Object.freeze(ancestors.get(change.orgId) ?? []),
-      current: current.rows[0]?.scope ?? null,
+      current,
+      targetGrants: Object.freeze(held.rows.map((row) => Object.freeze({ orgId: row.org_id, role: row.role, scope: row.scope }))),
       adminCount: admins.rows[0]?.n ?? 0,
     });
   }
