@@ -8,11 +8,11 @@ import { isLegacyDocumentKey, legacyBucketReader, type GetObjectSender } from ".
 const config = { bucket: "legacy-bucket", region: "eu-west-1", accessKeyId: "test-id", secretAccessKey: "test-secret" };
 const MAX = 16;
 
-type Answer = { status?: number; name?: string; body?: Buffer[] | null; range?: string; length?: number; explode?: boolean };
+type Answer = { status?: number; name?: string; body?: Buffer[] | null; range?: string; length?: number; explode?: boolean; stall?: boolean };
 const sdkError = (status: number, name: string) => Object.assign(new Error("Secret detail"), { name, $metadata: { httpStatusCode: status } });
 
 /** A fake S3 that records each command and serves `answers` by key. */
-function store(answers: Record<string, Answer>) {
+function store(answers: Record<string, Answer>, timeoutMs?: number) {
   const sent: { name: string; input: Record<string, unknown> }[] = [];
   const destroyed: string[] = [];
   const sender: GetObjectSender = {
@@ -24,13 +24,17 @@ function store(answers: Record<string, Answer>) {
       if (!a || a.status) throw sdkError(a?.status ?? 404, a?.name ?? "NoSuchKey");
       const key = input.Key as string;
       const body = a.body === null ? undefined : {
-        async *[Symbol.asyncIterator]() { for (const c of a.body ?? []) yield c; if (a.explode) throw new Error("Secret stream detail"); },
+        async *[Symbol.asyncIterator]() {
+          for (const c of a.body ?? []) yield c;
+          if (a.stall) await new Promise(() => undefined);
+          if (a.explode) throw new Error("Secret stream detail");
+        },
         destroy() { destroyed.push(key); },
       };
       return { Body: body, ContentRange: a.range, ContentLength: a.length };
     },
   };
-  return { reader: legacyBucketReader(config, sender), sent, destroyed };
+  return { reader: legacyBucketReader({ ...config, ...(timeoutMs ? { timeoutMs } : {}) }, sender), sent, destroyed };
 }
 
 test("a read is one ranged GetObject that asks for at most maxBytes + 1 bytes", async () => {
@@ -39,10 +43,11 @@ test("a read is one ranged GetObject that asks for at most maxBytes + 1 bytes", 
   assert.deepEqual(sent, [{ name: "GetObjectCommand", input: { Bucket: "legacy-bucket", Key: "photos/a.png", Range: `bytes=0-${MAX}` } }]);
 });
 
-test("only a 404 is missing; a 403 or any other failure is a failed read with a fixed message", async () => {
-  const { reader } = store({ "photos/denied.png": { status: 403, name: "AccessDenied" }, "photos/busy.png": { status: 503, name: "SlowDown" } });
+test("only NoSuchKey is missing; a 403, an absent bucket or any other failure is a failed read with a fixed message", async () => {
+  const { reader } = store({ "photos/denied.png": { status: 403, name: "AccessDenied" }, "photos/busy.png": { status: 503, name: "SlowDown" },
+    "photos/nobucket.png": { status: 404, name: "NoSuchBucket" }, "photos/bare404.png": { status: 404, name: "NotFound" } });
   assert.deepEqual(await reader.read("photos/absent.png", MAX), { kind: "missing" });
-  for (const key of ["photos/denied.png", "photos/busy.png"]) {
+  for (const key of ["photos/denied.png", "photos/busy.png", "photos/nobucket.png", "photos/bare404.png"]) {
     await assert.rejects(reader.read(key, MAX), (e: Error) => e.message === "m2.bucket.readFailed" && !String(e.stack).includes("Secret"));
   }
 });
@@ -51,7 +56,7 @@ test("an object over the limit is tooLarge from its stated total, or as soon as 
   const { reader, destroyed } = store({
     "photos/big.png": { body: [Buffer.alloc(MAX + 1)], range: `bytes 0-${MAX}/${MAX * 100}` },
     "photos/liar.png": { body: [Buffer.alloc(10), Buffer.alloc(10), Buffer.alloc(10)], range: "bytes 0-9/10" },
-    "photos/norange.png": { body: [Buffer.alloc(MAX), Buffer.alloc(1)] },
+    "photos/norange.png": { body: [Buffer.alloc(MAX), Buffer.alloc(1)], length: MAX * 2 },
     "photos/exact.png": { body: [Buffer.alloc(MAX)], range: `bytes 0-${MAX - 1}/${MAX}` },
   });
   assert.deepEqual(await reader.read("photos/big.png", MAX), { kind: "tooLarge" });
@@ -59,6 +64,35 @@ test("an object over the limit is tooLarge from its stated total, or as soon as 
   assert.deepEqual(await reader.read("photos/norange.png", MAX), { kind: "tooLarge" });
   assert.deepEqual(await reader.read("photos/exact.png", MAX), { kind: "found", bytes: Buffer.alloc(MAX) });
   assert.deepEqual(destroyed, ["photos/big.png", "photos/liar.png", "photos/norange.png"]);
+});
+
+test("a full unranged answer is found when its length matches", async () => {
+  const { reader } = store({ "photos/full.png": { body: [Buffer.from("abc"), Buffer.from("de")], length: 5 } });
+  assert.deepEqual(await reader.read("photos/full.png", MAX), { kind: "found", bytes: Buffer.from("abcde") });
+});
+
+test("a malformed, nonzero, partial or lengthless answer below the limit is a failed read", async () => {
+  const five = [Buffer.from("abcde")];
+  const answers: Record<string, Answer> = {
+    "photos/truncated.png": { body: [Buffer.from("abc")], range: "bytes 0-2/5" },
+    "photos/offset.png": { body: five, range: "bytes 1-5/6" },
+    "photos/star.png": { body: five, range: "bytes */5" },
+    "photos/words.png": { body: five, range: "bytes 0-4/five" },
+    "photos/backwards.png": { body: five, range: "bytes 0-5/5" },
+    "photos/garbage.png": { body: five, range: "Secret" },
+    "photos/nolength.png": { body: five },
+  };
+  const { reader, destroyed } = store(answers);
+  for (const key of Object.keys(answers)) {
+    await assert.rejects(reader.read(key, MAX), (e: Error) => e.message === "m2.bucket.readFailed", key);
+  }
+  assert.deepEqual(destroyed, Object.keys(answers));
+});
+
+test("one deadline covers the request and the body: a stalled body fails the read", async () => {
+  const { reader, destroyed } = store({ "photos/stalled.png": { body: [Buffer.from("ab")], range: "bytes 0-4/5", stall: true } }, 50);
+  await assert.rejects(reader.read("photos/stalled.png", MAX), (e: Error) => e.message === "m2.bucket.readFailed");
+  assert.deepEqual(destroyed, ["photos/stalled.png"]);
 });
 
 test("a short, broken or bodiless answer is a failed read; an empty object is found and empty", async () => {

@@ -145,8 +145,9 @@ Two active rows of one kind whose names normalize the same become one item: the 
 - **Bucket adapter** (`tools/legacy-import/src/m2-bucket.ts`, `legacyBucketReader`). It is the read-only adapter behind `LegacyObjectReader`:
   - It only ever sends GetObject. There is no list, put, copy, delete, ACL or presigned URL.
   - Each read asks for `bytes=0-<maxBytes>`, so the store sends at most `maxBytes + 1` bytes. The stream is cut once more than `maxBytes` arrive, whatever the store sends. An object whose stated total is over the limit is `tooLarge` without being read.
-  - Only a 404 is `missing`. A 403 or any other failure is a failed read, because S3 answers 403 for an absent key when the credential lacks ListBucket. The read credential therefore needs GetObject and ListBucket on this bucket only.
-  - A short, broken or bodiless answer is a failed read. Errors leave as a fixed message only.
+  - Only `NoSuchKey` is `missing`. A 403, an absent bucket or any other failure is a failed read, because S3 answers 403 for an absent key when the credential lacks ListBucket. The read credential therefore needs GetObject and ListBucket on this bucket only.
+  - Below the limit an answer must be the whole object from offset 0. A malformed, nonzero or partial Content-Range, a full answer without a length, or a short, broken or bodiless answer is a failed read.
+  - One deadline covers the request and draining its body, so a stalled body fails the read. Errors leave as a fixed message only.
   - Keys must have the mapper's shape: one of legacy's three prefixes, no path step, no control character. Any other key is refused before a request.
   - The bucket, region and credential come from the staging host's run environment, never from the repository.
 - **Run input** (`tools/legacy-import/src/m2-run.ts`). Ownership is decided over every candidate row, so the input is proved complete before any object is read:
