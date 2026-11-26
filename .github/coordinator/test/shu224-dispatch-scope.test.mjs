@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-739", "SHU-740"], "SHU-224: the scope names the current card queue (SHU-312): SHU-739 (store detail page) and SHU-740 (reference data entry page), new lane 1 cards that share no path; SHU-734 and SHU-735 are not in the scope");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-735", "SHU-740", "SHU-748", "SHU-749"], "SHU-224: the scope names the current card queue (SHU-312): SHU-735 (certificate detail page) is re-queued under its own id so its unreviewed build is reviewed, SHU-740 (reference data entry page) stays while its review runs, and SHU-748 (company note page) and SHU-749 (company contracts page) are new lane 1 cards; none shares a path; SHU-739 has landed, so it is not in the scope");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -1153,6 +1153,31 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
     for (const other of ["SHU-734", "SHU-735"]) assert.ok(!contracts[id].initial_build_paths.some((path) => contracts[other].initial_build_paths.includes(path)), `SHU-224: ${id} and ${other} share no path`);
   }
   assert.ok(!contracts["SHU-739"].initial_build_paths.some((path) => contracts["SHU-740"].initial_build_paths.includes(path)), "SHU-224: SHU-739 and SHU-740 share no path");
+  // SHU-735 is re-queued under its own id with its contract unchanged: its
+  // build was never reviewed. SHU-748 (company note page, O-06) and SHU-749
+  // (company contracts page, O-12) each add one read path to an existing
+  // handler. Neither waits, neither adds a route, and no two queued cards
+  // share a path.
+  assert.equal(config.card_lanes.filter((entry) => entry.id === "SHU-735").length, 1, "SHU-224: SHU-735 keeps its one lane");
+  assert.deepEqual(config.card_lanes.find((entry) => entry.id === "SHU-735").initial_build_paths, [...contracts["SHU-735"].initial_build_paths], "SHU-224: SHU-735's lane still matches its contract");
+  for (const [id, token, file] of [["SHU-748", "NOTEDET_", "apps/gateway/src/organizations/notes-page.ts"], ["SHU-749", "ORGCON_", "apps/gateway/src/pay-contracts-http.ts"]]) {
+    const lane = config.card_lanes.find((entry) => entry.id === id);
+    assert.equal(lane.after, undefined, `SHU-224: ${id} waits on nothing`);
+    assert.equal(lane.authorization_ref, id, `SHU-224: ${id}'s lane authorizes itself`);
+    assert.deepEqual(lane.initial_build_paths, [...contracts[id].initial_build_paths], `SHU-224: ${id}'s lane matches its contract`);
+    assert.deepEqual(lane.revision_paths, [...contracts[id].revision_paths], `SHU-224: ${id}'s revision paths match its contract`);
+    assert.equal(contracts[id].workspace_mode, "repo", `SHU-224: ${id} builds in the whole tree`);
+    assert.equal(contracts[id].initial_build_paths[0], file, `SHU-224: ${id} edits one product file`);
+    assert.equal(contracts[id].initial_build_paths.filter((path) => path.startsWith("apps/gateway/src/")).length, 1, `SHU-224: ${id} edits only one source file`);
+    assert.match(contracts[id].brief, new RegExp(`^Card ${id}:`), `SHU-224: ${id}'s brief names its own card`);
+    assert.ok(contracts[id].brief.endsWith(contracts[id].acceptance), `SHU-224: ${id}'s brief ends with its acceptance`);
+    assert.match(contracts[id].acceptance, new RegExp(`\\(1\\) ${token}`), `SHU-224: ${id}'s acceptance names its tests`);
+    assert.doesNotMatch(contracts[id].brief, /git fetch|origin coordinator/, `SHU-224: ${id} never asks for the network`);
+    assert.ok(!contracts[id].initial_build_paths.some((path) => path.startsWith("apps/gateway/src/routes/") || path.startsWith("apps/gateway/src/wiring/") || path.startsWith("packages/") || path.endsWith("routes-order.test.ts")), `SHU-224: ${id} adds no route, wiring or package change`);
+  }
+  const queued = config.dispatch_scope.issue_ids;
+  for (const [i, id] of queued.entries()) for (const other of queued.slice(i + 1)) assert.ok(!contracts[id].initial_build_paths.some((path) => contracts[other].initial_build_paths.includes(path)), `SHU-224: ${id} and ${other} share no path`);
+  assert.match(contracts["SHU-749"].acceptance, /\(2\) ORGCON_COMPANY_TERMS: the page shows only the company's side of each contract/, "SHU-224: SHU-749's page shows only the company's terms");
   assert.equal(contracts["SHU-641"].brief, contracts["SHU-636"].brief.replace(/\bSHU-(635|636)\b/g, (id) => ({ "SHU-635": "SHU-640", "SHU-636": "SHU-641" })[id]).replace(contracts["SHU-636"].acceptance.replace(/\bSHU-(635|636)\b/g, (id) => ({ "SHU-635": "SHU-640", "SHU-636": "SHU-641" })[id]), contracts["SHU-641"].acceptance), "SHU-224: SHU-641's brief is SHU-636's with only the ids and the re-queue sentence changed");
   assert.doesNotMatch(contracts["SHU-581"].brief + contracts["SHU-581"].acceptance, /waits on SHU-576/, "SHU-224: SHU-581 does not wait on the landed rules card");
   // SHU-564 is appended after SHU-563 and waits on nothing.

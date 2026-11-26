@@ -54,8 +54,10 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-739",
-      "SHU-740"
+      "SHU-735",
+      "SHU-740",
+      "SHU-748",
+      "SHU-749"
     ]
   },
   "adapter_pause_map": {},
@@ -10325,6 +10327,40 @@
         "apps/gateway/src/reference-data-page.ts",
         "apps/gateway/test/reference-data-entry.test.ts",
         "apps/gateway/test/reference-data-entry-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-748",
+      "authorization_ref": "SHU-748",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-06 note page: the read-only company note page at /organization/:orgId/notes/:noteId over the existing organizationNotes list(); edits only notes-page.ts and its own tests, adds no route. It waits on nothing and shares no path with SHU-735, SHU-740 or SHU-749.",
+      "initial_build_paths": [
+        "apps/gateway/src/organizations/notes-page.ts",
+        "apps/gateway/test/organization-note-detail.test.ts",
+        "apps/gateway/test/organization-note-detail-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/organizations/notes-page.ts",
+        "apps/gateway/test/organization-note-detail.test.ts",
+        "apps/gateway/test/organization-note-detail-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-749",
+      "authorization_ref": "SHU-749",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-12: the read-only company pay contracts page at /organization/:orgId/contracts over the existing payContracts listCompany(), company terms only; edits only pay-contracts-http.ts and its own tests, adds no route. It waits on nothing and shares no path with SHU-735, SHU-740 or SHU-748.",
+      "initial_build_paths": [
+        "apps/gateway/src/pay-contracts-http.ts",
+        "apps/gateway/test/organization-contracts-page.test.ts",
+        "apps/gateway/test/organization-contracts-page-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/pay-contracts-http.ts",
+        "apps/gateway/test/organization-contracts-page.test.ts",
+        "apps/gateway/test/organization-contracts-page-mutations.mjs"
       ]
     }
   ],
