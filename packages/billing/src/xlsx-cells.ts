@@ -110,6 +110,7 @@ function firstSheet(zip: Buffer, all: Map<string, Entry>): string | null {
  * so a truncated part is never read as a shorter one.
  */
 interface XmlHandler { open(name: string, tag: string): boolean; close(name: string): boolean; text(raw: string): boolean }
+const START_TAG = /^[A-Za-z_][\w.:-]*(?:\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"[^"<]*"|'[^'<]*'))*\s*\/?$/u;
 const localName = (qualified: string) => qualified.slice(qualified.indexOf(":") + 1);
 function scanXml(xml: string, handler: XmlHandler): boolean {
   const stack: string[] = [];
@@ -135,13 +136,16 @@ function scanXml(xml: string, handler: XmlHandler): boolean {
     const inner = xml.slice(lt + 1, gt);
     at = gt + 1;
     if (inner.startsWith("/")) {
-      const name = inner.slice(1).trim();
+      const name = /^\/([A-Za-z_][\w.:-]*)\s*$/u.exec(inner)?.[1];
+      if (!name) return false;
       if (stack.pop() !== name || !handler.close(localName(name))) return false;
       continue;
     }
+    // A start tag is a name and well-formed attributes only: a stray `<` (a tag cut short) is malformed.
+    if (!START_TAG.test(inner)) return false;
     const selfClosing = inner.endsWith("/");
-    const name = /^[A-Za-z_][\w.:-]*/u.exec(inner)?.[0];
-    if (!name || (stack.length === 0 && rooted)) return false;
+    const name = /^[A-Za-z_][\w.:-]*/u.exec(inner)![0];
+    if (stack.length === 0 && rooted) return false;
     rooted = true;
     const tag = selfClosing ? inner.slice(0, -1) : inner;
     if (!handler.open(localName(name), tag)) return false;

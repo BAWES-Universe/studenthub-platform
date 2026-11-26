@@ -139,6 +139,8 @@ test("XLSX_WELL_FORMED a truncated or malformed sheet is refused, shared strings
   for (const cut of [full.indexOf("<row r=\"4\">") + 12, full.indexOf("</row></sheetData>"), full.length - 13, full.length - 1])
     assert.equal(sheet(full.slice(0, cut)), "unreadable", `cut at ${cut}`);
   assert.equal(sheet(`<worksheet><sheetData><row r="1"><c><v>1</c></v></row></sheetData></worksheet>`), "unreadable", "crossed tags");
+  for (const bad of [`<row r="4" <c r="A4"/>`, `<row r="4"><c r="A4" <v>1</v></c></row>`, `<row r="4" r2=x/>`, `<row r="4"></ row>`])
+    assert.equal(sheet(`<worksheet><sheetData><row r="1"><c><v>1</v></c></row>${bad}</sheetData></worksheet>`), "unreadable", bad);
   assert.equal(sheet(`<worksheet><sheetData><row r="1"><c><v><![CDATA[1]]></v></c></row></sheetData></worksheet>`), "unreadable", "CDATA");
   assert.equal(sheet(`<worksheet><sheetData></sheetData></worksheet><worksheet/>`), "unreadable", "a second root");
   assert.equal(sheet(`<worksheet/>`), "unreadable", "no sheetData");
@@ -150,4 +152,18 @@ test("XLSX_WELL_FORMED a truncated or malformed sheet is refused, shared strings
   const started = Date.now();
   assert.deepEqual(sheet(`<worksheet><!--${"<row>".repeat(100_000)}--><sheetData><row r="1"><c><v>1</v></c></row></sheetData>${"<!-- <row> -->".repeat(50_000)}</worksheet>`), [["1"]]);
   assert.ok(Date.now() - started < 2000, `linear scan, took ${Date.now() - started} ms`);
+});
+
+test("XLSX_CUT_TAG a start tag cut short after valid result rows refuses the whole file, so earlier rows are never applied alone", async () => {
+  const first = ["Status", "Status Description", "Debit Narrative", "Credit Narrative"];
+  const head = [...first, ...AUB_RESULT_COLUMNS.filter((c) => !first.includes(c))];
+  const headXml = head.map((h) => `<c t="inlineStr"><is><t>${h}</t></is></c>`).join("");
+  const row = (r: number, cells: string[]) => `<row r="${r}">${cells.map((v) => `<c t="inlineStr"><is><t>${v}</t></is></c>`).join("")}</row>`;
+  const body = `<row r="2">${headXml}</row>${row(3, ["SUCCESS", "REF-1", "x", "L-1"])}`;
+  const read = (tail: string) => cellsOf(zip({ ...book(""), "xl/worksheets/sheet1.xml": `<worksheet><sheetData>${body}${tail}</sheetData></worksheet>` }));
+  const whole = read(row(4, ["SUCCESS", "REF-2", "x", "L-2"]));
+  assert.ok(Array.isArray(whole));
+  const sheetRead = readBankResultSheet("aub", whole);
+  assert.deepEqual(sheetRead.kind === "read" && sheetRead.rows.map((r) => r.lineRef), ["L-1", "L-2"]);
+  assert.equal(read(`<row r="4" <c r="A4"/>`), "unreadable");
 });
