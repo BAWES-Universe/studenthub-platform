@@ -209,8 +209,13 @@ organization's own documents. `PostgresDocumentPartitions` and
   walk by (person, document id), at most 1000 rows per query plus one look-ahead
   row, over only people whose slot history has an active slot of those types; it
   returns only each current document's metadata, never retired versions, journals
-  or blob references, and the OCR sweep reads every page, so no photo is dropped
-  or repeated. The operator cleanup count (`heldCount`) returns one exact number.
+  or blob references. The OCR sweep no longer lists photos in the process at all:
+  on this store it reads the view `candidate_current_documents` (migration 0663,
+  driven by active slots) inside its own REPEATABLE READ transaction, in one
+  statement, into a temporary table, so it sees one snapshot of every person and
+  no photo row reaches the worker; the expiry fallback looks up one person's back
+  photo. SWEEP-01 measures it at 50,000 people (100,000 photos). The operator
+  cleanup count (`heldCount`) returns one exact number.
   The 192 MiB hydration and 16 MiB metadata limits now apply per owner.
 - **Slot lock and history.** An owner's row is created empty on first use and
   locked `FOR UPDATE`, so upload, replace, remove and promotion of that owner's
@@ -239,6 +244,16 @@ organization's own documents. `PostgresDocumentPartitions` and
   under its old name: its document reads and writes fail `unavailable` rather
   than serve or change stale state, until it is replaced. Deploy the build with
   the migration; nothing outside these tables reads the old name.
+- **Quiesced handover, checked.** `store-handover-cli.js precheck`, run with the
+  gateway and worker stopped and before 0661, refuses (`locked`) while any other
+  transaction holds or awaits a lock on any relation in the store's schema (an
+  idle transaction that touched any table there still holds one) or a prepared
+  transaction exists, and prints the old row's element counts and digest only.
+  `postcheck <precheck file>`, run after 0661 and before the new build takes
+  traffic, requires 0661 recorded, the store authoritative with no write yet, the
+  frozen old row at exactly the precheck's digest (`changedSinceCheck` catches a
+  write that slipped in between) and the owner rows holding exactly the counted
+  elements (`countMismatch`). Both read only. HANDOVER-01 covers each refusal.
 - **Rollback boundary, durable and checkable.** `candidate_document_store_authority`
   records `first_write_at` in the same transaction as the first owner write;
   every writer holds that row (exclusively until the first write, shared after).

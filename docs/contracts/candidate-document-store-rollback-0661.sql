@@ -18,6 +18,9 @@ DROP TRIGGER candidate_document_snapshot_frozen ON candidate_document_snapshot_0
 DROP TRIGGER candidate_document_snapshot_frozen_truncate ON candidate_document_snapshot_0661_rollback;
 DROP FUNCTION reject_candidate_document_snapshot_write();
 ALTER TABLE candidate_document_snapshot_0661_rollback RENAME TO candidate_document_snapshot;
+-- The current-documents view (0663) reads the slot history; it goes first, with its ledger row.
+DROP VIEW IF EXISTS candidate_current_documents;
+DELETE FROM schema_migrations WHERE version = '0663_candidate_current_documents';
 DROP TABLE candidate_document_slots;
 DROP FUNCTION reject_candidate_document_slot_delete();
 DROP TABLE candidate_document_ids;
