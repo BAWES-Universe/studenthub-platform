@@ -404,7 +404,7 @@ export class PostgresAccessGrantsStore {
     const client = await this.#pool.connect();
     let broken = false;
     try {
-      await client.query("BEGIN");
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
       // A store never moves company (0202's trigger), so its company can be
       // read before the locks; the locks are then the ones an invitation
       // acceptance and a team-page removal take: the tree, the company, both
@@ -431,14 +431,14 @@ export class PostgresAccessGrantsStore {
         await client.query("ROLLBACK");
         return { kind: "refused", reason: "state_changed" };
       }
-      const decision = input.decide(snapshot);
-      if (decision.kind !== "apply") {
+      const verdict = input.decide(snapshot);
+      if (verdict.kind !== "apply") {
         await client.query("ROLLBACK");
-        return decision;
+        return verdict;
       }
       const store = snapshot.store!;
       const at = new Date(input.now());
-      if (decision.after) {
+      if (verdict.after) {
         await client.query(
           "INSERT INTO store_manager_access (id, org_id, store_id, principal_id, granted_by, created_at) VALUES ($1, $2, $3, $4, $5, $6)",
           [randomUUID(), store.orgId, store.storeId, request.targetPrincipalId, callerId, at]);
@@ -451,9 +451,9 @@ export class PostgresAccessGrantsStore {
       await client.query(
         `INSERT INTO access_grant_events (target_principal_id, org_id, role, scope, action, actor_principal_id, reason, store_id, token_id)
          VALUES ($1, $2, 'store-manager', 'store', $3, $4, $5, $6, $7)`,
-        [request.targetPrincipalId, store.orgId, decision.after ? "grant" : "revoke", callerId, request.reason, store.storeId, input.tokenId]);
+        [request.targetPrincipalId, store.orgId, verdict.after ? "grant" : "revoke", callerId, request.reason, store.storeId, input.tokenId]);
       await client.query("COMMIT");
-      return { kind: "applied", before: decision.before, after: decision.after };
+      return { kind: "applied", before: verdict.before, after: verdict.after };
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch { broken = true; }
       if ((error as { code?: string }).code === "23505" &&

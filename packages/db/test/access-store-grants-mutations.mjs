@@ -10,6 +10,8 @@ if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required for the
 const store = new URL("../dist/access/postgres-access-grants-store.js", import.meta.url);
 const suite = fileURLToPath(new URL("../../../dist/packages/db/test/postgres-access-store-grants.test.js", import.meta.url));
 const mutations = [
+  ["write the access before the event outside a transaction", "G02_STORE_ATOMIC",
+    'await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");', 'await client.query("SELECT 1");'],
   ["confirm over a change made meanwhile", "G02_STORE_GUARDS",
     "if (snapshot.held !== input.expectedHeld)", "if (false)"],
   ["ignore a pause made meanwhile", "G02_STORE_GUARDS",
@@ -17,7 +19,7 @@ const mutations = [
   ["give access at a removed store", "G02_STORE_GUARDS",
     'row.status === "active" &&', ""],
   ["record a revoke as a grant", "G02_STORE_ATOMIC",
-    'decision.after ? "grant" : "revoke"', '"grant"'],
+    'verdict.after ? "grant" : "revoke"', '"grant"'],
   ["offer removed stores in the search", "G02_STORE_LIST",
     "WHERE s.status = 'active' AND lower(s.name) LIKE", "WHERE lower(s.name) LIKE"],
   ["list access at a removed store", "G02_STORE_LIST",
