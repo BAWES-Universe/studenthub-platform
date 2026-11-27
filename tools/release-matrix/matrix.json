@@ -1183,10 +1183,17 @@
     "A-20": {
       "lane": "pay",
       "subject": "`/finance/settled`",
+      "served": [
+        {
+          "route": "/finance/settled",
+          "test": "apps/gateway/test/billing-finance-settled-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",
-          "note": "not started (audit 2026-11-20): pay lane: settled"
+          "note": "read-only Finance invoices and balances in review (invoices lane, F4); evidence added when the PR head is final"
         },
         "verified": {
           "state": "open"
