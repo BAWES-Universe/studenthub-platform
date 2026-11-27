@@ -187,10 +187,19 @@ test("the run stops between documents at its bounds and says it is incomplete; a
     const w = world();
     const r = await copyLegacyDocuments(sel, w.legacy, w.objects, w.store, GEN, INV, bounds(over));
     assert.deepEqual([r.outcomes.length, r.complete, r.orphans], [2, false, []], JSON.stringify(over));
+    // A retry under the same bounds moves on: verified documents do not use the bounds up.
     const retry = world({ objects: w.bucket, rows: [...w.rows.values()] });
-    const r2 = await copyLegacyDocuments(sel, retry.legacy, retry.objects, retry.store, GEN, INV, bounds());
-    assert.deepEqual([r2.outcomes.map((o) => o.rule), r2.complete], [["unchanged", "unchanged", "staged"], true]);
+    const r2 = await copyLegacyDocuments(sel, retry.legacy, retry.objects, retry.store, GEN, INV, bounds(over));
+    assert.deepEqual([r2.outcomes.map((o) => o.rule), r2.complete], [["unchanged", "unchanged", "staged"], true], JSON.stringify(over));
   }
+  // A document larger than the byte bound is still copied when it is the run's first new document,
+  // so a small bound can never stall a retry on it.
+  const tiny = world();
+  const one = await copyLegacyDocuments(sel, tiny.legacy, tiny.objects, tiny.store, GEN, INV, bounds({ maxBytes: 1 }));
+  assert.deepEqual([one.outcomes.map((o) => o.rule), one.complete], [["staged"], false]);
+  const tiny2 = world({ objects: tiny.bucket, rows: [...tiny.rows.values()] });
+  const two = await copyLegacyDocuments(sel, tiny2.legacy, tiny2.objects, tiny2.store, GEN, INV, bounds({ maxBytes: 1 }));
+  assert.deepEqual([two.outcomes.map((o) => o.rule), two.complete], [["unchanged", "staged"], false]);
   let t = 0;
   const w = world();
   const r = await copyLegacyDocuments(sel, w.legacy, w.objects, w.store, GEN, INV, bounds({ maxMs: 10, now: () => (t += 6) }));
