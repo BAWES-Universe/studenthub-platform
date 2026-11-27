@@ -4723,6 +4723,7 @@
     "Landing recovery: with two workers a fresh card still dispatches beside a stopped card, whether its recovery is running, finished or not needed",
     "Landing recovery: a recovery writes its finished status and exits like a landed run, so the outside watch never reads it as a run that died",
     "Landing recovery: a proof that can never pass for this head is recorded once, so with two workers the cards queued after it still dispatch",
+    "Landing recovery: the run lock is held until the recovery's record and its finished status are written, as every card run holds it",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -34432,6 +34433,10 @@
     },
     {
       "name": "Landing recovery: a proof that can never pass for this head is recorded once, so with two workers the cards queued after it still dispatch",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: the run lock is held until the recovery's record and its finished status are written, as every card run holds it",
       "capabilities": []
     },
     {

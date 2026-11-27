@@ -1788,7 +1788,13 @@ async function autoRepair({ io, paths, limits, config, revision, next, skip }) {
 // Landing recovery (card-recover.mjs): one start that lands a passed card's
 // own pull request after its landing stopped. It holds this worker's run lock
 // for the whole landing, so no other run of this worker starts beside it,
-// arms nothing, and posts its report like any run. The record it claims is
+// arms nothing, and posts its report like any run. The lock, the record, the
+// status and the report go in the order runCard keeps: the record and the
+// run's finished status are written while the lock is still held, so a start
+// that dies anywhere before the release leaves the lock (and a status that is
+// not finished) for the next start to recover, and no other run can start and
+// have its status overwritten by this one. Only then is the lock released and
+// the report posted, so a slow Linear never holds the host. The record is
 // finished with the landing's outcome whatever happens, so it never runs twice.
 async function autoRecover({ io, paths, limits, config, revision, next, skip }) {
   const id = next.id;
@@ -1798,61 +1804,67 @@ async function autoRecover({ io, paths, limits, config, revision, next, skip }) 
   let credentials = null;
   let land = null;
   let status = null;
+  let summary = null;
   try {
-    const busy = [...installing(io, paths), ...busyReasons(io, paths)];
-    if (busy.length) return skip("HOST_BUSY", busy.join("; "));
-    if (installedRevision(io, paths) !== revision) return skip("HOST_BUSY", `the installed revision moved from ${revision} after this start selected ${id}`);
-    try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch (error) { return skip("NOT_READY", error.message); }
-    const timeoutMs = limits.landRequestTimeoutMs ?? LAND_LIMITS.requestTimeoutMs;
-    const fetchImpl = boundedFetch(io, timeoutMs);
-    let claimed;
     try {
-      claimed = await claimRecovery({ io, paths, config, id, claim: next.recover, credentials, fetchImpl, gh: github(fetchImpl, credentials.GITHUB_TOKEN),
-        holder, timeoutMs, claimant: cardWorkers(config) > 1 ? claimant(io, paths) : {} });
-    } catch (error) {
-      if (error.recoverSkip) return skip(error.code, error.message);
-      return skip("NOT_READY", error.message);
-    }
-    // The run's status, as every card run keeps it, so the outside watch reads
-    // a recovery that is landing, and one that ended, like any landing run.
-    const invocation = typeof io.invocation === "function" ? io.invocation() : null;
-    status = createStatus({ io, paths, run: { run_id: claimed.round.record.activation_id,
-      invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: id, kind: "card", trigger: "timer", revision,
-      ...(await statusQueue(io, paths, config)) } });
-    status.write({ step: "landing", ticks: 0, last_tick_at: null, armed_at: null, outcome: "LANDING_RECOVERY" });
-    let custody;
-    try { custody = readLandToken(io, paths.landEnv); } catch { custody = { token: null, refused: "the landing token file cannot be read" }; }
-    if (custody.refused || !custody.token) {
-      land = { outcome: custody.refused ? "LAND_ERROR" : "LAND_SKIPPED_NO_TOKEN", reason: custody.refused ?? custody.reason };
-    } else {
-      const plan = { id, kind: "card", branch: `coordinator/${id}`, record: { activation_id: next.recover.activation_id },
-        recover: { pr: next.recover.pr, head: claimed.head } };
-      land = await landCard({ io, plan, config, credentials, landToken: custody.token, pausePath: paths.pause, landLock: paths.landLock ?? LAND_LOCK,
-        limits: { ...LAND_LIMITS, waitMs: limits.landWaitMs ?? LAND_LIMITS.waitMs, pollMs: limits.landPollMs ?? LAND_LIMITS.pollMs, requestTimeoutMs: timeoutMs } });
-    }
-  } catch (error) {
-    land = { outcome: "LAND_ERROR", reason: String(error?.message ?? error) };
-  } finally {
-    if (holder.round) {
+      const busy = [...installing(io, paths), ...busyReasons(io, paths)];
+      if (busy.length) return skip("HOST_BUSY", busy.join("; "));
+      if (installedRevision(io, paths) !== revision) return skip("HOST_BUSY", `the installed revision moved from ${revision} after this start selected ${id}`);
+      try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch (error) { return skip("NOT_READY", error.message); }
+      const timeoutMs = limits.landRequestTimeoutMs ?? LAND_LIMITS.requestTimeoutMs;
+      const fetchImpl = boundedFetch(io, timeoutMs);
+      let claimed;
       try {
-        advanceRound(io, holder.round, "finished", { finished_at: io.now().toISOString(), land: land?.outcome ?? "LAND_ERROR",
-          landed_head: land?.updated_head ?? land?.reviewed_head ?? null, ...(land?.updated_head ? { updated_head: land.updated_head } : {}),
-          merge_commit: land?.merge_commit ?? null });
-      } catch { /* the record stays claimed: it is never run again, and the stop says so */ }
+        claimed = await claimRecovery({ io, paths, config, id, claim: next.recover, credentials, fetchImpl, gh: github(fetchImpl, credentials.GITHUB_TOKEN),
+          holder, timeoutMs, claimant: cardWorkers(config) > 1 ? claimant(io, paths) : {} });
+      } catch (error) {
+        if (error.recoverSkip) return skip(error.code, error.message);
+        return skip("NOT_READY", error.message);
+      }
+      // The run's status, as every card run keeps it, so the outside watch reads
+      // a recovery that is landing, and one that ended, like any landing run.
+      const invocation = typeof io.invocation === "function" ? io.invocation() : null;
+      status = createStatus({ io, paths, run: { run_id: claimed.round.record.activation_id,
+        invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: id, kind: "card", trigger: "timer", revision,
+        ...(await statusQueue(io, paths, config)) } });
+      status.write({ step: "landing", ticks: 0, last_tick_at: null, armed_at: null, outcome: "LANDING_RECOVERY" });
+      let custody;
+      try { custody = readLandToken(io, paths.landEnv); } catch { custody = { token: null, refused: "the landing token file cannot be read" }; }
+      if (custody.refused || !custody.token) {
+        land = { outcome: custody.refused ? "LAND_ERROR" : "LAND_SKIPPED_NO_TOKEN", reason: custody.refused ?? custody.reason };
+      } else {
+        const plan = { id, kind: "card", branch: `coordinator/${id}`, record: { activation_id: next.recover.activation_id },
+          recover: { pr: next.recover.pr, head: claimed.head } };
+        land = await landCard({ io, plan, config, credentials, landToken: custody.token, pausePath: paths.pause, landLock: paths.landLock ?? LAND_LOCK,
+          limits: { ...LAND_LIMITS, waitMs: limits.landWaitMs ?? LAND_LIMITS.waitMs, pollMs: limits.landPollMs ?? LAND_LIMITS.pollMs, requestTimeoutMs: timeoutMs } });
+      }
+    } catch (error) {
+      land = { outcome: "LAND_ERROR", reason: String(error?.message ?? error) };
     }
+    if (!holder.round) return skip("NOT_READY", `the landing recovery of ${id} stopped before its record was written (${land?.reason ?? "no reason"})`);
+    // Still under the lock: the record, then the run's finished status (a
+    // status that could not be set up before the landing is set up now).
+    status ??= createStatus({ io, paths, run: { run_id: holder.round.record.activation_id, invocation: null, card: id, kind: "card", trigger: "timer", revision } });
+    try {
+      advanceRound(io, holder.round, "finished", { finished_at: io.now().toISOString(), land: land?.outcome ?? "LAND_ERROR",
+        landed_head: land?.updated_head ?? land?.reviewed_head ?? null, ...(land?.updated_head ? { updated_head: land.updated_head } : {}),
+        merge_commit: land?.merge_commit ?? null });
+    } catch { /* the record stays claimed: it is never run again, and the stop says so */ }
+    const record = holder.round.record;
+    summary = { ok: land.outcome === "MERGED", card: id, kind: "card", activation_id: record.activation_id, trigger: "timer", revision,
+      outcome: "LANDING_RECOVERY", reason: land.outcome === "MERGED" ? null : land.reason ?? null, ticks: [], revert: null, land,
+      recover: { pr: record.pr, reviewed_head: record.reviewed_head, head: record.head, recover_of: record.recover_of, stopped_land: record.stopped_land },
+      owner_mention: ownerMention(config.owner_mention) };
+    summary.needs_owner = needsOwner(summary);
+    status.write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "LANDING_RECOVERY", land: land.outcome ?? null,
+      reverted: false, needs_owner: summary.needs_owner });
+    if (status.failures()) summary.status_write_failures = status.failures();
+  } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* gone already */ }
   }
-  if (!holder.round) return skip("NOT_READY", `the landing recovery of ${id} stopped before its record was written (${land?.reason ?? "no reason"})`);
-  const record = holder.round.record;
-  const summary = { ok: land.outcome === "MERGED", card: id, kind: "card", activation_id: record.activation_id, trigger: "timer", revision,
-    outcome: "LANDING_RECOVERY", reason: land.outcome === "MERGED" ? null : land.reason ?? null, ticks: [], revert: null, land,
-    recover: { pr: record.pr, reviewed_head: record.reviewed_head, head: record.head, recover_of: record.recover_of, stopped_land: record.stopped_land },
-    owner_mention: ownerMention(config.owner_mention) };
-  summary.needs_owner = needsOwner(summary);
+  // Reported last, once the lock is released, as runCard reports.
   const report = await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs });
-  status?.write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "LANDING_RECOVERY", land: land.outcome ?? null,
-    reverted: false, needs_owner: summary.needs_owner });
-  return { ...summary, round: holder.round.file, report, ...(status?.failures() ? { status_write_failures: status.failures() } : {}) };
+  return { ...summary, round: holder.round.file, report };
 }
 
 // Self-repair B2: a repair round that never finished. It is never run again;

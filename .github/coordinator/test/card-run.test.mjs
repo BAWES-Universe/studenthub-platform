@@ -8089,3 +8089,37 @@ test("Landing recovery: a proof that can never pass for this head is recorded on
   await recoverStart(paused);
   assert.equal(paused.files.has(recoverFile()), false, "the pause records nothing");
 });
+
+test("Landing recovery: the run lock is held until the recovery's record and its finished status are written, as every card run holds it", async () => {
+  for (const [label, options] of [["merged", {}], ["not merged", { checks: ["red"], mainAt: 0 }]]) {
+    const host = recoverHost(options);
+    const statusFile = statusPath(LAND_PATHS);
+    const seen = [];
+    const rename = host.fs.renameSync;
+    host.fs.renameSync = (from, to) => {
+      const result = rename(from, to);
+      // Every status this run writes is written while it holds the run lock.
+      if (to === statusFile) seen.push({ status: JSON.parse(host.files.get(statusFile).text).step, locked: host.files.has(LAND_PATHS.lock) });
+      return result;
+    };
+    const unlink = host.fs.unlinkSync;
+    host.fs.unlinkSync = (file) => {
+      // A start that dies before the lock is released leaves the lock; so
+      // whenever the lock goes, the run's end is already written.
+      if (file === LAND_PATHS.lock) {
+        seen.push({ release: true, status: readStatus(host.io, LAND_PATHS)?.step ?? null, round: recoverRecord(host)?.state ?? null });
+      }
+      return unlink(file);
+    };
+    const result = await recoverStart(host);
+    assert.equal(result.outcome, "LANDING_RECOVERY", `${label}: ${JSON.stringify(result)}`);
+    const release = seen.findIndex((entry) => entry.release);
+    assert.ok(release > 0, `${label}: the lock was released once the run ended: ${JSON.stringify(seen)}`);
+    assert.deepEqual(seen[release], { release: true, status: "finished", round: "finished" }, `${label}: the record and status end before the lock is released`);
+    assert.ok(seen.slice(0, release).every((entry) => entry.locked === true), `${label}: every status write holds the lock: ${JSON.stringify(seen)}`);
+    assert.equal(seen.filter((entry) => entry.release).length, 1, `${label}: released once`);
+    assert.ok(seen.slice(release + 1).every((entry) => entry.status === undefined || entry.release), `${label}: no status is written after the lock is released: ${JSON.stringify(seen)}`);
+    assert.equal(readStatus(host.io, LAND_PATHS).step, "finished");
+    assert.equal(host.files.has(LAND_PATHS.lock), false, `${label}: the lock is released`);
+  }
+});
