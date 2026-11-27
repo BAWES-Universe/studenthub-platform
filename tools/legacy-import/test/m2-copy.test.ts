@@ -5,7 +5,7 @@ import { deflateSync } from "node:zlib";
 
 import {
   copyCounts, copyLegacyDocuments, M2CopyError, selectApproved, stagingKey, stagingPrefix,
-  type ApprovedDocument, type CopyBounds, type CopyContinuation, type CopyRun, type DocumentStagingStore, type StagedDocument, type StagingObjects,
+  type ApprovedDocument, type CheckpointKey, type CopyBounds, type CopyCheckpointStore, type CopyRun, type DocumentStagingStore, type StagedDocument, type StagingObjects,
 } from "../src/m2-copy.js";
 import { documentSetDigest, type LegacyObjectReader } from "../src/m2-document-check.js";
 import type { DocumentSourceRow } from "../src/m2-documents.js";
@@ -42,7 +42,8 @@ const approvedOf = (legacyId: string, kind: ApprovedDocument["kind"], bytes: Buf
   ({ legacyId, kind, mime: "image/png", size: bytes.length, sha256: sha(bytes) });
 const report = [approvedOf("1", "personal-photo", photo1), approvedOf("2", "personal-photo", photo2), approvedOf("3", "civil-id-front", front3)];
 
-function world(opts: { legacy?: Record<string, Buffer>; objects?: Map<string, Buffer>; rows?: StagedDocument[]; failInsert?: boolean } = {}) {
+type Saved = Map<string, { revision: number; checkpoint: unknown }>;
+function world(opts: { legacy?: Record<string, Buffer>; objects?: Map<string, Buffer>; rows?: StagedDocument[]; failInsert?: boolean; saved?: Saved } = {}) {
   const legacyReads: string[] = [];
   const legacy: LegacyObjectReader = {
     async read(key, max) {
@@ -84,12 +85,24 @@ function world(opts: { legacy?: Record<string, Buffer>; objects?: Map<string, Bu
       return "inserted";
     },
   };
-  return { legacy, legacyReads, objects, bucket, puts, lists, store, rows, inserted };
+  const saved: Saved = opts.saved ?? new Map();
+  const loads: string[] = [];
+  const checkpoints: CopyCheckpointStore = {
+    async load(key) { loads.push(JSON.stringify(key)); return saved.get(JSON.stringify(key)) ?? null; },
+    async save(checkpoint, expected) {
+      const k = JSON.stringify(checkpoint.key), now = saved.get(k);
+      if ((now?.revision ?? null) !== expected) return "stale";
+      saved.set(k, { revision: (expected ?? 0) + 1, checkpoint: JSON.parse(JSON.stringify(checkpoint)) });
+      return "saved";
+    },
+  };
+  return { legacy, legacyReads, objects, bucket, puts, lists, store, rows, inserted, checkpoints, saved, loads };
 }
 const bounds = (over: Partial<CopyBounds> = {}): CopyBounds =>
-  ({ maxDocuments: 100, maxBytes: 1 << 30, maxObjectBytes: 10 * 1024 * 1024, maxMs: 60_000, opTimeoutMs: 1_000, maxListPages: 10, listPageSize: 100, now: () => 0, ...over });
+  ({ maxDocuments: 100, maxApprovedBytes: 1 << 30, maxObjectBytes: 10 * 1024 * 1024, maxMs: 60_000, opTimeoutMs: 1_000, settleMs: 50, maxListPages: 10, listPageSize: 100, now: () => 0, ...over });
 const BUILD = "b".repeat(64);
-const run = (generation = GEN, build = BUILD): CopyRun => ({ generation, build, invocations: INV });
+const TARGET = { id: "33333333-3333-4333-8333-333333333333", bucket: "sh-staging-legacy-docs" };
+const run = (generation = GEN, build = BUILD, target = TARGET, copy = INV.copy): CopyRun => ({ generation, build, target, invocations: { ...INV, copy } });
 
 test("the approved subset is the report's rows, each named by the fresh plan, refused whole on any fault", () => {
   const ok = selectApproved(report, planned)!;
@@ -189,98 +202,152 @@ test("an object written before a crash is adopted when it reads back to the appr
   assert.deepEqual([rb.outcomes.map((o) => o.rule), b.inserted.length], [["objectMismatch"], 0]);
 });
 
-test("every bound is enforced as written; a run stops between documents and a continuation finishes the chain", async () => {
+test("every bound is enforced as written; a run stops between documents and the next resumes from the saved checkpoint", async () => {
   const sel = selectApproved(report, planned)!;
   const [s0, s1, s2] = report.map((d) => d.size) as [number, number, number];
   const cap = Math.max(s0, s1, s2);
-  for (const over of [{ maxDocuments: 2 }, { maxBytes: s0 + s1 + s2 - 1 }]) {
+  for (const over of [{ maxDocuments: 2 }, { maxApprovedBytes: s0 + s1 + s2 - 1 }]) {
     const w = world();
     const r = await copyLegacyDocuments(sel, w, run(), bounds({ ...over, maxObjectBytes: cap }));
-    assert.deepEqual([r.outcomes.length, r.complete], [2, false], JSON.stringify(over));
-    assert.ok(r.bytes <= bounds(over).maxBytes, "the byte bound is never exceeded");
-    assert.deepEqual([r.orphans.scanned, r.continuation.next], [false, r.outcomes.length]);
-    const r2 = await copyLegacyDocuments(sel, w, run(), bounds({ ...over, maxObjectBytes: cap }), r.continuation);
-    assert.deepEqual(r2.outcomes.map((o) => o.index), [2], "the next run starts after the handled prefix");
-    assert.equal(r2.complete, true);
+    assert.deepEqual([r.outcomes.length, r.complete, r.checkpoint], [2, false, { credit: "none", from: 0, next: 2 }], JSON.stringify(over));
+    assert.ok(r.approvedBytes <= bounds(over).maxApprovedBytes, "the byte budget is never exceeded");
+    assert.equal(r.orphans.scanned, false);
+    // A new process: only what is persisted (bucket, rows, checkpoint) carries over.
+    const next = world({ objects: w.bucket, rows: [...w.rows.values()], saved: w.saved });
+    const r2 = await copyLegacyDocuments(sel, next, run(GEN, BUILD, TARGET, "44444444-4444-4444-8444-444444444444"), bounds({ ...over, maxObjectBytes: cap }));
+    assert.deepEqual([r2.outcomes.map((o) => o.index), r2.checkpoint, r2.complete], [[2], { credit: "resumed", from: 2, next: 3 }, true]);
+    assert.deepEqual(next.legacyReads, ["photos/Secret-3.png"], "the credited prefix is not read again");
     assert.equal(documentSetDigest(r2.verified), documentSetDigest(report), "the chain verified every approved document");
-    assert.deepEqual(copyCounts(r2).staged, 3);
+    assert.equal(copyCounts(r2).staged, 3);
   }
 });
 
-test("a verified prefix that uses up the time budget does not livelock: each run handles one more and the chain ends", async () => {
+test("a verified prefix that uses up the time budget does not livelock once the checkpoint carries it", async () => {
   const sel = selectApproved(report, planned)!;
   const done = world();
   await copyLegacyDocuments(sel, done, run(), bounds());
-  // Every validation read takes longer than the whole run's budget.
   let t = 0;
-  const slow = world({ objects: done.bucket, rows: [...done.rows.values()] });
-  const reads = slow.objects.read.bind(slow.objects);
-  slow.objects.read = async (k, m) => { t += 100; return reads(k, m); };
+  const slow = (saved?: Saved) => {
+    const w = world({ objects: done.bucket, rows: [...done.rows.values()], ...(saved ? { saved } : {}) });
+    const reads = w.objects.read.bind(w.objects);
+    w.objects.read = async (k, m, signal) => { t += 100; return reads(k, m, signal); };
+    return w;
+  };
   const tight = bounds({ maxMs: 50, now: () => t });
-  // Without a continuation every run would start at row one again and validate the same prefix.
-  const fresh = await copyLegacyDocuments(sel, slow, run(), tight);
-  const again = await copyLegacyDocuments(sel, slow, run(), tight);
-  assert.deepEqual([fresh.outcomes.map((o) => o.index), again.outcomes.map((o) => o.index)], [[0], [0]]);
-  // With it, the chain moves one document per run and ends after selection.length runs.
-  let c = fresh.continuation, runs = 1, last = fresh;
-  while (!last.complete) { last = await copyLegacyDocuments(sel, slow, run(), tight, c); c = last.continuation; runs++; assert.ok(runs <= sel.length); }
+  // Without a checkpoint every run starts again at the first document.
+  const a = await copyLegacyDocuments(sel, slow(), run(), tight), b = await copyLegacyDocuments(sel, slow(), run(), tight);
+  assert.deepEqual([a.outcomes.map((o) => o.index), b.outcomes.map((o) => o.index)], [[0], [0]]);
+  // With the saved checkpoint the chain moves one document per run and ends after selection.length runs.
+  const saved: Saved = new Map();
+  let runs = 0, last;
+  do { last = await copyLegacyDocuments(sel, slow(saved), run(), tight); runs++; assert.ok(runs <= sel.length); } while (!last.complete);
   assert.equal(runs, sel.length);
-  assert.deepEqual(copyCounts(last).unchanged, 3);
+  assert.equal(copyCounts(last).unchanged, 3);
   assert.equal(documentSetDigest(last.verified), documentSetDigest(report));
 });
 
-test("a continuation is refused unless it belongs to the same generation, build and accepted set and adds up", async () => {
+test("a missing, untrusted or foreign checkpoint grants no credit; the run validates from the first document", async () => {
+  const sel = selectApproved(report, planned)!;
+  const first = world();
+  const r = await copyLegacyDocuments(sel, first, run(), bounds({ maxDocuments: 2 }));
+  assert.equal(r.checkpoint.credit, "none");
+  const [[savedKey, good]] = [...first.saved.entries()] as [[string, { revision: number; checkpoint: any }]];
+  const fresh = (checkpoint: unknown, target = TARGET, build = BUILD, order = sel) => {
+    const w = world({ objects: first.bucket, rows: [...first.rows.values()], saved: new Map([[savedKey, { revision: good.revision, checkpoint }]]) });
+    return { w, done: copyLegacyDocuments(order, w, run(GEN, build, target), bounds()) };
+  };
+  const clone = () => JSON.parse(JSON.stringify(good.checkpoint));
+  const tamper = (edit: (c: any) => void) => { const c = clone(); edit(c); return c; };
+  for (const [label, checkpoint] of [
+    ["sha", tamper((c) => { c.entries[0].binding.sha256 = "0".repeat(64); })],
+    ["objectKey", tamper((c) => { c.entries[0].binding.objectKey = stagingKey(OTHER_GEN, "1", "personal-photo", sha(photo1)); })],
+    ["index", tamper((c) => { c.entries[1].index = 5; })],
+    ["order", tamper((c) => { c.entries.reverse(); })],
+    ["invocation", tamper((c) => { c.entries[0].invocation = "someone"; })],
+    ["version", tamper((c) => { c.version = "v0"; })],
+    ["embedded key", tamper((c) => { c.key.targetId = "55555555-5555-4555-8555-555555555555"; })],
+    ["extra key field", tamper((c) => { c.key.extra = 1; })],
+    ["unverified with binding", tamper((c) => { c.entries[0].rule = "conflict"; })],
+    ["too many", tamper((c) => { c.entries.push(c.entries[0], c.entries[1]); })],
+    ["not an object", "Secret"],
+  ] as const) {
+    const { w, done } = fresh(checkpoint);
+    const res = await done;
+    assert.deepEqual([res.checkpoint.credit, res.checkpoint.from, res.outcomes.length, res.complete], ["untrusted", 0, 3, true], label);
+    assert.equal(w.saved.get(savedKey)!.revision, good.revision + 3, `${label}: replaced, never trusted`);
+  }
+  // Another target, bucket or build looks under another key: nothing there, no credit.
+  for (const [target, build] of [[{ ...TARGET, id: "55555555-5555-4555-8555-555555555555" }, BUILD], [{ ...TARGET, bucket: "sh-other" }, BUILD], [TARGET, "c".repeat(64)]] as const) {
+    const { w, done } = fresh(clone(), target, build);
+    const res = await done;
+    assert.deepEqual([res.checkpoint.credit, res.outcomes.length], ["none", 3]);
+    assert.equal(w.loads.length, 1);
+    assert.notEqual(w.loads[0], savedKey);
+  }
+  // The report in another order is the same canonical order and the same key: the checkpoint resumes.
+  const reordered = selectApproved([...report].reverse(), planned)!;
+  const { done } = fresh(clone(), TARGET, BUILD, reordered);
+  const res = await done;
+  assert.deepEqual([res.checkpoint, res.outcomes.map((o) => [o.index, o.legacyId])], [{ credit: "resumed", from: 2, next: 3 }, [[2, "3"]]]);
+  // A concurrent writer moved the checkpoint on: the run stops rather than overwrite it.
+  const racing = world({ objects: first.bucket, rows: [...first.rows.values()], saved: new Map(first.saved) });
+  racing.checkpoints.load = async () => ({ revision: 0, checkpoint: good.checkpoint });
+  await assert.rejects(copyLegacyDocuments(sel, racing, run(), bounds()), (e: unknown) => e instanceof M2CopyError && e.code === "m2.copy.checkpoint");
+});
+
+test("bounds, build, target and invocations are checked before anything is read", async () => {
   const sel = selectApproved(report, planned)!;
   const w = world();
-  const r = await copyLegacyDocuments(sel, w, run(), bounds({ maxDocuments: 1 }));
-  const c = r.continuation;
-  const refusals = [
-    () => copyLegacyDocuments(sel, w, run(OTHER_GEN), bounds(), c),
-    () => copyLegacyDocuments(sel, w, run(GEN, "c".repeat(64)), bounds(), c),
-    () => copyLegacyDocuments(selectApproved(report.slice(0, 2), planned)!, w, run(), bounds(), c),
-    () => copyLegacyDocuments(sel, w, run(), bounds(), { ...c, next: 2 }),
-    () => copyLegacyDocuments(sel, w, run(), bounds(), { ...c, next: 4 }),
-    () => copyLegacyDocuments(sel, w, run(), bounds(), { ...c, bytes: c.bytes + 1 }),
-    () => copyLegacyDocuments(sel, w, run(), bounds(), { ...c, unverified: [0] }),
-    () => copyLegacyDocuments(sel, w, run(), bounds(), { ...c, rules: { ...c.rules, staged: 0, conflict: 1 } }),
-    () => copyLegacyDocuments(sel, w, run(), bounds(), { ...c, version: "v0" } as unknown as CopyContinuation),
-  ];
-  for (const [i, attempt] of refusals.entries())
-    await assert.rejects(attempt(), (e: unknown) => e instanceof M2CopyError && e.code === "m2.copy.continuation", String(i));
-  for (const bad of [{ maxObjectBytes: (1 << 30) + 1 }, { maxDocuments: 0 }, { opTimeoutMs: 0 }, { listPageSize: 1.5 }])
+  for (const bad of [{ maxObjectBytes: (1 << 30) + 1 }, { maxDocuments: 0 }, { opTimeoutMs: 0 }, { settleMs: 0 }, { listPageSize: 1.5 }])
     await assert.rejects(copyLegacyDocuments(sel, w, run(), bounds(bad)), (e: unknown) => e instanceof M2CopyError && e.code === "m2.copy.bounds");
-  await assert.rejects(copyLegacyDocuments(sel, w, run(GEN, "not-hex"), bounds()), (e: unknown) => e instanceof M2CopyError && e.code === "m2.copy.bounds");
+  for (const r of [run(GEN, "not-hex"), run(GEN, BUILD, { ...TARGET, id: "x" }), run(GEN, BUILD, { ...TARGET, bucket: "" }), run(GEN, BUILD, TARGET, INV.doccheck)])
+    await assert.rejects(copyLegacyDocuments(sel, w, r, bounds()), (e: unknown) => e instanceof M2CopyError && e.code === "m2.copy.bounds");
+  assert.deepEqual([w.loads, w.legacyReads], [[], []]);
 });
 
 test("a document above the hard object cap is never read or written, even first in a run", async () => {
   const sel = selectApproved(report, planned)!;
   const w = world();
   const cap = Math.min(...report.map((d) => d.size)) - 1;
-  const r = await copyLegacyDocuments(sel, w, run(), bounds({ maxObjectBytes: cap, maxBytes: cap }));
+  const r = await copyLegacyDocuments(sel, w, run(), bounds({ maxObjectBytes: cap, maxApprovedBytes: cap }));
   assert.deepEqual(r.outcomes.map((o) => o.rule), ["overCap", "overCap", "overCap"]);
-  assert.deepEqual([w.legacyReads, w.puts, w.inserted.length, r.bytes, r.verified.length], [[], [], 0, 0, 0]);
+  assert.deepEqual([w.legacyReads, w.puts, w.inserted.length, r.approvedBytes, r.verified.length], [[], [], 0, 0, 0]);
   assert.equal(r.complete, true, "handled, and counted as not verified");
-  assert.deepEqual(r.continuation.unverified, [0, 1, 2]);
 });
 
-test("a hanging port call times out with a fixed code; a hanging legacy read is a failed read of that document", async () => {
+test("a port call past its timeout is aborted and awaited: settled is a timeout, still running is unsettled", async () => {
   const sel = selectApproved([report[0]], planned)!;
-  const hang = () => new Promise<never>(() => {});
-  const stuck = world();
-  stuck.store.get = hang;
-  await assert.rejects(copyLegacyDocuments(sel, stuck, run(), bounds({ opTimeoutMs: 5 })),
-    (e: unknown) => e instanceof M2CopyError && e.code === "m2.copy.timeout");
+  const abortable = (signal: AbortSignal) => new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
+  const deaf = () => new Promise<never>(() => {});
+  const fast = bounds({ opTimeoutMs: 5, settleMs: 5 });
+  const cases: [string, (w: ReturnType<typeof world>) => void, string][] = [
+    ["get honours abort", (w) => { w.store.get = (_i, _k, _g, signal) => abortable(signal); }, "m2.copy.timeout"],
+    ["put ignores abort", (w) => { w.objects.put = deaf; }, "m2.copy.unsettled"],
+    ["insert honours abort", (w) => { w.store.insert = (_r, _i, signal) => abortable(signal); }, "m2.copy.timeout"],
+    ["checkpoint save ignores abort", (w) => { w.checkpoints.save = deaf; }, "m2.copy.unsettled"],
+    ["list honours abort", (w) => { w.objects.list = (_p, _page, signal) => abortable(signal); }, "m2.copy.timeout"],
+  ];
+  for (const [label, edit, code] of cases) {
+    const w = world();
+    edit(w);
+    await assert.rejects(copyLegacyDocuments(sel, w, run(), fast), (e: unknown) => e instanceof M2CopyError && e.code === code, label);
+  }
+  // The uncertain put above may have landed: the next run reconciles it (adopts it after read-back).
+  const crashed = world();
+  const put = crashed.objects.put.bind(crashed.objects);
+  crashed.objects.put = async (k, b, m, signal) => { await put(k, b, m, signal); return deaf(); };
+  await assert.rejects(copyLegacyDocuments(sel, crashed, run(), fast), (e: unknown) => e instanceof M2CopyError && e.code === "m2.copy.unsettled");
+  const next = world({ objects: crashed.bucket, saved: crashed.saved });
+  const r = await copyLegacyDocuments(sel, next, run(), fast);
+  assert.deepEqual([r.checkpoint.credit, r.outcomes.map((o) => o.rule)], ["none", ["adopted"]]);
+  // A legacy read changes nothing: one that runs out of time is a failed read of that document.
   const slowLegacy = world();
-  slowLegacy.legacy.read = hang;
-  const r = await copyLegacyDocuments(sel, slowLegacy, run(), bounds({ opTimeoutMs: 5 }));
-  assert.deepEqual(r.outcomes.map((o) => o.rule), ["document.readFailed"]);
-  const stuckList = world();
-  stuckList.objects.list = hang;
-  await assert.rejects(copyLegacyDocuments(sel, stuckList, run(), bounds({ opTimeoutMs: 5 })),
-    (e: unknown) => e instanceof M2CopyError && e.code === "m2.copy.timeout");
+  slowLegacy.legacy.read = deaf;
+  const rl = await copyLegacyDocuments(sel, slowLegacy, run(), fast);
+  assert.deepEqual(rl.outcomes.map((o) => o.rule), ["document.readFailed"]);
 });
 
-test("the orphan scan reads page by page within its bound, says when it was truncated, and reports tuples and counts only", async () => {
+test("the orphan scan reads page by page within its bound, says when it was truncated, and reports pairs and counts only", async () => {
   const sel = selectApproved(report, planned)!;
   const objects = new Map<string, Buffer>();
   for (let i = 10; i < 15; i++) objects.set(`${stagingPrefix(GEN)}${i}/resume/${String(i % 10).repeat(64)}`, Buffer.from("x"));
