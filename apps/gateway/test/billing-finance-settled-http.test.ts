@@ -14,7 +14,7 @@ const PAGE: FinanceSettledPage = {
     { ...invoice, invoiceNumber: "SH-2026-11-000003", orgId: "c:1", companyName: "Sultan <Kids>", total: "1.250", status: "unpaid" },
     { ...invoice, invoiceNumber: "SH-2026-11-000002", orgId: "P", companyName: "Sultan Co", total: "3.000", status: "unpaid", creditNumber: "CN-2026-11-000001", creditedOn: "2026-11-23" },
     { ...invoice, invoiceNumber: "SH-2026-11-000001", orgId: "P", companyName: "Sultan Co", total: "4.000", status: "paid", paidOn: "2026-11-24" }],
-  page: 1, more: true };
+  page: 1, more: true, deletedOrgIds: ["P"] };
 
 async function rig(t: TestContext, reads?: Partial<FinanceSettledReads>) {
   const calls: string[] = [];
@@ -41,8 +41,9 @@ test("FINANCE_SETTLED_PAGE Finance sees each company's balance and every invoice
   for (const text of ['<tr><td><a href="/organization/invoices/c%3A1">Sultan &lt;Kids&gt;</a></td><td>KWD</td><td>3.750</td><td>2.500</td><td>0.000</td><td>1.250</td></tr>',
     "<td>KWD 1.250</td><td>Unpaid</td>", "<td>KWD 3.000</td><td>Credited by credit note CN-2026-11-000001 on 23 November 2026</td>",
     "<td>KWD 4.000</td><td>Paid on 24 November 2026</td>", '<a href="/finance/settled?status=credited" aria-current="page">Credited</a>',
-    '<a href="/finance/settled?status=credited&amp;page=2">Older</a>', '<a href="/finance/transfers">Transfers</a>']) assert.ok(html.includes(text), text);
-  assert.doesNotMatch(html, /<Kids>|Newer/);
+    '<a href="/finance/settled?status=credited&amp;page=2">Older</a>', '<a href="/finance/transfers">Transfers</a>',
+    "<td>SH-2026-11-000002</td><td>Sultan Co (deleted company)</td>"]) assert.ok(html.includes(text), text);
+  assert.doesNotMatch(html, /<Kids>|Newer|href="\/organization\/invoices\/P"/);
   const second = await (await x.call("/finance/settled?page=2&status=unpaid", FIN, "text/html")).text();
   assert.ok(second.includes('<a href="/finance/settled?status=unpaid">Newer</a>'), second);
   assert.deepEqual(x.calls, ["settled:fin:*:1", "settled:fin:credited:1", "settled:fin:unpaid:2"]);
