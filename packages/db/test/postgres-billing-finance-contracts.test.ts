@@ -20,7 +20,7 @@ const reads = () => new PostgresFinanceContractReads(pool, operatorFinanceGate(D
 const id = { hourly: randomUUID(), monthly: randomUUID(), fixed: randomUUID(), deleted: randomUUID(), outside: randomUUID() };
 /** Every key the company projection may carry: anything else (candidate rate or total, transfer cost, timestamps) must never leave. */
 const COMPANY_KEYS = ["autoGenerate", "candidateId", "companyId", "currencyId", "endDate", "id", "startDate", "status", "storeId", "terms"];
-const CANDIDATE_ONLY = ["candidateHourlyRate", "candidateTotal", "transferCost", "createdAt", "updatedAt", "1.250", "0.777", "300.000", "90.000"];
+const CANDIDATE_ONLY = ["candidateHourlyRate", "candidateTotal", "transferCost", "createdAt", "updatedAt", "1.250", "0.777", "300.000", "90.000", "Outside shop"];
 
 before(async () => {
   assert.ok(url, "DATABASE_URL must point to a disposable scratch PostgreSQL database");
@@ -39,7 +39,7 @@ beforeEach(async () => {
   await pool.query("INSERT INTO grants(principal_id,org_id,role,scope) VALUES ('fin','root','finance','subtree'),('cfin','P','finance','subtree'),('staff','root','staff','subtree')");
   for (const org of ["P", "X"]) {
     store[org] = randomUUID();
-    await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,'Synthetic shop',$3,$3)", [store[org], org, "a".repeat(64)]);
+    await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,$3,$4,$4)", [store[org], org, org === "X" ? "Outside shop" : "Synthetic shop", "a".repeat(64)]);
   }
   const currency = randomUUID();
   await pool.query("INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at) VALUES($1,'currency','Kuwaiti dinar','kuwaiti dinar','KWD','active',$2,$2,now(),now())", [currency, "a".repeat(64)]);
@@ -51,7 +51,8 @@ beforeEach(async () => {
   await contract(id.hourly, "amal", "P", store.P!, "hourly", "2026-09-01", null, "active", ["1.250", "2.000", null, null, null, null]);
   // C's store id is an imported key with no store row: the page shows the key.
   await contract(id.monthly, "badr", "C", "legacy-store-7", "monthly_salary", "2026-10-01", "2026-10-31", "inactive", [null, null, "300.000", "350.000", null, 25], true);
-  await contract(id.fixed, "worker", "P", store.P!, "fixed_price", "2026-11-01", null, "active", [null, null, "90.000", "120.000", 40, null]);
+  // The fixed-price contract of P names X's store: it must show the stored key, never X's store name.
+  await contract(id.fixed, "worker", "P", store.X!, "fixed_price", "2026-11-01", null, "active", [null, null, "90.000", "120.000", 40, null]);
   await contract(id.deleted, "amal", "P", store.P!, "hourly", "2026-12-01", null, "deleted", ["1.250", "2.000", null, null, null, null]);
   await contract(id.outside, "amal", "X", store.X!, "hourly", "2026-12-15", null, "active", ["1.250", "2.000", null, null, null, null]);
 });
@@ -62,7 +63,7 @@ test("FINANCE_CONTRACTS_PG central Finance lists every settled company's contrac
   const page = await reads().list("fin");
   assert.ok(page);
   assert.deepEqual(page.contracts.map((e) => [e.contract.id, e.personName, e.companyName, e.storeName, e.currencyCode]),
-    [[id.fixed, "worker", "Sultan Co", "Synthetic shop", "KWD"], [id.monthly, "Badr Synthetic", "Sultan Kids", "legacy-store-7", "KWD"], [id.hourly, "Amal Synthetic", "Sultan Co", "Synthetic shop", "KWD"]],
+    [[id.fixed, "worker", "Sultan Co", store.X, "KWD"], [id.monthly, "Badr Synthetic", "Sultan Kids", "legacy-store-7", "KWD"], [id.hourly, "Amal Synthetic", "Sultan Co", "Synthetic shop", "KWD"]],
     "the deleted contract and X outside StudentHub are not listed");
   assert.deepEqual(page.contracts.map((e) => e.contract.terms), [
     { payModel: "fixed_price", companyTotal: "120.000", completionPercentage: 40 },

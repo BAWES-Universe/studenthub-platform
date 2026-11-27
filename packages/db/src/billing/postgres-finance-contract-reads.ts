@@ -12,7 +12,8 @@ import { NAME } from "./postgres-transfer-invoice-reads.js";
  * the reader's reads exactly like a missing one. Every contract leaves through `projectPayContract(…, "company")`,
  * the same projection the pay contracts API gives a company's finance users: the company's side of the terms,
  * never the candidate's rate or total or the transfer cost. Deleted contracts are not shown, as in that API.
- * Names (person, company, store, currency code) are the ones the Finance transfer pages already show.
+ * Names (person, company, store, currency code) are the ones the Finance transfer pages already show. A store name
+ * shows only when the store belongs to the contract's company; otherwise the stored key shows, as for an imported one.
  *
  * Each read runs in one REPEATABLE READ snapshot. Not READ ONLY: the production gate locks grants and
  * organizations FOR SHARE.
@@ -47,7 +48,7 @@ const SELECT = `SELECT c.id, c.candidate_principal_id, c.company_org_id, c.store
     COALESCE(NULLIF(btrim(cur.code), ''), cur.name, '') AS "currencyCode"
   FROM pay_contracts c JOIN principals pr ON pr.id = c.candidate_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.candidate_principal_id
     JOIN organizations o ON o.id = c.company_org_id LEFT JOIN organization_profiles op ON op.org_id = o.id
-    LEFT JOIN organization_stores s ON s.id::text = c.store_id LEFT JOIN catalogue_items cur ON cur.id = c.currency_id
+    LEFT JOIN organization_stores s ON s.id::text = c.store_id AND s.org_id = c.company_org_id LEFT JOIN catalogue_items cur ON cur.id = c.currency_id
   WHERE c.company_org_id = ANY($1::text[]) AND c.status <> 'deleted'`;
 const ORDER = "ORDER BY c.start_date DESC, c.id";
 const CONTRACT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

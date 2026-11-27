@@ -19,6 +19,7 @@ const mutations = [
   ["show deleted contracts", "FINANCE_CONTRACTS_PG_DETAIL", "ANY($1::text[]) AND c.status <> 'deleted'", "ANY($1::text[])"],
   ["give Finance the full projection", "FINANCE_CONTRACTS_PG", "projectPayContract(contract, \"company\")", "projectPayContract(contract, \"full\")"],
   ["give Finance the candidate projection", "FINANCE_CONTRACTS_PG_DETAIL", "projectPayContract(contract, \"company\")", "projectPayContract(contract, \"candidate\")"],
+  ["name a store of another company", "FINANCE_CONTRACTS_PG", "s.id::text = c.store_id AND s.org_id = c.company_org_id", "s.id::text = c.store_id"],
   ["ignore the status filter", "FINANCE_CONTRACTS_PG", "($2::text IS NULL OR c.status = $2)", "($2::text IS NULL OR true)"],
   ["list the oldest first", "FINANCE_CONTRACTS_PG", "ORDER BY c.start_date DESC, c.id", "ORDER BY c.start_date, c.id"],
   ["hide that an older page exists", "FINANCE_CONTRACTS_PG", "const more = rows.length > limit;", "const more = false;"],
