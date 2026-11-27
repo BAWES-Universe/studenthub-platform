@@ -362,10 +362,22 @@
     "C-07": {
       "lane": "recruit",
       "subject": "`/applications`, `/applications/:id` \u2014 applications/request detail",
+      "served": [
+        {
+          "route": "/recruit/open-requests",
+          "test": "apps/gateway/test/recruit-request-applications-http.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/recruit/open-requests/:id",
+          "test": "apps/gateway/test/recruit-request-applications-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): apply exists; no page listing the person's own applications"
+          "state": "done",
+          "evidence": "My applications list (?applied=1) and request detail with the application status, proven by checkServed and REC7B_MY_APPLICATIONS; page from PR #524 at c1576639"
         },
         "verified": {
           "state": "open"
