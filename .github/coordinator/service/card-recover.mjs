@@ -77,10 +77,24 @@ export function recoverSkip(code, detail) {
   throw Object.assign(new Error(`${code}: ${detail}`), { code, recoverSkip: true });
 }
 
+// The proofs that can never pass again for this reviewed head: the pull
+// request or its head is not the claim's, a newer verdict or another owner
+// holds the card. Each is recorded once as the head's finished record, so the
+// card stays stopped, the start says why, and with more than one worker the
+// cards queued after it still run. A read that failed, the pause or a race
+// records nothing, and a later start tries again.
+export const RECOVER_REFUSALS = Object.freeze(new Set(["RECOVER_NOT_ELIGIBLE", "RECOVER_HEAD_UNPROVEN"]));
+function recordRefusal(io, file, fields) {
+  try {
+    io.fs.writeFileSync(file, `${JSON.stringify({ ...fields, state: "finished", land: null })}\n`, { flag: "wx", mode: 0o600 });
+    return true;
+  } catch { return false; /* a record is already there, or none could be written: a later start reads it, or proves again */ }
+}
+
 // What a recoverable claim means for this start. No record: recover it. A
 // record another worker is still working: running elsewhere. Any other
-// record, finished or not: no second attempt, the card stays stopped, and the
-// stop says why.
+// record, finished, refused or never finished: no second attempt, the card
+// stays stopped, and the stop says why.
 export function recoverStep(io, paths, id, claim, { live = () => false } = {}) {
   const file = recoverRecordPath(paths, id, claim.reviewed_head);
   if (!io.fs.existsSync(file)) return { next: { id, recover: claim } };
@@ -89,6 +103,7 @@ export function recoverStep(io, paths, id, claim, { live = () => false } = {}) {
   if (round?.state !== "finished") {
     return { note: `; its one landing recovery never finished (${round ? `state ${round.state}` : "an unreadable record"}) and is never run again: ${file}` };
   }
+  if (round.refused) return { note: `; its one landing recovery was refused (${round.refused}: ${round.reason ?? "no reason"}): ${file}` };
   return { note: `; its one landing recovery finished (${round.land ?? "no landing"}): ${file}` };
 }
 
@@ -98,8 +113,24 @@ export const RECOVER_ISSUE_QUERY = `
   }`;
 
 // The proof above, then the exclusive record. Every stop before the record is
-// a named skip that writes nothing. Returns the round and the head to land.
-export async function claimRecovery({ io, paths, config, id, claim, credentials, fetchImpl, gh, holder = null, timeoutMs = RECOVER_REQUEST_TIMEOUT_MS, claimant = {} }) {
+// a named skip; one that can never pass for this head (RECOVER_REFUSALS) is
+// recorded as the head's finished record, any other writes nothing. Returns
+// the round and the head to land.
+export async function claimRecovery(args) {
+  try {
+    return await proveAndClaim(args);
+  } catch (error) {
+    const { io, paths, id, claim, claimant = {} } = args;
+    if (error.recoverSkip && RECOVER_REFUSALS.has(error.code) && SHA_RE.test(claim?.reviewed_head ?? "") && claim?.card === id) {
+      recordRefusal(io, recoverRecordPath(paths, id, claim.reviewed_head), { card: id, revision: claim.revision ?? null, reviewed_head: claim.reviewed_head,
+        recover_of: claim.activation_id ?? null, pr: claim.pr ?? null, stopped_land: claim.land ?? null, refused: error.code,
+        reason: error.message.replace(/^[A-Z_]+: /, ""), refused_at: io.now().toISOString(), ...claimant });
+    }
+    throw error;
+  }
+}
+
+async function proveAndClaim({ io, paths, config, id, claim, credentials, fetchImpl, gh, holder = null, timeoutMs = RECOVER_REQUEST_TIMEOUT_MS, claimant = {} }) {
   const repo = config.pilot_repo ?? null;
   if (!recoverCandidate(claim, { id, repo })) {
     recoverSkip("RECOVER_NOT_ELIGIBLE", `${id}'s claim is not a passed run of ${repo ?? "the pilot repository"} stopped at landing on ${[...RECOVER_LANDS].join(" or ")}`);
@@ -112,6 +143,7 @@ export async function claimRecovery({ io, paths, config, id, claim, credentials,
   try { read = await getJson(io, `https://api.github.com/repos/${repo}/pulls/${claim.pr}`, credentials.GITHUB_TOKEN, timeoutMs); } catch (error) {
     recoverSkip("RECOVER_UNREADABLE", `pull request #${claim.pr} cannot be read (${error.message})`);
   }
+  if (read.status === 404) recoverSkip("RECOVER_NOT_ELIGIBLE", `pull request #${claim.pr} is not in ${repo}`);
   if (!read.ok || !read.body) recoverSkip("RECOVER_UNREADABLE", `pull request #${claim.pr} cannot be read (HTTP ${read.status})`);
   const wrong = repairPullIdentity(read.body, { repo, number: claim.pr, branch });
   if (wrong) recoverSkip("RECOVER_NOT_ELIGIBLE", wrong);

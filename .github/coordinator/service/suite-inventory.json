@@ -4717,10 +4717,12 @@
     "Landing recovery: a passed run stopped on LAND_ERROR lands the same way; a stop of any other kind is never recovered",
     "Landing recovery: with landing_repair off, a stopped card stays stopped and nothing is read, so the unchanged plan still sees it",
     "Landing recovery: a head anyone moved counts only as a plain merge of main that keeps the reviewed blobs; otherwise it needs a new review and is never reset",
-    "Landing recovery: a newer verdict, another owner, a delegate, another claiming pull request, a closed pull request or the pause each stop it before its record",
+    "Landing recovery: a newer verdict, another owner, a delegate, another claiming pull request, a closed pull request or the pause each stop it before it lands anything",
     "Landing recovery: one bounded attempt per passed head: a duplicate wake, a finished record or one never finished is never run again",
     "Landing recovery: a merge attempt already recorded for the PASS at the head being landed is never resumed",
     "Landing recovery: with two workers a fresh card still dispatches beside a stopped card, whether its recovery is running, finished or not needed",
+    "Landing recovery: a recovery writes its finished status and exits like a landed run, so the outside watch never reads it as a run that died",
+    "Landing recovery: a proof that can never pass for this head is recorded once, so with two workers the cards queued after it still dispatch",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -34409,7 +34411,7 @@
       "capabilities": []
     },
     {
-      "name": "Landing recovery: a newer verdict, another owner, a delegate, another claiming pull request, a closed pull request or the pause each stop it before its record",
+      "name": "Landing recovery: a newer verdict, another owner, a delegate, another claiming pull request, a closed pull request or the pause each stop it before it lands anything",
       "capabilities": []
     },
     {
@@ -34422,6 +34424,14 @@
     },
     {
       "name": "Landing recovery: with two workers a fresh card still dispatches beside a stopped card, whether its recovery is running, finished or not needed",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a recovery writes its finished status and exits like a landed run, so the outside watch never reads it as a run that died",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a proof that can never pass for this head is recorded once, so with two workers the cards queued after it still dispatch",
       "capabilities": []
     },
     {

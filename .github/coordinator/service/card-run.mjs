@@ -1792,11 +1792,12 @@ async function autoRepair({ io, paths, limits, config, revision, next, skip }) {
 // finished with the landing's outcome whatever happens, so it never runs twice.
 async function autoRecover({ io, paths, limits, config, revision, next, skip }) {
   const id = next.id;
-  try { io.fs.writeFileSync(paths.lock, String(process.pid), { mode: 0o600, flag: "wx" }); }
+  try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600, encoding: "utf8" }); }
   catch { return skip("LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
   const holder = { round: null };
   let credentials = null;
   let land = null;
+  let status = null;
   try {
     const busy = [...installing(io, paths), ...busyReasons(io, paths)];
     if (busy.length) return skip("HOST_BUSY", busy.join("; "));
@@ -1812,6 +1813,13 @@ async function autoRecover({ io, paths, limits, config, revision, next, skip }) 
       if (error.recoverSkip) return skip(error.code, error.message);
       return skip("NOT_READY", error.message);
     }
+    // The run's status, as every card run keeps it, so the outside watch reads
+    // a recovery that is landing, and one that ended, like any landing run.
+    const invocation = typeof io.invocation === "function" ? io.invocation() : null;
+    status = createStatus({ io, paths, run: { run_id: claimed.round.record.activation_id,
+      invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: id, kind: "card", trigger: "timer", revision,
+      ...(await statusQueue(io, paths, config)) } });
+    status.write({ step: "landing", ticks: 0, last_tick_at: null, armed_at: null, outcome: "LANDING_RECOVERY" });
     let custody;
     try { custody = readLandToken(io, paths.landEnv); } catch { custody = { token: null, refused: "the landing token file cannot be read" }; }
     if (custody.refused || !custody.token) {
@@ -1842,7 +1850,9 @@ async function autoRecover({ io, paths, limits, config, revision, next, skip }) 
     owner_mention: ownerMention(config.owner_mention) };
   summary.needs_owner = needsOwner(summary);
   const report = await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs });
-  return { ...summary, round: holder.round.file, report };
+  status?.write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "LANDING_RECOVERY", land: land.outcome ?? null,
+    reverted: false, needs_owner: summary.needs_owner });
+  return { ...summary, round: holder.round.file, report, ...(status?.failures() ? { status_write_failures: status.failures() } : {}) };
 }
 
 // Self-repair B2: a repair round that never finished. It is never run again;
@@ -2619,7 +2629,9 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
     if (command === "timer-remove") return { code: 0, output: removeTimer(io, paths) };
     if (command === "auto") {
       const result = await autoRun({ io, paths: cardRunPaths(worker, paths) });
-      return { code: result.skipped || (result.ok && (result.revert?.reverted || result.kind === "install")) ? 0 : 1, output: result };
+      // A landing recovery arms nothing, so it has nothing to revert: it ends
+      // well when it landed.
+      return { code: result.skipped || (result.ok && (result.revert?.reverted || result.kind === "install" || result.outcome === "LANDING_RECOVERY")) ? 0 : 1, output: result };
     }
     // A queue keeps its order only through the timer's claims, so it is run by
     // the timer alone.
