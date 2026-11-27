@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash,createHmac,randomBytes,randomUUID} from 'node:crypto';
 import {Readable} from 'node:stream';
 import {S3Client} from '@aws-sdk/client-s3';
-import {R2Objects,R2DocumentStore,emptyPackedSnapshot} from '../../../dist/packages/private-documents/src/r2-storage.js';
+import {R2Objects,R2DocumentStore,PartitionedR2DocumentStore,emptyPackedSnapshot} from '../../../dist/packages/private-documents/src/r2-storage.js';
 import {createCandidateDocuments,createRuntimeCandidateDocumentsFromEnv} from '../../../dist/apps/gateway/src/candidate-documents-runtime.js';
 import {createGatewayServer} from '../../../dist/apps/gateway/src/index.js';
 import {handleDocumentsUpload} from '../../../dist/apps/gateway/src/documents-upload-http.js';
@@ -146,7 +146,7 @@ test('SHU-145/R2-07 complete R2 configuration constructs ports without contactin
  const env={DOCUMENT_STORAGE:'r2',DOCUMENT_ORG_ID:'org-a',DOCUMENT_ORIGIN:origin,DOCUMENT_SIGNING_KEY:randomBytes(32).toString('base64'),
   DATABASE_URL:'postgresql://synthetic:synthetic@127.0.0.1:1/synthetic',OIDC_CALLBACK_URL:origin+'/login/callback',DOCUMENT_R2_ACCOUNT_ID:accountId,DOCUMENT_R2_BUCKET:bucket,
   DOCUMENT_R2_ACCESS_KEY_ID:accessKeyId,DOCUMENT_R2_SECRET_ACCESS_KEY:secretAccessKey};
- const runtime=await createRuntimeCandidateDocumentsFromEnv(env);assert.ok(runtime.service.options.directUploads);assert.ok(runtime.service.options.store instanceof R2DocumentStore);await runtime.close();
+ const runtime=await createRuntimeCandidateDocumentsFromEnv(env);assert.ok(runtime.service.options.directUploads);assert.ok(runtime.service.options.store instanceof PartitionedR2DocumentStore);await runtime.close();
  await assert.rejects(createRuntimeCandidateDocumentsFromEnv({...env,DOCUMENT_ROOT:'/no-fallback'}),{message:'invalid candidate-document configuration'});
 });
 
