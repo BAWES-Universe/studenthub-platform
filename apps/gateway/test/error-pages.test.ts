@@ -35,6 +35,21 @@ test("U07_ERROR every kind is an accessible page: not found is 404, a failure pa
   assert.notEqual(errorPage("server").html, errorPage("offline").html);
 });
 
+test("U07_ERROR failure pages are action-neutral: they never promise nothing was saved and say to check the last action before retrying", async (t) => {
+  const call = await rig(t);
+  for (const kind of ERROR_KINDS) {
+    const html = await (await call(`/error/${kind}`)).text();
+    assert.doesNotMatch(html, /nothing (you saved|was saved|has been changed)|has not been changed|was not saved/i, `${kind} makes no promise about saved work`);
+    if (kind !== "not-found") assert.match(html, /If you were saving or sending something, check whether it went through before you try it again\./, `${kind} says to check the last action`);
+  }
+  // The unhandled 503 can follow a write that already committed: the same neutral page, with the API JSON unchanged.
+  const failing = await rig(t, { web: { origin: ORIGIN }, notifications: { open: async () => { throw new Error("boom"); } } });
+  const page = await failing("/notifications");
+  assert.equal(page.status, 503); assert.equal(await page.text(), errorPage("server").html);
+  const api = await failing("/notifications", "application/json");
+  assert.equal(api.status, 503); assert.deepEqual(await api.json(), { ok: false, error: "service_unavailable" });
+});
+
 test("U07_ERROR an unknown kind is not found; API callers get JSON; other methods 405", async (t) => {
   const call = await rig(t);
   const unknown = await call("/error/whatever");

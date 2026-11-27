@@ -8,15 +8,21 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
  * callers keep the JSON they had. No session is read and nothing about the account is shown,
  * so a page is the same for everyone. Starting again goes to `/`, which resolves the person's
  * context afresh.
+ *
+ * The pages never claim that nothing was saved: the unhandled-failure 503 can follow a write that
+ * already committed, so they say to check whether the last save or send went through before trying
+ * it again. `/error/offline` is an ordinary server page that an app can send a person to once it is
+ * back online; it is not an offline fallback, which would need a service worker or the app's own
+ * bundle.
  */
 export const ERROR_KINDS = ["not-found", "server", "app-error", "offline"] as const;
 export type ErrorKind = typeof ERROR_KINDS[number];
 
 const PAGES: Readonly<Record<ErrorKind, { readonly status: number; readonly code: string; readonly title: string; readonly message: string }>> = {
   "not-found": { status: 404, code: "not_found", title: "We can’t find that page.", message: "The link may be old or mistyped. Nothing about your account is shown here." },
-  server: { status: 503, code: "service_unavailable", title: "StudentHub isn’t responding right now.", message: "Nothing you saved has been changed. Please try again in a moment." },
-  "app-error": { status: 500, code: "app_error", title: "Something went wrong on this page.", message: "Nothing you saved has been changed. Start again from StudentHub to carry on." },
-  offline: { status: 503, code: "offline", title: "You seem to be offline.", message: "Check your connection, then try again. Nothing you saved has been changed." },
+  server: { status: 503, code: "service_unavailable", title: "StudentHub isn’t responding right now.", message: "Please try again in a moment. If you were saving or sending something, check whether it went through before you try it again." },
+  "app-error": { status: 500, code: "app_error", title: "Something went wrong on this page.", message: "If you were saving or sending something, check whether it went through before you try it again. Start again from StudentHub to carry on." },
+  offline: { status: 503, code: "offline", title: "You seem to be offline.", message: "Check your connection. If you were saving or sending something, check whether it went through before you try it again." },
 };
 const ERROR_PATH = /^\/error\/([^/]+)$/;
 const isKind = (v: string): v is ErrorKind => (ERROR_KINDS as readonly string[]).includes(v);
