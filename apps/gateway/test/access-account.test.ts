@@ -15,6 +15,10 @@ function world(extraLive = 0) {
     [OMAR, { personId: "omar", signedInAt: "2026-11-20T06:00:00.000Z" }],
   ]);
   const ended: string[] = [];
+  const people: Record<string, { principalId: string; displayName: string | null; email: string | null }> = {
+    dana: { principalId: "dana", displayName: "Dana <Candidate>", email: "dana@example.invalid" },
+    omar: { principalId: "omar", displayName: null, email: null },
+  };
   const account: AccountSessionsStore = {
     async list(personId, current) {
       const sessions = [...live].filter(([, row]) => row.personId === personId)
@@ -32,10 +36,10 @@ function world(extraLive = 0) {
   };
   const ports = {
     sessions: { get: async (id: string) => (live.has(id) ? { id, personId: live.get(id)!.personId } : undefined) },
-    reads: { ownGrants: async () => [] } as never,
+    reads: { ownGrants: async () => [], person: async (principalId: string) => people[principalId] ?? null } as never,
     account,
   } as AccessPorts;
-  return { ports, live, ended };
+  return { ports, live, ended, people };
 }
 
 async function serve(t: TestContext, ports: AccessPorts) {
@@ -74,6 +78,25 @@ test("U03_PAGE a signed-in person sees where they are signed in, this browser fi
   assert.match(await (await http.get("/account", OMAR)).text(), /signed in to StudentHub only in this browser\./);
   assert.match(await (await http.get("/profile/access", DANA)).text(), /<a class="nav-item" href="\/account">Account<\/a>/, "Your access links to the account page");
   assert.doesNotMatch(html, /Showing the latest/, "under the cap nothing is left out");
+});
+
+test("U03_WHO the account page says who the session belongs to, from their Universe sign-in, and links to their roles", async (t) => {
+  const { ports, people } = world();
+  const http = await serve(t, ports);
+  const html = await (await http.get("/account", DANA)).text();
+  assert.match(html, /<section><h2>Signed in as<\/h2><dl class="profile-fields"><div><dt>Name<\/dt><dd>Dana &lt;Candidate&gt;<\/dd><\/div><div><dt>Email<\/dt><dd>dana@example\.invalid<\/dd><\/div><\/dl>/);
+  assert.match(html, /Your name and email come from your Universe account, as it last sent them when you signed in\. Change them in Universe\./);
+  assert.match(html, /<a class="text-link" href="\/profile\/access">Your roles in StudentHub →<\/a>/);
+  // Always the session's own person: a query naming someone else changes nothing.
+  assert.doesNotMatch(await (await http.get("/account?person=omar", DANA)).text(), /Not given/);
+  const omar = await (await http.get("/account", OMAR)).text();
+  assert.match(omar, /<dt>Name<\/dt><dd>Unnamed person<\/dd><\/div><div><dt>Email<\/dt><dd>Not given<\/dd>/);
+  assert.doesNotMatch(omar, /Dana/);
+  // No person record: the sessions still show, without the section.
+  delete people.omar;
+  const none = await (await http.get("/account", OMAR)).text();
+  assert.doesNotMatch(none, /Signed in as/);
+  assert.match(none, /Where you are signed in/);
 });
 
 test("U03_OVER_LIMIT past the store's cap the page counts every live sign-in, not just the listed ones", async (t) => {
