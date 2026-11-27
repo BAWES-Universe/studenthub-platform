@@ -1042,10 +1042,17 @@
     "A-06": {
       "lane": "organizations",
       "subject": "`/organizations/:orgId/admin`",
+      "served": [
+        {
+          "route": "/workspace/companies/:orgId/admin",
+          "test": "apps/gateway/test/organization-admin-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "backend only (audit 2026-11-20): status, terms, approved-to-hire, account manager, deletion APIs; no admin page"
+          "state": "done",
+          "evidence": "PR #769 at e3554b0b093b55ffde1b7953286ca5ca9cd2c021"
         },
         "verified": {
           "state": "open"
