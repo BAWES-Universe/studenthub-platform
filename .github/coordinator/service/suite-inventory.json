@@ -2603,6 +2603,8 @@
     "readback-read-failures-are-retried-read-only",
     "unresolved-readback-fails-closed-before-merge",
     "conflicting-readback-fails-at-once-before-merge",
+    "singleton-conflicting-readback-fails-at-once-before-merge",
+    "rate-limited-readback-is-raised-as-a-hold-before-merge",
     "binding-pre-merge-pr_number",
     "binding-pre-merge-base_ref",
     "binding-recovery-pr_number",
@@ -21518,6 +21520,14 @@
     },
     {
       "name": "conflicting-readback-fails-at-once-before-merge",
+      "capabilities": []
+    },
+    {
+      "name": "singleton-conflicting-readback-fails-at-once-before-merge",
+      "capabilities": []
+    },
+    {
+      "name": "rate-limited-readback-is-raised-as-a-hold-before-merge",
       "capabilities": []
     },
     {

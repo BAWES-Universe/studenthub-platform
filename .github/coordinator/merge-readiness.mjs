@@ -351,10 +351,17 @@ async function appendRecord({ record, issueId, linearToken, fetchImpl, allowedAc
   for (const delay of readbackDelays) {
     if (delay > 0) await sleep(delay);
     let issue;
-    try { issue = await fetchMergeIssue({ issueId, token: linearToken, fetchImpl }); } catch { continue; }
+    try { issue = await fetchMergeIssue({ issueId, token: linearToken, fetchImpl }); } catch (error) {
+      // A spent budget or quota is the whole tick's HOLD or failure, never a read to retry.
+      if (['LINEAR_RATE_LIMITED', 'LINEAR_COMMENT_CAP', 'LINEAR_QUOTA_UNCLASSIFIED'].includes(error?.code)) throw error;
+      continue;
+    }
     if (!Array.isArray(issue?.comments?.nodes)) continue;
     const parsed = parseMergeAttemptsFromComments(issue.comments.nodes, allowedActorIds);
-    if (parsed.conflicts.has(record.attempt_id)) throw new Error('merge-attempt write conflicts with a durable record');
+    if (parsed.conflicts.has(record.attempt_id) ||
+      parsed.records.some(candidate => candidate.attempt_id === record.attempt_id && !sameImmutable(candidate, record))) {
+      throw new Error('merge-attempt write conflicts with a durable record');
+    }
     if (parsed.records.some(candidate => candidate.attempt_id === record.attempt_id && candidate.state === record.state && JSON.stringify(candidate) === JSON.stringify(record))) {
       return issue;
     }

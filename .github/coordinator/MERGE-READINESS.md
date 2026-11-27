@@ -59,9 +59,14 @@ store:
 "Read back" means: after Linear acknowledges the create, the issue is read
 again up to five times (waits of 0, 1, 2, 4 and 8 seconds), never written
 again. A trusted copy of the same attempt with different immutable fields
-fails at once; a record still unseen after the last read fails closed as
-`merge-attempt write was not durably visible`, before any merge call. Linear
-can acknowledge a comment before its reads show it (SHU-749, 27 Nov 2026).
+fails at once, even when it is the only copy seen; a Linear rate limit or
+quota refusal on a read is raised as itself, so the tick HOLDs or fails as
+for any other read. A record still unseen after the last read fails as
+`merge-attempt write was not durably visible`. For PREPARED that is before
+the merge call, so nothing merges. COMPLETED is written after the merge, so
+an unseen COMPLETED means the merge happened and the next tick recovers from
+GitHub's durable state. Linear can acknowledge a comment before its reads
+show it (SHU-749, 27 Nov 2026).
 
 GitHub's REST merge endpoint binds `sha` to the head; it has no expected-base-SHA
 parameter. Base freshness therefore requires GitHub's server-enforced strict

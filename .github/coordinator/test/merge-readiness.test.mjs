@@ -61,7 +61,7 @@ function harness(options = {}) {
   let linearWrites = 0;
   // Readback fixtures: hide the newest write from the next N merge-issue
   // reads, fail the next N reads outright, or show a conflicting copy.
-  let hiddenReads = 0, failedReads = 0;
+  let hiddenReads = 0, failedReads = 0, rateLimitedReads = 0;
   const sleeps = [];
   let loseMergeResponse = Boolean(options.loseMergeResponse);
   const issueLabels = options.issueLabels ?? [];
@@ -74,6 +74,8 @@ function harness(options = {}) {
         parent: null, relations: { nodes: [] } }], () => structuredClone(comments)), pageInfo: { hasNextPage: false, endCursor: null } } };
       else if (query.includes('CoordinatorIssueComments')) data = { issue: { comments: { nodes: structuredClone(comments) } } };
       else if (query.includes('CoordinatorMergeIssue') && failedReads > 0) { failedReads--; return { ok: false, status: 500, json: async () => ({}) }; }
+      else if (query.includes('CoordinatorMergeIssue') && rateLimitedReads > 0) { rateLimitedReads--;
+        return { ok: false, status: 429, headers: { get: name => (String(name).toLowerCase() === 'retry-after' ? '30' : null) }, json: async () => ({}) }; }
       else if (query.includes('CoordinatorMergeIssue')) data = { issue: { id: 'linear-900', identifier: 'SHU-900', title: 'Routine change',
         state: { name: 'In Progress', type: 'started' }, labels: { nodes: issueLabels.map(name => ({ name })) },
         relations: { nodes: options.blocked ? [{ type: 'blockedBy', relatedIssue: { identifier: 'SHU-1', state: { name: 'In Progress', type: 'started' } } }] : [] },
@@ -83,9 +85,17 @@ function harness(options = {}) {
         comments.push({ body: variables.body, createdAt: `2026-09-14T00:10:${String(linearWrites).padStart(2, '0')}.000Z`, user: { id: ACTOR, displayName: 'Coordinator' } });
         hiddenReads = options.readbackLag ?? 0;
         failedReads = options.readbackFailures ?? 0;
+        rateLimitedReads = options.readbackRateLimited ?? 0;
         if (options.conflictOnWrite && linearWrites === 1) {
           const copy = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(variables.body)[1]);
           comments.push({ body: mergeAttemptCommentBody({ ...copy, approved_tree_sha: WRONG_TREE }), createdAt: '2026-09-14T00:09:59.000Z', user: { id: ACTOR, displayName: 'Coordinator' } });
+        }
+        if (options.singletonConflictOnWrite && linearWrites === 1) {
+          // The only visible copy of this attempt is a trusted one with other
+          // immutable fields; the acknowledged write itself stays unseen.
+          const written = comments.pop();
+          const copy = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(variables.body)[1]);
+          comments.push({ body: mergeAttemptCommentBody({ ...copy, approved_tree_sha: WRONG_TREE }), createdAt: written.createdAt, user: { id: ACTOR, displayName: 'Coordinator' } });
         }
         data = { commentCreate: { success: true, comment: { id: `comment-${linearWrites}` } } };
       } else throw new Error(`unexpected Linear query: ${query.slice(0, 80)}`);
@@ -483,6 +493,22 @@ test('unresolved-readback-fails-closed-before-merge', async () => {
 test('conflicting-readback-fails-at-once-before-merge', async () => {
   const h = harness({ conflictOnWrite: true });
   await assert.rejects(h.consume(), /merge-attempt write conflicts with a durable record/, READBACK);
+  assert.equal(h.mergeCalls(), 0, READBACK);
+  assert.equal(h.linearWrites(), 1, READBACK);
+  assert.deepEqual(h.sleeps, [], READBACK);
+});
+
+test('singleton-conflicting-readback-fails-at-once-before-merge', async () => {
+  const h = harness({ singletonConflictOnWrite: true });
+  await assert.rejects(h.consume(), /merge-attempt write conflicts with a durable record/, READBACK);
+  assert.equal(h.mergeCalls(), 0, READBACK);
+  assert.equal(h.linearWrites(), 1, READBACK);
+  assert.deepEqual(h.sleeps, [], READBACK);
+});
+
+test('rate-limited-readback-is-raised-as-a-hold-before-merge', async () => {
+  const h = harness({ readbackRateLimited: 1 });
+  await assert.rejects(h.consume(), error => error?.code === 'LINEAR_RATE_LIMITED' && Number.isInteger(error?.retryAfterSeconds), READBACK);
   assert.equal(h.mergeCalls(), 0, READBACK);
   assert.equal(h.linearWrites(), 1, READBACK);
   assert.deepEqual(h.sleeps, [], READBACK);
