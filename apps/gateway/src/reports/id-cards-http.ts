@@ -7,6 +7,7 @@ import type { PublicPhoto } from "../../../../packages/reports/src/public-photo.
 import type { IdCardAction, IdCardCheck, IdCardListRow, IdCardView, IdCardWriteResult, OwnIdCard } from "../../../../packages/reports/src/id-cards.js";
 import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 import { handleCertificates, type CertificatesHttpService } from "./certificates-http.js";
+import { handleCandidateStatistics, type CandidateStatisticsHttpService } from "./candidate-statistics-http.js";
 import { handleStatistics, type StatisticsHttpService } from "./statistics-http.js";
 import { handleCampaigns, type CampaignsHttpService } from "./campaigns-http.js";
 import { handleRevenue, type RevenueHttpService } from "./revenue-http.js";
@@ -46,6 +47,8 @@ export interface IdCardsHttpService {
   publicPhoto?(token: string, key: string, clientHash: string): Promise<PublicPhoto | null>;
   /** S8 experience certificates, sharing this service's staff check. */
   certificates?: CertificatesHttpService;
+  /** A person's own statistics (legacy candidate `Statistic` list). */
+  candidateStatistics?: CandidateStatisticsHttpService;
   /** P-3 staff statistics, sharing this service's staff check. */
   statistics?: StatisticsHttpService;
   /** A-22 marketing campaigns, sharing this service's staff check. */
@@ -266,6 +269,7 @@ export async function handleIdCards(req: IncomingMessage, res: ServerResponse, s
   if (path.startsWith(ID_CARD_VERIFY_PATH)) return verifyPage(req, res, service, path);
   const signedIn = async () => { const s = cookie(req.headers.cookie); return s ? authorize(s).catch(() => undefined) : undefined; };
   if (await handleCertificates(req, res, service?.certificates, path, signedIn, viewer => service!.isStaff(viewer))) return true;
+  if (await handleCandidateStatistics(req, res, service?.candidateStatistics, path, signedIn)) return true;
   if (await handleStatistics(req, res, service?.statistics, path, signedIn, viewer => service!.isStaff(viewer), origin)) return true;
   if (await handleCampaigns(req, res, service?.campaigns, path, signedIn, viewer => service!.isStaff(viewer), origin)) return true;
   if (await handleRevenue(req, res, service?.revenue, path, signedIn, viewer => service!.isStaff(viewer))) return true;

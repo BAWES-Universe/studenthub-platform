@@ -10,3 +10,5 @@ export { PostgresFiringSpikeStore } from "./postgres-firing-spike-store.js";
 export type { FiringSpikeRow } from "./postgres-firing-spike-store.js";
 export { PostgresCampaignsStore } from "./postgres-campaigns-store.js";
 export { PostgresRevenueStore } from "./postgres-revenue-store.js";
+export { PostgresCandidateStatisticsStore } from "./postgres-candidate-statistics-store.js";
+export type { CandidateStatisticsLineRow } from "./postgres-candidate-statistics-store.js";
