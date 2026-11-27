@@ -531,7 +531,7 @@
       "gates": {
         "built": {
           "state": "done",
-          "evidence": "PR #767 at 3212bddfb94368b0b0c71cbdbe45002e9c9e1651"
+          "evidence": "PR #767 at 125238e07456c2c528d7af67715733b3ad4bcaf9"
         },
         "verified": {
           "state": "open"
