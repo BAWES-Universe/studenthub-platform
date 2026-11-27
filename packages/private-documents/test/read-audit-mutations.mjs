@@ -5,8 +5,8 @@ import {join,resolve} from 'node:path';
 import assert from 'node:assert/strict';
 const root=resolve(new URL('../../../',import.meta.url).pathname),hasDb=Boolean(process.env.DATABASE_URL);
 const mutations=[
- ['read query locks','RA_NO_LOCK','r2-storage.js',"SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true'","SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true FOR UPDATE'",'r2-postgres.test.mjs',true],
- ['read uses writer pool','RA_NO_LOCK','r2-storage.js',"const rows = await this.reader.query('SELECT snapshot","const rows = await this.pool.query('SELECT snapshot",'r2-postgres.test.mjs',true],
+ ['read query locks','RA_NO_LOCK','r2-storage.js',"SELECT snapshot FROM candidate_document_partitions WHERE owner_kind = $1 AND owner_id = $2'","SELECT snapshot FROM candidate_document_partitions WHERE owner_kind = $1 AND owner_id = $2 FOR UPDATE'",'r2-postgres.test.mjs',true],
+ ['read uses writer pool','RA_NO_LOCK','r2-storage.js',"const rows = await this.reader.query('SELECT snapshot FROM candidate_document_partitions WHERE","const rows = await this.pool.query('SELECT snapshot FROM candidate_document_partitions WHERE",'r2-postgres.test.mjs',true],
  ['audit uses writer pool','RA_NO_LOCK','r2-storage.js',"await this.reader.query('INSERT INTO candidate_document_read_audit","await this.pool.query('INSERT INTO candidate_document_read_audit",'r2-postgres.test.mjs',true],
  ['audit insert skipped','RA_AUDIT_ROW','r2-storage.js',"await this.reader.query('INSERT INTO candidate_document_read_audit (id, operation, principal_ref, occurred_at) VALUES (gen_random_uuid(), $1, $2, to_timestamp($3 / 1000.0))', [entry.operation, entry.principalRef, entry.at]);","await Promise.resolve();",'r2-postgres.test.mjs',true],
  ['hydrates every row','RA_HYDRATE','r2-storage.js','return fn(s);','await Promise.all([...refs.keys()].map(id => s[documentReadHydrator](id))); return fn(s);','read-audit.test.mjs',false],

@@ -4,7 +4,7 @@ import type { AuthzStore } from '@studenthub/contracts';
 import type { SessionStore } from '@studenthub/login-contract';
 import { organizationDeletionDecision, organizationDeletionBlockers, organizationDeletionRecordRef, organizationDeletionPrincipalRef } from '@studenthub/organizations';
 import { FileDocumentStore, PrivateDocuments, type DocumentStore } from '../../../packages/private-documents/src/index.js';
-import { PostgresDocumentSnapshot, R2DocumentStore, R2Objects } from '../../../packages/private-documents/src/r2-storage.js';
+import { PartitionedR2DocumentStore, PostgresDocumentPartitions, R2Objects } from '../../../packages/private-documents/src/r2-storage.js';
 import type { OrganizationDocumentsRuntime } from './organization-documents-http.js';
 
 export function createOrganizationDocuments(ports: {
@@ -34,8 +34,8 @@ export async function createRuntimeOrganizationDocumentsFromEnv(env: NodeJS.Proc
       if (env.DOCUMENT_ROOT !== undefined || cloud.some(name => !env[name])) throw new Error();
       const objects = new R2Objects({ accountId: env.DOCUMENT_R2_ACCOUNT_ID!, bucket: env.DOCUMENT_R2_BUCKET!, accessKeyId: env.DOCUMENT_R2_ACCESS_KEY_ID!, secretAccessKey: env.DOCUMENT_R2_SECRET_ACCESS_KEY! });
       closers.push(() => objects.close());
-      const snapshots = new PostgresDocumentSnapshot(env.DATABASE_URL); closers.push(() => snapshots.close());
-      store = new R2DocumentStore(snapshots, objects);
+      const partitions = new PostgresDocumentPartitions(env.DATABASE_URL); closers.push(() => partitions.close());
+      store = new PartitionedR2DocumentStore(partitions, objects);
     }
     const authz = new PostgresAuthzStore({ connectionString: env.DATABASE_URL }); closers.push(() => authz.close());
     const login = new PostgresLoginStore({ connectionString: env.DATABASE_URL }); closers.push(() => login.close());
