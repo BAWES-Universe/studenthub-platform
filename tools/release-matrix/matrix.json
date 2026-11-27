@@ -1190,10 +1190,18 @@
     "A-20": {
       "lane": "pay",
       "subject": "`/finance/settled`",
+      "served": [
+        {
+          "route": "/finance/settled",
+          "test": "apps/gateway/test/billing-finance-settled-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "not started (audit 2026-11-20): pay lane: settled"
+          "state": "done",
+          "evidence": "read-only Finance invoices and balances with tests, proven by checkServed; PR #757 at f210e99c",
+          "note": "built covers the central Finance reader only; the admin:read-only + finance:read-settled reader, expense views, deployment and live acceptance stay open, so this is not full A-20 parity"
         },
         "verified": {
           "state": "open"

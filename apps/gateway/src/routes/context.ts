@@ -79,6 +79,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly payHistory?: import("../billing/pay-history-http.js").PayHistoryHttp;
   readonly bankResults?: import("../billing/bank-results-http.js").BankResultsHttp;
   readonly financeTransfers?: import("../billing/finance-transfers-http.js").FinanceTransfersHttp;
+  readonly financeSettled?: import("../billing/finance-settled-http.js").FinanceSettledHttp;
 };
 
 export interface GatewayRouteContext {

@@ -12,8 +12,8 @@ const store = new URL("../dist/billing/postgres-finance-transfer-reads.js", impo
 const shared = new URL("../dist/billing/postgres-transfer-invoice-reads.js", import.meta.url);
 const suite = fileURLToPath(new URL("../../../dist/packages/db/test/postgres-billing-finance-transfers.test.js", import.meta.url));
 const mutations = [
-  ["let anyone past the central finance gate", "FINANCE_TRANSFERS_PG_DETAIL", "if (!await this.#gate(client, principalId))\n            return null;", "if (false)\n            return null;"],
-  ["show every company's transfers", "FINANCE_TRANSFERS_PG", "chains.filter((c) => this.#decision(grants, c.company, c.ancestors))", "chains.filter(() => true)"],
+  ["let anyone past the central finance gate", "FINANCE_TRANSFERS_PG_DETAIL", "if (!await gate(client, principalId))\n        return null;", "if (false)\n        return null;"],
+  ["show every company's transfers", "FINANCE_TRANSFERS_PG", "chains.filter((c) => decision(grants, c.company, c.ancestors))", "chains.filter(() => true)"],
   ["ignore the status filter", "FINANCE_TRANSFERS_PG", "($2::text IS NULL OR t.status = $2)", "($2::text IS NULL OR true)"],
   ["hide that an older page exists", "FINANCE_TRANSFERS_PG", "const more = rows.length > limit;", "const more = false;"],
   ["count unpaid lines as paid", "FINANCE_TRANSFERS_PG_DETAIL", "FILTER (WHERE paid), 0)", "FILTER (WHERE true), 0)"],
