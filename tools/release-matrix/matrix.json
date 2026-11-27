@@ -1160,7 +1160,7 @@
       "gates": {
         "built": {
           "state": "done",
-          "evidence": "read-only Finance transfers list and detail with tests, proven by checkServed; PR #748 at f4d46cfb"
+          "evidence": "read-only Finance transfers list and detail with tests, proven by checkServed; PR #748 at d73928e2"
         },
         "verified": {
           "state": "open"
