@@ -80,13 +80,13 @@ export function legacyBucketReader(config: LegacyBucketConfig, client?: GetObjec
   });
 
   return {
-    async read(key: string, maxBytes: number): Promise<LegacyObjectRead> {
+    async read(key: string, maxBytes: number, signal?: AbortSignal): Promise<LegacyObjectRead> {
       if (!isLegacyDocumentKey(key) || !Number.isSafeInteger(maxBytes) || maxBytes < 1) throw failed();
       // One deadline for the request and for draining its body. The timer is a live handle, so a
-      // stalled read always ends, and it is cleared when the read settles.
+      // stalled read always ends, and it is cleared when the read settles. A caller's signal aborts it too.
       const deadline = new AbortController();
       const timer = setTimeout(() => deadline.abort(), timeoutMs);
-      try { return await readWithin(key, maxBytes, deadline.signal); } finally { clearTimeout(timer); }
+      try { return await readWithin(key, maxBytes, signal ? AbortSignal.any([deadline.signal, signal]) : deadline.signal); } finally { clearTimeout(timer); }
     },
   };
 

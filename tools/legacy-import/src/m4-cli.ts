@@ -107,7 +107,7 @@ import type { RefreshIdentity } from "./twin/report.js";
 import type { LegacyReader } from "./twin/journey.js";
 import { mirrorReader } from "./twin/staging.js";
 import { legacyBucketReader } from "./m2-bucket.js";
-import { checkLegacyDocuments, documentCheckCounts, M2_DOCUMENT_CHECK_REVISION, type CheckedDocument, type DocumentCheckRule, type LegacyObjectReader } from "./m2-document-check.js";
+import { checkLegacyDocuments, documentCheckCounts, documentSetDigest, M2_DOCUMENT_CHECK_REVISION, type CheckedDocument, type DocumentCheckRule, type LegacyObjectReader } from "./m2-document-check.js";
 import { M2_DOCUMENT_MAPPER_REVISION, type DocumentIssueRule } from "./m2-documents.js";
 import { M2InputError, planM2, readM2Sources } from "./m2-run.js";
 import { kuwaitDay, planIdentity, planM4, readM4Sources, receiptSafe, receiptStep, runM4, type M4Report, type M4Step, type M4Writers, type ReceiptStep } from "./m4-run.js";
@@ -252,15 +252,7 @@ export function refreshProvenance(last: unknown): { serverId: string; schema: st
   return { serverId, schema, generation, lock: r.lock, candidates: candidates as number };
 }
 
-/**
- * A digest of a checked document set: sha256 over each document's legacy id, kind, type, size and
- * sha256, sorted by id then kind. No key or byte.
- */
-export function documentSetDigest(documents: readonly CheckedDocument[]): string {
-  const rows = documents.map((d) => [d.legacyId, d.kind, d.mime, d.size, d.sha256] as const)
-    .sort((a, b) => a[0].length - b[0].length || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0) || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
-  return createHash("sha256").update(JSON.stringify(["m2-document-set-v1", rows])).digest("hex");
-}
+export { documentSetDigest };
 
 /**
  * A digest of a staged contact set: sha256 over its (legacy id, keyed row digest) pairs, sorted
