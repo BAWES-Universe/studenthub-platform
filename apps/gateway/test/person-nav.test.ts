@@ -16,14 +16,14 @@ const reports = (idCards: Record<string, unknown>) => ({ staffMessages: { idCard
 
 test("PERSON_NAV each link points at its route and sits after the existing entries", () => {
   assert.deepEqual(PERSON_CONTRIBUTION.navigation.map(n => [n.key, n.href]), [
-    ["statistics", "/profile/statistics"], ["pay", "/pay"], ["certificates", "/profile/certificates"], ["idCard", "/profile/id-card"],
+    ["statistics", "/profile/statistics"], ["pay", "/pay"], ["bank", "/profile/bank"], ["certificates", "/profile/certificates"], ["idCard", "/profile/id-card"],
   ]);
   const others = CONTRIBUTIONS.navigation.filter(n => !PERSON_CONTRIBUTION.navigation.some(p => p.key === n.key));
   assert.ok(PERSON_CONTRIBUTION.navigation.every(p => others.every(o => p.order > o.order)), "no existing entry moves");
 });
 
 test("PERSON_NAV a link shows only when its route is wired", () => {
-  for (const key of ["statistics", "pay", "certificates", "idCard"]) {
+  for (const key of ["statistics", "pay", "bank", "certificates", "idCard"]) {
     assert.equal(entry(key).visible({}), false, `${key}: nothing wired`);
     assert.equal(entry(key).visible({ navigation: {} } as never), false, `${key}: other areas only`);
   }
@@ -35,6 +35,8 @@ test("PERSON_NAV a link shows only when its route is wired", () => {
   assert.equal(entry("idCard").visible(reports({})), true);
   assert.equal(entry("pay").visible(reports({ candidateStatistics: {}, certificates: {} })), false, "pay needs the billing area");
   assert.equal(entry("pay").visible({ payHistory: {} } as never), true);
+  assert.equal(entry("bank").visible({ payHistory: {} } as never), false, "bank details need the profile wiring");
+  assert.equal(entry("bank").visible({ bankDetails: {} } as never), true);
 });
 
 test("PERSON_NAV every label has English and Arabic copy", () => {
@@ -60,10 +62,10 @@ test("PERSON_NAV the profile page links the wired routes, read from the runtime'
     return (page as { html: string }).html;
   };
   const bare = await html({});
-  for (const href of ["/profile/statistics", "/pay", "/profile/certificates", "/profile/id-card"]) assert.equal(bare.includes(`href="${href}"`), false, href);
+  for (const href of ["/profile/statistics", "/pay", "/profile/bank", "/profile/certificates", "/profile/id-card"]) assert.equal(bare.includes(`href="${href}"`), false, href);
   // login-runtime attaches the reports wiring as a non-enumerable property, so the gate must read it directly.
-  const wired = { payHistory: {} } as Partial<BrowserLoginApplication>;
+  const wired = { payHistory: {}, bankDetails: {} } as unknown as Partial<BrowserLoginApplication>;
   Object.defineProperty(wired, "staffMessages", { value: { idCards: { candidateStatistics: {}, certificates: {} } }, enumerable: false });
   const page = await html(wired);
-  assert.match(page, /<a href="\/profile\/statistics">My statistics<\/a><a href="\/pay">My pay<\/a><a href="\/profile\/certificates">Certificates<\/a><a href="\/profile\/id-card">ID card<\/a>/);
+  assert.match(page, /<a href="\/profile\/statistics">My statistics<\/a><a href="\/pay">My pay<\/a><a href="\/profile\/bank">Bank details<\/a><a href="\/profile\/certificates">Certificates<\/a><a href="\/profile\/id-card">ID card<\/a>/);
 });

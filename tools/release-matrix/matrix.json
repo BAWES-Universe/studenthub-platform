@@ -560,10 +560,17 @@
     "C-15": {
       "lane": "people",
       "subject": "`/profile/bank`",
+      "served": [
+        {
+          "route": "/profile/bank",
+          "test": "apps/gateway/test/bank-details-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "backend only (audit 2026-11-20): bank details preview/confirm API, no page"
+          "state": "done",
+          "evidence": "PR #767 at 125238e07456c2c528d7af67715733b3ad4bcaf9"
         },
         "verified": {
           "state": "open"
