@@ -90,7 +90,7 @@ function render(v: PlatformOperationsView): string {
     </dl>
     <table><caption>Delivery attempts in the last 24 hours</caption><thead><tr><th scope="col">Sent</th><th scope="col">Failed</th><th scope="col">Not sent</th><th scope="col">Suppressed</th></tr></thead>
       <tbody><tr><td>${a.sent}</td><td>${a.failed > 0 ? `<strong>${a.failed}</strong>` : "0"}</td><td>${a.not_sent}</td><td>${a.suppressed}</td></tr></tbody></table>
-    <p>A failed attempt is tried again until its retry limit. Not sent means the person turned that email off or has no address; suppressed means it was no longer needed. <a class="text-link" href="/admin/outbox">Email messages</a></p></main>`;
+    <p>A failed attempt is tried again until its retry limit. Not sent means this environment does not send email or delivery is not set up. Suppressed means the person turned that email off or it was no longer needed. An email with no address counts as failed. <a class="text-link" href="/admin/outbox">Email messages</a></p></main>`;
 }
 
 const sessionCookie = (header: string | undefined) => {
