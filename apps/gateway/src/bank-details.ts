@@ -371,7 +371,8 @@ export async function handleBankDetailsPage(
     }
     if (request.method !== "POST") { request.resume(); writeNotFound(request, response); return true; }
     if (!service || !origin) { request.resume(); refusalPage(write, 503); return true; }
-    if (request.headers.origin !== origin || request.headers["sec-fetch-site"] === "cross-site") { request.resume(); refusalPage(write, 403); return true; }
+    // Same-origin form posts only (the JSON API's check, written page-side so each has its own mutation anchor).
+    if (request.headers["sec-fetch-site"] === "cross-site" || request.headers.origin !== origin) { request.resume(); refusalPage(write, 403); return true; }
     if (!request.headers["content-type"]?.startsWith("application/x-www-form-urlencoded")) { request.resume(); refusalPage(write, 400); return true; }
     const values = await readForm(request);
     if (!values) { refusalPage(write, 400); return true; }
