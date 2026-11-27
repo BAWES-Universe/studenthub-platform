@@ -50,8 +50,10 @@ export interface StagedLegacyDocument {
  * version (recorded; never refilled). alreadyPromoted: the ledger has this person and kind.
  * Not recorded, a later run tries again: notLinked (no link), linkChanged (linked to another
  * candidate), stagedChanged (the staged row is not the one handed over), uploadInProgress.
+ * ineligible: the principal id is outside the document store's owner format, so that person can
+ * hold no candidate document at all (nothing recorded; reported on every run, never a stall).
  */
-export type DocumentPromotionOutcome = 'promoted' | 'personHeld' | 'alreadyPromoted' | 'notLinked' | 'linkChanged' | 'stagedChanged' | 'uploadInProgress';
+export type DocumentPromotionOutcome = 'promoted' | 'personHeld' | 'alreadyPromoted' | 'notLinked' | 'linkChanged' | 'stagedChanged' | 'uploadInProgress' | 'ineligible';
 
 /** The only error this step throws: any other failure rolls the person back and carries nothing. */
 export class DocumentPromotionError extends Error {
@@ -60,6 +62,7 @@ export class DocumentPromotionError extends Error {
 }
 
 const LEGACY_ID = /^[1-9][0-9]{0,17}$/;
+/** The per-owner store's owner id format (r2-storage checkOwner): only such a person can hold candidate documents. */
 const PRINCIPAL = /^[A-Za-z0-9_-]{1,128}$/;
 const ORG = /^[A-Za-z0-9_-]{1,128}$/;
 const GENERATION = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -124,7 +127,10 @@ export class LegacyDocumentPromotion {
    */
   async promote(principalId: string, staged: StagedLegacyDocument, bytes: Buffer,
     binding: { readonly acceptedCopy: string; readonly invocation: string }): Promise<DocumentPromotionOutcome> {
-    if (typeof principalId !== 'string' || !PRINCIPAL.test(principalId) || !UUID.test(binding.acceptedCopy) || !UUID.test(binding.invocation)) throw new DocumentPromotionError();
+    if (typeof principalId !== 'string' || !UUID.test(binding.acceptedCopy) || !UUID.test(binding.invocation)) throw new DocumentPromotionError();
+    // A real principal whose id the document store cannot own (for example one with '@' or '.') is
+    // reported, not a failure: the walk goes on past it.
+    if (!PRINCIPAL.test(principalId)) return 'ineligible';
     checkStaged(staged);
     if (!Buffer.isBuffer(bytes) || bytes.length !== staged.size || sha(bytes) !== staged.sha256) throw new DocumentPromotionError();
     try { validateCandidateContent(staged.kind, staged.mime, bytes); } catch { throw new DocumentPromotionError(); }

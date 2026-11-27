@@ -1353,9 +1353,15 @@ async function docCopy(deps: CliDeps, revision: string,
   return done ? 0 : 3;
 }
 
-const DOC_PROMOTION_RULES: readonly DocPromotionRule[] = ["promoted", "personHeld", "alreadyPromoted", "notLinked", "linkChanged", "stagedChanged", "uploadInProgress", "stagingUnreadable"];
-/** Outcomes a later run settles by itself: the person and kind are recorded and never tried again. */
-const SETTLED = new Set<DocPromotionRule>(["promoted", "personHeld", "alreadyPromoted"]);
+const DOC_PROMOTION_RULES: readonly DocPromotionRule[] = ["promoted", "personHeld", "alreadyPromoted", "notLinked", "linkChanged", "stagedChanged", "uploadInProgress", "ineligible", "stagingUnreadable"];
+/**
+ * Outcomes nothing later changes: recorded (promoted, personHeld, alreadyPromoted), or a principal
+ * id the document store cannot own (ineligible, counted on every run, never a stall).
+ */
+const SETTLED = new Set<DocPromotionRule>(["promoted", "personHeld", "alreadyPromoted", "ineligible"]);
+/** The database's C order (byte order of UTF-8), which JavaScript's UTF-16 comparison does not always match. */
+const cOrder = (a: { principalId: string; kind: string }, b: { principalId: string; kind: string }): number =>
+  Buffer.compare(Buffer.from(a.principalId), Buffer.from(b.principalId)) || Buffer.compare(Buffer.from(a.kind), Buffer.from(b.kind));
 
 /**
  * `docpromote` (M-2): promotes the staged documents of one complete doccopy into linked people's
@@ -1485,7 +1491,7 @@ async function docPromote(deps: CliDeps, revision: string, publish: (status: M4R
       const batch = await target.pendingDocPromotions(generation, PROMOTE_BATCH, after);
       if (batch.length === 0) { ended = true; break; }
       for (const pair of batch) {
-        if (after && (pair.principalId < after.principalId || (pair.principalId === after.principalId && pair.kind <= after.kind))) throw new Error("m4.promoteOrder");
+        if (after && cOrder(pair, after) <= 0) throw new Error("m4.promoteOrder");
         after = { principalId: pair.principalId, kind: pair.kind };
         const row = staged.get(tuple(pair.legacyId, pair.kind));
         if (!row || !selection.has(tuple(pair.legacyId, pair.kind))) continue;

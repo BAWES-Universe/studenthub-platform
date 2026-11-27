@@ -240,8 +240,10 @@ function harness(opts: HarnessOptions = {}): Harness {
       const pairs = [...db.docLinks].flatMap(([principalId, legacyId]) => [...db.stagedDocuments.values()]
         .filter((d) => d.generation === generation && d.legacyId === legacyId && !db.docLedger.has(`${principalId}/${d.kind}`))
         .map((d) => ({ principalId, legacyId, kind: d.kind })));
-      const key = (x: { principalId: string; kind: string }) => `${x.principalId}\u0000${x.kind}`;
-      return pairs.sort((a, b) => (key(a) < key(b) ? -1 : 1)).filter((x) => !after || key(x) > key(after)).slice(0, limit);
+      // The database's C order: UTF-8 byte order.
+      const cmp = (a: { principalId: string; kind: string }, b: { principalId: string; kind: string }) =>
+        Buffer.compare(Buffer.from(a.principalId), Buffer.from(b.principalId)) || Buffer.compare(Buffer.from(a.kind), Buffer.from(b.kind));
+      return pairs.sort(cmp).filter((x) => !after || cmp(x, after) > 0).slice(0, limit);
     },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
@@ -298,6 +300,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       promote: async (principalId, staged, bytes) => {
         calls.push("docpromote");
         const k = `${principalId}/${staged.kind}`;
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(principalId)) return "ineligible";
         if (db.docLedger.has(k)) return "alreadyPromoted";
         if (db.docLinks.get(principalId) !== staged.legacyId) return "linkChanged";
         const out = db.docOutcomes.get(k) ?? "promoted";
@@ -1506,5 +1509,24 @@ test("docpromote leaves what it cannot settle for a later run: an upload in prog
     assert.deepEqual([f.status, f.code, f.docPromotion!.handled], ["failed", "m2.promote.failed", 1]);
     assert.equal(d.db.writer, null);
     cleanup(failing); rmSync(d.dir, { recursive: true, force: true });
+  } finally { rmSync(a.dir, { recursive: true, force: true }); }
+});
+
+test("docpromote walks principals in the database's byte order and counts an id the store cannot own without stalling", async () => {
+  const a = await acceptedCopy();
+  try {
+    // UTF-16 puts the emoji first; UTF-8 byte order (the database's C order) puts the fullwidth letter first.
+    a.db.docLinks.clear();
+    for (const p of ["\u{1F600}-person", "\uFF21-person", "admin@example.test"]) a.db.docLinks.set(p, "31");
+    const h = promoteHarness(a);
+    assert.equal(await main(["docpromote"], h.deps), 0, h.err.join(" "));
+    const r = promoteReceipt(a, h);
+    assert.deepEqual([r.status, r.docPromotion!.handled, r.docPromotion!.rules.ineligible, r.docPromotion!.complete], ["ok", 3, 3, true]);
+    cleanup(h);
+    // Nothing is recorded for them, so a later run meets them again and still ends.
+    const again = promoteHarness(a);
+    assert.equal(await main(["docpromote"], again.deps), 0, again.err.join(" "));
+    assert.equal(promoteReceipt(a, again).docPromotion!.rules.ineligible, 3);
+    cleanup(again);
   } finally { rmSync(a.dir, { recursive: true, force: true }); }
 });

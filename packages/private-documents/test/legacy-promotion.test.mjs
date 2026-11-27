@@ -137,7 +137,9 @@ test('PROMO-04 the link, the staged row and the bytes are rechecked; nothing is 
  // Bytes that are not the staged row's never reach a transaction.
  await assert.rejects(promotion(bucket).promote(r.principal,r.staged,png(252),binding),DocumentPromotionError);
  await assert.rejects(promotion(bucket).promote(r.principal,{...r.staged,objectKey:'legacy-import/elsewhere'},r.bytes,binding),DocumentPromotionError);
- for(const p of [none.principal,moved.principal,r.principal])assert.deepEqual(await ledger(p),[]);
+ // A principal id the document store cannot own is reported, not a failure that stops the walk.
+ assert.equal(await promotion(bucket).promote('admin@example.test',r.staged,r.bytes,binding),'ineligible');
+ for(const p of [none.principal,moved.principal,r.principal,'admin@example.test'])assert.deepEqual(await ledger(p),[]);
  assert.deepEqual(bucket.log.puts,[]);
 });
 
