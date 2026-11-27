@@ -13,7 +13,7 @@ const env = {
   OIDC_JWKS_URL: "https://identity.test.invalid/jwks", LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.test.invalid/profile",
 };
 
-const always = ["abuse", "access", "adminJobs", "adminOutbox", "area", "bankResults", "callback", "companies", "contacts", "exports", "financeSettled", "financeTransfers", "invoices", "logout", "navigation", "organizationAccountManager", "organizationBrands", "organizationCreation", "organizationStores", "payContracts", "payHistory", "people", "profile", "recruitChecklist", "recruitEmployerView", "recruitFulltimers", "recruitInterviews", "recruitInvitations", "recruitJobs", "recruitPeopleSearch", "recruitPipeline", "recruitRequestApplications", "recruitRequests", "registrations", "staffView", "start", "storeManager", "team", "web"].sort();
+const always = ["abuse", "access", "adminJobs", "adminOutbox", "area", "bankResults", "callback", "companies", "contacts", "exports", "financeContracts", "financeSettled", "financeTransfers", "invoices", "logout", "navigation", "organizationAccountManager", "organizationBrands", "organizationCreation", "organizationStores", "payContracts", "payHistory", "people", "profile", "recruitChecklist", "recruitEmployerView", "recruitFulltimers", "recruitInterviews", "recruitInvitations", "recruitJobs", "recruitPeopleSearch", "recruitPipeline", "recruitRequestApplications", "recruitRequests", "registrations", "staffView", "start", "storeManager", "team", "web"].sort();
 const signed = [...always, "bankDetails", "browserEdit", "organizationApprovedToHire", "organizationCommercialTerms", "organizationDeletion", "organizationNotes", "organizationProfile", "organizationStatus", "preferences", "profileEdit"].sort();
 const KEY = Buffer.alloc(32, 7).toString("base64");
 
