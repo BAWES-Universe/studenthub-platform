@@ -30,7 +30,7 @@ export { consumeMergeReadiness, routineMergeEnabledFor };
 
 import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane, ROLE_REVIEW } from "./launch-vocabulary.mjs";
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
-import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid, ciBeforeReviewSettings, ciBeforeReviewApplies, ciBeforeReviewDecision, ciReviseCount, ciReviseOrder } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid, ciBeforeReviewSettings, ciBeforeReviewApplies, ciBeforeReviewDecision, ciReviseCount, ciReviseOrder, retryAttemptFor } from "./review-routing.mjs";
 import { parseActivationArgs, narrowQueueScope, cardQueue, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal, repairFromActivation } from "./single-run-activation.mjs";
 import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
@@ -3103,6 +3103,8 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
             successor, terminal, settings: ciSettings, config, githubToken, fetchImpl, io,
             lineage: targetReceipts.filter((r) => receiptInEpisodeScope(r, activationEpisodeScope)),
           });
+          // A CI revise that replaced the review retries under its own id too.
+          successor = retryAttemptFor(successor, targetReceipts);
         }
         singleRunActivation = {
           ...singleRunActivation,
