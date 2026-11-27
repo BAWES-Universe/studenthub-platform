@@ -155,8 +155,15 @@ Two active rows of one kind whose names normalize the same become one item: the 
   - The table is counted before and after that read, and the read must match both counts (`m2.ownershipIncomplete`).
   - The run holds the refresh lock and binds the refresh identity, like `m4 plan`, so the input is one known generation.
   - `planM2` derives M-1's imported people and the documents to check from those same rows.
+- **Run (`m4 doccheck`).** It runs through the same launcher, with a fresh `M4_INVOCATION`, `M4_REVISION`, `M4_ARTIFACT_DIGEST`, `M4_LEGACY_MIRROR_URL`, the refresh settings and the four `M4_LEGACY_BUCKET*` settings.
+  - It checks the verified build (`provenance`) and the bucket setting (`bucketConfig`), then takes the refresh lock (`locked`) and binds an ok refresh identity (`refreshNotOk`).
+  - It reads the whole candidate table, refusing `ownershipIncomplete` unless the counts agree, and maps with `planM2` on the run's Kuwait date.
+  - Only then does it read each object once through the adapter. A failed object read is counted as `document.readFailed`, not a run failure.
+  - It needs no database or key, writes nothing to any database and copies nothing.
+  - The private report (`<invocation>.doccheck.report.json`, mode 600, staging host only) lists each checked document's legacy id, kind, type, size and sha256, and each issue's legacy id, column and rule. It never holds a key, name or byte.
+  - The receipt holds the bound build, the refresh and the date, plus counts per rule and `documents.set`: a digest over the checked documents' ids, kinds, types, sizes and hashes, which the copy step must find again.
+  - Exit 0 when the report was written, 2 when refused before any object read, 1 when failed.
 - **Next slices (proposed):**
-  - An `m4 doccheck` run step on staging. It checks provenance, takes the refresh lock, binds the refresh identity and reads the input as above. It then checks each object through the adapter and writes a private report by legacy id (mode 600, staging host only) and a counts-only receipt.
   - The copy step: read each object again and refuse it unless it still hashes to the recorded sha256. Stage it apart from the person-owned documents, bound to `legacy-candidate:<id>` like the contact slice.
   - Promote it into the person's slot on link, only where the slot is empty. The check and the write happen under the owner and slot lock, and a slot the person cleared on purpose counts as theirs: the import never refills it.
   - Legacy's public objects stay where they are until SHU-54 is fixed.
@@ -244,6 +251,7 @@ Q14-L gives each person a self-service link (legacy sign-in) and staff a manual 
     6. Report a pass only by `acceptWrite` on that write invocation's receipt and exit code.
     7. After a passing write, run `tools/legacy-import/m4 promote` as the same user with a new `M4_INVOCATION`, the same `M4_REVISION`, `M4_ARTIFACT_DIGEST`, `M4_TARGET_ID`, `M4_DATABASE_URL` and both keys from the staging host's configuration, plus `M4_ACCEPTED_WRITE` (the passing write's invocation) and `M4_EXPECTED_PLAN` (the plan digest accepted for it). No other write may run in between; if one did, promote refuses `stagedInput` and the newer write is the one to accept. Report its receipt's counts only; a `failed` receipt is retried with a fresh `M4_INVOCATION`.
     8. After a promote, or whenever staff ask, run `tools/legacy-import/m4 linkreport` as the same user with a new `M4_INVOCATION`, the same `M4_REVISION`, `M4_ARTIFACT_DIGEST`, `M4_TARGET_ID` and `M4_DATABASE_URL`, and no keys. Report its receipt's counts only; staff read the ids from the private report on the staging host.
+    9. For M-2, run `tools/legacy-import/m4 doccheck` as the same user with a new `M4_INVOCATION`, the same `M4_REVISION` and `M4_ARTIFACT_DIGEST`, `M4_LEGACY_MIRROR_URL`, and the refresh settings. Also set `M4_LEGACY_BUCKET`, `M4_LEGACY_BUCKET_REGION`, `M4_LEGACY_BUCKET_ACCESS_KEY_ID` and `M4_LEGACY_BUCKET_SECRET_ACCESS_KEY` from the staging host's configuration. That credential must be read-only, with GetObject and ListBucket on that bucket only. It needs no database setting or key, and it copies nothing. Report its receipt's counts and set digest only.
 
 ## M-5 table map (work)
 
