@@ -7,7 +7,8 @@ import path from "node:path";
 import test from "node:test";
 
 import { M4_SOURCES, planM4, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
-import { acceptWrite, acquireSharedLock, contactSetDigest, digestKeyFingerprint, documentSetDigest, main, PROMOTE_BATCH, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
+import { acceptWrite, acquireSharedLock, contactSetDigest, digestKeyFingerprint, documentSetDigest, main, PROMOTE_BATCH, promotionDestinationFingerprint, type CliDeps, type DocumentPromoter, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
+import { DocumentPromotionError, type DocumentPromotionOutcome } from "../../../packages/private-documents/src/legacy-promotion.js";
 import type { LegacyObjectReader } from "../src/m2-document-check.js";
 import type { StagedDocument, StagingObjects } from "../src/m2-copy.js";
 import { ContactPromotionError, LinkReportError, type ContactPromotionResult, type LinkReport } from "@studenthub/db/import";
@@ -27,7 +28,8 @@ const CONTACT_VALUES = ["+96550001234", "96550001234", "50001234", "secret.handl
 const REFRESH = { ok: true, startedAt: "2026-11-23T01:00:00.000Z", finishedAt: "2026-11-23T01:05:00.000Z", totalRows: 42 };
 const MIRROR_ID = "3e11fa47-71ca-11e1-9e33-c80aa9429562";
 const STAGING_BUCKET_NAME = "sh-staging-legacy-docs";
-const STAGING_ACCOUNT = "0123456789abcdef".repeat(2), OTHER_ACCOUNT = "fedcba9876543210".repeat(2);
+const STAGING_ACCOUNT = "0123456789abcdef".repeat(2), OTHER_ACCOUNT = "fedcba9876543210".repeat(2), LIVE_ACCOUNT = "a1b2c3d4e5f60718".repeat(2);
+const LIVE_DESTINATION = { account: LIVE_ACCOUNT, bucket: "sh-live-docs", org: "org-docs" };
 const GENERATION_ID = "6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b";
 
 function sources(): M4Sources {
@@ -80,11 +82,21 @@ interface FakeDb {
   checkpoints: Map<string, { revision: number; checkpoint: unknown }>;
   /** How many times the copy loaded a checkpoint. */
   checkpointLoads: number;
+  /** Whether migrations 0661 and 0662 are applied; the legacy links (principal to legacy id); the promotion record; outcomes to force. */
+  docPromotionReady: boolean;
+  docLinks: Map<string, string>;
+  docLedger: Map<string, DocumentPromotionOutcome>;
+  docOutcomes: Map<string, DocumentPromotionOutcome | Error>;
+  /** The promotion destination recorded on the staging marker row (0662). */
+  promotionDestination: { account: string; bucket: string; org: string } | null;
+  /** What the promotion was handed: principal, kind, sha256 of the bytes. */
+  docPromoted: [string, string, string][];
 }
 const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY,
   promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64), linkReportReady: true,
   links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplePrincipals": [], "link.contactTaken": [], "link.emailMismatch": [] } },
-  documentsReady: true, documentBucket: { account: STAGING_ACCOUNT, bucket: STAGING_BUCKET_NAME }, stagedDocuments: new Map(), checkpoints: new Map(), checkpointLoads: 0 });
+  documentsReady: true, documentBucket: { account: STAGING_ACCOUNT, bucket: STAGING_BUCKET_NAME }, stagedDocuments: new Map(), checkpoints: new Map(), checkpointLoads: 0,
+  docPromotionReady: true, promotionDestination: LIVE_DESTINATION, docLinks: new Map(), docLedger: new Map(), docOutcomes: new Map(), docPromoted: [] });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -108,6 +120,8 @@ interface HarnessOptions {
   staging?: StagingObjects | (() => StagingObjects);
   /** The mirror's generation marker rows; default [GENERATION_ID]. */
   markers?: readonly string[];
+  /** The promotion for docpromote; default a fake over the FakeDb's links and record. */
+  promoter?: () => DocumentPromoter;
 }
 
 interface Harness {
@@ -119,7 +133,7 @@ interface Harness {
   readonly err: string[];
   readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined; halted: number[] };
   readonly file: (name: string) => string;
-  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy") => M4Receipt;
+  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote") => M4Receipt;
 }
 
 function harness(opts: HarnessOptions = {}): Harness {
@@ -192,6 +206,7 @@ function harness(opts: HarnessOptions = {}): Harness {
     },
     documentsReady: async () => db.documentsReady,
     documentBucket: async () => db.documentBucket,
+    promotionDestination: async () => db.promotionDestination,
     documentStaging: () => {
       assert.equal(db.writer, me, "the staging table is written only by the lock holder");
       return {
@@ -217,6 +232,22 @@ function harness(opts: HarnessOptions = {}): Harness {
           return "saved";
         },
       };
+    },
+    docPromotionReady: async () => db.docPromotionReady,
+    stagedGeneration: async (generation) => {
+      assert.equal(db.writer, me, "the staged set is read under the writer lock");
+      return [...db.stagedDocuments.values()].filter((d) => d.generation === generation);
+    },
+    pendingDocPromotions: async (generation, limit, after) => {
+      assert.equal(db.writer, me, "pending pairs are read under the writer lock");
+      calls.push(`docpending:${after ? `${after.principalId}/${after.kind}` : "-"}`);
+      const pairs = [...db.docLinks].flatMap(([principalId, legacyId]) => [...db.stagedDocuments.values()]
+        .filter((d) => d.generation === generation && d.legacyId === legacyId && !db.docLedger.has(`${principalId}/${d.kind}`))
+        .map((d) => ({ principalId, legacyId, kind: d.kind })));
+      // The database's C order: UTF-8 byte order.
+      const cmp = (a: { principalId: string; kind: string }, b: { principalId: string; kind: string }) =>
+        Buffer.compare(Buffer.from(a.principalId), Buffer.from(b.principalId)) || Buffer.compare(Buffer.from(a.kind), Buffer.from(b.kind));
+      return pairs.sort(cmp).filter((x) => !after || cmp(x, after) > 0).slice(0, limit);
     },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
@@ -269,6 +300,21 @@ function harness(opts: HarnessOptions = {}): Harness {
       if (typeof st === "function") return st();
       return st ?? memoryStaging().objects;
     },
+    promoter: () => opts.promoter?.() ?? {
+      promote: async (principalId, staged, bytes) => {
+        calls.push("docpromote");
+        const k = `${principalId}/${staged.kind}`;
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(principalId)) return "ineligible";
+        if (db.docLedger.has(k)) return "alreadyPromoted";
+        if (db.docLinks.get(principalId) !== staged.legacyId) return "linkChanged";
+        const out = db.docOutcomes.get(k) ?? "promoted";
+        if (out instanceof Error) throw out;
+        db.docPromoted.push([principalId, staged.kind, createHash("sha256").update(bytes).digest("hex")]);
+        if (out === "promoted" || out === "personHeld") db.docLedger.set(k, out);
+        return out;
+      },
+      close: async () => { calls.push("docpromote.close"); },
+    },
     halt: (code) => { state.halted.push(code); },
     provenance: () => ({ head: REVISION, clean: true, artifact: ARTIFACT, ...opts.provenance }),
     now: () => new Date(opts.now ?? "2026-11-23T02:00:00.000Z"),
@@ -277,7 +323,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       err.push(line);
     },
   };
-  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
+  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
   return { dir, invocation, deps, calls, out, err, state, file, receipt };
 }
 
@@ -1133,7 +1179,8 @@ test("doccheck turns a failed object read into a counted issue, and a failed leg
 });
 
 // doccopy (M-2 copy step). Synthetic objects; an accepted doccheck is produced by a real doccheck run.
-const copyEnv = { M4_STAGING_DOCUMENT_ACCOUNT_ID: STAGING_ACCOUNT, M4_STAGING_DOCUMENT_BUCKET: STAGING_BUCKET_NAME, M4_LEGACY_BUCKET: "sh-legacy-bucket", M4_LIVE_DOCUMENT_BUCKET: "sh-live-docs" };
+const copyEnv = { M4_STAGING_DOCUMENT_ACCOUNT_ID: STAGING_ACCOUNT, M4_STAGING_DOCUMENT_BUCKET: STAGING_BUCKET_NAME, M4_LEGACY_BUCKET: "sh-legacy-bucket", M4_LIVE_DOCUMENT_BUCKET: "sh-live-docs",
+  M4_LIVE_DOCUMENT_ACCOUNT_ID: LIVE_ACCOUNT, M4_DOCUMENT_ORG_ID: "org-docs" };
 async function acceptedDoccheck(photo: Buffer) {
   const dir = provenancedDir();
   const legacy: LegacyObjectReader = { read: async (key) => (key === "photos/Secret-photo.png" ? { kind: "found", bytes: photo } : { kind: "missing" }) };
@@ -1200,11 +1247,12 @@ test("doccopy is refused before any object read without a qualifying accepted do
     const db = opts.db ?? fakeDb();
     const h = harness({ dir: provenancedDir(), db, rows: docSources(), staging: staging.objects, bucket: { read: async (k, m) => { legacyReads++; return legacy.read(k, m); } }, ...opts,
       env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out, ...opts.env } });
+    // Taken before the run, so a refused run that touched a seeded checkpoint is caught.
+    const seeded = JSON.stringify([...db.checkpoints]);
     try {
       assert.equal(await main(["doccopy"], h.deps), 2, code);
       const r = JSON.parse(readFileSync(path.join(out, `${h.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
       assert.deepEqual([r.status, r.code, r.copy], ["refused", code, undefined], code);
-      const seeded = JSON.stringify([...db.checkpoints]);
       assert.deepEqual([legacyReads, staging.puts.length, staging.reads(), staging.lists(), db.stagedDocuments.size, db.checkpointLoads], [0, 0, 0, 0, 0, 0], `${code}: no object read or write, no checkpoint load`);
       assert.equal(JSON.stringify([...db.checkpoints]), seeded, `${code}: no checkpoint credit`);
       assert.equal(h.state.locked, false);
@@ -1305,4 +1353,199 @@ test("doccopy resumes from its own checkpoint in the target, and an unsettled wr
     const u = receiptOf(h);
     assert.deepEqual([u.status, u.code, h.state.halted, h.state.closed, h.state.locked], ["failed", "m2.copy.unsettled", [1], 0, true]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// docpromote (M-2 promotion step). Synthetic objects; the accepted copy comes from real doccheck and doccopy runs.
+function pdfBytes(): Buffer {
+  let s = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  for (const [i, obj] of ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>"].entries()) {
+    offsets.push(s.length);
+    s += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  }
+  const x = s.length;
+  s += `xref\n0 4\n0000000000 65535 f \n${offsets.map((n) => `${String(n).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n${x}\n%%EOF\n`;
+  return Buffer.from(s);
+}
+const PERSON = "principal-31";
+async function acceptedCopy(withResume = false) {
+  const photo = png(), cv = pdfBytes();
+  const dir = provenancedDir(), out = path.join(dir, "out");
+  const legacy: LegacyObjectReader = { read: async (key) => (key === "photos/Secret-photo.png" ? { kind: "found", bytes: photo }
+    : withResume && key === "candidate-resume/Secret-cv.pdf" ? { kind: "found", bytes: cv } : { kind: "missing" }) };
+  const check = harness({ dir, rows: docSources(), bucket: legacy });
+  assert.equal(await main(["doccheck"], check.deps), 0, check.err.join(" "));
+  const db = fakeDb(), staging = memoryStaging();
+  const copy = harness({ dir: provenancedDir(), db, rows: docSources(), bucket: legacy, staging: staging.objects,
+    env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: check.invocation, M4_OUTPUT_DIR: out } });
+  assert.equal(await main(["doccopy"], copy.deps), 0, copy.err.join(" "));
+  const staged = (JSON.parse(readFileSync(path.join(out, `${copy.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt).copy!.staged;
+  cleanup(copy);
+  db.docLinks.set(PERSON, "31");
+  return { dir, out, db, staging, accepted: copy.invocation, doccheck: check.invocation, staged, photo, cv };
+}
+const promoteHarness = (a: Awaited<ReturnType<typeof acceptedCopy>>, opts: HarnessOptions = {}) => harness({ dir: provenancedDir(), db: a.db, staging: a.staging.objects, ...opts,
+  env: { ...copyEnv, M4_ACCEPTED_DOCCOPY: a.accepted, M4_EXPECTED_STAGED: a.staged, M4_OUTPUT_DIR: a.out, ...opts.env } });
+const promoteReceipt = (a: { out: string }, h: Harness) => JSON.parse(readFileSync(path.join(a.out, `${h.invocation}.docpromote.receipt.json`), "utf8")) as M4Receipt;
+
+test("docpromote promotes the accepted copy's staged documents into linked people's slots, once, with counts only", async () => {
+  const a = await acceptedCopy();
+  try {
+    const h = promoteHarness(a);
+    assert.equal(await main(["docpromote"], h.deps), 0, h.err.join(" "));
+    const r = promoteReceipt(a, h);
+    assert.deepEqual([r.status, r.acceptedCopy, r.acceptedDoccheck, r.mirror, r.target], ["ok", a.accepted, a.doccheck, { generation: GENERATION_ID }, TARGET]);
+    assert.deepEqual({ ...r.docPromotion, rules: undefined }, { selected: 1, handled: 1, staged: a.staged, complete: true, bounded: false, rules: undefined });
+    assert.equal(r.docPromotion!.rules.promoted, 1);
+    assert.deepEqual(a.db.docPromoted, [[PERSON, "personal-photo", sha256(a.photo)]], "the staged bytes, read back from staging, reach the promotion");
+    assert.equal(h.state.locked, false, "no refresh lock is taken");
+    assert.equal(a.db.writer, null, "the writer lock is released");
+    assert.ok(h.calls.includes("docpromote.close"));
+    const everything = [JSON.stringify(r), h.out.join("\n"), h.err.join("\n")].join("\n");
+    assert.ok(!everything.includes(PERSON) && !everything.includes('"31"') && !everything.includes("Secret"), "no principal, legacy id or key leaves the run");
+    assert.ok(![STAGING_ACCOUNT, STAGING_BUCKET_NAME, "sh-live-docs", LIVE_ACCOUNT, "org-docs"].some((v) => everything.includes(v)), "no account, bucket or organization leaves the run");
+    assert.equal(r.promotionDestination, promotionDestinationFingerprint(LIVE_DESTINATION), "the receipt names the destination by fingerprint only");
+    assert.match(r.promotionDestination!, /^[0-9a-f]{64}$/);
+    cleanup(h);
+    // A re-run finds nothing pending and promotes nothing.
+    const again = promoteHarness(a);
+    assert.equal(await main(["docpromote"], again.deps), 0, again.err.join(" "));
+    assert.deepEqual([promoteReceipt(a, again).docPromotion!.handled, a.db.docPromoted.length], [0, 1]);
+    cleanup(again);
+    // A person who links later is picked up by the next run.
+    a.db.docLinks.set("principal-late", "31");
+    a.db.docLinks.delete(PERSON);
+    const late = promoteHarness(a);
+    assert.equal(await main(["docpromote"], late.deps), 0, late.err.join(" "));
+    assert.equal(promoteReceipt(a, late).docPromotion!.rules.promoted, 1);
+    cleanup(late);
+  } finally { rmSync(a.dir, { recursive: true, force: true }); }
+});
+
+test("docpromote is refused before any staging read or promotion without a complete accepted copy, its staging identity, a separate live bucket, the bound destination, the target and schema", async () => {
+  const a = await acceptedCopy();
+  const receiptFile = path.join(a.out, `${a.accepted}.doccopy.receipt.json`), reportFile = path.join(a.out, `${a.accepted}.doccopy.report.json`);
+  const checkFile = path.join(a.out, `${a.doccheck}.doccheck.report.json`);
+  const original = { receipt: readFileSync(receiptFile, "utf8"), report: readFileSync(reportFile, "utf8"), check: readFileSync(checkFile, "utf8") };
+  const edited = (text: string, fn: (r: Record<string, any>) => void) => { const r = JSON.parse(text); fn(r); return JSON.stringify(r); };
+  const run = async (code: string, opts: HarnessOptions & { db?: FakeDb } = {},
+    edit: { receipt?: (r: Record<string, any>) => void; report?: (r: Record<string, any>) => void; check?: (r: Record<string, any>) => void } = {}) => {
+    writeFileSync(receiptFile, edit.receipt ? edited(original.receipt, edit.receipt) : original.receipt);
+    writeFileSync(reportFile, edit.report ? edited(original.report, edit.report) : original.report);
+    writeFileSync(checkFile, edit.check ? edited(original.check, edit.check) : original.check);
+    const db = opts.db ?? { ...a.db, docLedger: new Map(), docPromoted: [] };
+    const staging = memoryStaging(new Map(a.staging.bucket));
+    let built = 0;
+    const h = promoteHarness({ ...a, db, staging }, { ...opts, promoter: () => { built++; return { promote: async () => { throw new Error("no promotion"); }, close: async () => {} }; } });
+    const ledger = JSON.stringify([...db.docLedger]);
+    try {
+      assert.equal(await main(["docpromote"], h.deps), 2, code);
+      const r = promoteReceipt(a, h);
+      assert.deepEqual([r.status, r.code, r.docPromotion], ["refused", code, undefined], code);
+      assert.deepEqual([staging.reads(), built, db.docPromoted.length], [0, 0, 0], `${code}: no staging read, no promotion`);
+      assert.equal(JSON.stringify([...db.docLedger]), ledger, `${code}: nothing recorded`);
+      if (code !== "writerBusy") assert.equal(db.writer, null, `${code}: the writer lock is released`);
+    } finally { cleanup(h); }
+  };
+  try {
+    await run("acceptedCopy", { env: { M4_ACCEPTED_DOCCOPY: randomUUID() } });
+    await run("acceptedCopy", { env: { M4_EXPECTED_STAGED: "0".repeat(64) } });
+    await run("acceptedCopy", {}, { receipt: (r) => { r.status = "incomplete"; } });
+    await run("acceptedCopy", {}, { receipt: (r) => { r.copy.complete = false; } });
+    await run("acceptedCopy", {}, { receipt: (r) => { r.copy.matchesAccepted = false; } });
+    await run("acceptedCopy", {}, { receipt: (r) => { r.copy.orphansTruncated = true; } });
+    await run("acceptedCopy", {}, { receipt: (r) => { r.target = randomUUID(); } });
+    await run("acceptedCopy", {}, { receipt: (r) => { r.revision = "f".repeat(40); } });
+    await run("acceptedCopy", {}, { report: (r) => { r.staged = "0".repeat(64); } });
+    await run("acceptedCopy", {}, { report: (r) => { r.mirror.generation = "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d"; } });
+    // The doccheck's documents no longer recompute to the accepted staged set.
+    await run("acceptedCopy", {}, { check: (r) => { r.documents[0].size += 1; } });
+    await run("provenance", { provenance: { clean: false } });
+    await run("bounds", { env: { M4_DOCPROMOTE_MAX_DOCS: "0" } });
+    await run("documentBucket", { env: { M4_STAGING_DOCUMENT_ACCOUNT_ID: OTHER_ACCOUNT } });
+    await run("documentBucket", { env: { M4_LIVE_DOCUMENT_BUCKET: STAGING_BUCKET_NAME } });
+    await run("documentBucket", { env: { M4_LIVE_DOCUMENT_BUCKET: "sh-legacy-bucket" } });
+    await run("documentBucket", { env: { M4_LIVE_DOCUMENT_BUCKET: undefined } });
+    await run("documentBucket", { db: { ...a.db, docLedger: new Map(), docPromoted: [], documentBucket: { account: OTHER_ACCOUNT, bucket: STAGING_BUCKET_NAME } } });
+    // The destination must be the one this database records: the same account (not only a bucket of
+    // the same name in another account), the same bucket and the same organization.
+    const rest = { ...a.db, docLedger: new Map(), docPromoted: [] };
+    await run("promotionDestination", { env: { M4_LIVE_DOCUMENT_ACCOUNT_ID: OTHER_ACCOUNT } });
+    await run("promotionDestination", { env: { M4_DOCUMENT_ORG_ID: "org-other" } });
+    await run("promotionDestination", { env: { M4_LIVE_DOCUMENT_BUCKET: "sh-other-docs" } });
+    await run("promotionDestination", { env: { M4_LIVE_DOCUMENT_ACCOUNT_ID: undefined } });
+    await run("promotionDestination", { env: { M4_DOCUMENT_ORG_ID: undefined } });
+    await run("promotionDestination", { env: { M4_DOCUMENT_ORG_ID: "org.with.dots" } });
+    await run("promotionDestination", { db: { ...rest, promotionDestination: { ...LIVE_DESTINATION, account: OTHER_ACCOUNT } } });
+    await run("promotionDestination", { db: { ...rest, promotionDestination: { ...LIVE_DESTINATION, org: "org-other" } } });
+    await run("promotionDestination", { db: { ...rest, promotionDestination: null } });
+    await run("target", { db: { ...a.db, docLedger: new Map(), docPromoted: [], marker: { environment: "staging", targetId: randomUUID() } } });
+    await run("schema", { db: { ...a.db, docLedger: new Map(), docPromoted: [], docPromotionReady: false } });
+    await run("writerBusy", { db: { ...a.db, docLedger: new Map(), docPromoted: [], writer: {} } });
+    // A staged row that is not the selected one (another digest) is refused under the writer lock.
+    const [[key, row]] = [...a.db.stagedDocuments];
+    await run("stagedInput", { db: { ...a.db, docLedger: new Map(), docPromoted: [], stagedDocuments: new Map([[key!, { ...row!, sha256: "0".repeat(64) }]]) } });
+    await run("stagedInput", { db: { ...a.db, docLedger: new Map(), docPromoted: [], stagedDocuments: new Map() } });
+  } finally { rmSync(a.dir, { recursive: true, force: true }); }
+});
+
+test("docpromote leaves what it cannot settle for a later run: an upload in progress, an unreadable staged object, a bound; a promotion failure fails the run", async () => {
+  const a = await acceptedCopy(true);
+  try {
+    assert.equal(a.db.stagedDocuments.size, 2);
+    a.db.docOutcomes.set(`${PERSON}/personal-photo`, "uploadInProgress");
+    const busy = promoteHarness(a);
+    assert.equal(await main(["docpromote"], busy.deps), 3, busy.err.join(" "));
+    const b = promoteReceipt(a, busy);
+    assert.deepEqual([b.status, b.docPromotion!.rules.uploadInProgress, b.docPromotion!.rules.promoted, b.docPromotion!.complete], ["incomplete", 1, 1, false]);
+    cleanup(busy);
+    // The next run takes the photo once the upload is gone.
+    a.db.docOutcomes.clear();
+    const next = promoteHarness(a);
+    assert.equal(await main(["docpromote"], next.deps), 0, next.err.join(" "));
+    assert.deepEqual([promoteReceipt(a, next).docPromotion!.handled, promoteReceipt(a, next).docPromotion!.rules.promoted], [1, 1]);
+    cleanup(next);
+    // A staged object that does not read back is counted and left; nothing is promoted from it.
+    const c = await acceptedCopy(true);
+    for (const k of c.staging.bucket.keys()) if (k.includes("/resume/")) c.staging.bucket.set(k, Buffer.from("changed"));
+    const unreadable = promoteHarness(c);
+    assert.equal(await main(["docpromote"], unreadable.deps), 3);
+    const u = promoteReceipt(c, unreadable);
+    assert.deepEqual([u.status, u.docPromotion!.rules.stagingUnreadable, u.docPromotion!.rules.promoted], ["incomplete", 1, 1]);
+    assert.deepEqual(c.db.docPromoted.map((x) => x[1]), ["personal-photo"]);
+    cleanup(unreadable); rmSync(c.dir, { recursive: true, force: true });
+    // A bound stops between pairs.
+    const d = await acceptedCopy(true);
+    const capped = promoteHarness(d, { env: { M4_DOCPROMOTE_MAX_DOCS: "1" } });
+    assert.equal(await main(["docpromote"], capped.deps), 3);
+    assert.deepEqual([promoteReceipt(d, capped).docPromotion!.bounded, promoteReceipt(d, capped).docPromotion!.handled, promoteReceipt(d, capped).docPromotion!.complete], [true, 1, false]);
+    cleanup(capped);
+    // A promotion failure fails the run with its fixed code and the counts so far.
+    d.db.docOutcomes.set(`${PERSON}/resume`, new DocumentPromotionError());
+    const failing = promoteHarness(d);
+    assert.equal(await main(["docpromote"], failing.deps), 1);
+    const f = promoteReceipt(d, failing);
+    assert.deepEqual([f.status, f.code, f.docPromotion!.handled], ["failed", "m2.promote.failed", 1]);
+    assert.equal(d.db.writer, null);
+    cleanup(failing); rmSync(d.dir, { recursive: true, force: true });
+  } finally { rmSync(a.dir, { recursive: true, force: true }); }
+});
+
+test("docpromote walks principals in the database's byte order and counts an id the store cannot own without stalling", async () => {
+  const a = await acceptedCopy();
+  try {
+    // UTF-16 puts the emoji first; UTF-8 byte order (the database's C order) puts the fullwidth letter first.
+    a.db.docLinks.clear();
+    for (const p of ["\u{1F600}-person", "\uFF21-person", "admin@example.test"]) a.db.docLinks.set(p, "31");
+    const h = promoteHarness(a);
+    assert.equal(await main(["docpromote"], h.deps), 0, h.err.join(" "));
+    const r = promoteReceipt(a, h);
+    assert.deepEqual([r.status, r.docPromotion!.handled, r.docPromotion!.rules.ineligible, r.docPromotion!.complete], ["ok", 3, 3, true]);
+    cleanup(h);
+    // Nothing is recorded for them, so a later run meets them again and still ends.
+    const again = promoteHarness(a);
+    assert.equal(await main(["docpromote"], again.deps), 0, again.err.join(" "));
+    assert.equal(promoteReceipt(a, again).docPromotion!.rules.ineligible, 3);
+    cleanup(again);
+  } finally { rmSync(a.dir, { recursive: true, force: true }); }
 });
