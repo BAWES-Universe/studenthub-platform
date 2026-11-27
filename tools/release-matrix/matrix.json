@@ -717,10 +717,23 @@
     "O-07": {
       "lane": "people",
       "subject": "`/organization/:orgId/candidates`, `/candidates/:id`",
+      "served": [
+        {
+          "route": "/organization/:orgId/candidates",
+          "test": "apps/gateway/test/organization-candidates-page.test.ts",
+          "via": "gateway"
+        },
+        {
+          "route": "/organization/:orgId/candidates/:personId",
+          "test": "apps/gateway/test/organization-candidates-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): person view through a request link only"
+          "state": "done",
+          "evidence": "company candidates list and person page through the gateway, proven by checkServed; PR #771 at dbf08c58",
+          "note": "served at /organization/:orgId/candidates and /organization/:orgId/candidates/:personId (the subject's /candidates/:id is not served and not aliased); shows name, store and placement dates only, profile fields wait on an agreed company projection"
         },
         "verified": {
           "state": "open"
