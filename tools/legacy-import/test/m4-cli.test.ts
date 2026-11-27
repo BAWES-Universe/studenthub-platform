@@ -967,6 +967,14 @@ test("doccheck reads the whole candidate table and each object once under the re
       { rule: "document.missing", legacyId: "31", field: "candidate_resume" },
     ]);
     assert.equal(report.set, r.documents!.set);
+    // Round trip: the receipt and the private report name the generation the refresh wrote and the
+    // mirror held; the receipt carries the generation only, never the server or schema.
+    const refreshed = JSON.parse(readFileSync(h.file("refresh.json"), "utf8"));
+    assert.deepEqual(r.mirror, { generation: refreshed.mirror.generation });
+    assert.deepEqual(report.mirror, refreshed.mirror);
+    assert.equal(report.diagnostic, undefined);
+    assert.ok(!JSON.stringify(r).includes(MIRROR_ID) && !JSON.stringify(r).includes("legacy_mirror"), "no server or schema in the receipt");
+    assert.ok(h.out.some((l) => l.includes(` generation=${GENERATION_ID} `)));
     const everything = [readFileSync(reportFile, "utf8"), JSON.stringify(r), h.out.join("\n"), h.err.join("\n")].join("\n");
     assert.ok(!everything.includes("Secret") && !everything.includes(SECRET), "no stored name, key or value leaves the run");
     assert.ok(h.out.some((l) => l.startsWith(`m4 doccheck ok invocation=${h.invocation} set=${r.documents!.set}`)));
@@ -980,7 +988,7 @@ test("doccheck is refused before any object is read without a verified build, it
     try {
       assert.equal(await main(["doccheck"], h.deps), 2);
       const r = h.receipt("doccheck");
-      assert.deepEqual([r.status, r.code, r.documents], ["refused", code, undefined]);
+      assert.deepEqual([r.status, r.code, r.documents, r.mirror], ["refused", code, undefined, undefined], "a refused run binds no generation");
       assert.equal(objects, 0, "no object read");
       assert.ok(!existsSync(path.join(h.file("out"), `${h.invocation}.doccheck.report.json`)), "no report");
       assert.equal(h.state.locked, false);
@@ -1027,6 +1035,7 @@ test("doccheck against a refresh report without provenance runs as diagnostic on
       assert.ok(!sqls.some((q) => q.includes("@@server_uuid")), "no mirror read without a recorded mirror");
       const report = JSON.parse(readFileSync(path.join(h.file("out"), `${h.invocation}.doccheck.report.json`), "utf8"));
       assert.equal(report.diagnostic, true);
+      assert.deepEqual([r.mirror, report.mirror], [undefined, undefined], "a diagnostic result names no generation");
       assert.ok(h.out.some((l) => l.includes(" diagnostic=true ")));
     } finally { cleanup(h); }
   }

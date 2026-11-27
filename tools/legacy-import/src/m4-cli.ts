@@ -189,6 +189,11 @@ export interface M4Receipt {
   readonly operator?: string;
   /** The run's Kuwait date; the plan identity binds it (M-1's age rule). */
   readonly today?: string;
+  /**
+   * For `doccheck`: the mirror generation the run verified (refresh report and the mirror's own
+   * marker agree), bound only after every equality check. Absent when the result is diagnostic.
+   */
+  readonly mirror?: { readonly generation: string };
   readonly plan?: string;
   /** Steps whose results were confirmed, in order. */
   readonly steps: readonly ReceiptStep[];
@@ -982,6 +987,8 @@ async function docCheck(deps: CliDeps, revision: string,
     return fail(error instanceof M2InputError ? error.code : "m2.read");
   }
   if (provenance && sources.candidate.length !== provenance.candidates) return refuse("staleCount");
+  // Every equality check passed: only now is the generation this run read bound to its outcome.
+  const verified = provenance ? { generation: provenance.generation } : undefined;
   const plan = planM2(sources, today);
   let check;
   try { check = await checkLegacyDocuments(plan.documents, bucket); } catch { return fail("m2.check"); }
@@ -991,14 +998,16 @@ async function docCheck(deps: CliDeps, revision: string,
   for (const issue of plan.issues) rules[issue.rule]++;
   const documents: DocCheckCounts = { candidates: plan.candidates, mapped: plan.documents.length, checked: counts.checked,
     bytes: counts.bytes, rules, set: documentSetDigest(check.checked), ...(provenance ? {} : { diagnostic: true as const }) };
+  // The private report names the whole verified mirror; the receipt carries the generation only.
+  // A diagnostic result names none, and says so.
   writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "doccheck", at: deps.now().toISOString(), ...bound,
     revisions: { mapper: M2_DOCUMENT_MAPPER_REVISION, check: M2_DOCUMENT_CHECK_REVISION }, set: documents.set,
-    ...(documents.diagnostic ? { diagnostic: true } : {}),
+    ...(provenance ? { mirror: { serverId: provenance.serverId, schema: provenance.schema, generation: provenance.generation } } : { diagnostic: true }),
     documents: check.checked.map(({ legacyId, kind, mime, size, sha256 }) => ({ legacyId, kind, mime, size, sha256 })),
     issues: [...plan.issues, ...check.issues].map(({ rule, legacyId, field }) => ({ rule, legacyId, field })) });
-  bind(bound, documents);
+  bind(verified ? { ...bound, mirror: verified } : bound, documents);
   publish("ok");
   deps.log(`documents candidates=${documents.candidates} mapped=${documents.mapped} checked=${documents.checked} bytes=${documents.bytes} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
-  deps.log(`m4 doccheck ok invocation=${env.M4_INVOCATION} set=${documents.set}${documents.diagnostic ? " diagnostic=true" : ""} revision=${revision} artifact=${artifact}`);
+  deps.log(`m4 doccheck ok invocation=${env.M4_INVOCATION} set=${documents.set}${verified ? ` generation=${verified.generation}` : " diagnostic=true"} revision=${revision} artifact=${artifact}`);
   return 0;
 }
