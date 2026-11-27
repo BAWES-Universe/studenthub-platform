@@ -340,11 +340,27 @@ test("a port call past its timeout is aborted and awaited: settled is a timeout,
   const next = world({ objects: crashed.bucket, saved: crashed.saved });
   const r = await copyLegacyDocuments(sel, next, run(), fast);
   assert.deepEqual([r.checkpoint.credit, r.outcomes.map((o) => o.rule)], ["none", ["adopted"]]);
-  // A legacy read changes nothing: one that runs out of time is a failed read of that document.
-  const slowLegacy = world();
-  slowLegacy.legacy.read = deaf;
-  const rl = await copyLegacyDocuments(sel, slowLegacy, run(), fast);
-  assert.deepEqual(rl.outcomes.map((o) => o.rule), ["document.readFailed"]);
+  // A legacy read that settles after its abort is a failed read of that document, and the next key is not tried.
+  const lateLegacy = world();
+  const lateReads: string[] = [];
+  lateLegacy.legacy.read = (k, _m, signal) => { lateReads.push(k); return abortable(signal!); };
+  const rl = await copyLegacyDocuments(selectApproved([report[0]], planned)!, lateLegacy, run(), fast);
+  assert.deepEqual([rl.outcomes.map((o) => o.rule), lateReads.length], [["document.readFailed"], 1]);
+  // One that never settles stops the run: no checkpoint for it, no next key, no next document.
+  const deafLegacy = world();
+  const deafReads: string[] = [];
+  deafLegacy.legacy.read = (k) => { deafReads.push(k); return deaf(); };
+  await assert.rejects(copyLegacyDocuments(selectApproved(report, planned)!, deafLegacy, run(), fast),
+    (e: unknown) => e instanceof M2CopyError && e.code === "m2.copy.unsettled");
+  assert.deepEqual([deafReads, deafLegacy.saved.size], [["candidate-profile-photos/Secret-1.png"], 0]);
+  // After a first document is checkpointed, an unsettled read of the second leaves the checkpoint at one.
+  const partial = world();
+  const reads = partial.legacy.read.bind(partial.legacy);
+  partial.legacy.read = (k, m, signal) => (k.includes("Secret-2") ? deaf() : reads(k, m, signal));
+  await assert.rejects(copyLegacyDocuments(selectApproved(report, planned)!, partial, run(), fast),
+    (e: unknown) => e instanceof M2CopyError && e.code === "m2.copy.unsettled");
+  const [only] = [...partial.saved.values()];
+  assert.deepEqual([only!.revision, (only!.checkpoint as { entries: unknown[] }).entries.length, partial.legacyReads.includes("photos/Secret-3.png")], [1, 1, false]);
 });
 
 test("the orphan scan reads page by page within its bound, says when it was truncated, and reports pairs and counts only", async () => {

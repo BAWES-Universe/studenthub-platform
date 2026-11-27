@@ -31,7 +31,9 @@
 //   run fails `m2.copy.unsettled`: the caller must end the process instead of releasing its locks
 //   or retrying in-process. Writes are create-only, so the next run reconciles any uncertain write
 //   (an object with no row is adopted only if it reads back; a row is verified against its object;
-//   an uncertain checkpoint save is resolved by its revision).
+//   an uncertain checkpoint save is resolved by its revision). Legacy reads follow the same rule:
+//   one that settles late is `document.readFailed` for that document; one that does not settle
+//   stops the run (GPT AMEND 7219967687).
 //
 // Outcomes and the orphan scan carry legacy ids, kinds, indexes and rule codes only: never a key,
 // name or byte. Only the checkpoint, in the target database, holds object keys.
@@ -297,9 +299,19 @@ async function copyOne(approved: ApprovedDocument, source: DocumentSourceRow, po
   const existing = await call(bounds, (signal) => ports.store.get(approved.legacyId, approved.kind, generation, signal));
   if (existing) return verifyRow(existing);
 
-  // Legacy reads change nothing: one that runs out of time is a failed read of that document.
-  const legacy: LegacyObjectReader = { read: (k, max) => call(bounds, () => ports.legacy.read(k, max)) };
+  // A legacy read gets the same abort and settle. One that settles after its timeout is a failed
+  // read of that document (readLegacyDocument then reads no further key). One that does not settle
+  // stops the run: the sentinel is kept across readLegacyDocument, which folds every throw into
+  // `document.readFailed`, so no checkpoint is saved for it and no next document is read.
+  let unsettled = false;
+  const legacy: LegacyObjectReader = {
+    read: (k, max) => call(bounds, (signal) => ports.legacy.read(k, max, signal)).catch((error: unknown) => {
+      if (error instanceof M2CopyError && error.code === "m2.copy.unsettled") unsettled = true;
+      throw error;
+    }),
+  };
   const read = await readLegacyDocument(source, legacy);
+  if (unsettled) throw new M2CopyError("m2.copy.unsettled");
   if ("rule" in read) return read.rule;
   if (!same(read.ok, approved)) return "document.changed";
 
