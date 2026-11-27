@@ -169,6 +169,8 @@ test("a refresh copies every non-token table, prunes stale mirror tables, and re
   assert.deepEqual(report.tables, { candidate: 3, company: 2, transfer: 4 });
   assert.deepEqual(report.excluded, ["candidate_token", "staff_token"]);
   assert.equal(report.totalRows, 9);
+  // The mirror's own identity, so a later reader can prove it reads this generation.
+  assert.deepEqual(report.mirror, { serverId: "uuid-staging" });
   assert.equal(report.durationMs, 1000);
   const text = JSON.stringify(report) + summary(report);
   for (const secret of ["s3cret", "m1rror", "legacy-replica", "staging-db", "reader"]) assert.equal(text.includes(secret), false, secret);
@@ -211,7 +213,7 @@ test("every way a run ends leaves a fresh report, so a stale ok is never read", 
   const dir = mkdtempSync(path.join(tmpdir(), "refresh-cli-"));
   const reportPath = path.join(dir, "last-run.json");
   const lockPath = path.join(dir, "run.lock");
-  const report = () => JSON.parse(readFileSync(reportPath, "utf8")) as { ok: boolean; code: string; tables: object };
+  const report = () => JSON.parse(readFileSync(reportPath, "utf8")) as { ok: boolean; code: string; tables: object; lock?: string };
   const staleOk = () => writeFileSync(reportPath, JSON.stringify({ ok: true, code: "ok", tables: { candidate: 3 } }));
   const lines: string[] = [];
   const deps = (over: Partial<Parameters<typeof runCli>[0]> = {}): Parameters<typeof runCli>[0] => ({
@@ -267,6 +269,7 @@ test("every way a run ends leaves a fresh report, so a stale ok is never read", 
     assert.equal(await runCli(deps({ mysql: () => watching })), 0);
     assert.equal(seenDuringCopy, "running");
     assert.deepEqual([report().ok, report().code], [true, "ok"]);
+    assert.equal(report().lock, path.resolve(lockPath), "an ok report names the lock it was produced under");
     assert.equal(existsSync(lockPath), true, "the lock file is never deleted");
 
     staleOk();
@@ -304,7 +307,7 @@ test("every way a run ends leaves a fresh report, so a stale ok is never read", 
 
 test("a source and target that are the same server under different names refuse", async () => {
   const report = await runRefresh(loadConfig(env), fakeMysql({ serverId: async () => "uuid-same" }), ticking());
-  assert.deepEqual([report.ok, report.code], [false, "target.isSource"]);
+  assert.deepEqual([report.ok, report.code, report.mirror], [false, "target.isSource", undefined]);
   const failing = await runRefresh(loadConfig(env), fakeMysql({ serverId: async () => Promise.reject(new Error("x")) }), ticking());
   assert.deepEqual([failing.ok, failing.code], [false, "failed.server"]);
 });

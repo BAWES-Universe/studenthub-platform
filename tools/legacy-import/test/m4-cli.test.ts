@@ -24,6 +24,7 @@ const CIVIL_KEY = Buffer.alloc(32, 2).toString("base64");
 // The contact values candidate 31 holds; none may reach a receipt, report or log.
 const CONTACT_VALUES = ["+96550001234", "96550001234", "50001234", "secret.handle", "290010112345", "secret.person", "Secret.Person"];
 const REFRESH = { ok: true, startedAt: "2026-11-23T01:00:00.000Z", finishedAt: "2026-11-23T01:05:00.000Z", totalRows: 42 };
+const MIRROR_ID = "3e11fa47-71ca-11e1-9e33-c80aa9429562";
 
 function sources(): M4Sources {
   const empty = Object.fromEntries(Object.keys(M4_SOURCES).map((t) => [t, []])) as unknown as Record<M4Table, Record<string, unknown>[]>;
@@ -86,6 +87,8 @@ interface HarnessOptions {
   bucket?: LegacyObjectReader | (() => LegacyObjectReader);
   /** Added to the candidate count after the rows are read (a copy changing underneath). */
   countDrift?: number;
+  /** The mirror's `@@server_uuid`; default MIRROR_ID. */
+  mirrorId?: string;
 }
 
 interface Harness {
@@ -199,6 +202,7 @@ function harness(opts: HarnessOptions = {}): Harness {
         // Every read happens with the refresh lock held.
         assert.equal(state.locked, true);
         state.reads++;
+        if (sql.includes("@@server_uuid")) return [{ id: opts.mirrorId ?? MIRROR_ID }];
         const table = /FROM `([a-z_]+)`$/.exec(sql)![1] as M4Table;
         if (sql.includes("COUNT(*)")) return [{ n: rows[table].length + (state.reads > 1 ? opts.countDrift ?? 0 : 0) }];
         return rows[table];
@@ -912,6 +916,14 @@ function docSources(): M4Sources {
   ] };
 }
 
+/** Writes a refresh report with mirror, lock and table provenance into the harness directory. */
+function withProvenance(dir: string, over: Record<string, unknown> = {}): string {
+  writeFileSync(path.join(dir, "refresh.json"), JSON.stringify({ ...REFRESH, mirror: { serverId: MIRROR_ID },
+    lock: path.join(dir, "lock"), tables: { candidate: 2, country: 0 }, ...over }));
+  return dir;
+}
+const provenancedDir = (over?: Record<string, unknown>) => withProvenance(mkdtempSync(path.join(tmpdir(), "m4-cli-")), over);
+
 test("doccheck reads the whole candidate table and each object once under the refresh lock, and publishes counts and the set digest only", async () => {
   const photo = png();
   const reads: string[] = [];
@@ -923,7 +935,7 @@ test("doccheck reads the whole candidate table and each object once under the re
       return key === "photos/Secret-photo.png" ? { kind: "found", bytes: photo } : { kind: "missing" };
     },
   };
-  const h = harness({ rows: docSources(), bucket, env: { M4_DATABASE_URL: undefined, M4_CONTACT_DIGEST_KEY: undefined, M4_CIVIL_ID_ENCRYPTION_KEY: undefined } });
+  const h = harness({ dir: provenancedDir(), rows: docSources(), bucket, env: { M4_DATABASE_URL: undefined, M4_CONTACT_DIGEST_KEY: undefined, M4_CIVIL_ID_ENCRYPTION_KEY: undefined } });
   state = h.state;
   try {
     assert.equal(await main(["doccheck"], h.deps), 0);
@@ -956,7 +968,7 @@ test("doccheck reads the whole candidate table and each object once under the re
 test("doccheck is refused before any object is read without a verified build, its bucket setting, the lock, an ok refresh or the whole candidate table", async () => {
   const run = async (opts: HarnessOptions, code: string) => {
     let objects = 0;
-    const h = harness({ rows: docSources(), bucket: { read: async () => { objects++; return { kind: "missing" }; } }, ...opts });
+    const h = harness({ dir: provenancedDir(), rows: docSources(), bucket: { read: async () => { objects++; return { kind: "missing" }; } }, ...opts });
     try {
       assert.equal(await main(["doccheck"], h.deps), 2);
       const r = h.receipt("doccheck");
@@ -976,10 +988,41 @@ test("doccheck is refused before any object is read without a verified build, it
   assert.equal(await run({ dir: notOk }, "refreshNotOk"), 0);
   // The table grew between the read and the second count.
   assert.ok(await run({ countDrift: 1 }, "ownershipIncomplete") > 0);
+  // The report describes another generation: another lock file, another mirror server, another count.
+  assert.equal(await run({ dir: provenancedDir({ lock: "/var/lock/other-refresh.lock" }) }, "lockMismatch"), 0);
+  assert.equal(await run({ mirrorId: "00000000-0000-1000-8000-000000000000" }, "mirrorMismatch"), 1);
+  assert.equal(await run({ dir: provenancedDir({ tables: { candidate: 3 } }) }, "staleCount"), 7);
+});
+
+test("doccheck against a refresh report without provenance runs as diagnostic only", async () => {
+  // A report from before mirror, lock and table provenance: no mirror read, and the receipt says diagnostic.
+  for (const over of [{ mirror: undefined }, { lock: undefined }, { tables: {} }, null]) {
+    const dir = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
+    if (over) withProvenance(dir, over); else writeFileSync(path.join(dir, "refresh.json"), JSON.stringify(REFRESH));
+    const sqls: string[] = [];
+    const h = harness({ dir, rows: docSources() });
+    try {
+      const reader = h.deps.reader;
+      const deps: CliDeps = { ...h.deps, reader: (env) => { const r = reader(env); return { rows: (sql, p) => { sqls.push(sql); return r.rows(sql, p); } }; } };
+      assert.equal(await main(["doccheck"], deps), 0);
+      const r = h.receipt("doccheck");
+      assert.equal(r.documents!.diagnostic, true);
+      assert.ok(!sqls.some((q) => q.includes("@@server_uuid")), "no mirror read without a recorded mirror");
+      const report = JSON.parse(readFileSync(path.join(h.file("out"), `${h.invocation}.doccheck.report.json`), "utf8"));
+      assert.equal(report.diagnostic, true);
+      assert.ok(h.out.some((l) => l.includes(" diagnostic=true ")));
+    } finally { cleanup(h); }
+  }
+  // With provenance the flag is absent.
+  const h = harness({ dir: provenancedDir(), rows: docSources() });
+  try {
+    assert.equal(await main(["doccheck"], h.deps), 0);
+    assert.equal(h.receipt("doccheck").documents!.diagnostic, undefined);
+  } finally { cleanup(h); }
 });
 
 test("doccheck turns a failed object read into a counted issue, and a failed legacy read into a fixed failure", async () => {
-  const h = harness({ rows: docSources(), bucket: { read: async () => { throw new Error("Secret detail"); } } });
+  const h = harness({ dir: provenancedDir(), rows: docSources(), bucket: { read: async () => { throw new Error("Secret detail"); } } });
   try {
     assert.equal(await main(["doccheck"], h.deps), 0);
     assert.equal(h.receipt("doccheck").documents!.rules["document.readFailed"], 2);

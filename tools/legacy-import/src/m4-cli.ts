@@ -223,6 +223,25 @@ export interface DocCheckCounts {
   readonly rules: Readonly<Record<DocumentIssueRule | DocumentCheckRule, number>>;
   /** documentSetDigest over the checked documents: what a copy step must find again. */
   readonly set: string;
+  /**
+   * Present (true) when the refresh report predates mirror, lock and table provenance, so this run
+   * could not prove it read the generation the report describes. Diagnostic only: never authorizes a copy.
+   */
+  readonly diagnostic?: true;
+}
+
+/** The mirror's own identity, read through the same reader as the sources. */
+export const MIRROR_SERVER_ID_SQL = "SELECT JSON_OBJECT('id', @@server_uuid)";
+
+/** What an ok refresh report says about the copy it made; undefined when the report predates it. */
+export function refreshProvenance(last: unknown): { serverId: string; lock: string; candidates: number } | undefined {
+  if (!last || typeof last !== "object") return undefined;
+  const r = last as { mirror?: { serverId?: unknown }; lock?: unknown; tables?: Record<string, unknown> };
+  const serverId = r.mirror?.serverId;
+  const candidates = r.tables?.candidate;
+  if (typeof serverId !== "string" || !serverId || typeof r.lock !== "string" || !r.lock
+    || !Number.isSafeInteger(candidates) || (candidates as number) < 0) return undefined;
+  return { serverId, lock: r.lock, candidates: candidates as number };
 }
 
 /**
@@ -897,6 +916,11 @@ async function linkReport(deps: CliDeps, revision: string, targetId: string,
  * the legacy bucket adapter (ranged GetObject only) and admits it with the platform's own rules.
  * It writes nothing to any database and copies nothing.
  *
+ * When the refresh report carries provenance (mirror server id, lock path, candidate count), the run
+ * proves it reads that generation: the same lock file (`lockMismatch`), the same mirror server
+ * (`mirrorMismatch`) and the candidate count the refresh recorded (`staleCount`), all before any
+ * object read. A report without it yields `documents.diagnostic: true`, which no copy accepts.
+ *
  * The private report (mode 600, on the staging host only) lists each checked document's legacy id,
  * kind, type, size and sha256, and each issue's legacy id, column and rule; never a key, name or
  * byte. The receipt holds counts per rule and the checked set's digest only.
@@ -935,11 +959,22 @@ async function docCheck(deps: CliDeps, revision: string,
   const bound = { revision, artifact, refresh, today };
   bind(bound);
 
+  // Bind the report to the mirror actually read: the same lock file the refresh held, the same
+  // server it copied into, and the candidate table it counted. All before any object read.
+  const provenance = refreshProvenance(last);
+  const reader = deps.reader(env);
+  if (provenance) {
+    if (path.resolve(lockPathFrom(env)) !== provenance.lock) return refuse("lockMismatch");
+    let serverId: unknown;
+    try { serverId = (await reader.rows(MIRROR_SERVER_ID_SQL, []))[0]?.id; } catch { return fail("m2.read.mirror"); }
+    if (typeof serverId !== "string" || serverId !== provenance.serverId) return refuse("mirrorMismatch");
+  }
   let sources;
-  try { sources = await readM2Sources(deps.reader(env)); } catch (error) {
+  try { sources = await readM2Sources(reader); } catch (error) {
     if (error instanceof M2InputError && error.code === "m2.ownershipIncomplete") return refuse("ownershipIncomplete");
     return fail(error instanceof M2InputError ? error.code : "m2.read");
   }
+  if (provenance && sources.candidate.length !== provenance.candidates) return refuse("staleCount");
   const plan = planM2(sources, today);
   let check;
   try { check = await checkLegacyDocuments(plan.documents, bucket); } catch { return fail("m2.check"); }
@@ -948,14 +983,15 @@ async function docCheck(deps: CliDeps, revision: string,
   const rules = { "document.badKey": 0, "document.sharedObject": 0, ...counts.rules } as Record<DocumentIssueRule | DocumentCheckRule, number>;
   for (const issue of plan.issues) rules[issue.rule]++;
   const documents: DocCheckCounts = { candidates: plan.candidates, mapped: plan.documents.length, checked: counts.checked,
-    bytes: counts.bytes, rules, set: documentSetDigest(check.checked) };
+    bytes: counts.bytes, rules, set: documentSetDigest(check.checked), ...(provenance ? {} : { diagnostic: true as const }) };
   writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "doccheck", at: deps.now().toISOString(), ...bound,
     revisions: { mapper: M2_DOCUMENT_MAPPER_REVISION, check: M2_DOCUMENT_CHECK_REVISION }, set: documents.set,
+    ...(documents.diagnostic ? { diagnostic: true } : {}),
     documents: check.checked.map(({ legacyId, kind, mime, size, sha256 }) => ({ legacyId, kind, mime, size, sha256 })),
     issues: [...plan.issues, ...check.issues].map(({ rule, legacyId, field }) => ({ rule, legacyId, field })) });
   bind(bound, documents);
   publish("ok");
   deps.log(`documents candidates=${documents.candidates} mapped=${documents.mapped} checked=${documents.checked} bytes=${documents.bytes} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
-  deps.log(`m4 doccheck ok invocation=${env.M4_INVOCATION} set=${documents.set} revision=${revision} artifact=${artifact}`);
+  deps.log(`m4 doccheck ok invocation=${env.M4_INVOCATION} set=${documents.set}${documents.diagnostic ? " diagnostic=true" : ""} revision=${revision} artifact=${artifact}`);
   return 0;
 }

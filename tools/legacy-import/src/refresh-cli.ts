@@ -442,6 +442,8 @@ export async function runCli(deps: CliDeps): Promise<number> {
       clearTimeout(timer);
     }
     if (deadline.signal.aborted && !report.ok) report = { ...report, code: "failed.timeout" };
+    // An ok report names the lock it was produced under, so a reader can prove it holds the same one.
+    if (report.ok) report = { ...report, lock: path.resolve(config.lockPath) };
     writeReport(config.reportPath, config.lockPath, report);
     deps.log(summary(report));
     return report.ok ? 0 : 1;
