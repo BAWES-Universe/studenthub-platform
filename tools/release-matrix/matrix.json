@@ -1159,8 +1159,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "read-only Finance pages in review (invoices lane, with the pay lane's agreement); evidence added when the PR head is final"
+          "state": "done",
+          "evidence": "read-only Finance transfers list and detail with tests, proven by checkServed; PR #748 at f4d46cfb"
         },
         "verified": {
           "state": "open"
