@@ -192,10 +192,17 @@
     "U-07": {
       "lane": "shell",
       "subject": "`/error/:kind`, wildcard \u2014 accessible failure states",
+      "served": [
+        {
+          "route": "/error/:kind",
+          "test": "apps/gateway/test/error-pages.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): Not found and error pages exist per route; no shared /error/:kind page"
+          "state": "done",
+          "evidence": "PR #756 at b1ff53a246afc73daf2c6e57f40ca830ffa03a71"
         },
         "verified": {
           "state": "open"
