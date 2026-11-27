@@ -82,6 +82,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly financeSettled?: import("../billing/finance-settled-http.js").FinanceSettledHttp;
   readonly financeContracts?: import("../billing/finance-contracts-http.js").FinanceContractsHttp;
   readonly platformOperations?: import("../platform/operations-page.js").PlatformOperations;
+  readonly platformIntegrations?: import("../platform/integrations-page.js").PlatformIntegrations;
 };
 
 export interface GatewayRouteContext {

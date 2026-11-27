@@ -1432,6 +1432,13 @@
     "A-27": {
       "lane": "platform",
       "subject": "`/platform/integrations`",
+      "served": [
+        {
+          "route": "/platform/integrations",
+          "test": "apps/gateway/test/platform-integrations.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",
