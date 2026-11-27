@@ -263,6 +263,14 @@ export interface RefreshReport {
   readonly nonTransactional: readonly string[];
   readonly tables: Readonly<Record<string, number>>;
   readonly totalRows: number;
+  /**
+   * For an ok run: the mirror server (`@@server_uuid`) and schema this run copied into, so a reader
+   * can prove it reads that server and schema. This does not identify the generation: a later run
+   * into the same schema has the same values, so a reader must still treat its result as diagnostic.
+   */
+  readonly mirror?: { readonly serverId: string; readonly schema: string };
+  /** For an ok run: the lock file the run held (resolved path), so readers can prove they share it. */
+  readonly lock?: string;
 }
 
 /** What the refresh needs from MySQL. The CLI backs this with the mysql client tools. */
@@ -290,6 +298,7 @@ export async function runRefresh(
 ): Promise<RefreshReport> {
   const started = clock();
   let nonTransactional: string[] = [];
+  let mirrorId: string | undefined;
   const finish = (ok: boolean, code: string, excluded: string[] = [], tables: Record<string, number> = {}): RefreshReport => {
     const finished = clock();
     return {
@@ -302,6 +311,7 @@ export async function runRefresh(
       nonTransactional,
       tables,
       totalRows: Object.values(tables).reduce((sum, n) => sum + n, 0),
+      ...(ok && mirrorId ? { mirror: { serverId: mirrorId, schema: config.target.database } } : {}),
     };
   };
 
@@ -310,6 +320,7 @@ export async function runRefresh(
     // Host names can alias (an IP, a proxy, a second DNS name); the server identity cannot.
     const [sourceId, targetId] = [await mysql.serverId(config.source), await mysql.serverId(config.target)];
     if (sourceId === targetId) return finish(false, "target.isSource");
+    mirrorId = targetId;
 
     step = "grants";
     const grants = await mysql.grants(config.source);
