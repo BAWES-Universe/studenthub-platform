@@ -15,6 +15,21 @@ export interface MorningSummarySendResult { readonly day: string; readonly recip
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const KUWAIT_DAY = (p: string) => `scheduled_at >= (${p}::date::timestamp AT TIME ZONE 'Asia/Kuwait') AND scheduled_at < ((${p}::date + 1)::timestamp AT TIME ZONE 'Asia/Kuwait')`;
 
+// Active clients with no request in 40 days (legacy `Company::last40daysWithoutRequest`, @55119d3): top-level
+// KWD companies, not deleted, that are
+//  - old: legacy asked for a creation date over 40 days back. The platform keeps no company creation date,
+//    so the oldest sign of the company stands in for it: an assignment that started, or a request made,
+//    before the Kuwait day 40 days before the report day. This is a deliberate change: a company older than
+//    that whose first assignment and first request are newer is not counted here, where legacy counted it;
+//  - active, as legacy's `filterActive`: someone assigned on the report day (any start date), or a request
+//    open or filling (legacy `started`), or a request of any status updated in the 30 Kuwait days to the
+//    report day (legacy `is_request_updates_in_30_days`); only requests made by the end of the report day;
+//  - without a request, of any status, drafts included, made from the Kuwait day 40 days before the report
+//    day to the end of the report day.
+// Every sign rolls up from sub-companies that are not deleted, as legacy did for staff, active requests and
+// updates. Legacy kept the last request date on the requesting company only, so a parent whose requests all
+// came from sub-companies counted as never requesting; rolling requests up too is a deliberate platform
+// choice. Request status and updated_at are read as they are now, so a past report day sees today's status.
 // One statement, so every counter reads the same snapshot. $1 is the Asia/Kuwait day, $2 the operator
 // organizations: they are not companies, and each organization rolls up to its top-level company under them.
 const COUNTS = `WITH RECURSIVE up(org_id, at, parent, depth) AS (
@@ -30,6 +45,19 @@ SELECT
          WHERE t.company_id = c.id AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = t.org_id) AND a.start_date <= $1::date - 40 AND (a.end_date IS NULL OR a.end_date >= $1::date))
        AND NOT EXISTS (SELECT 1 FROM pay_transfers p JOIN top t ON t.org_id = p.company_id
          WHERE t.company_id = c.id AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = t.org_id) AND NOT p.deleted AND p.payment_received_on > $1::date - 40 AND p.payment_received_on <= $1::date)) AS "companyMoreThen40DaysWithoutPayment",
+  (SELECT count(*)::int FROM organizations c LEFT JOIN organization_commercial_terms ct ON ct.org_id = c.id AND ct.field = 'currency_code'
+     WHERE c.id IN (SELECT company_id FROM top) AND COALESCE(ct.value, 'KWD') = 'KWD'
+       AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = c.id)
+       AND EXISTS (SELECT 1 FROM top t WHERE t.company_id = c.id AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = t.org_id) AND (
+             EXISTS (SELECT 1 FROM work_assignments a WHERE a.org_id = t.org_id AND a.start_date < $1::date - 40)
+          OR EXISTS (SELECT 1 FROM recruit_requests r WHERE r.org_id = t.org_id AND r.created_at < (($1::date - 40)::timestamp AT TIME ZONE 'Asia/Kuwait'))))
+       AND EXISTS (SELECT 1 FROM top t WHERE t.company_id = c.id AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = t.org_id) AND (
+             EXISTS (SELECT 1 FROM work_assignments a WHERE a.org_id = t.org_id AND a.start_date <= $1::date AND (a.end_date IS NULL OR a.end_date >= $1::date))
+          OR EXISTS (SELECT 1 FROM recruit_requests r WHERE r.org_id = t.org_id AND r.created_at < (($1::date + 1)::timestamp AT TIME ZONE 'Asia/Kuwait')
+               AND (r.status IN ('open','filling')
+                 OR (r.updated_at >= (($1::date - 29)::timestamp AT TIME ZONE 'Asia/Kuwait') AND r.updated_at < (($1::date + 1)::timestamp AT TIME ZONE 'Asia/Kuwait'))))))
+       AND NOT EXISTS (SELECT 1 FROM recruit_requests r JOIN top t ON t.org_id = r.org_id
+         WHERE t.company_id = c.id AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = t.org_id) AND r.created_at >= (($1::date - 40)::timestamp AT TIME ZONE 'Asia/Kuwait') AND r.created_at < (($1::date + 1)::timestamp AT TIME ZONE 'Asia/Kuwait'))) AS "last40daysNoRequest",
   (SELECT count(DISTINCT a.person_principal_id)::int FROM work_assignments a
      WHERE a.start_date < ($1::date - interval '2 months')::date AND (a.end_date IS NULL OR a.end_date >= $1::date)
        AND NOT EXISTS (SELECT 1 FROM pay_transfer_lines l JOIN pay_transfers p ON p.id = l.transfer_id

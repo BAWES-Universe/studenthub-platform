@@ -40,7 +40,7 @@ export const MORNING_SUMMARY_COUNTERS = [
   { key: "totalExpiredCards", label: "Candidates with expired ID cards", source: available },
   { key: "id_need_generated", label: "Candidates assigned to work without ID cards", source: available },
   { key: "activeRequests", label: "Active requests that need an update", source: available },
-  { key: "last40daysNoRequest", label: "Active clients who have not made a request in over 40 days", source: missing("company start dates and active flags from the importer") },
+  { key: "last40daysNoRequest", label: "Active clients who have not made a request in over 40 days", source: available },
   { key: "requireFollowup", label: "Clients requiring follow-up", source: missing("company follow-up dates, which no lane holds yet") },
   { key: "missingBankInfo", label: "Candidates missing bank info", source: available },
   { key: "assignedExpiredCivilID", label: "Assigned candidates with an expired civil ID", source: available },
