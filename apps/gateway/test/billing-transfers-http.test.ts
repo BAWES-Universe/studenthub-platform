@@ -8,8 +8,8 @@ import { createInvoicesHttp, handleInvoices, type TransferInvoiceReads } from ".
 // O-13 company transfers. Synthetic companies, people and amounts only.
 const FIN = "f".repeat(43), OTHER = "o".repeat(43);
 const OCTOBER: CompanyTransferEntry = { transferId: "t-oct", orgId: "P", companyName: "Parent <Co>", periodStart: "2026-10-01", periodEnd: "2026-10-31",
-  currencyCode: "KWD", status: "distributing", lineCount: 2, companyTotal: "12.750", paymentReceivedOn: "2026-11-22" };
-const NOVEMBER: CompanyTransferEntry = { ...OCTOBER, transferId: "t-nov", periodStart: "2026-11-01", periodEnd: "2026-11-30", status: "draft", lineCount: 0,
+  currencyCode: "KWD", status: "distributing", lineCount: 2, personCount: 2, companyTotal: "12.750", paymentReceivedOn: "2026-11-22" };
+const NOVEMBER: CompanyTransferEntry = { ...OCTOBER, transferId: "t-nov", periodStart: "2026-11-01", periodEnd: "2026-11-30", status: "draft", lineCount: 0, personCount: 0,
   companyTotal: "0.000", paymentReceivedOn: null };
 const DETAIL: CompanyTransferDetail = { ...OCTOBER, lines: [
   { lineId: "l-1", personName: "Amal <Synthetic>", storeName: "Shop P", worked: { hours: "5", minutes: 15 }, companyTotal: "10.500", paid: true },
