@@ -14,7 +14,8 @@ const mutations = [
   ["link a company by its raw id", "FINANCE_SETTLED_PAGE", "`${INVOICES_PATH}/${encodeURIComponent(orgId)}`", "`${INVOICES_PATH}/${orgId}`"],
   ["show a credited invoice by its payment status", "FINANCE_SETTLED_PAGE", "${i.creditNumber\n", "${false\n"],
   ["show what is owed as invoiced", "FINANCE_SETTLED_PAGE", "<td>${esc(b.outstanding)}</td>", "<td>${esc(b.invoiced)}</td>"],
-  ["print a company name unescaped", "FINANCE_SETTLED_PAGE", "${esc(b.companyName)}</a>", "${b.companyName}</a>"],
+  ["print a company name unescaped", "FINANCE_SETTLED_PAGE", "${esc(name)}</a>", "${name}</a>"],
+  ["link a deleted company", "FINANCE_SETTLED_PAGE", "deleted.has(orgId) ?", "false ?"],
 ];
 const original = await readFile(handler, "utf8");
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap",

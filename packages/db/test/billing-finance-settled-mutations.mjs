@@ -20,6 +20,7 @@ const mutations = [
   ["leave credits out of the balance", "FINANCE_SETTLED_PG", "sum(amount)::numeric(40,3)::text AS outstanding", "(sum(amount) FILTER (WHERE kind <> 'credit'))::numeric(40,3)::text AS outstanding"],
   ["report payments as credits", "FINANCE_SETTLED_PG", "FILTER (WHERE kind = 'credit')", "FILTER (WHERE kind = 'payment')"],
   ["hide that an older page exists", "FINANCE_SETTLED_PG", "const more = rows.length > limit;", "const more = false;"],
+  ["report no deleted company", "FINANCE_SETTLED_PG_DELETED", "FROM organization_deletions WHERE", "FROM organization_deletions WHERE false AND"],
 ];
 const originals = new Map([[settled.href, await readFile(settled, "utf8")], [companies.href, await readFile(companies, "utf8")]]);
 const restore = async () => { for (const [href, text] of originals) await writeFile(new URL(href), text); };
