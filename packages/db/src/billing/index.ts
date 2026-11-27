@@ -13,3 +13,4 @@ export { PAY_HISTORY_CALCULATION_VERSION, PAY_HISTORY_PAGE_SIZE, PostgresPayHist
   type PayHistoryPage } from "./postgres-pay-history-reads.js";
 export { PostgresBankResultStore, bankResultLifecyclePolicy, operatorFinanceGate, type BankResultApply, type BankResultCompletePort, type BankResultFileDetail, type BankResultFileEntry, type BankResultFileGate, type BankResultHeldRow, type BankResultLineRow, type BankResultRecordedRow, type BankResultTransferLine, type BankResultTransferStatus, type BankResultSubmit } from "./postgres-bank-result-store.js";
 export { FINANCE_TRANSFER_STATUSES, PostgresFinanceTransferReads, type FinanceTransferDecision, type FinanceTransferDetail, type FinanceTransferLine, type FinanceTransferPage } from "./postgres-finance-transfer-reads.js";
+export { FINANCE_SETTLED_STATUSES, PostgresFinanceSettledReads, type FinanceSettledBalance, type FinanceSettledPage, type FinanceSettledStatus } from "./postgres-finance-settled-reads.js";

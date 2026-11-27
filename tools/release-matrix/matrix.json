@@ -192,10 +192,17 @@
     "U-07": {
       "lane": "shell",
       "subject": "`/error/:kind`, wildcard \u2014 accessible failure states",
+      "served": [
+        {
+          "route": "/error/:kind",
+          "test": "apps/gateway/test/error-pages.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): Not found and error pages exist per route; no shared /error/:kind page"
+          "state": "done",
+          "evidence": "PR #756 at b1ff53a246afc73daf2c6e57f40ca830ffa03a71"
         },
         "verified": {
           "state": "open"
@@ -1183,10 +1190,18 @@
     "A-20": {
       "lane": "pay",
       "subject": "`/finance/settled`",
+      "served": [
+        {
+          "route": "/finance/settled",
+          "test": "apps/gateway/test/billing-finance-settled-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "not started (audit 2026-11-20): pay lane: settled"
+          "state": "done",
+          "evidence": "read-only Finance invoices and balances with tests, proven by checkServed; PR #757 at f210e99c",
+          "note": "built covers the central Finance reader only; the admin:read-only + finance:read-settled reader, expense views, deployment and live acceptance stay open, so this is not full A-20 parity"
         },
         "verified": {
           "state": "open"

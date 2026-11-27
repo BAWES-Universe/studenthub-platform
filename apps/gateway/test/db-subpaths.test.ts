@@ -62,7 +62,7 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
     types: "./dist/billing/index.d.ts", import: "./dist/billing/index.js",
   });
   const billing = await moduleFor("@studenthub/db/billing");
-  assert.deepEqual(Object.keys(billing).sort(), ["CREDIT_REASON_MAX", "FINANCE_TRANSFER_STATUSES", "PAY_HISTORY_CALCULATION_VERSION", "PAY_HISTORY_PAGE_SIZE", "PostgresBankResultStore", "PostgresBillingAccountStore", "PostgresFinanceTransferReads", "PostgresLegacyInvoiceStore", "PostgresOrgRegistry", "PostgresPayHistoryReads", "PostgresTransferInvoiceEffects", "PostgresTransferInvoiceReads", "PostgresTransferInvoiceVoids", "TRANSFER_INVOICE_SERIES", "allocateInvoiceNumber", "bankResultLifecyclePolicy", "candidateWorked", "creditReason", "issueInvoice", "listTransferInvoices", "operatorFinanceGate", "resolveInvoice", "transferInvoiceForLine"]);
+  assert.deepEqual(Object.keys(billing).sort(), ["CREDIT_REASON_MAX", "FINANCE_SETTLED_STATUSES", "FINANCE_TRANSFER_STATUSES", "PAY_HISTORY_CALCULATION_VERSION", "PAY_HISTORY_PAGE_SIZE", "PostgresBankResultStore", "PostgresBillingAccountStore", "PostgresFinanceSettledReads", "PostgresFinanceTransferReads", "PostgresLegacyInvoiceStore", "PostgresOrgRegistry", "PostgresPayHistoryReads", "PostgresTransferInvoiceEffects", "PostgresTransferInvoiceReads", "PostgresTransferInvoiceVoids", "TRANSFER_INVOICE_SERIES", "allocateInvoiceNumber", "bankResultLifecyclePolicy", "candidateWorked", "creditReason", "issueInvoice", "listTransferInvoices", "operatorFinanceGate", "resolveInvoice", "transferInvoiceForLine"]);
 });
 
 test("PREP_ROOT_SAME root database exports are the unchanged golden set and identical area objects", async () => {
