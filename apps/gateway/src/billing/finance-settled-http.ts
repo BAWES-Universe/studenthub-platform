@@ -15,7 +15,7 @@ import { INVOICES_PATH } from "./invoices-http.js";
  * paid, credited and still owed, all time, from the same documents as the company's statement) and then the
  * transfer invoices themselves, newest first, 100 a page (`?page=N`), optionally of one status
  * (`?status=unpaid|paid|credited`). Each company links to its invoices page, which a central Finance user
- * opens as the void view.
+ * opens as the void view; a deleted company is named as deleted, without a link, since its invoices page is closed.
  *
  * Only StudentHub's own finance users reach the page: the central gate and per-company settle rule of the
  * bank result files and Finance transfers. Everyone else, a company's own finance users included, gets not found.
@@ -58,11 +58,14 @@ const pageHref = (filter: { status?: FinanceSettledStatus; page: number }) => {
 };
 
 function settledHtml(result: FinanceSettledPage, status: FinanceSettledStatus | undefined): string {
-  const balances = result.balances.map((b) => `<tr><td><a href="${esc(companyHref(b.orgId))}">${esc(b.companyName)}</a></td><td>${esc(b.currencyCode)}</td>`
+  const deleted = new Set(result.deletedOrgIds);
+  /** A deleted company's invoices page is closed: name it as deleted, with no link. */
+  const company = (orgId: string, name: string) => deleted.has(orgId) ? `${esc(name)} (deleted company)` : `<a href="${esc(companyHref(orgId))}">${esc(name)}</a>`;
+  const balances = result.balances.map((b) => `<tr><td>${company(b.orgId, b.companyName)}</td><td>${esc(b.currencyCode)}</td>`
     + `<td>${esc(b.invoiced)}</td><td>${esc(b.paid)}</td><td>${esc(b.credited)}</td><td>${esc(b.outstanding)}</td></tr>`).join("");
   const filters = [`<a href="${FINANCE_SETTLED_PATH}"${status ? "" : ' aria-current="page"'}>All</a>`,
     ...FINANCE_SETTLED_STATUSES.map((s) => `<a href="${esc(pageHref({ status: s, page: 1 }))}"${status === s ? ' aria-current="page"' : ""}>${STATUS_NAME[s]}</a>`)].join(" · ");
-  const invoices = result.invoices.map((i) => `<tr><td>${esc(i.invoiceNumber)}</td><td><a href="${esc(companyHref(i.orgId))}">${esc(i.companyName)}</a></td>`
+  const invoices = result.invoices.map((i) => `<tr><td>${esc(i.invoiceNumber)}</td><td>${company(i.orgId, i.companyName)}</td>`
     + `<td>${esc(longDate(i.invoiceDate))}</td><td>${esc(i.currencyCode)} ${esc(i.total)}</td><td>${i.creditNumber
       ? `Credited by credit note ${esc(i.creditNumber)}${i.creditedOn ? ` on ${esc(longDate(i.creditedOn))}` : ""}`
       : i.status === "paid" ? `Paid${i.paidOn ? ` on ${esc(longDate(i.paidOn))}` : ""}` : "Unpaid"}</td></tr>`).join("");

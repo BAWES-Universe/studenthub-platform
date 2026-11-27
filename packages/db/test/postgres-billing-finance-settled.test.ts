@@ -76,7 +76,7 @@ test("FINANCE_SETTLED_PG central Finance sees each company's balance and every i
     [["P", "Sultan Co", "KWD", "7.000", "4.000", "3.000", "0.000"], ["C", "Sultan Kids", "KWD", "3.750", "2.500", "0.000", "1.250"]].sort((a, b) => a[1]!.localeCompare(b[1]!)),
     "X outside StudentHub has no balance here; a credit note settles like a payment");
   assert.deepEqual(page.invoices.map((i) => [i.orgId, i.total]).sort(), [["C", "1.250"], ["C", "2.500"], ["P", "3.000"], ["P", "4.000"]]);
-  assert.deepEqual([page.page, page.more], [1, false]);
+  assert.deepEqual([page.page, page.more, page.deletedOrgIds], [1, false, []]);
   const of = async (status: "unpaid" | "paid" | "credited") => (await reads().settled("fin", { status }))!.invoices.map((i) => [i.orgId, i.total, i.creditNumber !== null]).sort();
   assert.deepEqual(await of("unpaid"), [["C", "1.250", false]]);
   assert.deepEqual(await of("paid"), [["C", "2.500", false], ["P", "4.000", false]]);
@@ -117,4 +117,22 @@ test("FINANCE_SETTLED_HTTP_PG wired as production: a Finance-only session opens 
   for (const link of links) assert.equal((await get(link, FIN)).status, 200, `${link} opens for central Finance`);
   assert.equal((await get("/finance/settled", CFIN, "application/json")).status, 404);
   assert.equal((await get("/finance/settled?status=credited", FIN, "application/json")).status, 200);
+});
+
+test("FINANCE_SETTLED_PG_DELETED a deleted company keeps its balance and invoices, is reported as deleted, and is named without a dead link", async (t) => {
+  await documents();
+  await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES ('C',$1)", ["d".repeat(64)]);
+  const page = await reads().settled("fin");
+  assert.ok(page);
+  assert.deepEqual(page.balances.map((b) => [b.orgId, b.outstanding]).sort(), [["C", "1.250"], ["P", "0.000"]], "what C still owes stays in view");
+  assert.equal(page.invoices.filter((i) => i.orgId === "C").length, 2);
+  assert.deepEqual(page.deletedOrgIds, ["C"]);
+  const FIN = "f".repeat(43);
+  const settled = createFinanceSettledHttp({ sessions: { get: async (id: string) => (id === FIN ? { personId: "fin" } : undefined) as never }, reads: reads() });
+  const server = createServer(async (req, res) => { if (!await handleFinanceSettled(req, res, settled)) { res.writeHead(418); res.end(); } });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => new Promise<void>((r) => server.close(() => r())));
+  const html = await (await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/finance/settled`, { headers: { cookie: `__Host-studenthub_session=${FIN}`, accept: "text/html" } })).text();
+  assert.match(html, /<tr><td>Sultan Kids \(deleted company\)<\/td><td>KWD<\/td><td>3\.750<\/td><td>2\.500<\/td><td>0\.000<\/td><td>1\.250<\/td><\/tr>/);
+  assert.deepEqual([...new Set([...html.matchAll(/href="(\/organization\/invoices\/[^"]+)"/g)].map((m) => m[1]!))], ["/organization/invoices/P"], "only the live company links");
 });
