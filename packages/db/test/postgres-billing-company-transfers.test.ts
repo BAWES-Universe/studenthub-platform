@@ -75,9 +75,9 @@ test("COMPANY_TRANSFERS_LIST a company reader sees its transfers newest period f
   const page = await reads.companyTransfers("fin-p", "P");
   assert.ok(page);
   assert.equal(page.name, "Parent Trading Co");
-  assert.deepEqual(page.transfers.map(t => [t.transferId, t.orgId, t.companyName, t.periodStart, t.periodEnd, t.currencyCode, t.status, t.lineCount, t.companyTotal, t.paymentReceivedOn]), [
-    [november, "P", "Parent Trading Co", "2026-11-01", "2026-11-30", "KWD", "draft", 0, "0.000", null],
-    [october, "P", "Parent Trading Co", "2026-10-01", "2026-10-31", "KWD", "distributing", 2, "12.750", "2026-11-22"],
+  assert.deepEqual(page.transfers.map(t => [t.transferId, t.orgId, t.companyName, t.periodStart, t.periodEnd, t.currencyCode, t.status, t.lineCount, t.personCount, t.companyTotal, t.paymentReceivedOn]), [
+    [november, "P", "Parent Trading Co", "2026-11-01", "2026-11-30", "KWD", "draft", 0, 0, "0.000", null],
+    [october, "P", "Parent Trading Co", "2026-10-01", "2026-10-31", "KWD", "distributing", 2, 2, "12.750", "2026-11-22"],
   ], "the deleted transfer and company X's are not listed");
   assert.equal(await reads.companyTransfers("fin-p", "X"), null);
   assert.equal(await reads.companyTransfer("fin-p", "P", gone), null, "a deleted transfer is not found");

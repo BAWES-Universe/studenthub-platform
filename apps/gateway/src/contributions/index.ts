@@ -5,6 +5,7 @@ import { PROFILE_CONTRIBUTION } from "./profile.js";
 import { RECRUIT_CONTRIBUTION } from "./recruit.js";
 import { ACCESS_CONTRIBUTION } from "./access.js";
 import { WORK_CONTRIBUTION } from "./work.js";
+import { PERSON_CONTRIBUTION } from "./person.js";
 
 export interface NavEntry {
   readonly key: string;
@@ -37,4 +38,4 @@ export function mergeContributions(inputs: readonly Contributions[]): Contributi
   return { navigation, profileRows };
 }
 
-export const CONTRIBUTIONS = mergeContributions([PROFILE_CONTRIBUTION, ORGANIZATIONS_CONTRIBUTION, ACCESS_CONTRIBUTION, RECRUIT_CONTRIBUTION, WORK_CONTRIBUTION]);
+export const CONTRIBUTIONS = mergeContributions([PROFILE_CONTRIBUTION, ORGANIZATIONS_CONTRIBUTION, ACCESS_CONTRIBUTION, RECRUIT_CONTRIBUTION, WORK_CONTRIBUTION, PERSON_CONTRIBUTION]);

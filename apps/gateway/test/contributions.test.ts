@@ -29,6 +29,10 @@ test("PREP_NAV default area contributions preserve profile navigation", () => {
     { key: "work", order: 260 },
     { key: "workspaces", order: 300 },
     { key: "account", order: 310 },
+    { key: "statistics", order: 320 },
+    { key: "pay", order: 325 },
+    { key: "certificates", order: 330 },
+    { key: "idCard", order: 335 },
   ]);
   assert.deepEqual(CONTRIBUTIONS.profileRows, []);
   assert.equal(CONTRIBUTIONS.navigation[3]!.visible({}), false);

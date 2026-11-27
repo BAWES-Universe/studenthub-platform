@@ -1145,10 +1145,22 @@
     "A-18": {
       "lane": "pay",
       "subject": "`/finance/transfers`, `/:id`",
+      "served": [
+        {
+          "route": "/finance/transfers",
+          "test": "apps/gateway/test/billing-finance-transfers-http.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/finance/transfers/:id",
+          "test": "apps/gateway/test/billing-finance-transfers-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "not started (audit 2026-11-20): pay lane: transfers"
+          "state": "done",
+          "evidence": "read-only Finance transfers list and detail with tests, proven by checkServed; PR #748 at 524c65d4"
         },
         "verified": {
           "state": "open"
@@ -1384,11 +1396,23 @@
     },
     "G-02": {
       "lane": "access",
-      "subject": "`/access/grants/assign` \u2014 principal/org/store search, effective preview, assign/revoke",
+      "subject": "`/admin/access/people/:principalId` \u2014 principal/org/store search, effective preview, assign/revoke",
+      "served": [
+        {
+          "route": "/admin/access/people/:principalId",
+          "test": "apps/gateway/test/access-admin.test.ts",
+          "via": "gateway"
+        },
+        {
+          "route": "/admin/access/store-preview",
+          "test": "apps/gateway/test/access-store-grants.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built: person and organization search, assign/revoke with preview and the effective preview (what the change opens or closes) on /admin/access; no store search"
+          "state": "done",
+          "evidence": "PR #746 at 7eef4f0cc96709413b28919b288b6a50f7d37923"
         },
         "verified": {
           "state": "open"
