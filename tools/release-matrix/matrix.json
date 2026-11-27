@@ -124,10 +124,17 @@
     "U-03": {
       "lane": "access",
       "subject": "`/account` \u2014 account and local session security",
+      "served": [
+        {
+          "route": "/account",
+          "test": "apps/gateway/test/access-account.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): /profile/access shows grants; no session list or sign-out-everywhere page"
+          "state": "done",
+          "evidence": "PR #740 at c5b90158d47ed5400b4b7283ebb429ae4801c0b7"
         },
         "verified": {
           "state": "open"

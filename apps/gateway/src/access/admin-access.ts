@@ -493,8 +493,14 @@ const timeText = (value: string): string =>
   new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kuwait" }).format(new Date(value));
 
 /** U-03: where the person is signed in, and the sign-out-everywhere form. */
-export function renderAccount(list: AccountSessionList, notice = ""): string {
+export function renderAccount(list: AccountSessionList, notice = "", person: AccessPerson | null = null): string {
   const e = escapeHtml;
+  // Name and email are what Universe last sent at sign-in; they are changed in Universe, not here.
+  const who = person
+    ? `<section><h2>Signed in as</h2><dl class="profile-fields"><div><dt>Name</dt><dd>${e(personName(person))}</dd></div><div><dt>Email</dt><dd>${e(person.email ?? "Not given")}</dd></div></dl>`
+      + `<p>Your name and email come from your Universe account, as it last sent them when you signed in. Change them in Universe.</p>`
+      + `<p><a class="text-link" href="/profile/access">Your roles in StudentHub →</a></p></section>`
+    : "";
   const sessions = list.sessions;
   const rows = sessions.map((item) =>
     `<tr><th scope="row">${item.current ? "This browser" : "Another browser or device"}</th><td>${item.signedInAt ? e(timeText(item.signedInAt)) : "Not recorded"}</td><td>${e(timeText(item.expiresAt))}</td></tr>`).join("");
@@ -505,7 +511,7 @@ export function renderAccount(list: AccountSessionList, notice = ""): string {
   const summary = others === 0
     ? `<p role="status">You are signed in to StudentHub only in this browser.</p>`
     : `<p role="status">You are signed in to StudentHub in this browser and ${others} other${others === 1 ? "" : "s"}.</p>`;
-  return layout(`<div class="profile-heading"><h1>Account<span class="accent">.</span></h1></div>${notice}`
+  return layout(`<div class="profile-heading"><h1>Account<span class="accent">.</span></h1></div>${notice}${who}`
     + `<section><h2>Where you are signed in</h2>${summary}<div class="directory-table"><table><caption>Your StudentHub sign-ins (Kuwait time)</caption><thead><tr><th scope="col">Where</th><th scope="col">Signed in</th><th scope="col">Ends by itself</th></tr></thead><tbody>${rows}</tbody></table></div>${capped}</section>`
     + `<section><h2>Sign out everywhere</h2><p>This signs you out of StudentHub in every browser and device, this one included. Your Universe sign-in is not changed; sign in again to come back.</p>`
     + `<form action="/account/sign-out-everywhere" method="post"><button type="submit">Sign out everywhere</button></form></section>`, "account");
@@ -851,7 +857,8 @@ async function handleAccount(req: IncomingMessage, res: ServerResponse, ports: A
   if (!session || !caller) return false;
   if (path === "/account") {
     if (req.method !== "GET") return false;
-    write(200, "Account", renderAccount(await ports.account.list(caller, session)));
+    const [list, person] = await Promise.all([ports.account.list(caller, session), ports.reads.person(caller)]);
+    write(200, "Account", renderAccount(list, "", person));
     return true;
   }
   if (req.method !== "POST") return false;
