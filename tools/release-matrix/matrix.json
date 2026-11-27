@@ -521,6 +521,13 @@
     "C-15": {
       "lane": "people",
       "subject": "`/profile/bank`",
+      "served": [
+        {
+          "route": "/profile/bank",
+          "test": "apps/gateway/test/bank-details-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",

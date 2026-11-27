@@ -1,7 +1,7 @@
 import { handleProfileEdit, handleProfileEditPage, shownProfileValue } from "../profile-edit-http.js";
 import { handleProfileBrowserEdit } from "../profile-browser-edit-http.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "../language-preference.js";
-import { handleBankDetails } from "../bank-details.js";
+import { handleBankDetails, handleBankDetailsPage } from "../bank-details.js";
 import { handleProfileRecords } from "../profile-records-http.js";
 import type { GatewayRoute } from "./context.js";
 import { renderPeopleDirectory, wantsHtml } from "../web-ui.js";
@@ -48,8 +48,10 @@ export const languagePreferencePageRoute: GatewayRoute = { name: "language-prefe
 
 export const languagePreferenceRoute: GatewayRoute = { name: "language-preference", handle: (ctx) =>
   handleLanguagePreference(ctx.request, ctx.response, ctx.login?.preferences, ctx.login?.web?.origin) };
-export const bankDetailsRoute: GatewayRoute = { name: "bank-details", handle: (ctx) =>
-  handleBankDetails(ctx.request, ctx.response, ctx.login?.bankDetails, ctx.login?.web?.origin) };
+export const bankDetailsRoute: GatewayRoute = { name: "bank-details", handle: async (ctx) =>
+  await handleBankDetailsPage(ctx.request, ctx.response, ctx.login?.bankDetails, ctx.login?.web?.origin,
+    (status, title, body) => ctx.writeHtml(ctx.response, status, status === 401 ? ctx.renderError(401, ctx.login) : ctx.pageDocument(title, body)))
+  || handleBankDetails(ctx.request, ctx.response, ctx.login?.bankDetails, ctx.login?.web?.origin) };
 export const profileRecordsRoute: GatewayRoute = { name: "profile-records", handle: (ctx) =>
   handleProfileRecords(ctx.request, ctx.response, ctx.profileRecords,
     (status, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument("Education and experience", body))) };
