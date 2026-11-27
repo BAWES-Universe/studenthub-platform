@@ -10,7 +10,7 @@ import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {runMigrations} from '@studenthub/db';
 import {PostgresCivilIdOcrStore} from '../../../dist/packages/db/src/postgres-civil-id-ocr-store.js';
-import {precheck,postcheck,HandoverError} from '../../../dist/packages/private-documents/src/store-handover.js';
+import {precheck,postcheck,parsePrecheck,target,HandoverError} from '../../../dist/packages/private-documents/src/store-handover.js';
 import {handoverMain} from '../../../dist/packages/private-documents/src/store-handover-cli.js';
 import {runCivilIdOcr,InMemoryCivilIdOcrStore,FakeCivilIdOcrReader,CivilIdVault} from '../../../dist/packages/profile/src/index.js';
 import {emptyPackedSnapshot} from '../../../dist/packages/private-documents/src/r2-storage.js';
@@ -167,6 +167,9 @@ test('HANDOVER-01 the 0661 switch is checked quiet before and unchanged after: a
   const pre=await precheck(c);
   assert.deepEqual(pre.counts,{documents:1,retired:1,uploads:0,receipts:0,cleanup:1,audit:1});
   assert.match(pre.digest,/^[0-9a-f]{32}$/);
+  assert.match(pre.target,/^[0-9a-f]{32}$/);
+  assert.equal(await target(c),pre.target,'the approval fingerprint is the one the precheck carries');
+  assert.deepEqual(Object.keys(pre).sort(),['counts','digest','target']);
   // A writer in flight on the old row, or any open transaction that touched the store's schema, refuses.
   await other.query('BEGIN');await other.query('SELECT 1 FROM candidate_document_snapshot WHERE singleton FOR UPDATE');
   await assert.rejects(precheck(c),e=>e instanceof HandoverError&&e.code==='locked');
@@ -181,7 +184,18 @@ test('HANDOVER-01 the 0661 switch is checked quiet before and unchanged after: a
   await c.query("INSERT INTO schema_migrations (version) VALUES ('0661_candidate_document_partitions')");await c.query('COMMIT');
   await assert.rejects(precheck(c),e=>e.code==='notBefore0661');
   const post=await postcheck(c,pre);
-  assert.deepEqual(post,{counts:pre.counts,owners:1,rollbackAllowed:true});
+  assert.deepEqual(post,{target:pre.target,counts:pre.counts,owners:1,rollbackAllowed:true});
+  assert.equal(await target(c),pre.target,'the rename keeps the table, so the fingerprint holds after 0661');
+  // An identical store elsewhere (same row, same digest and counts) is not this one.
+  const twin=`h0661_${randomBytes(6).toString('hex')}`,copy=await oldStore(twin);
+  try{
+   await copy.c.query('UPDATE candidate_document_snapshot SET snapshot = $1::jsonb',[(await c.query('SELECT snapshot::text AS s FROM candidate_document_snapshot_0661_rollback')).rows[0].s]);
+   const elsewhere=await precheck(copy.c);
+   assert.equal(elsewhere.digest,pre.digest);assert.deepEqual(elsewhere.counts,pre.counts);assert.notEqual(elsewhere.target,pre.target);
+   await assert.rejects(postcheck(c,elsewhere),e=>e.code==='otherTarget');
+  }finally{await copy.c.query(`DROP SCHEMA ${twin} CASCADE`).catch(()=>{});await copy.c.end();}
+  // A precheck record that is not exactly what precheck prints never reaches a comparison.
+  for(const bad of [undefined,{},{...pre,counts:{}},{target:pre.target,digest:pre.digest}])await assert.rejects(postcheck(c,bad),e=>e.code==='precheckInvalid');
   // A write that slipped in between the check and the migration shows as another digest.
   await assert.rejects(postcheck(c,{...pre,digest:'0'.repeat(32)}),e=>e.code==='changedSinceCheck');
   await assert.rejects(postcheck(c,{...pre,counts:{...pre.counts,audit:2}}),e=>e.code==='countMismatch');
@@ -191,25 +205,57 @@ test('HANDOVER-01 the 0661 switch is checked quiet before and unchanged after: a
  }finally{await other.end().catch(()=>{});await c.query(`DROP SCHEMA ${schema} CASCADE`).catch(()=>{});await c.end();}
 });
 
+test('HANDOVER-03 a precheck record needs exactly its three fields and all six counts as nonnegative integers',()=>{
+ const good={target:'a'.repeat(32),digest:'b'.repeat(32),counts:{documents:1,retired:0,uploads:0,receipts:0,cleanup:0,audit:2}};
+ assert.deepEqual(parsePrecheck(JSON.parse(JSON.stringify(good))),good);
+ const {audit,...partial}=good.counts;
+ const bad={
+  missing:undefined,notObject:'x',array:[],empty:{},noCounts:{target:good.target,digest:good.digest},noTarget:{digest:good.digest,counts:good.counts},
+  extraField:{...good,note:'x'},emptyCounts:{...good,counts:{}},partialCounts:{...good,counts:partial},extraCount:{...good,counts:{...good.counts,other:0}},
+  fractional:{...good,counts:{...good.counts,audit:1.5}},negative:{...good,counts:{...good.counts,audit:-1}},text:{...good,counts:{...good.counts,audit:'2'}},
+  infinite:{...good,counts:{...good.counts,audit:Infinity}},nan:{...good,counts:{...good.counts,audit:NaN}},huge:{...good,counts:{...good.counts,audit:2**53}},
+  nullCount:{...good,counts:{...good.counts,audit:null}},badDigest:{...good,digest:'B'.repeat(32)},badTarget:{...good,target:'short'},
+ };
+ for(const [name,v] of Object.entries(bad))assert.throws(()=>parsePrecheck(v),e=>e instanceof HandoverError&&e.code==='precheckInvalid',name);
+});
+
 test('HANDOVER-02 the operator entry prints counts and a digest only, and refuses with a fixed code',async()=>{
  const out=[],err=[];
+ const approved='c'.repeat(32),db='postgres://unused/x';
  assert.equal(await handoverMain(['precheck'],{},s=>out.push(s),s=>err.push(s)),2);
- assert.equal(await handoverMain(['postcheck'],{DATABASE_URL:'postgres://unused/x'},s=>out.push(s),s=>err.push(s)),2);
+ assert.equal(await handoverMain(['postcheck'],{DATABASE_URL:db},s=>out.push(s),s=>err.push(s)),2);
+ assert.equal(await handoverMain(['precheck','extra'],{DATABASE_URL:db},s=>out.push(s),s=>err.push(s)),2);
+ assert.equal(await handoverMain(['precheck'],{DATABASE_URL:db},s=>out.push(s),s=>err.push(s)),2);
+ assert.equal(await handoverMain(['precheck'],{DATABASE_URL:db,HANDOVER_APPROVED_TARGET:'nope'},s=>out.push(s),s=>err.push(s)),2);
  const dir=mkdtempSync(path.join(tmpdir(),'handover-'));
  try{
-  writeFileSync(path.join(dir,'pre.json'),'not json');
-  assert.equal(await handoverMain(['postcheck',path.join(dir,'pre.json')],{DATABASE_URL:'postgres://unused/x'},s=>out.push(s),s=>err.push(s)),2);
-  assert.deepEqual(err,['handover: usage','handover: usage','handover: refused.precheckFile']);
+  const file=path.join(dir,'pre.json'),counts={documents:1,retired:1,uploads:0,receipts:0,cleanup:1,audit:1};
+  writeFileSync(file,'not json');
+  assert.equal(await handoverMain(['postcheck',file],{DATABASE_URL:db,HANDOVER_APPROVED_TARGET:approved},s=>out.push(s),s=>err.push(s)),2);
+  writeFileSync(file,JSON.stringify({target:approved,digest:'d'.repeat(32),counts:{documents:1}}));
+  assert.equal(await handoverMain(['postcheck',file],{DATABASE_URL:db,HANDOVER_APPROVED_TARGET:approved},s=>out.push(s),s=>err.push(s)),2);
+  writeFileSync(file,JSON.stringify({target:'e'.repeat(32),digest:'d'.repeat(32),counts}));
+  assert.equal(await handoverMain(['postcheck',file],{DATABASE_URL:db,HANDOVER_APPROVED_TARGET:approved},s=>out.push(s),s=>err.push(s)),2);
+  assert.deepEqual(err,['handover: usage','handover: usage','handover: usage','handover: refused.approvedTarget','handover: refused.approvedTarget',
+   'handover: refused.precheckFile','handover: refused.precheckFile','handover: refused.otherTarget']);
+  assert.deepEqual(out,[],'a refusal prints nothing on standard output');
  }finally{rmSync(dir,{recursive:true,force:true});}
  if(!url)return;
  const schema=`h0661_${randomBytes(6).toString('hex')}`;
  const {c}=await oldStore(schema);
  try{
   const scoped=`${url}${url.includes('?')?'&':'?'}options=${encodeURIComponent(`-c search_path=${schema}`)}`;
-  const lines=[];
-  assert.equal(await handoverMain(['precheck'],{DATABASE_URL:scoped},s=>lines.push(s),()=>{}),0);
-  const printed=JSON.parse(lines[0]);
-  assert.deepEqual(Object.keys(printed).sort(),['counts','digest']);
-  assert.ok(!lines[0].includes('alice')&&!lines[0].includes('org-a'),'no id leaves the check');
+  const lines=[],errs=[];
+  assert.equal(await handoverMain(['target'],{DATABASE_URL:scoped},s=>lines.push(s),()=>{}),0);
+  const fingerprint=JSON.parse(lines[0]).target;
+  assert.deepEqual(Object.keys(JSON.parse(lines[0])),['target']);
+  // A precheck against a database other than the approved one refuses and prints nothing.
+  assert.equal(await handoverMain(['precheck'],{DATABASE_URL:scoped,HANDOVER_APPROVED_TARGET:'f'.repeat(32)},s=>lines.push(s),s=>errs.push(s)),2);
+  assert.deepEqual(errs,['handover: refused.otherTarget']);assert.equal(lines.length,1);
+  assert.equal(await handoverMain(['precheck'],{DATABASE_URL:scoped,HANDOVER_APPROVED_TARGET:fingerprint},s=>lines.push(s),()=>{}),0);
+  const printed=JSON.parse(lines[1]);
+  assert.deepEqual(Object.keys(printed).sort(),['counts','digest','target']);
+  assert.equal(printed.target,fingerprint);
+  assert.ok(!lines.join('').includes('alice')&&!lines.join('').includes('org-a'),'no id leaves the check');
  }finally{await c.query(`DROP SCHEMA ${schema} CASCADE`).catch(()=>{});await c.end();}
 });
