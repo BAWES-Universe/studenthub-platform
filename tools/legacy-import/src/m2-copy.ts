@@ -130,7 +130,7 @@ export interface CopyResult {
   readonly verified: readonly ApprovedDocument[];
   /** False when a bound stopped the run before every approved document was handled. */
   readonly complete: boolean;
-  /** Approved bytes handled. */
+  /** Approved bytes handled, unchanged documents included. */
   readonly bytes: number;
   /** Keys under this generation's prefix that no approved document accounts for. Listed only when complete. */
   readonly orphans: readonly string[];
@@ -189,15 +189,20 @@ export async function copyLegacyDocuments(selection: ReturnType<typeof selectApp
   const outcomes: { legacyId: string; kind: DocumentKind; rule: CopyRule }[] = [];
   const verified: ApprovedDocument[] = [];
   let bytes = 0;
+  // The count and byte bounds meter new work only: a document already verified (`unchanged`) does
+  // not use them up, so a retry under the same bounds always moves past what earlier runs finished.
+  // The first new document of a run is always taken, so one larger than the byte bound still copies.
+  let work = 0, workBytes = 0;
   let complete = true;
   for (const { approved, source } of selection) {
-    if (outcomes.length >= bounds.maxDocuments || bytes + approved.size > bounds.maxBytes || bounds.now() - started >= bounds.maxMs) {
+    if (work >= bounds.maxDocuments || (work > 0 && workBytes + approved.size > bounds.maxBytes) || bounds.now() - started >= bounds.maxMs) {
       complete = false;
       break;
     }
     const rule = await copyOne(approved, source, legacy, objects, store, generation, invocations);
     outcomes.push({ legacyId: approved.legacyId, kind: approved.kind, rule });
     bytes += approved.size;
+    if (rule !== "unchanged") { work++; workBytes += approved.size; }
     if (VERIFIED.has(rule)) verified.push(approved);
   }
   let orphans: string[] = [];
