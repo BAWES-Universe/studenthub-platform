@@ -124,13 +124,17 @@ test("C15_BANK_PAGE_FLOW review shows before and after masked, confirm saves thr
 
   const confirm = await call(x.service, "/profile/bank/confirm", hidden);
   assert.equal(confirm.status, 303);
-  assert.equal(confirm.headers.location, "/profile/bank?saved");
+  assert.match(confirm.headers.location ?? "", /^\/profile\/bank\?saved=[0-9a-f]{64}$/);
   assert.equal(confirm.headers["cache-control"], "no-store");
   assert.equal(x.value(), bankDetailsValue({ bankId: OTHER_BANK, iban: NEW_IBAN, beneficiaryName: "Synthetic Person Two" }));
 
-  const after = await call(x.service, "/profile/bank?saved", undefined);
+  const after = await call(x.service, confirm.headers.location!, undefined);
   assert.ok(after.html.includes('<p class="notice" role="status">Your bank details were saved.</p>'));
-  assert.ok(after.html.includes("Second Synthetic Bank"));
+  // A synthetic reread: a fresh service over the same stored row shows the saved details, masked.
+  const reread = await call(rig({ stored: x.value() }).service, "/profile/bank", undefined);
+  assert.match(reread.html, /<dt>Bank<\/dt><dd>Second Synthetic Bank<\/dd><dt>IBAN<\/dt><dd><span class="masked">KW81•+0101<\/span><\/dd><dt>Account holder<\/dt><dd>Synthetic Person Two<\/dd>/);
+  assert.equal(reread.html.includes(IBAN), false);
+  assert.equal(reread.html.includes("were saved"), false, "a plain reread claims no save");
   const replay = await call(x.service, "/profile/bank/confirm", hidden);
   assert.equal(replay.status, 409, "a used token is refused");
   assert.ok(replay.html.includes("Your bank details weren’t changed."));
@@ -140,7 +144,7 @@ test("C15_BANK_PAGE_INPUT a refused entry keeps the bank and name, never writes 
   const x = rig();
   for (const [form, message] of [
     [{ bankId: BANK, iban: "KW00NOTANIBAN", beneficiaryName: "Synthetic Person" }, "Enter a valid IBAN."],
-    [{ bankId: "", iban: IBAN, beneficiaryName: "Synthetic Person" }, "Choose your bank from the list."],
+    [{ bankId: "not-a-bank", iban: IBAN, beneficiaryName: "Synthetic Person" }, "Choose your bank from the list."],
     [{ bankId: "9999abcd-9999-4999-8999-99999999abcd", iban: IBAN, beneficiaryName: "Synthetic Person" }, "Choose your bank from the list."],
     [{ bankId: BANK, iban: IBAN, beneficiaryName: "x" }, "Enter the account holder's name"],
   ] as const) {
@@ -259,7 +263,9 @@ test("C15_BANK_PAGE_GATEWAY the gateway serves the page, the review and the save
     body: new URLSearchParams({ bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person" }) })).text();
   const done = await fetch(`${originHolder.value}/profile/bank/confirm`, { method: "POST", headers, body: new URLSearchParams(hiddenFields(review)), redirect: "manual" });
   assert.equal(done.status, 303);
-  assert.equal(done.headers.get("location"), "/profile/bank?saved");
+  assert.match(done.headers.get("location") ?? "", /^\/profile\/bank\?saved=[0-9a-f]{64}$/);
+  const shown = await (await fetch(`${originHolder.value}${done.headers.get("location")}`, { headers: { cookie, accept: "text/html" } })).text();
+  assert.ok(shown.includes("Your bank details were saved.") && shown.includes("Second Synthetic Bank"));
   assert.equal(x.value(), bankDetailsValue({ bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person" }));
   const signedOut = await fetch(`${originHolder.value}/profile/bank`, { headers: { accept: "text/html" } });
   assert.equal(signedOut.status, 401);
@@ -269,4 +275,40 @@ test("C15_BANK_PAGE_GATEWAY the gateway serves the page, the review and the save
     body: JSON.stringify({ bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" }) });
   assert.equal(api.status, 200);
   assert.equal(((await api.json()) as { after: { ibanMasked: string } }).after.ibanMasked, MASKED);
+});
+
+test("C15_BANK_PAGE_FORMS empty and partial forms name every missing part, invalid ones say what to fix, and nothing claims a save", async () => {
+  const x = rig({ stored: stored() });
+  const empty = await call(x.service, "/profile/bank/review", { bankId: "", iban: "", beneficiaryName: "" });
+  assert.equal(empty.status, 400);
+  assert.ok(empty.html.includes('<div id="bank-error" class="form-error" role="alert"><p>Your bank details weren’t saved yet:</p><ul><li>Choose your bank.</li><li>Enter your IBAN.</li><li>Enter the account holder&#39;s name.</li></ul></div>'), empty.html);
+  for (const [form, expected] of [
+    [{ bankId: BANK, iban: "", beneficiaryName: "" }, ["Enter your IBAN.", "Enter the account holder&#39;s name."]],
+    [{ bankId: "", iban: "KW81 CBKU 0000 0000 0000 1234 5601 01", beneficiaryName: "Synthetic Person" }, ["Choose your bank."]],
+    [{ bankId: BANK, iban: "   ", beneficiaryName: "Synthetic Person" }, ["Enter your IBAN."]],
+  ] as const) {
+    const page = await call(x.service, "/profile/bank/review", form);
+    assert.equal(page.status, 400, JSON.stringify(form));
+    for (const message of expected) assert.ok(page.html.includes(message), `${message} in ${page.html}`);
+    assert.equal(/name="iban"[^>]*value=/.test(page.html), false, "the IBAN is not echoed");
+    assert.equal(page.html.includes("1234"), false, "no part of a typed IBAN comes back");
+    assert.equal(page.html.includes("were saved"), false);
+  }
+  // Invalid entries get one message saying what to fix (C15_BANK_PAGE_INPUT covers each kind).
+  const invalid = await call(x.service, "/profile/bank/review", { bankId: BANK, iban: "KW81CBKU0000000000001234569999", beneficiaryName: "Synthetic Person" });
+  assert.ok(invalid.html.includes('role="alert">Enter a valid IBAN.'));
+  assert.equal(invalid.html.includes("9999"), false);
+  assert.equal(x.value(), stored(), "nothing saved by any refused form");
+
+  // The saved notice needs this person's own receipt, not a hand-typed link.
+  for (const path of ["/profile/bank?saved", `/profile/bank?saved=${"a".repeat(64)}`, "/profile/bank?saved=x", `/profile/bank?saved=${"a".repeat(64)}&x=1`]) {
+    const page = await call(x.service, path, undefined);
+    assert.equal(page.status, 200, path);
+    assert.equal(page.html.includes("were saved"), false, path);
+  }
+  const review = await call(x.service, "/profile/bank/review", { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person" });
+  const done = await call(x.service, "/profile/bank/confirm", hiddenFields(review.html));
+  const other = rig({ stored: stored() });
+  assert.equal((await call(other.service, done.headers.location!, undefined)).html.includes("were saved"), false, "another store's receipt is not this one's");
+  assert.equal((await call(x.service, done.headers.location!, undefined, { cookie: null })).status, 401);
 });

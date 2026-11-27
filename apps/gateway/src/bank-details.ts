@@ -266,6 +266,12 @@ const PAGE_TITLE = "Bank details";
 
 const esc = (value: string) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 
+const MISSING_MESSAGES: Readonly<Record<(typeof PAGE_FIELDS)[number], string>> = {
+  bankId: "Choose your bank.",
+  iban: "Enter your IBAN.",
+  beneficiaryName: "Enter the account holder's name.",
+};
+
 const INPUT_MESSAGES: Readonly<Record<string, string>> = {
   invalid_bank: "Choose your bank from the list.",
   invalid_iban: "Enter a valid IBAN. A Kuwaiti IBAN starts with KW and has 30 characters.",
@@ -301,12 +307,14 @@ function detailsList(details: MaskedBankDetails, choices: readonly BankChoice[])
 }
 
 /** The change form. The IBAN is never written back into it: after a refusal the person types it again. */
-function changeForm(choices: readonly BankChoice[], selected = "", name = "", error?: string): string {
-  const described = error ? ' aria-describedby="bank-error" aria-invalid="true"' : "";
+function changeForm(choices: readonly BankChoice[], selected = "", name = "", errors: readonly string[] = []): string {
+  const error = errors.length === 1 ? errors[0] : undefined;
+  const described = errors.length ? ' aria-describedby="bank-error" aria-invalid="true"' : "";
   const options = choices.map((choice) =>
     `<option value="${esc(choice.id)}"${choice.id === selected.toLowerCase() ? " selected" : ""}>${esc(choice.name)}</option>`).join("");
   return `<form method="post" action="${PAGE_REVIEW}" novalidate>`
-    + (error ? `<p id="bank-error" class="form-error" role="alert">${esc(error)}</p>` : "")
+    + (error ? `<p id="bank-error" class="form-error" role="alert">${esc(error)}</p>`
+      : errors.length ? `<div id="bank-error" class="form-error" role="alert"><p>Your bank details weren’t saved yet:</p><ul>${errors.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>` : "")
     + `<label>Bank<select name="bankId" required${described}><option value="">Choose your bank</option>${options}</select></label>`
     + `<label>IBAN<input name="iban" required autocomplete="off" spellcheck="false" maxlength="42"${described}></label>`
     + `<label>Account holder's name<input name="beneficiaryName" required maxlength="140" value="${esc(name)}"${described}></label>`
@@ -350,7 +358,9 @@ export async function handleBankDetailsPage(
       if (current.status !== 200) { refusalPage(write, current.status); return true; }
       const details = (current.body as { details: MaskedBankDetails | null }).details;
       const choices = await service.bankChoices();
-      const saved = url.search === "?saved";
+      // The saved notice needs this person's own receipt: a hand-typed link never claims a save.
+      const receiptRef = /^\?saved=([0-9a-f]{64})$/.exec(url.search)?.[1];
+      const saved = receiptRef !== undefined && (await service.receipt(sessionId, receiptRef)).status === 200;
       write(200, PAGE_TITLE, `<main id="main" class="profile-main"><h1>Bank details<span class="accent">.</span></h1>`
         + (saved ? `<p class="notice" role="status">Your bank details were saved.</p>` : "")
         + `<p>Your pay is sent to this account. Only you can see or change it here.</p>`
@@ -368,13 +378,23 @@ export async function handleBankDetailsPage(
     const details = Object.fromEntries(PAGE_FIELDS.map((key) => [key, values[key]]));
     if (path === PAGE_REVIEW) {
       if (!exactKeys(values, PAGE_FIELDS)) { refusalPage(write, 400); return true; }
+      const missing = (["bankId", "iban", "beneficiaryName"] as const).filter((key) => values[key]!.trim() === "").map((key) => MISSING_MESSAGES[key]);
+      if (missing.length) {
+        // Empty or partly filled: every missing part is named, before anything is checked.
+        const current = await service.current(sessionId);
+        if (current.status === 404) { writeNotFound(request, response); return true; }
+        if (current.status !== 200) { refusalPage(write, current.status); return true; }
+        const choices = await service.bankChoices();
+        write(400, PAGE_TITLE, `<main id="main" class="profile-main"><h1>Change your bank details<span class="accent">.</span></h1>${changeForm(choices, values.bankId, values.beneficiaryName, missing)}<a class="text-link" href="${PAGE}">Cancel</a></main>`);
+        return true;
+      }
       const result = await service.preview(sessionId, details);
       if (result.status === 403) { writeNotFound(request, response); return true; }
       const reason = result.status === 400 ? (result.body as { error?: string }).error : undefined;
       const message = reason ? INPUT_MESSAGES[reason] : undefined;
       if (message) {
         const choices = await service.bankChoices();
-        write(400, PAGE_TITLE, `<main id="main" class="profile-main"><h1>Change your bank details<span class="accent">.</span></h1>${changeForm(choices, values.bankId, values.beneficiaryName, message)}<a class="text-link" href="${PAGE}">Cancel</a></main>`);
+        write(400, PAGE_TITLE, `<main id="main" class="profile-main"><h1>Change your bank details<span class="accent">.</span></h1>${changeForm(choices, values.bankId, values.beneficiaryName, [message])}<a class="text-link" href="${PAGE}">Cancel</a></main>`);
         return true;
       }
       if (result.status !== 200) { refusalPage(write, result.status); return true; }
@@ -397,7 +417,8 @@ export async function handleBankDetailsPage(
     const result = await service.confirm(sessionId, { ...details, token });
     if (result.status === 403) { writeNotFound(request, response); return true; }
     if (result.status !== 200) { refusalPage(write, result.status); return true; }
-    response.writeHead(303, { location: `${PAGE}?saved`, "cache-control": "no-store" });
+    const receiptRef = (result.body as { receipt: Receipt }).receipt.receiptRef;
+    response.writeHead(303, { location: `${PAGE}?saved=${receiptRef}`, "cache-control": "no-store" });
     response.end();
   } catch {
     // Dependency messages, and the bank details themselves, never reach a page or a log.
