@@ -74,3 +74,24 @@ test("REC7B_HTTP_PAGE pages escape every value; deciders get buttons, readers do
   const decided = await call(`/recruit/request-applications/${APP}/reject`, form(`requestId=${REQ}`));
   assert.deepEqual([decided.status, decided.headers.location], [303, `/recruit/requests/${REQ}/applications`]);
 });
+
+test("REC7B_MY_APPLICATIONS a person's own applications page lists each request they applied to with its status", async () => {
+  who = "noor"; calls.length = 0;
+  const mine = { ...row, application_id: APP, application_status: "rejected" } as OpenRequestRow;
+  const original = store.board, originalOne = store.openRequest;
+  store.board = async (p, q) => { calls.push(`board:${p}:${q.q}:${q.positionType}:${q.applied}:${q.page}`); return { requests: q.applied ? [mine] : [row], total: 1 }; };
+  store.openRequest = async (_p, id) => (id === REQ ? mine : null);
+  try {
+    const page = (await call("/recruit/open-requests?applied=1", { html: true })).page!;
+    assert.equal(page.status, 200);
+    for (const text of ["<h1>My applications", `href="/recruit/open-requests/${REQ}">Cashier &lt;c&gt;</a> <span class="badge">Not selected</span>`,
+      'name="applied" value="1"', '<a class="text-link" href="/recruit/open-requests">Browse open positions</a>']) assert.ok(page.body.includes(text), text);
+    const one = (await call(`/recruit/open-requests/${REQ}`, { html: true })).page!.body;
+    assert.ok(one.includes('<span class="badge">Not selected</span>'), "the request shows the application's status");
+    assert.equal(one.includes("/apply"), false, "no second application");
+    assert.deepEqual((await call("/recruit/open-requests?applied=1")).json?.applied, true);
+    assert.deepEqual(calls, ["board:noor:null:null:true:1", "board:noor:null:null:true:1"]);
+    store.board = async () => ({ requests: [], total: 0 });
+    assert.ok((await call("/recruit/open-requests?applied=1", { html: true })).page!.body.includes("You have not applied to a position yet."));
+  } finally { store.board = original; store.openRequest = originalOne; }
+});

@@ -4713,6 +4713,28 @@
     "M15: two card workers run two cards at once through main auto and auto --worker 2, each on its own units, and neither reverts the other",
     "M15 W9: a claim is published whole, so another worker never reads it empty",
     "M15 W8: the committed config runs two card workers, and a queued card that shares another's files waits for it",
+    "Landing recovery: a passed run stopped on CI_TIMEOUT lands its own pull request once, at the head main updated it to, under the landing lock",
+    "Landing recovery: a passed run stopped on LAND_ERROR lands the same way; a stop of any other kind is never recovered",
+    "Landing recovery: with landing_repair off, a stopped card stays stopped and nothing is read, so the unchanged plan still sees it",
+    "Landing recovery: a head anyone moved counts only as a plain merge of main that keeps the reviewed blobs; otherwise it needs a new review and is never reset",
+    "Landing recovery: a newer verdict, another owner, a delegate, another claiming pull request, a closed pull request or the pause each stop it before it lands anything",
+    "Landing recovery: one bounded attempt per passed head: a duplicate wake, a finished record or one never finished is never run again",
+    "Landing recovery: a merge attempt already recorded for the PASS at the head being landed is never resumed",
+    "Landing recovery: with two workers a fresh card still dispatches beside a stopped card, whether its recovery is running, finished or not needed",
+    "Landing recovery: a recovery writes its finished status and exits like a landed run, so the outside watch never reads it as a run that died",
+    "Landing recovery: a proof that can never pass for this head is recorded once, so with two workers the cards queued after it still dispatch",
+    "Landing recovery: the run lock is held until the recovery's record and its finished status are written, as every card run holds it",
+    "Landing recovery: a read that fails while proving the pull requests or the carried head is retried on a later start, never recorded as a refusal",
+    "Landing recovery: a worker's start that finds its recovery died while landing recovers the worker and leaves the stopped claim and the record as they are",
+    "Landing recovery: a recovery's status binds a dead lock only when its record belongs to the dead run; a later ordinary run that died keeps the fail-closed handling",
+    "Landing recovery: a landing token that cannot be used is reported before the one attempt is claimed, so a later start with the token recovers",
+    "Landing recovery: a pause that lands between the claim and the landing's first step leaves the one attempt for a later start",
+    "Landing recovery: the pull request listed at another head than it was read at is retried, never recorded; a competing pull request stays a refusal",
+    "Landing recovery: with two workers a proof that cannot be read now passes the card over for this start only; a card queued after it still waits",
+    "Landing recovery: a passed run stopped under an earlier installed revision, with no claim at this one, is recovered once and never run again",
+    "Landing recovery: a stop under an earlier revision is recovered when this revision's own claim is a start that was refused",
+    "Landing recovery: across several earlier revisions only the newest stopped run is recovered, and with two workers it runs beside other cards",
+    "Landing recovery: a stop under an earlier revision whose recovery already ended, or with landing_repair off, starts the card as before",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -34382,6 +34404,94 @@
     },
     {
       "name": "M15 W8: the committed config runs two card workers, and a queued card that shares another's files waits for it",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a passed run stopped on CI_TIMEOUT lands its own pull request once, at the head main updated it to, under the landing lock",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a passed run stopped on LAND_ERROR lands the same way; a stop of any other kind is never recovered",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: with landing_repair off, a stopped card stays stopped and nothing is read, so the unchanged plan still sees it",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a head anyone moved counts only as a plain merge of main that keeps the reviewed blobs; otherwise it needs a new review and is never reset",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a newer verdict, another owner, a delegate, another claiming pull request, a closed pull request or the pause each stop it before it lands anything",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: one bounded attempt per passed head: a duplicate wake, a finished record or one never finished is never run again",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a merge attempt already recorded for the PASS at the head being landed is never resumed",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: with two workers a fresh card still dispatches beside a stopped card, whether its recovery is running, finished or not needed",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a recovery writes its finished status and exits like a landed run, so the outside watch never reads it as a run that died",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a proof that can never pass for this head is recorded once, so with two workers the cards queued after it still dispatch",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: the run lock is held until the recovery's record and its finished status are written, as every card run holds it",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a read that fails while proving the pull requests or the carried head is retried on a later start, never recorded as a refusal",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a worker's start that finds its recovery died while landing recovers the worker and leaves the stopped claim and the record as they are",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a recovery's status binds a dead lock only when its record belongs to the dead run; a later ordinary run that died keeps the fail-closed handling",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a landing token that cannot be used is reported before the one attempt is claimed, so a later start with the token recovers",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a pause that lands between the claim and the landing's first step leaves the one attempt for a later start",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: the pull request listed at another head than it was read at is retried, never recorded; a competing pull request stays a refusal",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: with two workers a proof that cannot be read now passes the card over for this start only; a card queued after it still waits",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a passed run stopped under an earlier installed revision, with no claim at this one, is recovered once and never run again",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a stop under an earlier revision is recovered when this revision's own claim is a start that was refused",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: across several earlier revisions only the newest stopped run is recovered, and with two workers it runs beside other cards",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a stop under an earlier revision whose recovery already ended, or with landing_repair off, starts the card as before",
       "capabilities": []
     },
     {
