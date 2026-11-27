@@ -48,7 +48,7 @@ export const STAFF_STATISTICS_COUNTERS = [
   { key: "totalMinor", label: "Candidates under 16", source: available },
   { key: "assignedIdleCandidates", label: "Assigned candidates not paid for any pay period that ended in the past two months", source: available },
   { key: "companyMoreThen40DaysWithoutPayment", label: "Companies with assigned staff that have not made a payment in 40 days", source: available },
-  { key: "last40daysNoRequest", label: "Active clients who have not made a request in over 40 days", source: missing("company start dates and active flags from the importer") },
+  { key: "last40daysNoRequest", label: "Active clients who have not made a request in over 40 days", source: available },
   { key: "companyUnderReview", label: "Company registrations waiting for review", source: available },
   { key: "transfersWithNoProfitInProgress", label: "Unpaid transfers with no profit", source: available },
   { key: "transfersWithSameRateInProgress", label: "Unpaid transfers where the company and candidate rates are the same", source: missing("hourly rates on transfer lines, which the pay lane keeps only inside each line's calculation") },

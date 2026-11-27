@@ -258,6 +258,57 @@ test("REPORTS_MORNING_SUMMARY_PG payment counters: KWD companies with staff for 
   assert.deepEqual([companies - companiesBefore, idle - idleBefore], [5, 8]);
 });
 
+const requestAt = async (org: { id: string; shop: string }, status: string, at: string, updated = at) => {
+  const id = await request(status, org.id, org.shop);
+  await pool.query("UPDATE recruit_requests SET created_at = $2, updated_at = $3 WHERE id = $1", [id, at, updated]);
+  return id;
+};
+
+test("REPORTS_MORNING_SUMMARY_PG active KWD companies over 40 days old with no request in the 40 days to the report day, sub-companies included", async () => {
+  const day = "2026-11-20"; // 40 days before is 11 October, Kuwait time; the 30 update days start 22 October
+  const read = async () => (await store.counts(day)).last40daysNoRequest!;
+  const before = await read();
+  // Counted (11):
+  await placed(await payCompany(), "2026-09-01"); // staff for over 40 days, never a request
+  const old = await payCompany(); await placed(old, "2026-08-01");
+  await requestAt(old, "filled", "2026-10-10T20:59:00Z"); // made the Kuwait day before the window
+  const opened = await payCompany(); await requestAt(opened, "open", "2026-09-01T08:00:00Z"); // no staff, an old open request
+  const subOnly = await payCompany(), subStaffed = await payCompany(subOnly.id); await placed(subStaffed, "2026-08-01"); // staff only at a sub-company: the parent, once
+  const later = await payCompany(); await placed(later, "2026-08-01");
+  await requestAt(later, "filled", "2026-11-25T08:00:00Z"); // made after the report day
+  const quiet = await payCompany(), quietSub = await payCompany(quiet.id); await placed(quiet, "2026-08-01");
+  await requestAt(quietSub, "filled", "2026-11-01T08:00:00Z"); // a deleted sub-company's request does not count
+  const returning = await payCompany(); await placed(returning, "2026-05-01", "2026-06-30"); await placed(returning, "2026-11-10");
+  // old (a placement long ended) and active through someone placed 10 days ago: any current staff is active
+  const touched = await payCompany(); await requestAt(touched, "filled", "2026-08-01T08:00:00Z", "2026-11-15T08:00:00Z"); // no staff, an old request updated in 30 days
+  const touchedEdge = await payCompany(); await requestAt(touchedEdge, "filled", "2026-08-01T08:00:00Z", "2026-10-21T21:00:00Z"); // updated at Kuwait midnight starting 22 October
+  const viaSub = await payCompany(), viaSubChild = await payCompany(viaSub.id); await placed(viaSub, "2026-11-01");
+  await requestAt(viaSubChild, "filled", "2026-07-01T08:00:00Z", "2026-07-01T08:00:00Z"); // the sub-company's old request makes the parent old
+  const oldOpenSub = await payCompany(), oldOpenChild = await payCompany(oldOpenSub.id); await requestAt(oldOpenChild, "filling", "2026-09-01T08:00:00Z"); // a sub-company's open request
+  // Not counted:
+  const edge = await payCompany(); await placed(edge, "2026-08-01");
+  await requestAt(edge, "filled", "2026-10-10T21:00:00Z"); // midnight 11 October in Kuwait: inside the window
+  const draft = await payCompany(); await placed(draft, "2026-08-01");
+  await requestAt(draft, "draft", "2026-11-01T08:00:00Z"); // a draft is a request
+  const parent = await payCompany(), sub = await payCompany(parent.id); await placed(parent, "2026-08-01");
+  await requestAt(sub, "filled", "2026-11-01T08:00:00Z"); // the sub-company's request counts for its parent
+  await placed(await payCompany(), "2026-10-20"); // nothing older than 40 days: not known to be old
+  await placed(await payCompany(), "2026-10-11"); // started on the 40th day before: not older than 40 days
+  await placed(await payCompany(), "2026-08-01", "2026-11-10"); // old, but no one assigned any more
+  await requestAt(await payCompany(), "filled", "2026-09-01T08:00:00Z"); // old, no staff, no open request, not updated in 30 days
+  await requestAt(await payCompany(), "filled", "2026-08-01T08:00:00Z", "2026-10-21T20:59:00Z"); // updated the Kuwait day before the 30 days
+  const future = await payCompany(); await requestAt(future, "filled", "2026-08-01T08:00:00Z");
+  await requestAt(future, "open", "2026-11-25T08:00:00Z"); // old, but its only open request was made after the report day
+  const updatedLater = await payCompany(); await requestAt(updatedLater, "filled", "2026-08-01T08:00:00Z", "2026-11-25T08:00:00Z"); // updated after the report day
+  await placed(await payCompany(OPS, "USD"), "2026-08-01"); // not KWD
+  const deleted = await payCompany(); await placed(deleted, "2026-08-01"); // a deleted company
+  const gone = await payCompany(), goneSub = await payCompany(gone.id); await placed(goneSub, "2026-08-01"); // staff only at a deleted sub-company
+  const goneOld = await payCompany(), goneOldSub = await payCompany(goneOld.id); await placed(goneOld, "2026-11-01");
+  await placed(goneOldSub, "2026-05-01", "2026-06-30"); // only a deleted sub-company is old
+  for (const org of [deleted.id, goneSub.id, quietSub.id, goneOldSub.id]) await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [org, `receipt-${randomUUID()}`]);
+  assert.equal(await read() - before, 11);
+});
+
 async function bankDetails(person: string): Promise<void> {
   const bank = randomUUID();
   await pool.query(`INSERT INTO catalogue_items (id, catalogue_type, name, normalized_name, status, created_by_ref, updated_by_ref, created_at, updated_at)

@@ -4,8 +4,8 @@ import { EMAIL_TEMPLATES, validateTemplateParameters } from "../../notifications
 import { MORNING_SUMMARY_COUNTERS, MORNING_SUMMARY_KEYS, MorningSummaryService, completeCounts, kuwaitHour, queueMorningSummaryThenDeliver, sendMorningSummaryIfDue,
   type MorningSummaryCounts, type MorningSummaryStore } from "../src/index.js";
 
-const AVAILABLE = ["interviewScheduledToday", "companyMoreThen40DaysWithoutPayment", "totalExpiredCards", "id_need_generated", "activeRequests", "missingBankInfo", "assignedExpiredCivilID", "assignedIdleCandidates"];
-const RAW = { interviewScheduledToday: 2, companyMoreThen40DaysWithoutPayment: 5, totalExpiredCards: 3, id_need_generated: 4, activeRequests: 7, missingBankInfo: 8, assignedExpiredCivilID: 1, assignedIdleCandidates: 6 };
+const AVAILABLE = ["interviewScheduledToday", "companyMoreThen40DaysWithoutPayment", "totalExpiredCards", "id_need_generated", "activeRequests", "last40daysNoRequest", "missingBankInfo", "assignedExpiredCivilID", "assignedIdleCandidates"];
+const RAW = { interviewScheduledToday: 2, companyMoreThen40DaysWithoutPayment: 5, totalExpiredCards: 3, id_need_generated: 4, activeRequests: 7, last40daysNoRequest: 9, missingBankInfo: 8, assignedExpiredCivilID: 1, assignedIdleCandidates: 6 };
 
 test("REPORTS_MORNING_SUMMARY_REGISTRY the twelve legacy counters in email order, and only landed sources are available", () => {
   assert.deepEqual(MORNING_SUMMARY_KEYS, ["interviewScheduledToday", "companyMoreThen40DaysWithoutPayment", "totalExpiredCards", "id_need_generated", "activeRequests",
