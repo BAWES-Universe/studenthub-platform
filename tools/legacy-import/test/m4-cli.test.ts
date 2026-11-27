@@ -9,7 +9,7 @@ import test from "node:test";
 import { M4_SOURCES, planM4, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
 import { acceptWrite, acquireSharedLock, contactSetDigest, digestKeyFingerprint, documentSetDigest, main, PROMOTE_BATCH, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
 import type { LegacyObjectReader } from "../src/m2-document-check.js";
-import { CONTINUATION_VERSION, COPY_RULES, type StagedDocument, type StagingObjects } from "../src/m2-copy.js";
+import type { StagedDocument, StagingObjects } from "../src/m2-copy.js";
 import { ContactPromotionError, LinkReportError, type ContactPromotionResult, type LinkReport } from "@studenthub/db/import";
 
 // Synthetic legacy rows only. SECRET marks every value that must never reach a receipt or a log.
@@ -75,11 +75,13 @@ interface FakeDb {
   documentsReady: boolean;
   documentBucket: string | null;
   stagedDocuments: Map<string, StagedDocument>;
+  /** The copy's checkpoint table, by key. */
+  checkpoints: Map<string, { revision: number; checkpoint: unknown }>;
 }
 const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY,
   promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64), linkReportReady: true,
   links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplePrincipals": [], "link.contactTaken": [], "link.emailMismatch": [] } },
-  documentsReady: true, documentBucket: STAGING_BUCKET_NAME, stagedDocuments: new Map() });
+  documentsReady: true, documentBucket: STAGING_BUCKET_NAME, stagedDocuments: new Map(), checkpoints: new Map() });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -112,7 +114,7 @@ interface Harness {
   readonly calls: string[];
   readonly out: string[];
   readonly err: string[];
-  readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined };
+  readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined; halted: number[] };
   readonly file: (name: string) => string;
   readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy") => M4Receipt;
 }
@@ -123,7 +125,7 @@ function harness(opts: HarnessOptions = {}): Harness {
   if (!existsSync(file("refresh.json"))) writeFileSync(file("refresh.json"), JSON.stringify(REFRESH));
   const invocation = opts.env && "M4_INVOCATION" in opts.env ? opts.env.M4_INVOCATION ?? "" : randomUUID();
   const calls: string[] = [], out: string[] = [], err: string[] = [];
-  const state = { locked: false, released: 0, closed: 0, reads: 0, receiptAtRelease: undefined as string | undefined };
+  const state = { locked: false, released: 0, closed: 0, reads: 0, receiptAtRelease: undefined as string | undefined, halted: [] as number[] };
   const rows = opts.rows ?? sources();
   const db = opts.db ?? fakeDb();
   const me = {};
@@ -200,6 +202,19 @@ function harness(opts: HarnessOptions = {}): Harness {
         },
       };
     },
+    copyCheckpoints: () => {
+      assert.equal(db.writer, me, "the checkpoint is written only by the lock holder");
+      return {
+        load: async (key) => db.checkpoints.get(JSON.stringify(key)) ?? null,
+        save: async (checkpoint, expected) => {
+          if (db.sessionLost || db.writer !== me) throw new Error("m4.writerLost");
+          const k = JSON.stringify(checkpoint.key), now = db.checkpoints.get(k);
+          if ((now?.revision ?? null) !== expected) return "stale";
+          db.checkpoints.set(k, { revision: (expected ?? 0) + 1, checkpoint: JSON.parse(JSON.stringify(checkpoint)) });
+          return "saved";
+        },
+      };
+    },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
     close: async () => {
@@ -251,6 +266,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       if (typeof st === "function") return st();
       return st ?? memoryStaging().objects;
     },
+    halt: (code) => { state.halted.push(code); },
     provenance: () => ({ head: REVISION, clean: true, artifact: ARTIFACT, ...opts.provenance }),
     now: () => new Date(opts.now ?? "2026-11-23T02:00:00.000Z"),
     log: (line) => out.push(line),
@@ -1131,7 +1147,7 @@ test("doccopy stages exactly the accepted documents under the verified generatio
     assert.equal(await main(["doccopy"], h.deps), 0, h.err.join(" "));
     const r = h.receipt("doccopy");
     assert.deepEqual([r.status, r.acceptedDoccheck, r.mirror, r.target], ["ok", invocation, { generation: GENERATION_ID }, TARGET]);
-    assert.deepEqual({ ...r.copy, rules: undefined }, { approved: 1, handled: 1, chainHandled: 1, bytes: photo.length, staged: set, matchesAccepted: true, complete: true,
+    assert.deepEqual({ ...r.copy, rules: undefined }, { approved: 1, handled: 1, approvedBytes: photo.length, checkpoint: { credit: "none", from: 0, next: 1 }, staged: set, matchesAccepted: true, complete: true,
       orphans: 0, orphansTruncated: false, rules: undefined });
     assert.equal(r.copy!.rules.staged, 1);
     const key = `legacy-import/${GENERATION_ID}/31/personal-photo/${sha256(photo)}`;
@@ -1142,19 +1158,21 @@ test("doccopy stages exactly the accepted documents under the verified generatio
     const report = JSON.parse(readFileSync(path.join(h.file("out"), `${h.invocation}.doccopy.report.json`), "utf8"));
     assert.equal(statSync(path.join(h.file("out"), `${h.invocation}.doccopy.report.json`)).mode & 0o777, 0o600);
     assert.deepEqual(report.outcomes, [{ index: 0, legacyId: "31", kind: "personal-photo", rule: "staged" }]);
-    assert.deepEqual([report.continuation.next, report.continuation.build, report.continuation.generation], [1, r.artifact, GENERATION_ID]);
+    assert.deepEqual(report.checkpoint, { credit: "none", from: 0, next: 1 });
+    const [saved] = [...db.checkpoints.values()];
+    assert.deepEqual([db.checkpoints.size, saved!.revision, (saved!.checkpoint as { key: { targetId: string } }).key.targetId], [1, 1, TARGET]);
     assert.deepEqual(report.orphans, { scanned: true, truncated: false, count: 0, tuples: [], unparsed: 0 });
     const everything = [readFileSync(path.join(h.file("out"), `${h.invocation}.doccopy.report.json`), "utf8"), JSON.stringify(r), h.out.join("\n"), h.err.join("\n")].join("\n");
     assert.ok(!everything.includes("Secret"), "no legacy key or name leaves the run");
     assert.ok(!JSON.stringify(r).includes('"31"'), "no legacy id in the receipt");
   } finally { /* h shares the accepted doccheck's directory, removed below */ }
-  // A retry with the same accepted doccheck verifies what is there and writes nothing.
+  // A retry with the same accepted doccheck resumes from the checkpoint and writes nothing.
   const again = harness({ dir: provenancedDir(), db, rows: docSources(), bucket: { read: async () => { throw new Error("no legacy read on retry"); } }, staging: staging.objects,
     env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: path.join(dir, "out") } });
   try {
     assert.equal(await main(["doccopy"], again.deps), 0, again.err.join(" "));
     const r = JSON.parse(readFileSync(path.join(dir, "out", `${again.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
-    assert.deepEqual([r.status, r.copy!.rules.unchanged, r.copy!.staged], ["ok", 1, set]);
+    assert.deepEqual([r.status, r.copy!.checkpoint.credit, r.copy!.rules.staged, r.copy!.staged], ["ok", "resumed", 1, set]);
     assert.equal(staging.puts.length, 1, "no second write");
   } finally { cleanup(again); rmSync(dir, { recursive: true, force: true }); }
 });
@@ -1206,9 +1224,9 @@ test("doccopy is refused before any object read without a qualifying accepted do
     await run("schema", { db: { ...fakeDb(), documentsReady: false } });
     await run("writerBusy", { db: { ...fakeDb(), writer: {} } });
     await run("bounds", { env: { M4_DOCCOPY_MAX_DOCS: "0" } });
-    await run("bounds", { env: { M4_DOCCOPY_MAX_BYTES: "1000", M4_DOCCOPY_MAX_OBJECT_BYTES: "1001" } });
+    await run("bounds", { env: { M4_DOCCOPY_MAX_APPROVED_BYTES: "1000", M4_DOCCOPY_MAX_OBJECT_BYTES: "1001" } });
+    await run("bounds", { env: { M4_DOCCOPY_SETTLE_MS: "0" } });
     await run("bounds", { env: { M4_DOCCOPY_OP_TIMEOUT_MS: "-1" } });
-    await run("continuation", { env: { M4_DOCCOPY_CONTINUE: randomUUID() } });
     await run("locked", { lockHeld: false });
     // The mirror now holds another generation, or the refresh report names another one.
     await run("generationMismatch", { markers: ["0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d"] });
@@ -1233,46 +1251,41 @@ test("doccopy that finds changed bytes or an object over the hard cap publishes 
     cleanup(changed);
     let reads = 0;
     const capped = harness({ dir: provenancedDir(), rows: docSources(), bucket: { read: async () => { reads++; return { kind: "missing" }; } }, staging: memoryStaging().objects,
-      env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out, M4_DOCCOPY_MAX_BYTES: "1", M4_DOCCOPY_MAX_OBJECT_BYTES: "1" } });
+      env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out, M4_DOCCOPY_MAX_APPROVED_BYTES: "1", M4_DOCCOPY_MAX_OBJECT_BYTES: "1" } });
     assert.equal(await main(["doccopy"], capped.deps), 3, capped.err.join(" "));
     const b = JSON.parse(readFileSync(path.join(out, `${capped.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
-    assert.deepEqual([b.status, b.copy!.rules.overCap, b.copy!.bytes, b.copy!.complete, b.copy!.matchesAccepted, reads], ["incomplete", 1, 0, true, false, 0]);
+    assert.deepEqual([b.status, b.copy!.rules.overCap, b.copy!.approvedBytes, b.copy!.complete, b.copy!.matchesAccepted, reads], ["incomplete", 1, 0, true, false, 0]);
     cleanup(capped);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("doccopy continues only an incomplete run of the same chain, from where it stopped", async () => {
+test("doccopy resumes from its own checkpoint in the target, and an unsettled write ends the process without releasing locks", async () => {
   const photo = png();
   const { dir, legacy, invocation, set } = await acceptedDoccheck(photo);
   const out = path.join(dir, "out");
-  const check = JSON.parse(readFileSync(path.join(out, `${invocation}.doccheck.receipt.json`), "utf8")) as M4Receipt;
-  const zero = Object.fromEntries(COPY_RULES.map((rule) => [rule, 0]));
-  // A synthetic earlier run that stopped before its first document.
-  const prior = (over: { receipt?: Record<string, unknown>; continuation?: Record<string, unknown> } = {}) => {
-    const id = randomUUID();
-    writeFileSync(path.join(out, `${id}.doccopy.receipt.json`), JSON.stringify({ schemaVersion: 2, kind: "doccopy", invocation: id, status: "incomplete",
-      acceptedDoccheck: invocation, revision: check.revision, artifact: check.artifact, mirror: { generation: GENERATION_ID }, copy: { complete: false }, ...over.receipt }));
-    writeFileSync(path.join(out, `${id}.doccopy.report.json`), JSON.stringify({ invocation: id, acceptedDoccheck: invocation,
-      continuation: { version: CONTINUATION_VERSION, generation: GENERATION_ID, build: check.artifact, acceptedSet: set, next: 0, rules: zero, unverified: [], bytes: 0, ...over.continuation } }));
-    return id;
-  };
-  const go = async (id: string) => {
-    const h = harness({ dir: provenancedDir(), rows: docSources(), bucket: legacy, staging: memoryStaging().objects,
-      env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out, M4_DOCCOPY_CONTINUE: id } });
-    const code = await main(["doccopy"], h.deps);
-    const receipt = JSON.parse(readFileSync(path.join(out, `${h.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
-    cleanup(h);
-    return { code, receipt };
-  };
+  const db = fakeDb();
+  const staging = memoryStaging();
+  const go = (opts: HarnessOptions = {}) => harness({ dir: provenancedDir(), db, rows: docSources(), bucket: legacy, staging: staging.objects,
+    env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out }, ...opts });
+  const receiptOf = (h: Harness) => JSON.parse(readFileSync(path.join(out, `${h.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
   try {
-    const id = prior();
-    const ok = await go(id);
-    assert.deepEqual([ok.code, ok.receipt.status, ok.receipt.copy!.continued, ok.receipt.copy!.chainHandled, ok.receipt.copy!.staged], [0, "ok", id, 1, set]);
-    for (const bad of [prior({ receipt: { status: "ok" } }), prior({ receipt: { copy: { complete: true } } }), prior({ receipt: { acceptedDoccheck: randomUUID() } }),
-      prior({ receipt: { mirror: { generation: "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d" } } }), prior({ continuation: { build: "c".repeat(64) } }),
-      prior({ continuation: { acceptedSet: "d".repeat(64) } }), prior({ continuation: { next: 1 } })]) {
-      const r = await go(bad);
-      assert.deepEqual([r.code, r.receipt.status, r.receipt.code], [2, "refused", "continuation"], bad);
-    }
+    const first = go();
+    assert.equal(await main(["doccopy"], first.deps), 0, first.err.join(" "));
+    cleanup(first);
+    // A later run with nothing handed over finds the checkpoint under its key and reads nothing.
+    let reads = 0;
+    const again = go({ bucket: { read: async () => { reads++; return { kind: "missing" }; } } });
+    assert.equal(await main(["doccopy"], again.deps), 0, again.err.join(" "));
+    const r = receiptOf(again);
+    assert.deepEqual([r.status, r.copy!.checkpoint, r.copy!.handled, r.copy!.staged, reads], ["ok", { credit: "resumed", from: 1, next: 1 }, 0, set, 0]);
+    cleanup(again);
+    // A put that ignores its abort: the run fails unsettled, publishes, and leaves the locks to the process exit.
+    const stuck = memoryStaging();
+    stuck.objects.put = () => new Promise<never>(() => {});
+    const h = harness({ dir: provenancedDir(), db: fakeDb(), rows: docSources(), bucket: legacy, staging: stuck.objects,
+      env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out, M4_DOCCOPY_OP_TIMEOUT_MS: "5", M4_DOCCOPY_SETTLE_MS: "5" } });
+    assert.equal(await main(["doccopy"], h.deps), 1);
+    const u = receiptOf(h);
+    assert.deepEqual([u.status, u.code, h.state.halted, h.state.closed, h.state.locked], ["failed", "m2.copy.unsettled", [1], 0, true]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

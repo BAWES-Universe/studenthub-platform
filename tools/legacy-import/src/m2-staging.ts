@@ -14,6 +14,12 @@
 //   bucket (checked by the run step). Errors leave as a fixed message.
 //
 // Table: get and insert only. Insert is ON CONFLICT DO NOTHING; a row is never updated or deleted.
+// A query cannot be cancelled through its AbortSignal: one that hangs past the settle window ends
+// the run as unsettled, and ending the process closes its connection (the server then rolls back
+// anything not committed; the next run reconciles anything that was).
+//
+// Checkpoints (`legacy_document_copy_checkpoints`): load by the exact key; save inserts the first
+// revision or updates only the row still at the expected revision. Never deleted.
 
 import { createHash } from "node:crypto";
 
@@ -21,7 +27,7 @@ import { ListObjectsV2Command, PutObjectCommand, S3Client, type GetObjectCommand
 import pg from "pg";
 
 import { rangedRead, type GetObjectSender } from "./m2-bucket.js";
-import type { DocumentStagingStore, StagedDocument, StagingObjects } from "./m2-copy.js";
+import type { CheckpointKey, CopyCheckpointStore, DocumentStagingStore, StagedDocument, StagingObjects } from "./m2-copy.js";
 import type { DocumentKind } from "./m2-documents.js";
 
 const STAGING_KEY = /^legacy-import\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/[1-9][0-9]{0,17}\/(?:personal-photo|resume|civil-id-front|civil-id-back)\/[0-9a-f]{64}$/;
@@ -55,20 +61,20 @@ export function stagingBucket(config: StagingBucketConfig, client?: StagingSende
     credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
     requestChecksumCalculation: "WHEN_REQUIRED", responseChecksumValidation: "WHEN_REQUIRED",
   });
-  const within = async <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+  const within = async <T>(caller: AbortSignal, fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), timeoutMs);
-    try { return await fn(deadline.signal); } finally { clearTimeout(timer); }
+    try { return await fn(AbortSignal.any([deadline.signal, caller])); } finally { clearTimeout(timer); }
   };
   const read = rangedRead(sender as GetObjectSender, config.bucket, timeoutMs, (key) => STAGING_KEY.test(key));
   return {
-    async read(key, maxBytes) {
-      try { return await read(key, maxBytes); } catch { throw failed(); }
+    async read(key, maxBytes, signal) {
+      try { return await read(key, maxBytes, signal); } catch { throw failed(); }
     },
-    async put(key, bytes, mime) {
+    async put(key, bytes, mime, signal) {
       if (!STAGING_KEY.test(key) || !Buffer.isBuffer(bytes) || bytes.length < 1) throw failed();
       try {
-        await within((abortSignal) => sender.send(new PutObjectCommand({
+        await within(signal, (abortSignal) => sender.send(new PutObjectCommand({
           Bucket: config.bucket, Key: key, Body: bytes, ContentLength: bytes.length, ContentType: mime,
           ContentMD5: createHash("md5").update(bytes).digest("base64"), CacheControl: "private, no-store", IfNoneMatch: "*",
         }), { abortSignal }));
@@ -79,12 +85,12 @@ export function stagingBucket(config: StagingBucketConfig, client?: StagingSende
         throw failed();
       }
     },
-    async list(prefix, page) {
+    async list(prefix, page, signal) {
       // One page, in key order, after `page.after`: the copy core bounds how many pages it reads.
       if (!STAGING_PREFIX.test(prefix) || !Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 1000
         || (page.after !== undefined && !page.after.startsWith(prefix))) throw failed();
       try {
-        const listed = await within((abortSignal) => sender.send(new ListObjectsV2Command({ Bucket: config.bucket, Prefix: prefix, MaxKeys: page.limit,
+        const listed = await within(signal, (abortSignal) => sender.send(new ListObjectsV2Command({ Bucket: config.bucket, Prefix: prefix, MaxKeys: page.limit,
           ...(page.after === undefined ? {} : { StartAfter: page.after }) }), { abortSignal })) as { Contents?: { Key?: unknown }[]; IsTruncated?: boolean };
         const keys = (listed.Contents ?? []).map((item) => item.Key);
         if (!keys.every((k): k is string => typeof k === "string") || keys.length > page.limit || (listed.IsTruncated && keys.length === 0)) throw failed();
@@ -111,6 +117,30 @@ export function postgresDocumentStaging(db: Pick<pg.Pool, "query">): DocumentSta
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT DO NOTHING`,
         [row.legacyId, row.kind, row.generation, row.mime, row.size, row.sha256, row.objectKey, invocations.doccheck, invocations.copy]);
       return rowCount === 1 ? "inserted" : "exists";
+    },
+  };
+}
+
+const KEY_WHERE = `accepted_doccheck = $1 AND target_id = $2 AND bucket = $3 AND generation = $4 AND build = $5 AND copy_order = $6`;
+const keyParams = (k: CheckpointKey) => [k.acceptedDoccheck, k.targetId, k.bucket, k.generation, k.build, k.order];
+
+/** The copy's checkpoint table through a pool (or a pinned client). */
+export function postgresCopyCheckpoints(db: Pick<pg.Pool, "query">): CopyCheckpointStore {
+  return {
+    async load(key) {
+      const { rows } = await db.query<{ revision: number; checkpoint: unknown }>(
+        `SELECT revision, checkpoint FROM legacy_document_copy_checkpoints WHERE ${KEY_WHERE}`, keyParams(key));
+      return rows[0] ? { revision: Number(rows[0].revision), checkpoint: rows[0].checkpoint } : null;
+    },
+    async save(checkpoint, expected) {
+      const params = [...keyParams(checkpoint.key), JSON.stringify(checkpoint)];
+      const { rowCount } = expected === null
+        ? await db.query(`INSERT INTO legacy_document_copy_checkpoints
+            (accepted_doccheck, target_id, bucket, generation, build, copy_order, revision, checkpoint)
+            VALUES ($1, $2, $3, $4, $5, $6, 1, $7::jsonb) ON CONFLICT DO NOTHING`, params)
+        : await db.query(`UPDATE legacy_document_copy_checkpoints SET revision = revision + 1, checkpoint = $7::jsonb, updated_at = clock_timestamp()
+            WHERE ${KEY_WHERE} AND revision = $8`, [...params, expected]);
+      return rowCount === 1 ? "saved" : "stale";
     },
   };
 }

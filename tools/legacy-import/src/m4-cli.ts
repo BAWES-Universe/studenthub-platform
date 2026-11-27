@@ -101,8 +101,8 @@ import pg from "pg";
 import { CIVIL_KEY_CHECK, civilKeyOpens, linkReportCounts, readLinkReport, type LinkReport, PostgresCatalogueImportStore, ContactPromotionError, PostgresContactPromotion, type ContactPromotionResult, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonContactImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore, personContactDigest } from "@studenthub/db/import";
 import { CivilIdVault, PROFILE_PARITY_REVISION } from "@studenthub/profile";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
-import { copyCounts, copyLegacyDocuments, M2_DOCUMENT_COPY_REVISION, M2CopyError, selectApproved, type CopyContinuation, type CopyRule, type DocumentStagingStore, type StagingObjects } from "./m2-copy.js";
-import { postgresDocumentStaging, STAGING_BUCKET, stagingBucket } from "./m2-staging.js";
+import { copyCounts, copyLegacyDocuments, M2_DOCUMENT_COPY_REVISION, M2CopyError, selectApproved, type CopyCheckpointStore, type CopyRule, type DocumentStagingStore, type StagingObjects } from "./m2-copy.js";
+import { postgresCopyCheckpoints, postgresDocumentStaging, STAGING_BUCKET, stagingBucket } from "./m2-staging.js";
 import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, GENERATION, lockPathFrom, MIRROR_GENERATION_TABLE, parseDatabaseUrl } from "./refresh.js";
 import { refreshIdentity } from "./twin/cli.js";
 import type { RefreshIdentity } from "./twin/report.js";
@@ -227,16 +227,15 @@ export interface M4Receipt {
 export interface DocCopyCounts {
   /** Approved documents in the accepted doccheck. */
   readonly approved: number;
-  /** Documents this run handled, and the chain so far (earlier runs it continued included). */
+  /** Documents this run handled. */
   readonly handled: number;
-  readonly chainHandled: number;
-  /** Bytes this run read against M4_DOCCOPY_MAX_BYTES. */
-  readonly bytes: number;
-  /** Rule counts over the chain. */
+  /** Approved bytes this run handled against M4_DOCCOPY_MAX_APPROVED_BYTES. */
+  readonly approvedBytes: number;
+  /** Rule counts over the checkpoint. */
   readonly rules: Readonly<Record<CopyRule, number>>;
-  /** The doccopy invocation this run continued, if any. */
-  readonly continued?: string;
-  /** documentSetDigest over the documents the chain verified; equals the accepted set only when all verified. */
+  /** How the run started: no checkpoint, an untrusted one (no credit), or resumed, from which canonical index to which. */
+  readonly checkpoint: { readonly credit: "none" | "untrusted" | "resumed"; readonly from: number; readonly next: number };
+  /** documentSetDigest over the documents the checkpoint verified; equals the accepted set only when all verified. */
   readonly staged: string;
   /** Whether staged equals the accepted doccheck's documents.set. */
   readonly matchesAccepted: boolean;
@@ -422,6 +421,8 @@ export interface WriteTarget {
   documentBucket(): Promise<string | null>;
   /** The staging table bound to the lock-holding session; only after claimWriter. */
   documentStaging(): DocumentStagingStore;
+  /** The copy's checkpoint table on the same session; only after claimWriter. */
+  copyCheckpoints(): CopyCheckpointStore;
   /** Re-checks, on the lock session itself, that it is alive and still holds the lock. */
   stillHeld(): Promise<boolean>;
   /** Whether the lock session was lost or broken at any point. Once true, stays true. */
@@ -627,6 +628,10 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
       if (!writer) throw new Error("m4.writerNotClaimed");
       return postgresDocumentStaging(writer);
     },
+    copyCheckpoints: () => {
+      if (!writer) throw new Error("m4.writerNotClaimed");
+      return postgresCopyCheckpoints(writer);
+    },
     stillHeld: async () => (writer ? writer.fence() : false),
     lost: () => wasLost || (writer?.lost ?? false),
     close: async () => {
@@ -647,6 +652,12 @@ export interface CliDeps {
   readonly bucket?: (env: NodeJS.ProcessEnv) => LegacyObjectReader;
   /** The staging document bucket (doccopy only; default envStaging). Throws on a bad setting. */
   readonly staging?: (env: NodeJS.ProcessEnv) => StagingObjects;
+  /**
+   * Ends the process at once (default process.exit). Used only when a storage write did not settle
+   * after it was aborted: the locks are then not released in-process, and ending the process
+   * closes their connections.
+   */
+  readonly halt?: (code: number) => void;
   readonly provenance: () => Provenance;
   readonly now: () => Date;
   readonly log: (line: string) => void;
@@ -669,6 +680,7 @@ export const defaultDeps = (env: NodeJS.ProcessEnv, built: Provenance): CliDeps 
   target: (e) => postgresTarget(e.M4_DATABASE_URL ?? "", e.M4_IMPORT_ACTOR ?? "", e.M4_OPERATOR_ORG_ID ?? "", contactKeysFrom(e, "write")),
   bucket: envBucket,
   staging: envStaging,
+  halt: (code) => process.exit(code),
   provenance: () => built,
   now: () => new Date(),
   log: (line) => console.log(line),
@@ -693,6 +705,7 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
 
   const receiptPath = path.join(dir, `${invocation}.${mode}.receipt.json`);
   const reportPath = path.join(dir, `${invocation}.${mode}.report.json`);
+  let abandon = false;
   let bound: Omit<M4Receipt, "schemaVersion" | "invocation" | "kind" | "status" | "at" | "steps"> = {};
   const confirmed: M4Step[] = [];
   let order: readonly string[] = [];
@@ -720,7 +733,7 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
       return await docCheck(deps, revision, publish, reportPath, (b, d) => { bound = b; documents = d; }, (l) => { lock = l; });
     }
     if (mode === "doccopy") {
-      return await docCopy(deps, revision, publish, reportPath, (b, c) => { bound = b; copy = c; }, (l) => { lock = l; }, (t) => { target = t; });
+      return await docCopy(deps, revision, publish, reportPath, (b, c) => { bound = b; copy = c; }, (l) => { lock = l; }, (t) => { target = t; }, () => { abandon = true; });
     }
     if (mode === "promote") return await promote(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
     const operator = env.M4_OPERATOR_ORG_ID ?? "";
@@ -799,9 +812,13 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     try { publish("failed", code); } catch { /* the exit code still says failed */ }
     return 1;
   } finally {
-    // The writer lock is held until the terminal receipt above is published.
-    await target?.close();
-    if (lock.held) lock.release();
+    // The writer lock is held until the terminal receipt above is published. After an unsettled
+    // storage write nothing is released in-process: the process ends and its connections close.
+    if (abandon) (deps.halt ?? ((code: number) => process.exit(code)))(1);
+    else {
+      await target?.close();
+      if (lock.held) lock.release();
+    }
   }
 }
 
@@ -1103,18 +1120,20 @@ function envBound(value: string | undefined, fallback: number): number | null {
  *   refresh's count (`ownershipIncomplete`, `staleCount`), and an approved subset the fresh plan
  *   names exactly (`selection`).
  * The refresh lock is held from selection through the last source read. The run is bounded by
- * M4_DOCCOPY_MAX_DOCS (200), M4_DOCCOPY_MAX_BYTES (256 MiB), M4_DOCCOPY_MAX_OBJECT_BYTES (10 MiB, hard
- * per object, at most MAX_BYTES), M4_DOCCOPY_MAX_MS (15 min), M4_DOCCOPY_OP_TIMEOUT_MS (60 s per
- * storage call) and M4_DOCCOPY_MAX_LIST_PAGES (100 pages of 1000 keys for the orphan scan).
- * M4_DOCCOPY_CONTINUE names an earlier `incomplete` doccopy of the same accepted doccheck, build and
- * generation; this run starts where it stopped (`continuation`).
- * Exit 0 when the chain is complete, the staged set equals the accepted set and the orphan scan was
+ * M4_DOCCOPY_MAX_DOCS (200), M4_DOCCOPY_MAX_APPROVED_BYTES (256 MiB of approved sizes),
+ * M4_DOCCOPY_MAX_OBJECT_BYTES (10 MiB, hard per object, at most the approved-byte budget),
+ * M4_DOCCOPY_MAX_MS (15 min), M4_DOCCOPY_OP_TIMEOUT_MS (60 s per storage call), M4_DOCCOPY_SETTLE_MS
+ * (30 s for an aborted call to settle) and M4_DOCCOPY_MAX_LIST_PAGES (100 pages of 1000 keys).
+ * It resumes only from its own checkpoint in the target (`legacy_document_copy_checkpoints`), keyed
+ * by the accepted doccheck, target, bucket, generation, build and order. A storage call that does
+ * not settle publishes `failed` (`m2.copy.unsettled`) and ends the process without releasing locks.
+ * Exit 0 when the checkpoint is complete, the staged set equals the accepted set and the orphan scan was
  * not truncated; 3 otherwise (continue with this invocation); 2 refused; 1 failed.
  */
 async function docCopy(deps: CliDeps, revision: string,
   publish: (status: M4Receipt["status"], code?: string) => void, reportPath: string,
   bind: (bound: Omit<M4Receipt, "schemaVersion" | "invocation" | "kind" | "status" | "at" | "steps">, copy?: DocCopyCounts) => void,
-  trackLock: (lock: SharedLock) => void, trackTarget: (target: WriteTarget) => void): Promise<number> {
+  trackLock: (lock: SharedLock) => void, trackTarget: (target: WriteTarget) => void, abandonLocks: () => void): Promise<number> {
   const { env } = deps;
   const refuse = (code: string): number => {
     deps.error(`m4: refused.${code}`);
@@ -1131,10 +1150,11 @@ async function docCopy(deps: CliDeps, revision: string,
   const artifact = env.M4_ARTIFACT_DIGEST ?? "";
   const built = deps.provenance();
   if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
-  const limits = { maxDocuments: envBound(env.M4_DOCCOPY_MAX_DOCS, 200), maxBytes: envBound(env.M4_DOCCOPY_MAX_BYTES, 256 * 1024 * 1024),
+  const limits = { maxDocuments: envBound(env.M4_DOCCOPY_MAX_DOCS, 200), maxApprovedBytes: envBound(env.M4_DOCCOPY_MAX_APPROVED_BYTES, 256 * 1024 * 1024),
     maxObjectBytes: envBound(env.M4_DOCCOPY_MAX_OBJECT_BYTES, 10 * 1024 * 1024), maxMs: envBound(env.M4_DOCCOPY_MAX_MS, 15 * 60 * 1000),
-    opTimeoutMs: envBound(env.M4_DOCCOPY_OP_TIMEOUT_MS, 60 * 1000), maxListPages: envBound(env.M4_DOCCOPY_MAX_LIST_PAGES, 100) };
-  if (Object.values(limits).some((n) => n === null) || limits.maxObjectBytes! > limits.maxBytes!) return refuse("bounds");
+    opTimeoutMs: envBound(env.M4_DOCCOPY_OP_TIMEOUT_MS, 60 * 1000), settleMs: envBound(env.M4_DOCCOPY_SETTLE_MS, 30 * 1000),
+    maxListPages: envBound(env.M4_DOCCOPY_MAX_LIST_PAGES, 100) };
+  if (Object.values(limits).some((n) => n === null) || limits.maxObjectBytes! > limits.maxApprovedBytes!) return refuse("bounds");
 
   // The accepted doccheck, by its own receipt and private report.
   const accepted = env.M4_ACCEPTED_DOCCHECK ?? "";
@@ -1160,21 +1180,6 @@ async function docCopy(deps: CliDeps, revision: string,
   const base = { revision, artifact, target: targetId, acceptedDoccheck: accepted, mirror: { generation } };
   bind(base);
 
-  // An earlier incomplete run of the same chain to continue from; the copy core checks the rest.
-  const continued = env.M4_DOCCOPY_CONTINUE || undefined;
-  let continuation: CopyContinuation | undefined;
-  if (continued !== undefined) {
-    let prior: Partial<M4Receipt> | undefined, priorReport: Record<string, unknown> | undefined;
-    try {
-      prior = JSON.parse(readFileSync(path.join(dir, `${continued}.doccopy.receipt.json`), "utf8")) as Partial<M4Receipt>;
-      priorReport = JSON.parse(readFileSync(path.join(dir, `${continued}.doccopy.report.json`), "utf8")) as Record<string, unknown>;
-    } catch { prior = undefined; }
-    if (!UUID.test(continued) || continued === env.M4_INVOCATION || !prior || !priorReport || prior.kind !== "doccopy" || prior.invocation !== continued
-      || prior.status !== "incomplete" || !prior.copy || prior.copy.complete || prior.acceptedDoccheck !== accepted || prior.revision !== revision || prior.artifact !== artifact
-      || prior.mirror?.generation !== generation || priorReport.invocation !== continued || priorReport.acceptedDoccheck !== accepted
-      || !priorReport.continuation || typeof priorReport.continuation !== "object") return refuse("continuation");
-    continuation = priorReport.continuation as CopyContinuation;
-  }
 
   // The staging side: its bucket, distinct from legacy's and the live one, and the staging database.
   const bucketName = env.M4_STAGING_DOCUMENT_BUCKET ?? "";
@@ -1218,28 +1223,28 @@ async function docCopy(deps: CliDeps, revision: string,
   publish("started");
   let result;
   try {
-    result = await copyLegacyDocuments(selection, { legacy, objects, store: target.documentStaging() },
-      { generation, build: artifact, invocations: { doccheck: accepted, copy: env.M4_INVOCATION! } },
-      { maxDocuments: limits.maxDocuments!, maxBytes: limits.maxBytes!, maxObjectBytes: limits.maxObjectBytes!, maxMs: limits.maxMs!,
-        opTimeoutMs: limits.opTimeoutMs!, maxListPages: limits.maxListPages!, listPageSize: 1000, now: () => Date.now() }, continuation);
+    result = await copyLegacyDocuments(selection, { legacy, objects, store: target.documentStaging(), checkpoints: target.copyCheckpoints() },
+      { generation, build: artifact, target: { id: targetId, bucket: bucketName }, invocations: { doccheck: accepted, copy: env.M4_INVOCATION! } },
+      { maxDocuments: limits.maxDocuments!, maxApprovedBytes: limits.maxApprovedBytes!, maxObjectBytes: limits.maxObjectBytes!, maxMs: limits.maxMs!,
+        opTimeoutMs: limits.opTimeoutMs!, settleMs: limits.settleMs!, maxListPages: limits.maxListPages!, listPageSize: 1000, now: () => Date.now() });
   } catch (error) {
-    if (error instanceof M2CopyError && error.code === "m2.copy.continuation") return refuse("continuation");
+    if (error instanceof M2CopyError && error.code === "m2.copy.unsettled") abandonLocks();
     return fail(error instanceof M2CopyError ? error.code : "m2.copy");
   }
   if (!await target.stillHeld()) return fail("m4.writerLost");
 
   const rules = copyCounts(result);
   const staged = documentSetDigest(result.verified);
-  const counts: DocCopyCounts = { approved: selection.length, handled: result.outcomes.length, chainHandled: result.continuation.next, bytes: result.bytes, rules,
-    ...(continued ? { continued } : {}), staged, matchesAccepted: staged === acceptedSet, complete: result.complete,
+  const counts: DocCopyCounts = { approved: selection.length, handled: result.outcomes.length, approvedBytes: result.approvedBytes, rules,
+    checkpoint: result.checkpoint, staged, matchesAccepted: staged === acceptedSet, complete: result.complete,
     orphans: result.orphans.count, orphansTruncated: result.orphans.truncated };
   writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "doccopy", at: deps.now().toISOString(), ...base, refresh, today,
-    revisions: { copy: M2_DOCUMENT_COPY_REVISION }, accepted: acceptedSet, staged, complete: result.complete, ...(continued ? { continued } : {}),
-    outcomes: result.outcomes, continuation: result.continuation, orphans: result.orphans });
+    revisions: { copy: M2_DOCUMENT_COPY_REVISION }, accepted: acceptedSet, staged, complete: result.complete, checkpoint: result.checkpoint,
+    outcomes: result.outcomes, orphans: result.orphans });
   bind({ ...base, refresh, today }, counts);
   const done = result.complete && counts.matchesAccepted && !result.orphans.truncated;
   publish(done ? "ok" : "incomplete");
-  deps.log(`copy approved=${counts.approved} handled=${counts.handled} bytes=${counts.bytes} orphans=${counts.orphans} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
+  deps.log(`copy approved=${counts.approved} handled=${counts.handled} from=${result.checkpoint.from} credit=${result.checkpoint.credit} approvedBytes=${counts.approvedBytes} orphans=${counts.orphans} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
   deps.log(`m4 doccopy ${done ? "ok" : "incomplete"} invocation=${env.M4_INVOCATION} accepted=${accepted} generation=${generation} staged=${staged} complete=${result.complete}`);
   return done ? 0 : 3;
 }

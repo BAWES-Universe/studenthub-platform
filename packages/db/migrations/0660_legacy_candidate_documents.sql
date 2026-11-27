@@ -23,3 +23,21 @@ CREATE TABLE legacy_candidate_documents (
   CHECK ((kind = 'resume') = (mime = 'application/pdf')),
   CHECK (object_key = 'legacy-import/' || generation::text || '/' || legacy_candidate_id || '/' || kind || '/' || sha256)
 );
+
+-- The copy's own checkpoint (m2-copy): which documents a chain of runs has handled, with the exact
+-- binding each verified document was read back with. One row per checkpoint key; replaced only at
+-- the revision it was loaded at. A run takes credit only from the row under its own key, and only
+-- after checking every entry against its selection. Ids, kinds, rules, invocations and staging
+-- object keys only: no legacy key, file name or byte.
+CREATE TABLE legacy_document_copy_checkpoints (
+  accepted_doccheck uuid NOT NULL,
+  target_id uuid NOT NULL,
+  bucket text NOT NULL CHECK (bucket ~ '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'),
+  generation uuid NOT NULL,
+  build char(64) NOT NULL CHECK (build ~ '^[0-9a-f]{64}$'),
+  copy_order char(64) NOT NULL CHECK (copy_order ~ '^[0-9a-f]{64}$'),
+  revision integer NOT NULL CHECK (revision >= 1),
+  checkpoint jsonb NOT NULL CHECK (jsonb_typeof(checkpoint) = 'object'),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (accepted_doccheck, target_id, bucket, generation, build, copy_order)
+);
