@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { M4_SOURCES, planM4, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
-import { acceptWrite, acquireSharedLock, contactSetDigest, digestKeyFingerprint, main, PROMOTE_BATCH, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
+import { acceptWrite, acquireSharedLock, contactSetDigest, digestKeyFingerprint, documentSetDigest, main, PROMOTE_BATCH, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
+import type { LegacyObjectReader } from "../src/m2-document-check.js";
 import { ContactPromotionError, LinkReportError, type ContactPromotionResult, type LinkReport } from "@studenthub/db/import";
 
 // Synthetic legacy rows only. SECRET marks every value that must never reach a receipt or a log.
@@ -22,6 +24,7 @@ const CIVIL_KEY = Buffer.alloc(32, 2).toString("base64");
 // The contact values candidate 31 holds; none may reach a receipt, report or log.
 const CONTACT_VALUES = ["+96550001234", "96550001234", "50001234", "secret.handle", "290010112345", "secret.person", "Secret.Person"];
 const REFRESH = { ok: true, startedAt: "2026-11-23T01:00:00.000Z", finishedAt: "2026-11-23T01:05:00.000Z", totalRows: 42 };
+const MIRROR_ID = "3e11fa47-71ca-11e1-9e33-c80aa9429562";
 
 function sources(): M4Sources {
   const empty = Object.fromEntries(Object.keys(M4_SOURCES).map((t) => [t, []])) as unknown as Record<M4Table, Record<string, unknown>[]>;
@@ -80,6 +83,14 @@ interface HarnessOptions {
   provenance?: Partial<Provenance>;
   /** The run's clock, default 2026-11-23T02:00:00.000Z. */
   now?: string;
+  /** The legacy bucket for doccheck; default: every object missing. */
+  bucket?: LegacyObjectReader | (() => LegacyObjectReader);
+  /** Added to the candidate count after the rows are read (a copy changing underneath). */
+  countDrift?: number;
+  /** The mirror's `@@server_uuid`; default MIRROR_ID. */
+  mirrorId?: string;
+  /** The schema the mirror reader is connected to; default legacy_mirror. */
+  mirrorSchema?: string;
 }
 
 interface Harness {
@@ -91,7 +102,7 @@ interface Harness {
   readonly err: string[];
   readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined };
   readonly file: (name: string) => string;
-  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport") => M4Receipt;
+  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck") => M4Receipt;
 }
 
 function harness(opts: HarnessOptions = {}): Harness {
@@ -193,11 +204,18 @@ function harness(opts: HarnessOptions = {}): Harness {
         // Every read happens with the refresh lock held.
         assert.equal(state.locked, true);
         state.reads++;
+        if (sql.includes("@@server_uuid")) return [{ id: opts.mirrorId ?? MIRROR_ID, schema: opts.mirrorSchema ?? "legacy_mirror" }];
         const table = /FROM `([a-z_]+)`$/.exec(sql)![1] as M4Table;
+        if (sql.includes("COUNT(*)")) return [{ n: rows[table].length + (state.reads > 1 ? opts.countDrift ?? 0 : 0) }];
         return rows[table];
       },
     }),
     target: () => target,
+    bucket: () => {
+      const b = opts.bucket;
+      if (typeof b === "function") return b();
+      return b ?? { read: async () => { assert.equal(state.locked, true); return { kind: "missing" }; } };
+    },
     provenance: () => ({ head: REVISION, clean: true, artifact: ARTIFACT, ...opts.provenance }),
     now: () => new Date(opts.now ?? "2026-11-23T02:00:00.000Z"),
     log: (line) => out.push(line),
@@ -205,7 +223,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       err.push(line);
     },
   };
-  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
+  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
   return { dir, invocation, deps, calls, out, err, state, file, receipt };
 }
 
@@ -872,4 +890,160 @@ test("linkreport is refused before any read without a verified build, its target
   assert.deepEqual(await run({ env: { M4_TARGET_ID: "22222222-2222-4222-8222-222222222222" } }, [2, "refused", "target"]), []);
   assert.deepEqual(await run({ db: { ...fakeDb(), linkReportReady: false } }, [2, "refused", "schema"]), []);
   assert.deepEqual(await run({ db: { ...fakeDb(), links: new LinkReportError() } }, [1, "failed", "m3.link.reportFailed"]), ["linkReport"]);
+});
+
+// doccheck (M-2). Synthetic objects; "Secret" marks a stored name that must never leave memory.
+const crc32 = (bytes: Buffer) => {
+  let c = 0xffffffff;
+  for (const b of bytes) { c ^= b; for (let i = 0; i < 8; i++) c = (c >>> 1) ^ ((c & 1) ? 0xedb88320 : 0); }
+  return (c ^ 0xffffffff) >>> 0;
+};
+const pngChunk = (type: string, data: Buffer) => {
+  const b = Buffer.alloc(data.length + 12);
+  b.writeUInt32BE(data.length); b.write(type, 4); data.copy(b, 8); b.writeUInt32BE(crc32(b.subarray(4, -4)), b.length - 4);
+  return b;
+};
+const png = () => {
+  const h = Buffer.alloc(13); h.writeUInt32BE(1, 0); h.writeUInt32BE(1, 4); h[8] = 8; h[9] = 2;
+  return Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), pngChunk("IHDR", h), pngChunk("IDAT", deflateSync(Buffer.from([0, 0, 0, 0]))), pngChunk("IEND", Buffer.alloc(0))]);
+};
+const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+
+/** M-4's fixture with document columns: the imported candidate 31 and the archived 32. */
+function docSources(): M4Sources {
+  const base = sources();
+  return { ...base, candidate: [
+    { ...base.candidate[0]!, candidate_personal_photo: "Secret-photo.png", candidate_resume: "Secret-cv.pdf", candidate_civil_photo_front: "../Secret.png" },
+    { ...base.candidate[1]!, candidate_civil_photo_back: "Secret-archived.png" },
+  ] };
+}
+
+/** Writes a refresh report with mirror, lock and table provenance into the harness directory. */
+function withProvenance(dir: string, over: Record<string, unknown> = {}): string {
+  writeFileSync(path.join(dir, "refresh.json"), JSON.stringify({ ...REFRESH, mirror: { serverId: MIRROR_ID, schema: "legacy_mirror" },
+    lock: path.join(dir, "lock"), tables: { candidate: 2, country: 0 }, ...over }));
+  return dir;
+}
+const provenancedDir = (over?: Record<string, unknown>) => withProvenance(mkdtempSync(path.join(tmpdir(), "m4-cli-")), over);
+
+test("doccheck reads the whole candidate table and each object once under the refresh lock, and publishes counts and the set digest only", async () => {
+  const photo = png();
+  const reads: string[] = [];
+  let state!: Harness["state"];
+  const bucket: LegacyObjectReader = {
+    read: async (key) => {
+      assert.equal(state.locked, true, "objects are read under the refresh lock");
+      reads.push(key);
+      return key === "photos/Secret-photo.png" ? { kind: "found", bytes: photo } : { kind: "missing" };
+    },
+  };
+  const h = harness({ dir: provenancedDir(), rows: docSources(), bucket, env: { M4_DATABASE_URL: undefined, M4_CONTACT_DIGEST_KEY: undefined, M4_CIVIL_ID_ENCRYPTION_KEY: undefined } });
+  state = h.state;
+  try {
+    assert.equal(await main(["doccheck"], h.deps), 0);
+    assert.deepEqual(reads, ["candidate-profile-photos/Secret-photo.png", "photos/Secret-photo.png", "candidate-resume/Secret-cv.pdf"]);
+    assert.deepEqual(h.calls, [], "no target is touched");
+    assert.equal(h.state.locked, false);
+    assert.equal(h.state.released, 1);
+    const checked = [{ legacyId: "31", kind: "personal-photo" as const, key: "photos/Secret-photo.png", mime: "image/png" as const, size: photo.length, sha256: sha256(photo) }];
+    const r = h.receipt("doccheck");
+    assert.deepEqual([r.kind, r.status, r.revision, r.artifact, r.today], ["doccheck", "ok", REVISION, ARTIFACT, "2026-11-23"]);
+    assert.deepEqual(r.refresh, { startedAt: REFRESH.startedAt, finishedAt: REFRESH.finishedAt, totalRows: 42 });
+    assert.deepEqual(r.documents, { candidates: 2, mapped: 2, checked: 1, bytes: photo.length, set: documentSetDigest(checked), diagnostic: true,
+      rules: { "document.badKey": 1, "document.sharedObject": 0, "document.missing": 1, "document.tooLarge": 0, "document.admission": 0, "document.readFailed": 0 } });
+    assert.ok(!JSON.stringify(r).includes('"31"'), "no legacy id in the receipt");
+    const reportFile = path.join(h.file("out"), `${h.invocation}.doccheck.report.json`);
+    assert.equal(statSync(reportFile).mode & 0o777, 0o600);
+    const report = JSON.parse(readFileSync(reportFile, "utf8"));
+    assert.deepEqual(report.documents, [{ legacyId: "31", kind: "personal-photo", mime: "image/png", size: photo.length, sha256: sha256(photo) }]);
+    assert.deepEqual(report.issues, [
+      { rule: "document.badKey", legacyId: "31", field: "candidate_civil_photo_front" },
+      { rule: "document.missing", legacyId: "31", field: "candidate_resume" },
+    ]);
+    assert.equal(report.set, r.documents!.set);
+    const everything = [readFileSync(reportFile, "utf8"), JSON.stringify(r), h.out.join("\n"), h.err.join("\n")].join("\n");
+    assert.ok(!everything.includes("Secret") && !everything.includes(SECRET), "no stored name, key or value leaves the run");
+    assert.ok(h.out.some((l) => l.startsWith(`m4 doccheck ok invocation=${h.invocation} set=${r.documents!.set}`)));
+  } finally { cleanup(h); }
+});
+
+test("doccheck is refused before any object is read without a verified build, its bucket setting, the lock, an ok refresh or the whole candidate table", async () => {
+  const run = async (opts: HarnessOptions, code: string) => {
+    let objects = 0;
+    const h = harness({ dir: provenancedDir(), rows: docSources(), bucket: { read: async () => { objects++; return { kind: "missing" }; } }, ...opts });
+    try {
+      assert.equal(await main(["doccheck"], h.deps), 2);
+      const r = h.receipt("doccheck");
+      assert.deepEqual([r.status, r.code, r.documents], ["refused", code, undefined]);
+      assert.equal(objects, 0, "no object read");
+      assert.ok(!existsSync(path.join(h.file("out"), `${h.invocation}.doccheck.report.json`)), "no report");
+      assert.equal(h.state.locked, false);
+      return h.state.reads;
+    } finally { cleanup(h); }
+  };
+  assert.equal(await run({ provenance: { clean: false } }, "provenance"), 0);
+  assert.equal(await run({ env: { M4_ARTIFACT_DIGEST: "f".repeat(64) } }, "provenance"), 0);
+  assert.equal(await run({ bucket: () => { throw new Error("m2.bucket.config"); } }, "bucketConfig"), 0);
+  assert.equal(await run({ lockHeld: false }, "locked"), 0);
+  const notOk = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
+  writeFileSync(path.join(notOk, "refresh.json"), JSON.stringify({ ...REFRESH, ok: false }));
+  assert.equal(await run({ dir: notOk }, "refreshNotOk"), 0);
+  // The table grew between the read and the second count.
+  assert.ok(await run({ countDrift: 1 }, "ownershipIncomplete") > 0);
+  // The report describes another generation: another lock file, another mirror server, another count.
+  assert.equal(await run({ dir: provenancedDir({ lock: "/var/lock/other-refresh.lock" }) }, "lockMismatch"), 0);
+  assert.equal(await run({ mirrorId: "00000000-0000-1000-8000-000000000000" }, "mirrorMismatch"), 1);
+  // Same server (one MySQL instance holds both schemas) and the same row count, another schema.
+  assert.equal(await run({ mirrorSchema: "legacy_mirror_old" }, "mirrorMismatch"), 1);
+  assert.equal(await run({ dir: provenancedDir({ mirror: { serverId: MIRROR_ID, schema: "legacy_mirror_old" } }) }, "mirrorMismatch"), 1);
+  assert.equal(await run({ dir: provenancedDir({ tables: { candidate: 3 } }) }, "staleCount"), 7);
+});
+
+test("doccheck is diagnostic only: without provenance, and with it, since no generation marker exists yet", async () => {
+  // A report from before mirror, lock and table provenance: no mirror read, and the receipt says diagnostic.
+  for (const over of [{ mirror: undefined }, { mirror: { serverId: MIRROR_ID } }, { lock: undefined }, { tables: {} }, null]) {
+    const dir = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
+    if (over) withProvenance(dir, over); else writeFileSync(path.join(dir, "refresh.json"), JSON.stringify(REFRESH));
+    const sqls: string[] = [];
+    const h = harness({ dir, rows: docSources() });
+    try {
+      const reader = h.deps.reader;
+      const deps: CliDeps = { ...h.deps, reader: (env) => { const r = reader(env); return { rows: (sql, p) => { sqls.push(sql); return r.rows(sql, p); } }; } };
+      assert.equal(await main(["doccheck"], deps), 0);
+      const r = h.receipt("doccheck");
+      assert.equal(r.documents!.diagnostic, true);
+      assert.ok(!sqls.some((q) => q.includes("@@server_uuid")), "no mirror read without a recorded mirror");
+      const report = JSON.parse(readFileSync(path.join(h.file("out"), `${h.invocation}.doccheck.report.json`), "utf8"));
+      assert.equal(report.diagnostic, true);
+      assert.ok(h.out.some((l) => l.includes(" diagnostic=true ")));
+    } finally { cleanup(h); }
+  }
+  // A replacement copy into the same server and schema, under the same lock path, with the same
+  // count, matches every recorded value; nothing read from the mirror tells the generations apart,
+  // so the result stays non-authoritative.
+  const h = harness({ dir: provenancedDir({ startedAt: "2026-11-22T01:00:00.000Z", finishedAt: "2026-11-22T01:05:00.000Z" }), rows: docSources() });
+  try {
+    assert.equal(await main(["doccheck"], h.deps), 0);
+    assert.equal(h.receipt("doccheck").documents!.diagnostic, true);
+  } finally { cleanup(h); }
+});
+
+test("doccheck turns a failed object read into a counted issue, and a failed legacy read into a fixed failure", async () => {
+  const h = harness({ dir: provenancedDir(), rows: docSources(), bucket: { read: async () => { throw new Error("Secret detail"); } } });
+  try {
+    assert.equal(await main(["doccheck"], h.deps), 0);
+    assert.equal(h.receipt("doccheck").documents!.rules["document.readFailed"], 2);
+  } finally { cleanup(h); }
+  const broken = harness({ rows: docSources() });
+  try {
+    const deps: CliDeps = { ...broken.deps, reader: () => ({ rows: async (sql: string) => {
+      if (sql.includes("COUNT(*)")) return [{ n: 2 }];
+      if (sql.endsWith("`candidate`")) return docSources().candidate;
+      throw new Error("Secret detail");
+    } }) };
+    assert.equal(await main(["doccheck"], deps), 1);
+    const r = broken.receipt("doccheck");
+    assert.deepEqual([r.status, r.code], ["failed", "m2.read.country"]);
+    assert.ok(!broken.err.join("\n").includes("Secret"));
+  } finally { cleanup(broken); }
 });
