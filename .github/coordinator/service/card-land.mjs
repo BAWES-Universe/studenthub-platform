@@ -631,6 +631,9 @@ async function checkState(gh, { repo, number, head, branch, settled, policy, ext
     const blockedBy = pull.mergeable_state === "blocked" && reviewed && decision !== "REVIEW_REQUIRED" && decision !== "CHANGES_REQUESTED"
       ? unresolvedThreads(threadsResponse, threads) : null;
     return { green: false, note: `the pull request reads mergeable_state ${pull.mergeable_state ?? "unknown"}`,
+      // Its checks are green but main moved past it: only a carry of main can
+      // make it mergeable.
+      ...(pull.mergeable_state === "behind" ? { behind: true } : {}),
       ...(blockedBy?.length ? { unresolved: blockedBy, viewer: threads.data.viewer?.login } : {}) };
   }
   // The SHU-259 consumer holds for good on any unresolved review thread, so a
@@ -662,7 +665,10 @@ function unresolvedThreads(threadsResponse, threads) {
 // M10: review, when given, is handed every unresolved thread of a read held
 // only by threads. It may end the wait with an outcome, and once it resolved
 // threads the wait runs long enough for green to hold again.
-async function waitForGreen(io, gh, target, limits, settle, review) {
+// carry, when true, ends the wait with BEHIND on a read whose checks are
+// green but whose pull request is behind main, so the landing carries main
+// again rather than wait out its bound.
+async function waitForGreen(io, gh, target, limits, settle, review, carry = false) {
   let deadline = io.now().getTime() + limits.waitMs;
   let streak = 0;
   let last = "no read yet";
@@ -675,6 +681,7 @@ async function waitForGreen(io, gh, target, limits, settle, review) {
     if (state.identity) stop("LAND_ERROR", `the repaired pull request changed during the wait: ${state.identity}`);
     if (state.moved) stop("LAND_HEAD_MISMATCH", `the pull request head moved to ${state.sha} after the review passed ${target.head}`);
     if (state.red) return { outcome: "PR_OPENED_CI_RED", reason: `red: ${state.red.join(", ")}` };
+    if (state.behind && carry) return { outcome: "BEHIND", reason: state.note };
     streak = state.green ? streak + 1 : 0;
     if (streak >= limits.greenReads) return { outcome: "GREEN", ...(state.advisory ? { advisory: state.advisory } : {}) };
     if (!state.green) last = state.note;
@@ -1099,6 +1106,10 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     // request up to main first, and look at main again under the landing
     // lock; main that moved meanwhile sends the landing round again, all
     // rounds inside the one wait.
+    // A wait that reads the pull request behind main with its checks green
+    // (main is strict, and moved during the wait) carries main again the same
+    // way, by the exact-blobs rule and under the landing lock, one worker or
+    // more: a round of its own, inside the one wait and the baseRounds bound.
     const target = { repo, number: pr.number, head, branch, settled, policy, external, reviewed };
     const waitUntil = io.now().getTime() + limits.waitMs;
     // The lock's bound counts from the first time it is wanted, not from
@@ -1111,7 +1122,14 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
         target.head = landHead;
       }
       const wait = parallel ? { ...limits, waitMs: Math.max(0, waitUntil - io.now().getTime()) } : limits;
-      checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined);
+      checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined, true);
+      if (checks.outcome === "BEHIND") {
+        if (round >= limits.baseRounds) {
+          return result("LAND_BASE_MOVING", { ...landed(), reason: `main moved under pull request #${pr.number} in each of ${round} rounds; nothing was handed off or merged` });
+        }
+        parallel = true;
+        continue;
+      }
       if (checks.outcome !== "GREEN" || !parallel) break;
       lockUntil ??= io.now().getTime() + limits.lockWaitMs;
       release = takeLandLock(io, landLock, lockUntil, limits);

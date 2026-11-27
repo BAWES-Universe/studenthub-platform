@@ -489,8 +489,8 @@ const CASES = [
   {
     name: "M73 write the handoff before green",
     file: "service/card-land.mjs",
-    from: "      checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined);",
-    to: '      await writeHandoffReceipt({ terminal, target: head, decision: { action: "merge-readiness", hold_code: "MISSING_AUTHORITY" }, issueId: issue.id, linearToken, fetchImpl }); checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined); // SHU306-M73',
+    from: "      checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined, true);",
+    to: '      await writeHandoffReceipt({ terminal, target: head, decision: { action: "merge-readiness", hold_code: "MISSING_AUTHORITY" }, issueId: issue.id, linearToken, fetchImpl }); checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined, true); // SHU306-M73',
     pattern: "SHU-306 L5:",
   },
   {
@@ -2009,6 +2009,27 @@ const CASES = [
     from: "  if (named !== null && !marked.includes(named) && !failed.some((f) => f.file === named)) failed.push(",
     to: "  if (false) /* SHU86-M341 */ failed.push(",
     pattern: "2026-11-15: a dead run whose named claim is gone",
+  },
+  {
+    name: "M342 wait out the landing bound on a pull request behind main with green checks",
+    file: "service/card-land.mjs",
+    from: "    if (state.behind && carry) return { outcome: \"BEHIND\", reason: state.note };",
+    to: "    // SHU86-M342",
+    pattern: "Re-carry: one worker whose pull request reads behind main",
+  },
+  {
+    name: "M343 carry main without bound while main keeps moving",
+    file: "service/card-land.mjs",
+    from: "      if (checks.outcome === \"BEHIND\") {\n        if (round >= limits.baseRounds) {",
+    to: "      if (checks.outcome === \"BEHIND\") {\n        if (round >= 99) { // SHU86-M343",
+    pattern: "Re-carry: main that keeps moving during the wait",
+  },
+  {
+    name: "M344 report an unmerged landing as landed",
+    file: "service/card-prepare.mjs",
+    from: "land.outcome === \"MERGED\" ? `Landed:",
+    to: "true ? `Landed:",
+    pattern: "Report: \"Landed:\" is written only for a merge",
   },
 ];
 
