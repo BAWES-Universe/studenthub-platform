@@ -15,7 +15,10 @@
 //   filled or cleared is theirs: it is recorded as `personHeld` and never refilled.
 //
 // Only then is the document added and the ledger row written, and both commit together with the
-// store's own id index and slot history. The object goes to the live bucket under a content-
+// store's own id index and slot history. A promoted civil ID photo is also recorded as already seen
+// by OCR (`civil_id_ocr_jobs`, status `noted`), in the same transaction, as the first OCR sweep does
+// for the photos present when OCR was switched on: the sweep never queues it, so promotion adds no
+// OCR cost and no review. A person's own later upload is read as usual. The object goes to the live bucket under a content-
 // addressed immutable key, create-only, and is read back and compared before the commit.
 //
 // The document id and version are derived from (principal, legacy id, kind, generation, sha256), so
@@ -182,4 +185,10 @@ async function record(sql: PartitionSql, principalId: string, s: StagedLegacyDoc
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [principalId, s.kind, s.legacyId, s.generation, s.sha256, orgId, outcome, ids?.id ?? null, ids?.version ?? null, DOCUMENT_PROMOTION_REVISION,
       binding.acceptedCopy, binding.invocation]);
+  // Legacy civil ID photos are not read by OCR: noted, never pending (see the header).
+  if (ids && (s.kind === 'civil-id-front' || s.kind === 'civil-id-back')) {
+    await sql.query(`INSERT INTO civil_id_ocr_jobs (id, principal_id, org_id, side, document_id, document_version, status, not_before, created_at, updated_at)
+      VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'noted', clock_timestamp(), clock_timestamp(), clock_timestamp())
+      ON CONFLICT (document_id, document_version) DO NOTHING`, [principalId, orgId, s.kind === 'civil-id-front' ? 'front' : 'back', ids.id, ids.version]);
+  }
 }

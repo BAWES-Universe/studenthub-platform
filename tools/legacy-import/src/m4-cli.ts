@@ -229,6 +229,8 @@ export interface M4Receipt {
   readonly copy?: DocCopyCounts;
   /** For `docpromote`: the accepted doccopy it consumed. */
   readonly acceptedCopy?: string;
+  /** For `docpromote`: an opaque fingerprint of the destination account, bucket and organization it promoted into. */
+  readonly promotionDestination?: string;
   /** For `docpromote`: counts per outcome only, never a principal or legacy id. */
   readonly docPromotion?: DocPromotionCounts;
 }
@@ -450,6 +452,8 @@ export interface WriteTarget {
   copyCheckpoints(): CopyCheckpointStore;
   /** Whether the promotion record (0662) and the per-owner document store (0661, authoritative) are migrated. */
   docPromotionReady(): Promise<boolean>;
+  /** The promotion destination recorded on the staging marker row (0662), or null when none is recorded. */
+  promotionDestination(): Promise<PromotionDestination | null>;
   /** Every staged row of one generation, read on the writer session; only after claimWriter. */
   stagedGeneration(generation: string): Promise<readonly StagedDocument[]>;
   /**
@@ -504,6 +508,12 @@ export const DOC_PROMOTION_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migr
   AND to_regclass('public.legacy_document_promotions') IS NOT NULL
   AND to_regclass('public.candidate_document_partitions') IS NOT NULL
   AND EXISTS (SELECT 1 FROM candidate_document_store_authority WHERE singleton AND store = 'partitioned') AS ready`;
+/** The document store a promotion writes into: account, bucket and the candidate documents' organization. */
+export interface PromotionDestination { readonly account: string; readonly bucket: string; readonly org: string }
+const DESTINATION_ACCOUNT = /^[a-f0-9]{32}$/, DESTINATION_BUCKET = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/, DESTINATION_ORG = /^[A-Za-z0-9_-]{1,128}$/;
+/** An opaque fingerprint of a promotion destination, for receipts. */
+export const promotionDestinationFingerprint = (d: PromotionDestination): string =>
+  createHash("sha256").update(`m2-promotion-destination-v1\n${d.account}/${d.bucket}\n${d.org}`).digest("hex");
 export interface PendingDocPromotion { readonly principalId: string; readonly legacyId: string; readonly kind: string }
 /** How many pending principals `promote` takes at a time. */
 export const PROMOTE_BATCH = 500;
@@ -675,6 +685,14 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
     copyCheckpoints: () => {
       if (!writer) throw new Error("m4.writerNotClaimed");
       return postgresCopyCheckpoints(writer);
+    },
+    promotionDestination: async () => {
+      try {
+        const { rows } = await pool.query<{ account: string | null; bucket: string | null; org: string | null }>(
+          "SELECT promotion_account AS account, promotion_bucket AS bucket, promotion_org AS org FROM legacy_import_target WHERE environment = 'staging'");
+        const r = rows.length === 1 ? rows[0]! : null;
+        return r?.account && r.bucket && r.org ? { account: r.account, bucket: r.bucket, org: r.org } : null;
+      } catch { return null; }
     },
     docPromotionReady: async () => {
       try { return (await pool.query<{ ready: boolean }>(DOC_PROMOTION_READY_SQL)).rows[0]?.ready === true; } catch { return false; }
@@ -1378,8 +1396,12 @@ const cOrder = (a: { principalId: string; kind: string }, b: { principalId: stri
  *   receipt's and which the marker records, and a live bucket (`M4_LIVE_DOCUMENT_BUCKET`) that is
  *   neither the staging nor the legacy bucket (`documentBucket`), and the live store's settings
  *   (`promoterConfig`);
- * - the staging marker and target (`target`), migrations 0661 (authoritative) and 0662 (`schema`),
- *   then the one-writer lock (`writerBusy`), and under it every selected document staged in the
+ * - the staging marker and target (`target`), migrations 0661 (authoritative) and 0662 (`schema`);
+ * - the destination (M4_LIVE_DOCUMENT_ACCOUNT_ID, M4_LIVE_DOCUMENT_BUCKET, M4_DOCUMENT_ORG_ID) equal
+ *   to the one this database records for its staging environment (0662), account, bucket and
+ *   organization, never the staging copy's (`promotionDestination`); the receipt carries its
+ *   fingerprint only;
+ * - then the one-writer lock (`writerBusy`), and under it every selected document staged in the
  *   receipt's generation exactly as selected (`stagedInput`).
  * It then walks the linked, unrecorded (person, kind) pairs of that generation in C order with a
  * cursor, only those the selected set names, reads each staged object back from staging (bounded by
@@ -1443,7 +1465,7 @@ async function docPromote(deps: CliDeps, revision: string, publish: (status: M4R
   const tuple = (legacyId: string, kind: string) => `${legacyId}\u0000${kind}`;
   const selection = new Map(selected.map((d) => [tuple(d.legacyId, d.kind), d] as const));
   if (selection.size !== selected.length) return refuse("acceptedCopy");
-  const base = { revision, artifact, target: targetId, acceptedCopy: accepted, acceptedDoccheck: doccheck, mirror: { generation }, staging: copy.staging };
+  let base: Parameters<typeof bind>[0] = { revision, artifact, target: targetId, acceptedCopy: accepted, acceptedDoccheck: doccheck, mirror: { generation }, staging: copy.staging };
   bind(base);
 
   // The staging identity the copy wrote to, the live bucket apart from it and from legacy's.
@@ -1452,6 +1474,10 @@ async function docPromote(deps: CliDeps, revision: string, publish: (status: M4R
   const identity = stagingIdentity(accountId, bucketName);
   const live = env.M4_LIVE_DOCUMENT_BUCKET ?? "";
   if (!identity || stagingFingerprint(identity) !== copy.staging || !live || live === bucketName || live === env.M4_LEGACY_BUCKET) return refuse("documentBucket");
+  // The destination as configured for this run: account, bucket and organization, all well formed.
+  const destination: PromotionDestination = { account: env.M4_LIVE_DOCUMENT_ACCOUNT_ID ?? "", bucket: live, org: env.M4_DOCUMENT_ORG_ID ?? "" };
+  if (!DESTINATION_ACCOUNT.test(destination.account) || !DESTINATION_BUCKET.test(destination.bucket) || !DESTINATION_ORG.test(destination.org)
+    || (destination.account === accountId && destination.bucket === bucketName)) return refuse("promotionDestination");
   let objects: StagingObjects;
   try { objects = (deps.staging ?? envStaging)(env); } catch { return refuse("stagingConfig"); }
   const target = deps.target(env);
@@ -1461,6 +1487,13 @@ async function docPromote(deps: CliDeps, revision: string, publish: (status: M4R
   if (!await target.docPromotionReady()) return refuse("schema");
   const recorded = await target.documentBucket();
   if (!recorded || recorded.account !== accountId || recorded.bucket !== bucketName) return refuse("documentBucket");
+  // The destination must be exactly the one this database records for its own environment (0662):
+  // the same account, not only a bucket of the same name, and the same organization. Checked before
+  // any storage read or write and before the writer lock, so a mismatch reads, writes and records nothing.
+  const bound = await target.promotionDestination();
+  if (!bound || bound.account !== destination.account || bound.bucket !== destination.bucket || bound.org !== destination.org) return refuse("promotionDestination");
+  base = { ...base, promotionDestination: promotionDestinationFingerprint(destination) };
+  bind(base);
   if (!await target.claimWriter()) return refuse("writerBusy");
 
   // Under the writer lock: every selected document is staged in this generation exactly as selected.

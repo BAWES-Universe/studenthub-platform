@@ -178,3 +178,43 @@ test('PROMO-06 a promotion and the person\'s own upload serialise on the person\
   }
  }
 });
+
+test('PROMO-07 a promoted civil ID photo is recorded as already seen by OCR, so no sweep queues it; other kinds are not',unavailable,async()=>{
+ const jobs=async p=>(await pool.query('SELECT side, status, document_id::text AS id, document_version::text AS version, org_id FROM civil_id_ocr_jobs WHERE principal_id=$1 ORDER BY side',[p])).rows;
+ for(const [kind,side] of [['civil-id-front','front'],['civil-id-back','back']]){
+  const r=await rig({kind}),bucket=liveBucket(),ids=promotionIds(r.principal,r.staged);
+  assert.equal(await promotion(bucket).promote(r.principal,r.staged,r.bytes,binding),'promoted');
+  assert.deepEqual(await jobs(r.principal),[{side,status:'noted',id:ids.id,version:ids.version,org_id:ORG}]);
+  // The sweep inserts with ON CONFLICT (document_id, document_version) DO NOTHING: this photo is never pending.
+  const q=await pool.query(`INSERT INTO civil_id_ocr_jobs (id, principal_id, org_id, side, document_id, document_version, status, not_before, created_at, updated_at)
+   VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'pending', now(), now(), now()) ON CONFLICT (document_id, document_version) DO NOTHING`,[r.principal,ORG,side,ids.id,ids.version]);
+  assert.equal(q.rowCount,0);
+ }
+ const photo=await rig();
+ assert.equal(await promotion(liveBucket()).promote(photo.principal,photo.staged,photo.bytes,binding),'promoted');
+ assert.deepEqual(await jobs(photo.principal),[]);
+ // A slot found held records no job either.
+ const held=await rig({kind:'civil-id-front'});
+ await pool.query("INSERT INTO candidate_document_slots (person_id, org_id, type, state) VALUES ($1,$2,'civil-id-front','cleared')",[held.principal,ORG]);
+ assert.equal(await promotion(liveBucket()).promote(held.principal,held.staged,held.bytes,binding),'personHeld');
+ assert.deepEqual(await jobs(held.principal),[]);
+});
+
+test('PROMO-08 the promotion destination is bound once on the staging marker, apart from the staging copy, and never changed',unavailable,async()=>{
+ const c=await pool.connect();
+ const fails=async(sql,args,re)=>{await c.query('SAVEPOINT x');await assert.rejects(c.query(sql,args),re);await c.query('ROLLBACK TO SAVEPOINT x');};
+ try{
+  await c.query('BEGIN');
+  await c.query('DELETE FROM legacy_import_target');
+  await c.query("INSERT INTO legacy_import_target (environment, document_account, document_bucket) VALUES ('staging',$1,'sh-staging-docs')",['a'.repeat(32)]);
+  const set="UPDATE legacy_import_target SET promotion_account=$1, promotion_bucket=$2, promotion_org=$3";
+  await fails(set,['a'.repeat(32),'sh-staging-docs','org-docs'],/promotion_apart/);
+  await fails('UPDATE legacy_import_target SET promotion_account=$1',['b'.repeat(32)],/promotion_identity/);
+  await fails(set,['b'.repeat(32),'sh-live-docs','org.dots'],/check constraint/);
+  await c.query(set,['b'.repeat(32),'sh-live-docs','org-docs']);
+  await fails(set,['c'.repeat(32),'sh-live-docs','org-docs'],/set once/);
+  await fails(set,['b'.repeat(32),'sh-live-docs','org-other'],/set once/);
+  await fails('UPDATE legacy_import_target SET promotion_account=NULL, promotion_bucket=NULL, promotion_org=NULL',[],/set once/);
+  await c.query('UPDATE legacy_import_target SET set_at=now()');
+ }finally{await c.query('ROLLBACK').catch(()=>{});c.release();}
+});

@@ -16,6 +16,7 @@ const mutations = [
   ['link not rechecked', 'PROMO-04', "if (link.rows[0].legacy_candidate_id !== staged.legacyId)\n                    return 'linkChanged';", ''],
   ['staged row not rechecked', 'PROMO-04', "if (!await sameStaged(sql, staged))\n                    return 'stagedChanged';", ''],
   ['bytes not checked against the staged digest', 'PROMO-04', ' || sha(bytes) !== staged.sha256)', ')'],
+  ['promoted civil ID photo left for OCR', 'PROMO-07', "'noted', clock_timestamp()", "'pending', clock_timestamp()"],
   ['ids not derived (a retry names another object)', 'PROMO-05', "version: derivedUuid('legacy-document-version-v1', parts)", "version: derivedUuid('legacy-document-version-v1', [...parts, String(Math.random())])"],
 ];
 if (!process.env.DATABASE_URL) {

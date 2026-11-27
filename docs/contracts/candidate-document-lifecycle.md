@@ -257,7 +257,12 @@ organization's own documents. `PostgresDocumentPartitions` and
   `legacy_document_promotions` commits with the document. A person's own upload
   that started after a promotion sees the promoted version as current and must
   name it to replace it; one that started first makes the promotion wait for a
-  later run. See `docs/lanes/cutover/PLAN.md`, "Promotion step".
+  later run. It writes only into the document store and organization this
+  database records as its own (the staging marker's promotion destination,
+  0662). A promoted civil ID photo is recorded as already seen by OCR
+  (`noted`) in the same transaction, so the sweep never queues it and
+  promotion adds no OCR cost or review. See `docs/lanes/cutover/PLAN.md`,
+  "Promotion step".
 
 **Read-audit decision:** successful list (including empty lists), delivery issuance,
 and delivery redemption now commit durable `list`, `issueDelivery`, and `deliver`

@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { M4_SOURCES, planM4, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
-import { acceptWrite, acquireSharedLock, contactSetDigest, digestKeyFingerprint, documentSetDigest, main, PROMOTE_BATCH, type CliDeps, type DocumentPromoter, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
+import { acceptWrite, acquireSharedLock, contactSetDigest, digestKeyFingerprint, documentSetDigest, main, PROMOTE_BATCH, promotionDestinationFingerprint, type CliDeps, type DocumentPromoter, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
 import { DocumentPromotionError, type DocumentPromotionOutcome } from "../../../packages/private-documents/src/legacy-promotion.js";
 import type { LegacyObjectReader } from "../src/m2-document-check.js";
 import type { StagedDocument, StagingObjects } from "../src/m2-copy.js";
@@ -28,7 +28,8 @@ const CONTACT_VALUES = ["+96550001234", "96550001234", "50001234", "secret.handl
 const REFRESH = { ok: true, startedAt: "2026-11-23T01:00:00.000Z", finishedAt: "2026-11-23T01:05:00.000Z", totalRows: 42 };
 const MIRROR_ID = "3e11fa47-71ca-11e1-9e33-c80aa9429562";
 const STAGING_BUCKET_NAME = "sh-staging-legacy-docs";
-const STAGING_ACCOUNT = "0123456789abcdef".repeat(2), OTHER_ACCOUNT = "fedcba9876543210".repeat(2);
+const STAGING_ACCOUNT = "0123456789abcdef".repeat(2), OTHER_ACCOUNT = "fedcba9876543210".repeat(2), LIVE_ACCOUNT = "a1b2c3d4e5f60718".repeat(2);
+const LIVE_DESTINATION = { account: LIVE_ACCOUNT, bucket: "sh-live-docs", org: "org-docs" };
 const GENERATION_ID = "6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b";
 
 function sources(): M4Sources {
@@ -86,6 +87,8 @@ interface FakeDb {
   docLinks: Map<string, string>;
   docLedger: Map<string, DocumentPromotionOutcome>;
   docOutcomes: Map<string, DocumentPromotionOutcome | Error>;
+  /** The promotion destination recorded on the staging marker row (0662). */
+  promotionDestination: { account: string; bucket: string; org: string } | null;
   /** What the promotion was handed: principal, kind, sha256 of the bytes. */
   docPromoted: [string, string, string][];
 }
@@ -93,7 +96,7 @@ const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARG
   promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64), linkReportReady: true,
   links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplePrincipals": [], "link.contactTaken": [], "link.emailMismatch": [] } },
   documentsReady: true, documentBucket: { account: STAGING_ACCOUNT, bucket: STAGING_BUCKET_NAME }, stagedDocuments: new Map(), checkpoints: new Map(), checkpointLoads: 0,
-  docPromotionReady: true, docLinks: new Map(), docLedger: new Map(), docOutcomes: new Map(), docPromoted: [] });
+  docPromotionReady: true, promotionDestination: LIVE_DESTINATION, docLinks: new Map(), docLedger: new Map(), docOutcomes: new Map(), docPromoted: [] });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -203,6 +206,7 @@ function harness(opts: HarnessOptions = {}): Harness {
     },
     documentsReady: async () => db.documentsReady,
     documentBucket: async () => db.documentBucket,
+    promotionDestination: async () => db.promotionDestination,
     documentStaging: () => {
       assert.equal(db.writer, me, "the staging table is written only by the lock holder");
       return {
@@ -1175,7 +1179,8 @@ test("doccheck turns a failed object read into a counted issue, and a failed leg
 });
 
 // doccopy (M-2 copy step). Synthetic objects; an accepted doccheck is produced by a real doccheck run.
-const copyEnv = { M4_STAGING_DOCUMENT_ACCOUNT_ID: STAGING_ACCOUNT, M4_STAGING_DOCUMENT_BUCKET: STAGING_BUCKET_NAME, M4_LEGACY_BUCKET: "sh-legacy-bucket", M4_LIVE_DOCUMENT_BUCKET: "sh-live-docs" };
+const copyEnv = { M4_STAGING_DOCUMENT_ACCOUNT_ID: STAGING_ACCOUNT, M4_STAGING_DOCUMENT_BUCKET: STAGING_BUCKET_NAME, M4_LEGACY_BUCKET: "sh-legacy-bucket", M4_LIVE_DOCUMENT_BUCKET: "sh-live-docs",
+  M4_LIVE_DOCUMENT_ACCOUNT_ID: LIVE_ACCOUNT, M4_DOCUMENT_ORG_ID: "org-docs" };
 async function acceptedDoccheck(photo: Buffer) {
   const dir = provenancedDir();
   const legacy: LegacyObjectReader = { read: async (key) => (key === "photos/Secret-photo.png" ? { kind: "found", bytes: photo } : { kind: "missing" }) };
@@ -1398,7 +1403,9 @@ test("docpromote promotes the accepted copy's staged documents into linked peopl
     assert.ok(h.calls.includes("docpromote.close"));
     const everything = [JSON.stringify(r), h.out.join("\n"), h.err.join("\n")].join("\n");
     assert.ok(!everything.includes(PERSON) && !everything.includes('"31"') && !everything.includes("Secret"), "no principal, legacy id or key leaves the run");
-    assert.ok(![STAGING_ACCOUNT, STAGING_BUCKET_NAME, "sh-live-docs"].some((v) => everything.includes(v)), "no account or bucket leaves the run");
+    assert.ok(![STAGING_ACCOUNT, STAGING_BUCKET_NAME, "sh-live-docs", LIVE_ACCOUNT, "org-docs"].some((v) => everything.includes(v)), "no account, bucket or organization leaves the run");
+    assert.equal(r.promotionDestination, promotionDestinationFingerprint(LIVE_DESTINATION), "the receipt names the destination by fingerprint only");
+    assert.match(r.promotionDestination!, /^[0-9a-f]{64}$/);
     cleanup(h);
     // A re-run finds nothing pending and promotes nothing.
     const again = promoteHarness(a);
@@ -1415,7 +1422,7 @@ test("docpromote promotes the accepted copy's staged documents into linked peopl
   } finally { rmSync(a.dir, { recursive: true, force: true }); }
 });
 
-test("docpromote is refused before any staging read or promotion without a complete accepted copy, its staging identity, a separate live bucket, the target and schema", async () => {
+test("docpromote is refused before any staging read or promotion without a complete accepted copy, its staging identity, a separate live bucket, the bound destination, the target and schema", async () => {
   const a = await acceptedCopy();
   const receiptFile = path.join(a.out, `${a.accepted}.doccopy.receipt.json`), reportFile = path.join(a.out, `${a.accepted}.doccopy.report.json`);
   const checkFile = path.join(a.out, `${a.doccheck}.doccheck.report.json`);
@@ -1460,6 +1467,18 @@ test("docpromote is refused before any staging read or promotion without a compl
     await run("documentBucket", { env: { M4_LIVE_DOCUMENT_BUCKET: "sh-legacy-bucket" } });
     await run("documentBucket", { env: { M4_LIVE_DOCUMENT_BUCKET: undefined } });
     await run("documentBucket", { db: { ...a.db, docLedger: new Map(), docPromoted: [], documentBucket: { account: OTHER_ACCOUNT, bucket: STAGING_BUCKET_NAME } } });
+    // The destination must be the one this database records: the same account (not only a bucket of
+    // the same name in another account), the same bucket and the same organization.
+    const rest = { ...a.db, docLedger: new Map(), docPromoted: [] };
+    await run("promotionDestination", { env: { M4_LIVE_DOCUMENT_ACCOUNT_ID: OTHER_ACCOUNT } });
+    await run("promotionDestination", { env: { M4_DOCUMENT_ORG_ID: "org-other" } });
+    await run("promotionDestination", { env: { M4_LIVE_DOCUMENT_BUCKET: "sh-other-docs" } });
+    await run("promotionDestination", { env: { M4_LIVE_DOCUMENT_ACCOUNT_ID: undefined } });
+    await run("promotionDestination", { env: { M4_DOCUMENT_ORG_ID: undefined } });
+    await run("promotionDestination", { env: { M4_DOCUMENT_ORG_ID: "org.with.dots" } });
+    await run("promotionDestination", { db: { ...rest, promotionDestination: { ...LIVE_DESTINATION, account: OTHER_ACCOUNT } } });
+    await run("promotionDestination", { db: { ...rest, promotionDestination: { ...LIVE_DESTINATION, org: "org-other" } } });
+    await run("promotionDestination", { db: { ...rest, promotionDestination: null } });
     await run("target", { db: { ...a.db, docLedger: new Map(), docPromoted: [], marker: { environment: "staging", targetId: randomUUID() } } });
     await run("schema", { db: { ...a.db, docLedger: new Map(), docPromoted: [], docPromotionReady: false } });
     await run("writerBusy", { db: { ...a.db, docLedger: new Map(), docPromoted: [], writer: {} } });
