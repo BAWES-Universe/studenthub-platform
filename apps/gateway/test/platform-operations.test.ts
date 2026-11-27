@@ -62,6 +62,7 @@ test("OPS_PAGE an operator admin sees every job's last run and whether it is lat
   assert.match(html, /<dt>Overdue<\/dt><dd><strong>3<\/strong><\/dd>/);
   assert.match(html, /<tr><td>40<\/td><td><strong>2<\/strong><\/td><td>5<\/td><td>1<\/td><\/tr>/);
   assert.match(html, /href="\/admin\/jobs"/); assert.match(html, /href="\/admin\/outbox"/);
+  assert.match(html, /Some failed attempts are tried again, up to the retry limit; one with no address is not\./, "OPS_PAGE not every failure is retried");
   assert.match(html, /Not sent means this environment does not send email or delivery is not set up\. Suppressed means the person turned that email off or it was no longer needed\. An email with no address counts as failed\./, "OPS_PAGE outcomes as the worker records them");
   assert.doesNotMatch(html, /cache|flush/i, "no cache flush");
   assert.equal(reads.email, 1);
