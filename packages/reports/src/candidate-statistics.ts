@@ -14,7 +14,8 @@
  * - Legacy added every currency together. Here money is per currency.
  * - Legacy summed hours on every transfer row. Here hours are summed over the person's lines on
  *   transfers that are not draft (still being edited), cancelled or deleted.
- * - Hours and bonus are read from a line's calculation only when it is the pay lane's generated
+ * - The bonus is read only from an hourly line, the only pay model whose total the pay lane adds a
+ *   bonus to. Hours and bonus are read from a line's calculation only when it is the pay lane's generated
  *   calculation (`CANDIDATE_STATISTICS_CALCULATION_VERSION`) and its result still matches the line's
  *   stored candidate total. A line added or edited by hand counts fully as paid, with no hours and
  *   no bonus, since nothing on it says how its total splits.
@@ -33,7 +34,7 @@ export interface CandidatePayLine {
   /** Only the calculation fields this report reads; anything else is never selected. */
   readonly calculation: {
     readonly version: unknown; readonly hours: unknown; readonly minutes: unknown; readonly seconds: unknown;
-    readonly bonus: unknown; readonly resultKind: unknown; readonly resultCandidateTotal: unknown; readonly bonusCommission: unknown;
+    readonly payModel: unknown; readonly bonus: unknown; readonly resultKind: unknown; readonly resultCandidateTotal: unknown; readonly bonusCommission: unknown;
   } | null;
 }
 export interface CandidateStatisticsStore {
@@ -63,7 +64,8 @@ export function lineParts(line: CandidatePayLine): { readonly seconds: bigint; r
   const hours = typeof c.hours === "string" && /^[0-9]{1,9}$/.test(c.hours) ? BigInt(c.hours) : null;
   const minutes = part(c.minutes, 59), seconds = part(c.seconds, 59), bonus = fils(c.bonus), commission = fils(c.bonusCommission);
   if (hours === null || minutes === null || seconds === null || bonus === null || commission === null) return null;
-  const net = bonus - commission;
+  // The pay lane adds a bonus only to an hourly line (`calculatePayLine`); a salary or fixed line's total holds none.
+  const net = c.payModel === "hourly" ? bonus - commission : 0n;
   if (net < 0n || net > total) return null;
   return { seconds: hours * 3600n + BigInt(minutes * 60 + seconds), bonus: net };
 }

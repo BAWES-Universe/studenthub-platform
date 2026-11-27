@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CANDIDATE_STATISTICS_CALCULATION_VERSION, candidateStatistics, lineParts, type CandidatePayLine } from "../src/candidate-statistics.js";
 
-const calc = (over: Partial<NonNullable<CandidatePayLine["calculation"]>> = {}): CandidatePayLine["calculation"] => ({ version: CANDIDATE_STATISTICS_CALCULATION_VERSION, hours: "1", minutes: 2, seconds: 3,
+const calc = (over: Partial<NonNullable<CandidatePayLine["calculation"]>> = {}): CandidatePayLine["calculation"] => ({ version: CANDIDATE_STATISTICS_CALCULATION_VERSION, hours: "1", minutes: 2, seconds: 3, payModel: "hourly",
   bonus: "2.000", resultKind: "calculated", resultCandidateTotal: "10.000", bonusCommission: "0.250", ...over });
 const line = (calculation: CandidatePayLine["calculation"], candidateTotal = "10.000", paidOut = true, currency = "KWD"): CandidatePayLine => ({ currency, candidateTotal, paidOut, calculation });
 
 test("CANDIDATE_STATISTICS a generated line that still matches its total gives worked time and the bonus after commission", () => {
   assert.deepEqual(lineParts(line(calc())), { seconds: 3723n, bonus: 1750n });
   assert.deepEqual(lineParts(line(calc({ resultCandidateTotal: "10" }))), { seconds: 3723n, bonus: 1750n }, "the same amount written another way");
+  for (const payModel of ["monthly_salary", "fixed", undefined]) assert.deepEqual(lineParts(line(calc({ payModel, bonusCommission: "0.000" }))), { seconds: 3723n, bonus: 0n }, `no bonus in a ${String(payModel)} line's total`);
 });
 
 test("CANDIDATE_STATISTICS anything else gives no parts, so the whole total counts as paid", () => {

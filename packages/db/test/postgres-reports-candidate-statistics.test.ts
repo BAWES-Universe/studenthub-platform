@@ -72,6 +72,10 @@ test("CANDIDATE_STATISTICS_PG money is what was paid out, per currency, with the
   await transfer(5, [{ total: "200.000", calculation: F2("100", 0, 0, "0", "0.000", "200.000") }], "KWD"); // draft
   await transfer(6, [{ total: "100.000", calculation: F2("50", 0, 0, "0", "0.000", "100.000") }], "KWD", "cancel");
   await transfer(7, [{ total: "140.000", calculation: F2("70", 0, 0, "0", "0.000", "140.000") }], "KWD", "lock", "delete");
+  // A salary line carrying a bonus input: the pay lane adds no bonus to its total, so all of it is paid.
+  const salary = F2("0", 0, 0, "6.000", "0.000", "50.000") as { input: { rate: Record<string, unknown> } };
+  salary.input.rate = { payModel: "monthly_salary", source: "contract", candidateTotal: "50.000", companyTotal: "99.000" };
+  await transfer(9, [{ total: "50.000", calculation: salary, paid: true }], "KWD", "lock", "payment_received");
   // Another currency stays apart.
   await transfer(8, [{ total: "7.000", paid: true }], "USD", "lock", "payment_received");
   const store = new PostgresCandidateStatisticsStore({ pool });
@@ -81,7 +85,7 @@ test("CANDIDATE_STATISTICS_PG money is what was paid out, per currency, with the
   const stats = await new CandidateStatisticsService(store, () => NOW).own("me");
   assert.deepEqual(stats.worked, { hours: "4", minutes: 16, seconds: 5 });
   assert.deepEqual(stats.money, [
-    { currency: "KWD", paid: "21.000", bonus: "4.500", earnings: "25.500" },
+    { currency: "KWD", paid: "71.000", bonus: "4.500", earnings: "75.500" },
     { currency: "USD", paid: "7.000", bonus: "0.000", earnings: "7.000" },
   ]);
   const other = await new CandidateStatisticsService(store, () => NOW).own("other");

@@ -16,14 +16,14 @@ export interface CandidateStatisticsLineRow {
   readonly paidOut: boolean;
   readonly calculation: {
     readonly version: unknown; readonly hours: unknown; readonly minutes: unknown; readonly seconds: unknown;
-    readonly bonus: unknown; readonly resultKind: unknown; readonly resultCandidateTotal: unknown; readonly bonusCommission: unknown;
+    readonly payModel: unknown; readonly bonus: unknown; readonly resultKind: unknown; readonly resultCandidateTotal: unknown; readonly bonusCommission: unknown;
   } | null;
 }
 
 const LINES = `SELECT l.currency_code AS currency, l.candidate_total::text AS "candidateTotal",
     (l.paid AND t.status IN ('distributing', 'complete')) AS "paidOut",
     jsonb_build_object('version', l.calculation->'version', 'hours', l.calculation->'input'->'hours', 'minutes', l.calculation->'input'->'minutes',
-      'seconds', l.calculation->'input'->'seconds', 'bonus', l.calculation->'input'->'bonus', 'resultKind', l.calculation->'result'->'kind',
+      'seconds', l.calculation->'input'->'seconds', 'payModel', l.calculation->'input'->'rate'->'payModel', 'bonus', l.calculation->'input'->'bonus', 'resultKind', l.calculation->'result'->'kind',
       'resultCandidateTotal', l.calculation->'result'->'candidateTotal', 'bonusCommission', l.calculation->'result'->'bonusCommission') AS calculation
   FROM pay_transfer_lines l JOIN pay_transfers t ON t.id = l.transfer_id AND t.currency_code = l.currency_code
   WHERE l.person_id = $1 AND NOT t.deleted AND t.status NOT IN ('draft', 'cancelled')`;
