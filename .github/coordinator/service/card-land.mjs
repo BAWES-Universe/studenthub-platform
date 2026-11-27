@@ -967,7 +967,9 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   let landHead = null;
   let release = null;
   try {
-    if (paused()) return result("LAND_PAUSED", { reason: `${pausePath} exists; nothing was opened` });
+    // before_work: nothing was read or written yet, so a caller may treat
+    // this landing as never begun (a landing recovery gives its attempt back).
+    if (paused()) return result("LAND_PAUSED", { reason: `${pausePath} exists; nothing was opened`, before_work: true });
     policy = settlePolicy(config);
     const review = threadReviewPolicy(config);
     if (review?.error) stop("LAND_ERROR", review.error);

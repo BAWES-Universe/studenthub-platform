@@ -585,7 +585,7 @@ function intentLive(io, paths, revision, id) {
   try { return claimLive(io, paths, JSON.parse(io.fs.readFileSync(file, "utf8"))); } catch { return false; }
 }
 
-export async function nextCard(io, paths, config, revision, { landing = null, record = false } = {}) {
+export async function nextCard(io, paths, config, revision, { landing = null, record = false, passOver = null } = {}) {
   const queue = cardQueue(config);
   if (!queue.queue) return { id: null };
   if (!queue.ok) return { id: null, skipped: "NOT_READY", reason: `CARD_RUN_SCOPE: ${queue.reason}` };
@@ -607,6 +607,11 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
     const needs = queue.after?.[id] ?? [];
     if (parallel && needs.some((need) => stoppedIds.has(need))) { stoppedIds.add(id); continue; }
     if (parallel && needs.some((need) => !landedIds.has(need))) { waiting += 1; continue; }
+    // A landing recovery this start could not prove now (RECOVER_UNREADABLE)
+    // is passed over for the rest of this start only, like a card running
+    // elsewhere: it is tried again on the next start, and a card queued after
+    // it still waits for it.
+    if (parallel && passOver?.has(id)) { waiting += 1; continue; }
     const claim = autoClaim(paths, revision, id);
     // Landing recovery (card-recover.mjs): a passed run stopped at landing
     // under an earlier installed revision keeps its claim under that
@@ -1437,7 +1442,7 @@ function giveBackRun(io, paths, revision, id, claim, error) {
 // except a retryable refusal before arming, given back a bounded number of
 // times; see giveBackRun). Every reason
 // not to run is a skip that touches neither the host nor Linear.
-export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS }) {
+export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, passOver = new Set() }) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   const skip = (skipped, reason) => ({ ok: true, trigger: "timer", skipped, reason });
   if (io.fs.existsSync(paths.pause)) return skip("PAUSED", `${paths.pause} exists`);
@@ -1479,7 +1484,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       try {
         revision = installedRevision(io, paths);
         config = readConfig(io, paths);
-        const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true });
+        const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true, passOver });
         // SHU-321: only a done queue may go on to review a queue config pull
         // request; an invalid or paused one never does. M16: a stopped queue
         // does what a done one does (Card B, then Card A).
@@ -1534,8 +1539,17 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     finally { if (intent) { try { io.fs.unlinkSync(intent); } catch { /* gone already */ } } }
   }
   if (recoverNext) {
-    try { return await autoRecover({ io, paths, limits, config, revision, next: recoverNext, skip }); }
+    let recovered;
+    try { recovered = await autoRecover({ io, paths, limits, config, revision, next: recoverNext, skip }); }
     finally { if (intent) { try { io.fs.unlinkSync(intent); } catch { /* gone already */ } } }
+    // With more than one worker, a recovery that could not be read now gives
+    // this start to another card, selected again under the selection lock;
+    // the card stays retryable and its record unwritten.
+    if (parallel && recovered?.skipped === "RECOVER_UNREADABLE" && !passOver.has(recoverNext.id) && passOver.size < MAX_CARD_QUEUE) {
+      const instead = await autoRun({ io, paths, limits, passOver: new Set([...passOver, recoverNext.id]) });
+      return instead?.skipped ? { ...recovered, reason: `${recovered.reason}; nothing else to run on this start (${instead.skipped})` } : instead;
+    }
+    return recovered;
   }
   let result;
   try {
@@ -1649,7 +1663,7 @@ function recoverHeldDeadRun({ io, paths, limits, pid }) {
   if (reverted.reverted !== true) return failed("revert", `its revert did not finish (${reverted.code ?? "unknown"})`, { revert: reverted });
   const at = io.now().toISOString();
   let named;
-  try { named = deadRunClaim(io, paths); }
+  try { named = deadRunClaim(io, paths, pid); }
   catch (error) { return failed("status", `its status could not be read (${error.code})`, { revert: reverted }); }
   const claims = markDeadClaims(io, paths, pid, at, named);
   if (claims.failed.length) {
@@ -1698,7 +1712,7 @@ function writeRecoverPause(io, paths, text) {
 // The claim file of the run the worker's status names, or null when the
 // status names no unfinished run, or false when the run was a landing
 // recovery, which has no claim. A status that cannot be read throws.
-function deadRunClaim(io, paths) {
+function deadRunClaim(io, paths, pid = null) {
   let status = null;
   try { status = JSON.parse(io.fs.readFileSync(statusPath(paths), "utf8")); }
   catch (error) { if (error.code !== "ENOENT") throw Object.assign(new Error("status unreadable"), { code: error.code ?? "STATUS_UNREADABLE" }); }
@@ -1706,10 +1720,20 @@ function deadRunClaim(io, paths) {
   // its own record, which stays unfinished and is never run again, and the
   // card's claim it started from already has its outcome. No claim is the
   // dead run's, so none is marked (false: known to be none; null: unknown).
+  // Only when that record is the dead run's own (claimed by this worker and
+  // the pid that held the lock, and never finished): a status a recovery
+  // left behind is otherwise read as any card's, and fails closed.
   if (status && typeof status === "object" && !["finished", "recovered"].includes(status.step) && typeof status.recovery_record === "string"
-    && /^card-recover-[0-9a-f]{40}-[A-Z][A-Z0-9]*-\d+\.json$/.test(status.recovery_record)) return false;
+    && /^card-recover-[0-9a-f]{40}-[A-Z][A-Z0-9]*-\d+\.json$/.test(status.recovery_record) && recoveryOwnedBy(io, paths, status.recovery_record, pid)) return false;
   return status && typeof status === "object" && !["finished", "recovered"].includes(status.step)
     && typeof status.card === "string" && /^[0-9a-f]{40}$/.test(status.revision ?? "") ? autoClaim(paths, status.revision, status.card) : null;
+}
+function recoveryOwnedBy(io, paths, name, pid) {
+  if (!Number.isSafeInteger(pid)) return false;
+  try {
+    const record = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, name), "utf8"));
+    return record?.state !== "finished" && record?.worker === workerOf(paths) && record?.pid === pid;
+  } catch { return false; }
 }
 function markDeadClaims(io, paths, pid, at, named) {
   const marked = [];
@@ -1830,6 +1854,12 @@ async function autoRecover({ io, paths, limits, config, revision, next, skip }) 
       try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch (error) { return skip("NOT_READY", error.message); }
       const timeoutMs = limits.landRequestTimeoutMs ?? LAND_LIMITS.requestTimeoutMs;
       const fetchImpl = boundedFetch(io, timeoutMs);
+      // The landing token's custody, before the one attempt is claimed: a
+      // token that cannot be used now writes no record, and a later start
+      // with a usable token recovers.
+      let custody;
+      try { custody = readLandToken(io, paths.landEnv); } catch { custody = { token: null, refused: "the landing token file cannot be read" }; }
+      if (custody.refused || !custody.token) return skip("NOT_READY", `the landing recovery of ${id} needs a usable landing token: ${custody.refused ?? custody.reason ?? "no landing token"}`);
       let claimed;
       try {
         claimed = await claimRecovery({ io, paths, config, id, claim: next.recover, credentials, fetchImpl, gh: github(fetchImpl, credentials.GITHUB_TOKEN),
@@ -1848,15 +1878,23 @@ async function autoRecover({ io, paths, limits, config, revision, next, skip }) 
         invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: id, kind: "card", trigger: "timer", revision,
         recovery_record: path.basename(claimed.round.file), ...(await statusQueue(io, paths, config)) } });
       status.write({ step: "landing", ticks: 0, last_tick_at: null, armed_at: null, outcome: "LANDING_RECOVERY" });
-      let custody;
-      try { custody = readLandToken(io, paths.landEnv); } catch { custody = { token: null, refused: "the landing token file cannot be read" }; }
-      if (custody.refused || !custody.token) {
-        land = { outcome: custody.refused ? "LAND_ERROR" : "LAND_SKIPPED_NO_TOKEN", reason: custody.refused ?? custody.reason };
-      } else {
-        const plan = { id, kind: "card", branch: `coordinator/${id}`, record: { activation_id: next.recover.activation_id },
-          recover: { pr: next.recover.pr, head: claimed.head } };
-        land = await landCard({ io, plan, config, credentials, landToken: custody.token, pausePath: paths.pause, landLock: paths.landLock ?? LAND_LOCK,
-          limits: { ...LAND_LIMITS, waitMs: limits.landWaitMs ?? LAND_LIMITS.waitMs, pollMs: limits.landPollMs ?? LAND_LIMITS.pollMs, requestTimeoutMs: timeoutMs } });
+      const plan = { id, kind: "card", branch: `coordinator/${id}`, record: { activation_id: next.recover.activation_id },
+        recover: { pr: next.recover.pr, head: claimed.head } };
+      land = await landCard({ io, plan, config, credentials, landToken: custody.token, pausePath: paths.pause, landLock: paths.landLock ?? LAND_LOCK,
+        limits: { ...LAND_LIMITS, waitMs: limits.landWaitMs ?? LAND_LIMITS.waitMs, pollMs: limits.landPollMs ?? LAND_LIMITS.pollMs, requestTimeoutMs: timeoutMs } });
+      // A pause that came after the proof and stopped the landing before any
+      // landing work records nothing, as a pause before the proof does: the
+      // record is given back and a later start tries again. A pause once work
+      // has begun ends the attempt like any other stop.
+      if (land?.outcome === "LAND_PAUSED" && land.before_work === true) {
+        let returned = false;
+        try { io.fs.unlinkSync(claimed.round.file); returned = true; } catch { /* kept: the attempt ends below as a stop */ }
+        if (returned) {
+          holder.round = null;
+          status.write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "LANDING_RECOVERY", land: "LAND_PAUSED",
+            reverted: false, needs_owner: false });
+          return skip("PAUSED", `${paths.pause} exists; the landing recovery of ${id} did no landing work and is tried again once the pause is lifted`);
+        }
       }
     } catch (error) {
       land = { outcome: "LAND_ERROR", reason: String(error?.message ?? error) };

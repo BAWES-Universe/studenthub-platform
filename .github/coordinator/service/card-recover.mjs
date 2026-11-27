@@ -227,6 +227,12 @@ async function proveAndClaim({ io, paths, config, id, claim, credentials, fetchI
   const pulls = await readOpenPulls({ repo, token: credentials.GITHUB_TOKEN, fetchImpl });
   // A listing that could not be read whole proves nothing: unreadable, tried again later.
   if (pulls.complete !== true) recoverSkip("RECOVER_UNREADABLE", `the open pull requests claiming ${id} could not be read completely${pulls.reason ? ` (${pulls.reason})` : ""}`);
+  // The same pull request listed at another head than it was just read at
+  // moved between the two reads: nothing is proven either way, and a later
+  // start proves the head it is at then. A competing pull request in a
+  // complete listing stays a refusal below.
+  const listed = (pulls.items ?? []).find((pull) => pull?.number === claim.pr);
+  if (listed && listed.head?.sha !== head) recoverSkip("RECOVER_UNREADABLE", `#${claim.pr} moved while it was read (${head}, then ${listed.head?.sha ?? "no head"})`);
   const claimedBy = { complete: pulls.complete === true, items: (pulls.items ?? []).filter((pull) => pullRequestClaimsIssue(pull, id)), reason: pulls.reason ?? null };
   const owners = Array.isArray(config.linear_callback_actor_ids) ? config.linear_callback_actor_ids : [];
   const eligible = repairEligible({ issue: { id: issue.identifier, state: issue.state?.name ?? null, assignee: issue.assignee ?? null, delegate: issue.delegate ?? null },
