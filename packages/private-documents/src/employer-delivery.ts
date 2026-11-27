@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { documentReadHydrator, type DocumentState } from './index.js';
+import { documentReadHydrator, readPerson, type DocumentState } from './index.js';
 import { CANDIDATE_DOCUMENT_TYPES, type CandidateDocumentType } from './lifecycle-state.js';
 import { CandidateDocuments, LifecycleError } from './candidate-lifecycle.js';
 
@@ -48,9 +48,9 @@ export class EmployerDocuments {
     return viewer;
   }
 
-  private async read<T>(fn: (state: DocumentState) => Promise<T>): Promise<T> {
-    const store = this.options.documents.options.store;
-    return store.readPath ? store.readPath.read(fn) : store.transaction(fn);
+  /** Reads only `subject`'s documents when the store is per-owner. */
+  private async read<T>(subject: unknown, fn: (state: DocumentState) => Promise<T>): Promise<T> {
+    return readPerson(this.options.documents.options.store, subject, fn);
   }
 
   private rows(state: DocumentState, subject: string) {
@@ -65,7 +65,7 @@ export class EmployerDocuments {
   /** One link per document on file, each audited before it is returned. */
   async links(credential: unknown, subject: string, requestId: string): Promise<Array<{ type: CandidateDocumentType; url: string; expiresAt: number }>> {
     const viewer = await this.viewer(credential, subject, requestId);
-    return this.read(async state => {
+    return this.read(subject, async state => {
       const out: Array<{ type: CandidateDocumentType; url: string; expiresAt: number }> = [];
       for (const type of CANDIDATE_DOCUMENT_TYPES) {
         const rows = this.rows(state, subject).filter(row => row.type === type);
@@ -101,7 +101,7 @@ export class EmployerDocuments {
     const now = this.now();
     if (!Number.isSafeInteger(claim.issuedAt) || claim.expiresAt !== claim.issuedAt + EMPLOYER_LINK_TTL_MS || now < claim.issuedAt || now >= claim.expiresAt) return deny();
     const subject = claim.subject, requestId = claim.request, type = claim.type as CandidateDocumentType, version = claim.version;
-    return this.read(async state => {
+    return this.read(subject, async state => {
       const rows = this.rows(state, subject).filter(row => row.type === type);
       if (rows.length !== 1 || rows[0]!.version !== version) return deny(); // EMPLOYERDOC_MUTANT_VERSION
       const row = rows[0]!;

@@ -78,6 +78,9 @@ test("G02_STORE_ATOMIC one confirm writes the store access and its event; the st
   assert.deepEqual(await rows(target), [{ store_id: salmiya, granted_by: staff, revoked_by: staff, revoked: true }], "the row stays, with revoked_at");
   assert.deepEqual(await managers.managedStores(target), []);
   assert.deepEqual((await events(target)).map((row) => [row.action, row.reason]), [["grant", "Runs the Salmiya branch"], ["revoke", "Moved to Hawally"]]);
+  // The person page history names the store for each store manager event.
+  assert.deepEqual((await grants.history(target)).map((row) => [row.action, row.role, row.scope, row.storeName]),
+    [["revoke", "store-manager", "store", "Salmiya"], ["grant", "store-manager", "store", "Salmiya"]]);
   // Replaying the first token is refused and changes nothing.
   assert.deepEqual(await writes().confirm(staff, request, preview.token), { kind: "refused", reason: "token_already_used" });
   assert.equal((await events(target)).length, 2);
@@ -171,6 +174,11 @@ test("G02_STORE_LIST store search finds active stores of live companies by name 
   assert.ok(found.every((item) => item.orgId === acme));
   assert.ok(!found.some((item) => item.storeId === deletedCompany || item.storeId === removed));
   assert.deepEqual((await grants.findStores(`${tag}%`)).map((item) => item.name), [`${tag}%wild`], "% matches itself, not anything");
+  // Postgres text can't hold NUL: a search containing one finds nothing instead of failing the page.
+  assert.deepEqual(await grants.findStores(`${tag}\u0000`).catch((error: Error) => error.message), []);
+  assert.deepEqual(await grants.findOrganizations("Acme\u0000").catch((error: Error) => error.message), []);
+  assert.deepEqual(await grants.findPeople({ kind: "name", value: "Person\u0000" }).catch((error: Error) => error.message), []);
+  assert.deepEqual(await grants.findPeople({ kind: "email", value: "a\u0000@example.invalid" }).catch((error: Error) => error.message), []);
 
   const staff = await person([{ orgId: root, role: "staff", scope: "subtree" }]);
   const target = await person();

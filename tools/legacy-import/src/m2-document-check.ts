@@ -30,7 +30,8 @@ export type LegacyObjectRead =
 
 /** Read-only access to legacy's permanent bucket. It must never write, copy or delete. */
 export interface LegacyObjectReader {
-  read(key: string, maxBytes: number): Promise<LegacyObjectRead>;
+  /** `signal`, when given, aborts the read (the copy step passes one; the doccheck uses the adapter's own deadline). */
+  read(key: string, maxBytes: number, signal?: AbortSignal): Promise<LegacyObjectRead>;
 }
 
 export type DocumentMime = "image/png" | "image/jpeg" | "application/pdf";
@@ -74,9 +75,13 @@ function sniff(kind: DocumentKind, bytes: Buffer): DocumentMime | null {
   return null;
 }
 
-type Outcome = { readonly ok: CheckedDocument } | { readonly rule: DocumentCheckRule };
+type Outcome = { readonly ok: CheckedDocument; readonly bytes: Buffer } | { readonly rule: DocumentCheckRule };
 
-async function checkOne(row: DocumentSourceRow, reader: LegacyObjectReader): Promise<Outcome> {
+/**
+ * Reads one mapped document the way the check does (probe order, size cap, admission) and returns
+ * its bytes with what was recorded about them. The copy step uses it to read an approved document again.
+ */
+export async function readLegacyDocument(row: DocumentSourceRow, reader: LegacyObjectReader): Promise<Outcome> {
   const maxBytes = CANDIDATE_DOCUMENT_ADMISSION[row.kind].maxBytes;
   for (const key of row.keys) {
     let read: LegacyObjectRead | null | undefined;
@@ -91,7 +96,7 @@ async function checkOne(row: DocumentSourceRow, reader: LegacyObjectReader): Pro
     if (mime === null) return { rule: "document.admission" };
     try { validateCandidateContent(row.kind, mime, bytes); } catch { return { rule: "document.admission" }; }
     const sha256 = createHash("sha256").update(bytes).digest("hex");
-    return { ok: { legacyId: row.legacyId, kind: row.kind, key, mime, size: bytes.length, sha256 } };
+    return { ok: { legacyId: row.legacyId, kind: row.kind, key, mime, size: bytes.length, sha256 }, bytes };
   }
   return { rule: "document.missing" };
 }
@@ -106,7 +111,7 @@ export async function checkLegacyDocuments(documents: readonly DocumentSourceRow
   const checked: CheckedDocument[] = [];
   const issues: DocumentCheckIssue[] = [];
   for (const row of documents) {
-    const outcome = await checkOne(row, reader);
+    const outcome = await readLegacyDocument(row, reader);
     if ("ok" in outcome) checked.push(outcome.ok);
     else issues.push({ rule: outcome.rule, legacyId: row.legacyId, field: column.get(row.kind)! });
   }
@@ -118,4 +123,14 @@ export function documentCheckCounts(result: M2DocumentCheck): { checked: number;
   const rules: Record<DocumentCheckRule, number> = { "document.missing": 0, "document.tooLarge": 0, "document.admission": 0, "document.readFailed": 0 };
   for (const issue of result.issues) rules[issue.rule]++;
   return { checked: result.checked.length, bytes: result.checked.reduce((sum, d) => sum + d.size, 0), rules };
+}
+
+/**
+ * A digest of a checked document set: sha256 over each document's legacy id, kind, type, size and
+ * sha256, sorted by id then kind. No key or byte.
+ */
+export function documentSetDigest(documents: readonly Pick<CheckedDocument, "legacyId" | "kind" | "mime" | "size" | "sha256">[]): string {
+  const rows = documents.map((d) => [d.legacyId, d.kind, d.mime, d.size, d.sha256] as const)
+    .sort((a, b) => a[0].length - b[0].length || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0) || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+  return createHash("sha256").update(JSON.stringify(["m2-document-set-v1", rows])).digest("hex");
 }
