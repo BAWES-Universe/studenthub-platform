@@ -517,7 +517,7 @@ const CASES = [
   {
     name: "M77 skip the passed-head check",
     file: "service/card-land.mjs",
-    from: "    if (!headMatches(pr, { repo, branch, head })) {",
+    from: "    if (!headMatches(pr, { repo, branch, head: startHead })) {",
     to: "    if (false) { // SHU306-M77",
     pattern: "SHU-306 L4:",
   },

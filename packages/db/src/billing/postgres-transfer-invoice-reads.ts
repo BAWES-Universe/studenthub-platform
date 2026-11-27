@@ -85,6 +85,8 @@ export interface CompanyTransferEntry {
   readonly currencyCode: string;
   readonly status: CompanyTransferStatus;
   readonly lineCount: number;
+  /** Distinct people paid; one person can have a line at each of several stores. */
+  readonly personCount: number;
   /** What the company owes for the transfer: the sum of its lines' company totals. */
   readonly companyTotal: string;
   readonly paymentReceivedOn: string | null;
@@ -101,8 +103,8 @@ export interface CompanyTransferLine {
 }
 export interface CompanyTransferDetail extends CompanyTransferEntry { readonly lines: readonly CompanyTransferLine[] }
 
-const NAME = (alias: string, profile: string) => `COALESCE(NULLIF(btrim(${profile}.name_en), ''), ${alias}.name)`;
-const ENTRY = `i.invoice_number AS "invoiceNumber", i.transfer_id AS "transferId", i.org_id AS "orgId", ${NAME("o", "p")} AS "companyName",
+export const NAME = (alias: string, profile: string) => `COALESCE(NULLIF(btrim(${profile}.name_en), ''), ${alias}.name)`;
+export const ENTRY = `i.invoice_number AS "invoiceNumber", i.transfer_id AS "transferId", i.org_id AS "orgId", ${NAME("o", "p")} AS "companyName",
   i.currency_code AS "currencyCode", i.invoice_date::text AS "invoiceDate", i.total::text AS total, i.line_count AS "lineCount", i.status,
   (i.paid_at AT TIME ZONE 'Asia/Kuwait')::date::text AS "paidOn", c.credit_number AS "creditNumber", c.credit_date::text AS "creditedOn"`;
 /*
@@ -113,7 +115,7 @@ const ENTRY = `i.invoice_number AS "invoiceNumber", i.transfer_id AS "transferId
  * A credited invoice (F4.7) was shown when it was credited, so it stays, with its credit note, whatever
  * its transfer does next; an invoice voided for any other reason is gone.
  */
-const FROM = `FROM transfer_invoice i JOIN organizations o ON o.id = i.org_id LEFT JOIN organization_profiles p ON p.org_id = i.org_id
+export const FROM = `FROM transfer_invoice i JOIN organizations o ON o.id = i.org_id LEFT JOIN organization_profiles p ON p.org_id = i.org_id
   JOIN pay_transfers t ON t.id = i.transfer_id LEFT JOIN transfer_invoice_credit c ON c.invoice_number = i.invoice_number
   WHERE (NOT i.deleted OR i.void_reason = 'credited') AND i.org_id = ANY($1::text[])
     AND (i.status = 'paid' OR t.status IN ('locked', 'payment_sent') OR i.void_reason = 'credited')`;
@@ -124,18 +126,19 @@ const FROM = `FROM transfer_invoice i JOIN organizations o ON o.id = i.org_id LE
  * credit note's date. Nothing is read from
  * live pay lines, so a past window keeps its figures when later invoices are issued or paid.
  */
-const MOVEMENTS = `WITH docs AS (SELECT i.invoice_number, i.org_id, ${NAME("o", "p")} AS company, i.currency_code, i.total, i.invoice_date,
+export const MOVEMENTS = `WITH docs AS (SELECT i.invoice_number, i.org_id, ${NAME("o", "p")} AS company, i.currency_code, i.total, i.invoice_date,
     CASE WHEN i.status = 'paid' THEN (i.paid_at AT TIME ZONE 'Asia/Kuwait')::date END AS paid_on, c.credit_number, c.credit_date ${FROM}),
   moves AS (SELECT invoice_date AS on_date, 'invoice' AS kind, invoice_number, NULL::text AS credit_number, org_id, company, currency_code, total AS amount FROM docs
     UNION ALL SELECT paid_on, 'payment', invoice_number, NULL, org_id, company, currency_code, -total FROM docs WHERE paid_on IS NOT NULL
     UNION ALL SELECT credit_date, 'credit', invoice_number, credit_number, org_id, company, currency_code, -total FROM docs WHERE credit_number IS NOT NULL)`;
 
-const TRANSFER = `t.id AS "transferId", t.company_id AS "orgId", ${NAME("o", "p")} AS "companyName",
+export const TRANSFER = `t.id AS "transferId", t.company_id AS "orgId", ${NAME("o", "p")} AS "companyName",
   t.period_start::text AS "periodStart", t.period_end::text AS "periodEnd", t.currency_code AS "currencyCode", t.status,
   (SELECT count(*)::int FROM pay_transfer_lines l WHERE l.transfer_id = t.id) AS "lineCount",
+  (SELECT count(DISTINCT l.person_id)::int FROM pay_transfer_lines l WHERE l.transfer_id = t.id) AS "personCount",
   (SELECT COALESCE(sum(l.company_total), 0)::numeric(40,3)::text FROM pay_transfer_lines l WHERE l.transfer_id = t.id) AS "companyTotal",
   t.payment_received_on::text AS "paymentReceivedOn"`;
-const TRANSFERS = `FROM pay_transfers t JOIN organizations o ON o.id = t.company_id LEFT JOIN organization_profiles p ON p.org_id = t.company_id
+export const TRANSFERS = `FROM pay_transfers t JOIN organizations o ON o.id = t.company_id LEFT JOIN organization_profiles p ON p.org_id = t.company_id
   WHERE NOT t.deleted AND t.company_id = ANY($1::text[])`;
 
 export class PostgresTransferInvoiceReads {
