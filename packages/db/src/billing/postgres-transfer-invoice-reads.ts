@@ -85,6 +85,8 @@ export interface CompanyTransferEntry {
   readonly currencyCode: string;
   readonly status: CompanyTransferStatus;
   readonly lineCount: number;
+  /** Distinct people paid; one person can have a line at each of several stores. */
+  readonly personCount: number;
   /** What the company owes for the transfer: the sum of its lines' company totals. */
   readonly companyTotal: string;
   readonly paymentReceivedOn: string | null;
@@ -133,6 +135,7 @@ const MOVEMENTS = `WITH docs AS (SELECT i.invoice_number, i.org_id, ${NAME("o", 
 export const TRANSFER = `t.id AS "transferId", t.company_id AS "orgId", ${NAME("o", "p")} AS "companyName",
   t.period_start::text AS "periodStart", t.period_end::text AS "periodEnd", t.currency_code AS "currencyCode", t.status,
   (SELECT count(*)::int FROM pay_transfer_lines l WHERE l.transfer_id = t.id) AS "lineCount",
+  (SELECT count(DISTINCT l.person_id)::int FROM pay_transfer_lines l WHERE l.transfer_id = t.id) AS "personCount",
   (SELECT COALESCE(sum(l.company_total), 0)::numeric(40,3)::text FROM pay_transfer_lines l WHERE l.transfer_id = t.id) AS "companyTotal",
   t.payment_received_on::text AS "paymentReceivedOn"`;
 export const TRANSFERS = `FROM pay_transfers t JOIN organizations o ON o.id = t.company_id LEFT JOIN organization_profiles p ON p.org_id = t.company_id

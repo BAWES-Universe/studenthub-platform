@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 // file is restored before the next.
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required for the finance transfer mutations");
 const store = new URL("../dist/billing/postgres-finance-transfer-reads.js", import.meta.url);
+// The transfer row columns are shared with the company transfer pages.
+const shared = new URL("../dist/billing/postgres-transfer-invoice-reads.js", import.meta.url);
 const suite = fileURLToPath(new URL("../../../dist/packages/db/test/postgres-billing-finance-transfers.test.js", import.meta.url));
 const mutations = [
   ["let anyone past the central finance gate", "FINANCE_TRANSFERS_PG_DETAIL", "if (!await this.#gate(client, principalId))\n            return null;", "if (false)\n            return null;"],
@@ -16,17 +18,20 @@ const mutations = [
   ["hide that an older page exists", "FINANCE_TRANSFERS_PG", "const more = rows.length > limit;", "const more = false;"],
   ["count unpaid lines as paid", "FINANCE_TRANSFERS_PG_DETAIL", "FILTER (WHERE paid), 0)", "FILTER (WHERE true), 0)"],
   ["count unpaid lines in the paid count", "FINANCE_TRANSFERS_PG_DETAIL", "count(*) FILTER (WHERE paid)", "count(*)"],
+  ["count lines as people", "FINANCE_TRANSFERS_PG", "count(DISTINCT l.person_id)", "count(l.person_id)", shared],
   ["list the oldest period first", "FINANCE_TRANSFERS_PG", "ORDER BY t.period_end DESC, t.period_start DESC", "ORDER BY t.period_end ASC, t.period_start ASC"],
 ];
-const original = await readFile(store, "utf8");
+const originals = new Map([[store.href, await readFile(store, "utf8")], [shared.href, await readFile(shared, "utf8")]]);
+const restore = async () => { for (const [href, text] of originals) await writeFile(new URL(href), text); };
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-concurrency=1",
   ...(pattern ? [`--test-name-pattern=^${pattern} `] : []), suite], { encoding: "utf8", timeout: 120_000 });
 let killed = 0;
 try {
   assert.equal(run().status, 0, "the unmutated suite passes");
-  for (const [name, pattern, from, to] of mutations) {
+  for (const [name, pattern, from, to, file = store] of mutations) {
+    const original = originals.get(file.href);
     assert.equal(original.split(from).length - 1, 1, `mutation binds exactly once: ${name}`);
-    await writeFile(store, original.replace(from, () => to));
+    await writeFile(file, original.replace(from, () => to));
     const result = run(pattern);
     const output = result.stdout + result.stderr;
     assert.equal(result.error, undefined, `${name}: runner error`);
@@ -36,8 +41,8 @@ try {
     assert.match(output, /AssertionError|ERR_ASSERTION/, `${name}: did not die by assertion\n${output}`);
     killed++;
     process.stdout.write(`KILLED ${name} -> ${pattern}\n`);
-    await writeFile(store, original);
+    await restore();
   }
-} finally { await writeFile(store, original); }
+} finally { await restore(); }
 assert.equal(run().status, 0, "the restored suite passes");
 process.stdout.write(`${killed}/${mutations.length} finance transfer read mutations killed\n`);

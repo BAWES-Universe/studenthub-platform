@@ -171,7 +171,7 @@ export const transferStatus = (s: CompanyTransferStatus, received: string | null
 function transfersHtml(page: CompanyTransferPage): string {
   const base = `/organization/${encodeURIComponent(page.orgId)}/transfers`;
   const rows = page.transfers.map(t => `<tr><td><a href="${esc(`${base}/${encodeURIComponent(t.transferId)}`)}">${esc(longDate(t.periodStart))} to ${esc(longDate(t.periodEnd))}</a></td>`
-    + `<td>${esc(t.companyName)}</td><td>${t.lineCount}</td><td>${esc(t.currencyCode)} ${esc(t.companyTotal)}</td><td>${esc(transferStatus(t.status, t.paymentReceivedOn))}</td></tr>`).join("");
+    + `<td>${esc(t.companyName)}</td><td>${t.personCount}</td><td>${esc(t.currencyCode)} ${esc(t.companyTotal)}</td><td>${esc(transferStatus(t.status, t.paymentReceivedOn))}</td></tr>`).join("");
   return `<main><h1>Transfers</h1><p>${esc(page.name)}: salary transfers for the company and its sub-companies, newest period first.</p>${page.transfers.length
     ? `<table><thead><tr><th>Period</th><th>Company</th><th>People</th><th>Amount</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`
     : "<p>There are no transfers yet.</p>"}<p><a href="${esc(`${INVOICES_PATH}/${encodeURIComponent(page.orgId)}`)}">Invoices</a></p></main>`;
@@ -181,7 +181,7 @@ function transferHtml(orgId: string, t: CompanyTransferDetail): string {
   const rows = t.lines.map(l => `<tr><td>${esc(l.personName)}</td><td>${esc(l.storeName)}</td><td>${l.worked ? `${esc(l.worked.hours)} h ${l.worked.minutes} min` : ""}</td>`
     + `<td>${esc(t.currencyCode)} ${esc(l.companyTotal)}</td><td>${l.paid ? "Paid" : "Not paid yet"}</td></tr>`).join("");
   return `<main><h1>Transfer</h1><p>${esc(t.companyName)}, ${esc(longDate(t.periodStart))} to ${esc(longDate(t.periodEnd))}. ${esc(transferStatus(t.status, t.paymentReceivedOn))}.</p>`
-    + `<p>Amount: ${esc(t.currencyCode)} ${esc(t.companyTotal)} for ${t.lineCount} ${t.lineCount === 1 ? "person" : "people"}.</p>`
+    + `<p>Amount: ${esc(t.currencyCode)} ${esc(t.companyTotal)} for ${t.personCount} ${t.personCount === 1 ? "person" : "people"}.</p>`
     + (t.lines.length ? `<table><thead><tr><th>Person</th><th>Store</th><th>Worked</th><th>Amount</th><th>Salary</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>This transfer has no lines yet.</p>")
     + `<p><a href="${esc(`/organization/${encodeURIComponent(orgId)}/transfers`)}">All transfers</a></p></main>`;
 }

@@ -8,8 +8,8 @@ import { createFinanceTransfersHttp, filterOf, handleFinanceTransfers, type Fina
 // A-18 Finance transfers. Synthetic companies, people and amounts only.
 const FIN = "f".repeat(43), OTHER = "o".repeat(43);
 const OCT: CompanyTransferEntry = { transferId: "t:oct.1", orgId: "P", companyName: "Sultan <Co>", periodStart: "2026-10-01", periodEnd: "2026-10-31",
-  currencyCode: "KWD", status: "distributing", lineCount: 2, companyTotal: "30.000", paymentReceivedOn: "2026-11-22" };
-const NOV: CompanyTransferEntry = { ...OCT, transferId: "t-nov", periodStart: "2026-11-01", periodEnd: "2026-11-30", status: "locked", paymentReceivedOn: null };
+  currencyCode: "KWD", status: "distributing", lineCount: 2, personCount: 2, companyTotal: "30.000", paymentReceivedOn: "2026-11-22" };
+const NOV: CompanyTransferEntry = { ...OCT, transferId: "t-nov", periodStart: "2026-11-01", periodEnd: "2026-11-30", status: "locked", personCount: 1, paymentReceivedOn: null };
 const DETAIL: FinanceTransferDetail = { ...OCT, candidateTotal: "25.000", paidTotal: "10.000", paidCount: 1, lines: [
   { lineId: "L-1", personId: "w1", personName: "Amal <Synthetic>", storeName: "Avenues", candidateTotal: "10.000", companyTotal: "12.000", paid: true },
   { lineId: "L-2", personId: "w2", personName: "Badr", storeName: "Avenues", candidateTotal: "15.000", companyTotal: "18.000", paid: false }] };
@@ -37,7 +37,7 @@ test("FINANCE_TRANSFERS_LIST Finance lists every company's transfers, newest per
   const page = await x.call("/finance/transfers?status=distributing", FIN, "text/html");
   assert.equal(page.status, 200); assert.equal(page.headers.get("cache-control"), "no-store");
   const html = await page.text();
-  for (const text of ['<a href="/finance/transfers/t%3Aoct.1">1 October 2026 to 31 October 2026</a>', "<td>Sultan &lt;Co&gt;</td><td>2</td><td>KWD 30.000</td>",
+  for (const text of ['<a href="/finance/transfers/t%3Aoct.1">1 October 2026 to 31 October 2026</a>', "<td>Sultan &lt;Co&gt;</td><td>2</td><td>KWD 30.000</td>", "<td>Sultan &lt;Co&gt;</td><td>1</td><td>KWD 30.000</td>",
     "Received, paying salaries (payment received 22 November 2026)", '<a href="/finance/transfers?status=distributing" aria-current="page">Received, paying salaries</a>',
     '<a href="/finance/transfers?status=distributing&amp;page=2">Older</a>']) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /<Co>|Newer/);

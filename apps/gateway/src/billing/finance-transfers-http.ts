@@ -63,7 +63,7 @@ function listHtml(result: FinanceTransferPage, status: CompanyTransferStatus | u
   const filters = [`<a href="${FINANCE_TRANSFERS_PATH}"${status ? "" : ' aria-current="page"'}>All</a>`,
     ...FINANCE_TRANSFER_STATUSES.map((s) => `<a href="${esc(listHref({ status: s, page: 1 }))}"${status === s ? ' aria-current="page"' : ""}>${esc(TRANSFER_STATUS_NAME[s])}</a>`)].join(" · ");
   const rows = result.transfers.map((t) => `<tr><td><a href="${esc(detailHref(t.transferId))}">${esc(longDate(t.periodStart))} to ${esc(longDate(t.periodEnd))}</a></td>`
-    + `<td>${esc(t.companyName)}</td><td>${t.lineCount}</td><td>${esc(t.currencyCode)} ${esc(t.companyTotal)}</td><td>${esc(transferStatus(t.status, t.paymentReceivedOn))}</td></tr>`).join("");
+    + `<td>${esc(t.companyName)}</td><td>${t.personCount}</td><td>${esc(t.currencyCode)} ${esc(t.companyTotal)}</td><td>${esc(transferStatus(t.status, t.paymentReceivedOn))}</td></tr>`).join("");
   const nav = [result.page > 1 ? `<a href="${esc(listHref({ ...(status ? { status } : {}), page: result.page - 1 }))}">Newer</a>` : "",
     result.more ? `<a href="${esc(listHref({ ...(status ? { status } : {}), page: result.page + 1 }))}">Older</a>` : ""].filter(Boolean).join(" ");
   return `<main><h1>Transfers</h1><p>Salary transfers of every company, newest period first.</p><p>${filters}</p>${result.transfers.length
@@ -75,7 +75,7 @@ function detailHtml(t: FinanceTransferDetail): string {
   const rows = t.lines.map((l) => `<tr id="line-${esc(l.lineId)}"><td>${esc(l.personName)}</td><td>${esc(l.storeName)}</td><td>${esc(t.currencyCode)} ${esc(l.candidateTotal)}</td>`
     + `<td>${esc(t.currencyCode)} ${esc(l.companyTotal)}</td><td>${l.paid ? "Paid" : "Not paid yet"}</td></tr>`).join("");
   return `<main><h1>Transfer</h1><p>${esc(t.companyName)}, ${esc(longDate(t.periodStart))} to ${esc(longDate(t.periodEnd))}. ${esc(transferStatus(t.status, t.paymentReceivedOn))}.</p>`
-    + `<p>Billed to the company: ${esc(t.currencyCode)} ${esc(t.companyTotal)}. Salaries for ${t.lineCount} ${t.lineCount === 1 ? "person" : "people"}: ${esc(t.currencyCode)} ${esc(t.candidateTotal)}. `
+    + `<p>Billed to the company: ${esc(t.currencyCode)} ${esc(t.companyTotal)}. Salaries for ${t.personCount} ${t.personCount === 1 ? "person" : "people"}: ${esc(t.currencyCode)} ${esc(t.candidateTotal)}. `
     + `Paid so far: ${esc(t.currencyCode)} ${esc(t.paidTotal)}, ${t.paidCount} of ${t.lineCount} ${t.lineCount === 1 ? "line" : "lines"}.</p>`
     + (t.lines.length ? `<table><thead><tr><th>Person</th><th>Store</th><th>Salary</th><th>Billed</th><th>Paid</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>This transfer has no lines yet.</p>")
     + `<p><a href="${esc(`${BANK_RESULTS_PATH}/transfers/${encodeURIComponent(t.transferId)}`)}">Bank payments for this transfer</a></p>`

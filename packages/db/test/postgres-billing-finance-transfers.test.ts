@@ -52,12 +52,12 @@ async function transfer(id: string, company: string, period: string, lines: read
 
 test("FINANCE_TRANSFERS_PG central Finance lists every company's transfers it settles, newest period first, with counts and totals; a status filter and pages", async () => {
   await transfer("T-sep", "P", "2026-09-01", [["L-1", "w1", "10.000", "12.000", true]]);
-  await transfer("T-oct", "C", "2026-10-01", [["L-2", "w1", "10.000", "12.500", false], ["L-3", "w2", "5.000", "6.000", false]]);
+  await transfer("T-oct", "C", "2026-10-01", [["L-2", "w1", "10.000", "12.500", false], ["L-3", "w1", "5.000", "6.000", false]]);
   await transfer("T-x", "X", "2026-11-01", [["L-4", "w2", "1.000", "1.000", false]]);
   await transfer("T-gone", "P", "2026-11-01", [["L-5", "w2", "1.000", "1.000", false]], "lock", "delete");
   const page = await reads().list("fin");
-  assert.deepEqual(page && [page.transfers.map((t) => [t.transferId, t.companyName, t.lineCount, t.companyTotal, t.status]), page.page, page.more],
-    [[["T-oct", "Sultan Kids", 2, "18.500", "draft"], ["T-sep", "Sultan Co", 1, "12.000", "draft"]], 1, false], "a company outside StudentHub and a deleted transfer are not listed");
+  assert.deepEqual(page && [page.transfers.map((t) => [t.transferId, t.companyName, t.lineCount, t.personCount, t.companyTotal, t.status]), page.page, page.more],
+    [[["T-oct", "Sultan Kids", 2, 1, "18.500", "draft"], ["T-sep", "Sultan Co", 1, 1, "12.000", "draft"]], 1, false], "a company outside StudentHub and a deleted transfer are not listed; two lines of one person are one person");
   assert.deepEqual((await reads().list("fin", { status: "locked" }))?.transfers, []);
   const small = new PostgresFinanceTransferReads(pool, operatorFinanceGate(DEFAULT_OPERATOR_ORG_IDS, TRANSFER_INVOICE_VOID_ROLE), decision);
   const first = await small.list("fin", { page: 1 }, 1), second = await small.list("fin", { page: 2 }, 1);
