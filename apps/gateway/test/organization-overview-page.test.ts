@@ -7,6 +7,7 @@ import {
   ORGANIZATION_FIELD_CONTRACT, ORGANIZATION_FIELDS_BY_AUDIENCE, type OrganizationDeletionRecords,
 } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
+import { errorPage } from "../src/shell/error-pages.js";
 import { createContextNavigation, type ContextNavigation } from "../src/context-navigation.js";
 import type { BrowserLoginApplication } from "../src/web-ui.js";
 
@@ -111,7 +112,7 @@ test("OVW_DEGRADE unavailable data is a notice and failures are plain 503 pages"
 
 test("OVW_PASSTHROUGH reserved and nested organization routes pass through", async (t) => {
   const calls: URLSearchParams[] = []; const f = await fixture(t, { calls });
-  const fallback = '{"ok":false,"error":"not_found"}';
+  const fallback = errorPage("not-found").html; // the gateway's unknown-path answer for a browser (U-07)
   const post = await f.request("/organization/org-a", true, "POST");
   assert.equal(post.status, 404); assert.equal(await post.text(), fallback, "OVW_PASSTHROUGH POST /organization/org-a bytes");
   const passthroughs = [

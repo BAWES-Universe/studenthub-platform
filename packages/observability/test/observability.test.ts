@@ -9,6 +9,7 @@ import { createLocalSentry, EVENT_LIMIT, EVENT_TTL_MS } from '../src/local-sentr
 import { createGatewayServer } from '../../../apps/gateway/src/index.js';
 import { createAuthzFixture } from '../../../apps/gateway/test/helpers/authz.js';
 import type { BrowserLoginApplication } from '../../../apps/gateway/src/web-ui.js';
+import { errorPage } from '../../../apps/gateway/src/shell/error-pages.js';
 const SAFE = { version: 1, traceId: 'a'.repeat(32), spanId: 'b'.repeat(16), component: 'gateway', journey: 'profile_read', outcome: 'failure', fault: 'dependency_unavailable', durationMs: 12 };
 const secrets = {
   cookie: '__Host-studenthub_session=SYNTHETIC_COOKIE_903', authorization: 'Bearer SYNTHETIC_BEARER_903',
@@ -184,8 +185,12 @@ test('gateway: uncaught rendering failures are contained and diagnosed', async (
   const login = { get web() { throw new Error(secrets.password); } } as unknown as BrowserLoginApplication;
   const server = createGatewayServer(undefined, undefined, undefined, login, null, telemetry); const origin = await listen(server);
   try {
+    // A browser gets the shared server page (U-07); an API caller the JSON. Neither carries the failure's text.
     const response = await fetch(origin + '/', { headers: { accept: 'text/html' } });
-    assert.equal(response.status, 503); privateAbsent(await response.json());
+    assert.equal(response.status, 503); const page = await response.text(); privateAbsent(page);
+    assert.equal(page, errorPage('server').html);
+    const api = await fetch(origin + '/', { headers: { accept: 'application/json' } });
+    assert.equal(api.status, 503); privateAbsent(await api.json());
     const snapshot = await telemetry.snapshot(); privateAbsent(snapshot);
     assert.equal((snapshot.events[0] as any).tags.fault, 'unhandled_failure');
   } finally { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await telemetry.close(); }
