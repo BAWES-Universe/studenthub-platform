@@ -101,7 +101,7 @@ import pg from "pg";
 import { CIVIL_KEY_CHECK, civilKeyOpens, linkReportCounts, readLinkReport, type LinkReport, PostgresCatalogueImportStore, ContactPromotionError, PostgresContactPromotion, type ContactPromotionResult, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonContactImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore, personContactDigest } from "@studenthub/db/import";
 import { CivilIdVault, PROFILE_PARITY_REVISION } from "@studenthub/profile";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
-import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, lockPathFrom, parseDatabaseUrl } from "./refresh.js";
+import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, GENERATION, lockPathFrom, MIRROR_GENERATION_TABLE, parseDatabaseUrl } from "./refresh.js";
 import { refreshIdentity } from "./twin/cli.js";
 import type { RefreshIdentity } from "./twin/report.js";
 import type { LegacyReader } from "./twin/journey.js";
@@ -189,6 +189,11 @@ export interface M4Receipt {
   readonly operator?: string;
   /** The run's Kuwait date; the plan identity binds it (M-1's age rule). */
   readonly today?: string;
+  /**
+   * For `doccheck`: the mirror generation the run verified (refresh report and the mirror's own
+   * marker agree), bound only after every equality check. Absent when the result is diagnostic.
+   */
+  readonly mirror?: { readonly generation: string };
   readonly plan?: string;
   /** Steps whose results were confirmed, in order. */
   readonly steps: readonly ReceiptStep[];
@@ -224,25 +229,27 @@ export interface DocCheckCounts {
   /** documentSetDigest over the checked documents: what a copy step must find again. */
   readonly set: string;
   /**
-   * Always true for now: server, schema, lock and count bind the report to the mirror read, but no
-   * generation marker read from the mirror itself exists yet, so a replacement copy with the same
-   * server, schema, path and count cannot be told apart. Diagnostic only: never authorizes a copy.
+   * Present (true) when the refresh report predates mirror provenance (server, schema, generation,
+   * lock and counts), so this run could not prove it read the copy the report describes.
+   * Diagnostic only: never authorizes a copy.
    */
-  readonly diagnostic: true;
+  readonly diagnostic?: true;
 }
 
 /** The mirror's own identity, read through the same reader as the sources. */
-export const MIRROR_SERVER_ID_SQL = "SELECT JSON_OBJECT('id', @@server_uuid, 'schema', DATABASE())";
+export const MIRROR_IDENTITY_SQL = "SELECT JSON_OBJECT('id', @@server_uuid, 'schema', DATABASE(), "
+  + `'generation', (SELECT MAX(generation) FROM \`${MIRROR_GENERATION_TABLE}\`), 'markers', (SELECT COUNT(*) FROM \`${MIRROR_GENERATION_TABLE}\`))`;
 
 /** What an ok refresh report says about the copy it made; undefined when the report predates it. */
-export function refreshProvenance(last: unknown): { serverId: string; schema: string; lock: string; candidates: number } | undefined {
+export function refreshProvenance(last: unknown): { serverId: string; schema: string; generation: string; lock: string; candidates: number } | undefined {
   if (!last || typeof last !== "object") return undefined;
-  const r = last as { mirror?: { serverId?: unknown; schema?: unknown }; lock?: unknown; tables?: Record<string, unknown> };
-  const { serverId, schema } = r.mirror ?? {};
+  const r = last as { mirror?: { serverId?: unknown; schema?: unknown; generation?: unknown }; lock?: unknown; tables?: Record<string, unknown> };
+  const { serverId, schema, generation } = r.mirror ?? {};
   const candidates = r.tables?.candidate;
-  if (typeof serverId !== "string" || !serverId || typeof schema !== "string" || !schema || typeof r.lock !== "string" || !r.lock
+  if (typeof serverId !== "string" || !serverId || typeof schema !== "string" || !schema
+    || typeof generation !== "string" || !GENERATION.test(generation) || typeof r.lock !== "string" || !r.lock
     || !Number.isSafeInteger(candidates) || (candidates as number) < 0) return undefined;
-  return { serverId, schema, lock: r.lock, candidates: candidates as number };
+  return { serverId, schema, generation, lock: r.lock, candidates: candidates as number };
 }
 
 /**
@@ -917,11 +924,12 @@ async function linkReport(deps: CliDeps, revision: string, targetId: string,
  * the legacy bucket adapter (ranged GetObject only) and admits it with the platform's own rules.
  * It writes nothing to any database and copies nothing.
  *
- * When the refresh report carries provenance (mirror server id and schema, lock path, candidate
- * count), the run refuses unless it holds the same lock file (`lockMismatch`), reads the same server
- * and schema (`mirrorMismatch`) and finds the candidate count the refresh recorded (`staleCount`),
- * all before any object read. Until a generation marker read from the mirror itself exists, every
- * result is `documents.diagnostic: true`, which no copy accepts.
+ * When the refresh report carries provenance (mirror server id, schema and generation, lock path,
+ * candidate count), the run refuses unless it holds the same lock file (`lockMismatch`), reads the
+ * same server and schema (`mirrorMismatch`), finds the same generation in the mirror's own marker
+ * (`generationMismatch`) and the candidate count the refresh recorded (`staleCount`), all before
+ * any object read. A report without that provenance yields `documents.diagnostic: true`, which no
+ * copy accepts.
  *
  * The private report (mode 600, on the staging host only) lists each checked document's legacy id,
  * kind, type, size and sha256, and each issue's legacy id, column and rule; never a key, name or
@@ -968,8 +976,10 @@ async function docCheck(deps: CliDeps, revision: string,
   if (provenance) {
     if (path.resolve(lockPathFrom(env)) !== provenance.lock) return refuse("lockMismatch");
     let mirror: Readonly<Record<string, unknown>> | undefined;
-    try { mirror = (await reader.rows(MIRROR_SERVER_ID_SQL, []))[0]; } catch { return fail("m2.read.mirror"); }
+    try { mirror = (await reader.rows(MIRROR_IDENTITY_SQL, []))[0]; } catch { return fail("m2.read.mirror"); }
     if (mirror?.id !== provenance.serverId || mirror?.schema !== provenance.schema) return refuse("mirrorMismatch");
+    // The copy itself: the generation the refresh wrote into the mirror, exactly one marker row.
+    if (Number(mirror?.markers) !== 1 || mirror?.generation !== provenance.generation) return refuse("generationMismatch");
   }
   let sources;
   try { sources = await readM2Sources(reader); } catch (error) {
@@ -977,6 +987,8 @@ async function docCheck(deps: CliDeps, revision: string,
     return fail(error instanceof M2InputError ? error.code : "m2.read");
   }
   if (provenance && sources.candidate.length !== provenance.candidates) return refuse("staleCount");
+  // Every equality check passed: only now is the generation this run read bound to its outcome.
+  const verified = provenance ? { generation: provenance.generation } : undefined;
   const plan = planM2(sources, today);
   let check;
   try { check = await checkLegacyDocuments(plan.documents, bucket); } catch { return fail("m2.check"); }
@@ -985,15 +997,17 @@ async function docCheck(deps: CliDeps, revision: string,
   const rules = { "document.badKey": 0, "document.sharedObject": 0, ...counts.rules } as Record<DocumentIssueRule | DocumentCheckRule, number>;
   for (const issue of plan.issues) rules[issue.rule]++;
   const documents: DocCheckCounts = { candidates: plan.candidates, mapped: plan.documents.length, checked: counts.checked,
-    bytes: counts.bytes, rules, set: documentSetDigest(check.checked), diagnostic: true };
+    bytes: counts.bytes, rules, set: documentSetDigest(check.checked), ...(provenance ? {} : { diagnostic: true as const }) };
+  // The private report names the whole verified mirror; the receipt carries the generation only.
+  // A diagnostic result names none, and says so.
   writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "doccheck", at: deps.now().toISOString(), ...bound,
     revisions: { mapper: M2_DOCUMENT_MAPPER_REVISION, check: M2_DOCUMENT_CHECK_REVISION }, set: documents.set,
-    diagnostic: true,
+    ...(provenance ? { mirror: { serverId: provenance.serverId, schema: provenance.schema, generation: provenance.generation } } : { diagnostic: true }),
     documents: check.checked.map(({ legacyId, kind, mime, size, sha256 }) => ({ legacyId, kind, mime, size, sha256 })),
     issues: [...plan.issues, ...check.issues].map(({ rule, legacyId, field }) => ({ rule, legacyId, field })) });
-  bind(bound, documents);
+  bind(verified ? { ...bound, mirror: verified } : bound, documents);
   publish("ok");
   deps.log(`documents candidates=${documents.candidates} mapped=${documents.mapped} checked=${documents.checked} bytes=${documents.bytes} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
-  deps.log(`m4 doccheck ok invocation=${env.M4_INVOCATION} set=${documents.set} diagnostic=true revision=${revision} artifact=${artifact}`);
+  deps.log(`m4 doccheck ok invocation=${env.M4_INVOCATION} set=${documents.set}${verified ? ` generation=${verified.generation}` : " diagnostic=true"} revision=${revision} artifact=${artifact}`);
   return 0;
 }
