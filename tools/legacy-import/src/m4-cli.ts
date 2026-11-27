@@ -11,6 +11,7 @@
  *   tools/legacy-import/m4 keycheck   (once per target: the civil ID key check)
  *   tools/legacy-import/m4 promote    (after a write: linked people's staged contacts, see `promote`)
  *   tools/legacy-import/m4 linkreport (M-3: the identity link report for staff, see `linkReport`)
+ *   tools/legacy-import/m4 doccheck   (M-2: each imported person's legacy documents, read-only, see `docCheck`)
  * (a shell entry that clears the environment and starts Node on tools/legacy-import/m4-launch.mjs).
  * This module is not an entry point: run directly, it evaluates its imports but never calls `main`.
  *
@@ -82,6 +83,8 @@
  *   LEGACY_REFRESH_LOCK    the refresh's lock file
  *   M4_CONTACT_DIGEST_KEY  canonical base64 of 32 bytes: the HMAC key for staged contact digests
  *                          and verified-address HMACs; the plan identity binds those HMACs only
+ * For doccheck only (the read-only legacy bucket credential: GetObject and ListBucket on that bucket):
+ *   M4_LEGACY_BUCKET, M4_LEGACY_BUCKET_REGION, M4_LEGACY_BUCKET_ACCESS_KEY_ID, M4_LEGACY_BUCKET_SECRET_ACCESS_KEY
  * For write only:
  *   M4_EXPECTED_PLAN       the plan identity from the reviewed plan receipt
  *   M4_DATABASE_URL        staging PostgreSQL
@@ -103,6 +106,10 @@ import { refreshIdentity } from "./twin/cli.js";
 import type { RefreshIdentity } from "./twin/report.js";
 import type { LegacyReader } from "./twin/journey.js";
 import { mirrorReader } from "./twin/staging.js";
+import { legacyBucketReader } from "./m2-bucket.js";
+import { checkLegacyDocuments, documentCheckCounts, M2_DOCUMENT_CHECK_REVISION, type CheckedDocument, type DocumentCheckRule, type LegacyObjectReader } from "./m2-document-check.js";
+import { M2_DOCUMENT_MAPPER_REVISION, type DocumentIssueRule } from "./m2-documents.js";
+import { M2InputError, planM2, readM2Sources } from "./m2-run.js";
 import { kuwaitDay, planIdentity, planM4, readM4Sources, receiptSafe, receiptStep, runM4, type M4Report, type M4Step, type M4Writers, type ReceiptStep } from "./m4-run.js";
 
 export const DEFAULT_M4_OUTPUT_DIR = "/var/lib/legacy-import/m4";
@@ -171,7 +178,7 @@ export function receipt(report: M4Report): string[] {
 export interface M4Receipt {
   readonly schemaVersion: 2;
   readonly invocation: string;
-  readonly kind: "plan" | "write" | "keycheck" | "promote" | "linkreport";
+  readonly kind: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck";
   readonly status: "ok" | "started" | "refused_rows" | "failed" | "refused";
   readonly at: string;
   /** Set once the run got as far as computing them. */
@@ -202,6 +209,50 @@ export interface M4Receipt {
   readonly acceptedWrite?: string;
   /** For `linkreport`: totals and counts per rule only; the ids are in the private report. */
   readonly links?: ReturnType<typeof linkReportCounts>;
+  /** For `doccheck`: counts only and the checked set's digest; ids, kinds and hashes are in the private report. */
+  readonly documents?: DocCheckCounts;
+}
+
+export interface DocCheckCounts {
+  /** Candidate rows read (the whole table, counted before and after). */
+  readonly candidates: number;
+  /** Documents the mapper names for imported people. */
+  readonly mapped: number;
+  readonly checked: number;
+  readonly bytes: number;
+  readonly rules: Readonly<Record<DocumentIssueRule | DocumentCheckRule, number>>;
+  /** documentSetDigest over the checked documents: what a copy step must find again. */
+  readonly set: string;
+  /**
+   * Always true for now: server, schema, lock and count bind the report to the mirror read, but no
+   * generation marker read from the mirror itself exists yet, so a replacement copy with the same
+   * server, schema, path and count cannot be told apart. Diagnostic only: never authorizes a copy.
+   */
+  readonly diagnostic: true;
+}
+
+/** The mirror's own identity, read through the same reader as the sources. */
+export const MIRROR_SERVER_ID_SQL = "SELECT JSON_OBJECT('id', @@server_uuid, 'schema', DATABASE())";
+
+/** What an ok refresh report says about the copy it made; undefined when the report predates it. */
+export function refreshProvenance(last: unknown): { serverId: string; schema: string; lock: string; candidates: number } | undefined {
+  if (!last || typeof last !== "object") return undefined;
+  const r = last as { mirror?: { serverId?: unknown; schema?: unknown }; lock?: unknown; tables?: Record<string, unknown> };
+  const { serverId, schema } = r.mirror ?? {};
+  const candidates = r.tables?.candidate;
+  if (typeof serverId !== "string" || !serverId || typeof schema !== "string" || !schema || typeof r.lock !== "string" || !r.lock
+    || !Number.isSafeInteger(candidates) || (candidates as number) < 0) return undefined;
+  return { serverId, schema, lock: r.lock, candidates: candidates as number };
+}
+
+/**
+ * A digest of a checked document set: sha256 over each document's legacy id, kind, type, size and
+ * sha256, sorted by id then kind. No key or byte.
+ */
+export function documentSetDigest(documents: readonly CheckedDocument[]): string {
+  const rows = documents.map((d) => [d.legacyId, d.kind, d.mime, d.size, d.sha256] as const)
+    .sort((a, b) => a[0].length - b[0].length || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0) || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+  return createHash("sha256").update(JSON.stringify(["m2-document-set-v1", rows])).digest("hex");
 }
 
 /**
@@ -541,11 +592,17 @@ export interface CliDeps {
   readonly lock: (lockPath: string) => Promise<SharedLock>;
   readonly reader: (env: NodeJS.ProcessEnv) => LegacyReader;
   readonly target: (env: NodeJS.ProcessEnv) => WriteTarget;
+  /** The legacy bucket, read-only (doccheck only; default envBucket). Throws m2.bucket.config on a bad setting. */
+  readonly bucket?: (env: NodeJS.ProcessEnv) => LegacyObjectReader;
   readonly provenance: () => Provenance;
   readonly now: () => Date;
   readonly log: (line: string) => void;
   readonly error: (line: string) => void;
 }
+
+/** The legacy bucket adapter from the run's environment (doccheck only). */
+export const envBucket = (e: NodeJS.ProcessEnv): LegacyObjectReader => legacyBucketReader({ bucket: e.M4_LEGACY_BUCKET ?? "",
+  region: e.M4_LEGACY_BUCKET_REGION ?? "", accessKeyId: e.M4_LEGACY_BUCKET_ACCESS_KEY_ID ?? "", secretAccessKey: e.M4_LEGACY_BUCKET_SECRET_ACCESS_KEY ?? "" });
 
 /** `built` is the provenance tools/legacy-import/m4-launch.mjs verified before loading this module. */
 export const defaultDeps = (env: NodeJS.ProcessEnv, built: Provenance): CliDeps => ({
@@ -553,6 +610,7 @@ export const defaultDeps = (env: NodeJS.ProcessEnv, built: Provenance): CliDeps 
   lock: acquireSharedLock,
   reader: (e) => mirrorReader(parseDatabaseUrl(e.M4_LEGACY_MIRROR_URL, "mirror")),
   target: (e) => postgresTarget(e.M4_DATABASE_URL ?? "", e.M4_IMPORT_ACTOR ?? "", e.M4_OPERATOR_ORG_ID ?? "", contactKeysFrom(e, "write")),
+  bucket: envBucket,
   provenance: () => built,
   now: () => new Date(),
   log: (line) => console.log(line),
@@ -568,7 +626,7 @@ class Refusal extends Error {}
 export async function main(argv: readonly string[], deps: CliDeps): Promise<number> {
   const { env } = deps;
   const mode = argv[0];
-  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote" && mode !== "linkreport") { deps.error("m4: refused.usage"); return 2; }
+  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote" && mode !== "linkreport" && mode !== "doccheck") { deps.error("m4: refused.usage"); return 2; }
   const invocation = env.M4_INVOCATION ?? "";
   // Without a fresh, unclaimed name there is nowhere this run's outcome could be published.
   if (!UUID.test(invocation)) { deps.error("m4: refused.invocation"); return 2; }
@@ -581,11 +639,12 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
   const confirmed: M4Step[] = [];
   let order: readonly string[] = [];
   let links: M4Receipt["links"];
+  let documents: M4Receipt["documents"];
   const publish = (status: M4Receipt["status"], code?: string, promotion?: PromotionCounts) => {
     const unconfirmed = status === "failed" && mode !== "promote" ? order.slice(confirmed.length) : undefined;
     writeWhole(receiptPath, { schemaVersion: 2, invocation, kind: mode, status, at: deps.now().toISOString(), ...bound,
       steps: confirmed.map(receiptStep), ...(unconfirmed ? { unconfirmed } : {}), ...(code ? { code } : {}),
-      ...(promotion ? { promotion } : {}), ...(links ? { links } : {}) } satisfies M4Receipt);
+      ...(promotion ? { promotion } : {}), ...(links ? { links } : {}), ...(documents ? { documents } : {}) } satisfies M4Receipt);
   };
   const refuse = (code: string): never => { throw new Refusal(code); };
 
@@ -598,6 +657,9 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     const targetId = env.M4_TARGET_ID ?? "";
     if (mode === "keycheck") return await keycheck(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
     if (mode === "linkreport") return await linkReport(deps, revision, targetId, publish, reportPath, (b, l) => { bound = b; links = l; }, (t) => { target = t; });
+    if (mode === "doccheck") {
+      return await docCheck(deps, revision, publish, reportPath, (b, d) => { bound = b; documents = d; }, (l) => { lock = l; });
+    }
     if (mode === "promote") return await promote(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
     const operator = env.M4_OPERATOR_ORG_ID ?? "";
     if (!UUID.test(targetId) || !ORG_ID.test(operator)) refuse("destination");
@@ -844,5 +906,94 @@ async function linkReport(deps: CliDeps, revision: string, targetId: string,
   publish("ok");
   deps.log(`links imported=${counts.imported} linked=${counts.linked} ${Object.entries(counts.rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
   deps.log(`m4 linkreport ok invocation=${env.M4_INVOCATION} target=${targetId} revision=${revision} artifact=${artifact}`);
+  return 0;
+}
+
+/**
+ * `doccheck` (M-2): checks each imported person's legacy documents, read-only, and records what a
+ * copy step must find again. Under the refresh lock and bound to the refresh identity, it reads
+ * the whole candidate table (counted before and after, readM2Sources), maps the documents of the
+ * people M-1 imports with ownership over every row (planM2), then reads each object once through
+ * the legacy bucket adapter (ranged GetObject only) and admits it with the platform's own rules.
+ * It writes nothing to any database and copies nothing.
+ *
+ * When the refresh report carries provenance (mirror server id and schema, lock path, candidate
+ * count), the run refuses unless it holds the same lock file (`lockMismatch`), reads the same server
+ * and schema (`mirrorMismatch`) and finds the candidate count the refresh recorded (`staleCount`),
+ * all before any object read. Until a generation marker read from the mirror itself exists, every
+ * result is `documents.diagnostic: true`, which no copy accepts.
+ *
+ * The private report (mode 600, on the staging host only) lists each checked document's legacy id,
+ * kind, type, size and sha256, and each issue's legacy id, column and rule; never a key, name or
+ * byte. The receipt holds counts per rule and the checked set's digest only.
+ * Exit 0 when the report was written, 2 when refused before any object was read, 1 when failed.
+ */
+async function docCheck(deps: CliDeps, revision: string,
+  publish: (status: M4Receipt["status"], code?: string) => void, reportPath: string,
+  bind: (bound: Omit<M4Receipt, "schemaVersion" | "invocation" | "kind" | "status" | "at" | "steps">, documents?: DocCheckCounts) => void,
+  track: (lock: SharedLock) => void): Promise<number> {
+  const { env } = deps;
+  const refuse = (code: string): number => {
+    deps.error(`m4: refused.${code}`);
+    try { publish("refused", code); } catch { return 1; }
+    return 2;
+  };
+  const fail = (code: string): number => {
+    deps.error(`m4: ${code}`);
+    try { publish("failed", code); } catch { /* the exit code still says failed */ }
+    return 1;
+  };
+  const artifact = env.M4_ARTIFACT_DIGEST ?? "";
+  const built = deps.provenance();
+  if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
+  let bucket: LegacyObjectReader;
+  try { bucket = (deps.bucket ?? envBucket)(env); } catch { return refuse("bucketConfig"); }
+
+  const lock = await deps.lock(lockPathFrom(env));
+  track(lock);
+  if (!lock.held) return refuse("locked");
+  // Under the lock: the refresh identity and the copy it describes are read together.
+  let last: unknown;
+  try { last = JSON.parse(readFileSync(env.LEGACY_REFRESH_REPORT || REFRESH_REPORT_PATH, "utf8")); } catch { last = undefined; }
+  const refresh = refreshIdentity(last);
+  if (!refresh) return refuse("refreshNotOk");
+  const today = kuwaitDay(deps.now().toISOString());
+  const bound = { revision, artifact, refresh, today };
+  bind(bound);
+
+  // Bind the report to the mirror actually read: the same lock file the refresh held, the same
+  // server it copied into, and the candidate table it counted. All before any object read.
+  const provenance = refreshProvenance(last);
+  const reader = deps.reader(env);
+  if (provenance) {
+    if (path.resolve(lockPathFrom(env)) !== provenance.lock) return refuse("lockMismatch");
+    let mirror: Readonly<Record<string, unknown>> | undefined;
+    try { mirror = (await reader.rows(MIRROR_SERVER_ID_SQL, []))[0]; } catch { return fail("m2.read.mirror"); }
+    if (mirror?.id !== provenance.serverId || mirror?.schema !== provenance.schema) return refuse("mirrorMismatch");
+  }
+  let sources;
+  try { sources = await readM2Sources(reader); } catch (error) {
+    if (error instanceof M2InputError && error.code === "m2.ownershipIncomplete") return refuse("ownershipIncomplete");
+    return fail(error instanceof M2InputError ? error.code : "m2.read");
+  }
+  if (provenance && sources.candidate.length !== provenance.candidates) return refuse("staleCount");
+  const plan = planM2(sources, today);
+  let check;
+  try { check = await checkLegacyDocuments(plan.documents, bucket); } catch { return fail("m2.check"); }
+
+  const counts = documentCheckCounts(check);
+  const rules = { "document.badKey": 0, "document.sharedObject": 0, ...counts.rules } as Record<DocumentIssueRule | DocumentCheckRule, number>;
+  for (const issue of plan.issues) rules[issue.rule]++;
+  const documents: DocCheckCounts = { candidates: plan.candidates, mapped: plan.documents.length, checked: counts.checked,
+    bytes: counts.bytes, rules, set: documentSetDigest(check.checked), diagnostic: true };
+  writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "doccheck", at: deps.now().toISOString(), ...bound,
+    revisions: { mapper: M2_DOCUMENT_MAPPER_REVISION, check: M2_DOCUMENT_CHECK_REVISION }, set: documents.set,
+    diagnostic: true,
+    documents: check.checked.map(({ legacyId, kind, mime, size, sha256 }) => ({ legacyId, kind, mime, size, sha256 })),
+    issues: [...plan.issues, ...check.issues].map(({ rule, legacyId, field }) => ({ rule, legacyId, field })) });
+  bind(bound, documents);
+  publish("ok");
+  deps.log(`documents candidates=${documents.candidates} mapped=${documents.mapped} checked=${documents.checked} bytes=${documents.bytes} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
+  deps.log(`m4 doccheck ok invocation=${env.M4_INVOCATION} set=${documents.set} diagnostic=true revision=${revision} artifact=${artifact}`);
   return 0;
 }
