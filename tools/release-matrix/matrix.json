@@ -1139,10 +1139,18 @@
     "A-17": {
       "lane": "pay",
       "subject": "`/finance/contracts`",
+      "served": [
+        {
+          "route": "/finance/contracts",
+          "test": "apps/gateway/test/billing-finance-contracts-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "backend only (audit 2026-11-20): pay contracts API, no staff page"
+          "state": "done",
+          "evidence": "read-only Finance contracts list and detail with tests, proven by checkServed; PR #759 at de90fab0",
+          "note": "built covers the central Finance reader with the company projection only; contract changes stay with the pay contracts API, and deployment and live acceptance stay open"
         },
         "verified": {
           "state": "open"
