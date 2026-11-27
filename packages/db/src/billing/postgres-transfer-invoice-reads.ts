@@ -101,7 +101,7 @@ export interface CompanyTransferLine {
 }
 export interface CompanyTransferDetail extends CompanyTransferEntry { readonly lines: readonly CompanyTransferLine[] }
 
-const NAME = (alias: string, profile: string) => `COALESCE(NULLIF(btrim(${profile}.name_en), ''), ${alias}.name)`;
+export const NAME = (alias: string, profile: string) => `COALESCE(NULLIF(btrim(${profile}.name_en), ''), ${alias}.name)`;
 const ENTRY = `i.invoice_number AS "invoiceNumber", i.transfer_id AS "transferId", i.org_id AS "orgId", ${NAME("o", "p")} AS "companyName",
   i.currency_code AS "currencyCode", i.invoice_date::text AS "invoiceDate", i.total::text AS total, i.line_count AS "lineCount", i.status,
   (i.paid_at AT TIME ZONE 'Asia/Kuwait')::date::text AS "paidOn", c.credit_number AS "creditNumber", c.credit_date::text AS "creditedOn"`;
@@ -130,12 +130,12 @@ const MOVEMENTS = `WITH docs AS (SELECT i.invoice_number, i.org_id, ${NAME("o", 
     UNION ALL SELECT paid_on, 'payment', invoice_number, NULL, org_id, company, currency_code, -total FROM docs WHERE paid_on IS NOT NULL
     UNION ALL SELECT credit_date, 'credit', invoice_number, credit_number, org_id, company, currency_code, -total FROM docs WHERE credit_number IS NOT NULL)`;
 
-const TRANSFER = `t.id AS "transferId", t.company_id AS "orgId", ${NAME("o", "p")} AS "companyName",
+export const TRANSFER = `t.id AS "transferId", t.company_id AS "orgId", ${NAME("o", "p")} AS "companyName",
   t.period_start::text AS "periodStart", t.period_end::text AS "periodEnd", t.currency_code AS "currencyCode", t.status,
   (SELECT count(*)::int FROM pay_transfer_lines l WHERE l.transfer_id = t.id) AS "lineCount",
   (SELECT COALESCE(sum(l.company_total), 0)::numeric(40,3)::text FROM pay_transfer_lines l WHERE l.transfer_id = t.id) AS "companyTotal",
   t.payment_received_on::text AS "paymentReceivedOn"`;
-const TRANSFERS = `FROM pay_transfers t JOIN organizations o ON o.id = t.company_id LEFT JOIN organization_profiles p ON p.org_id = t.company_id
+export const TRANSFERS = `FROM pay_transfers t JOIN organizations o ON o.id = t.company_id LEFT JOIN organization_profiles p ON p.org_id = t.company_id
   WHERE NOT t.deleted AND t.company_id = ANY($1::text[])`;
 
 export class PostgresTransferInvoiceReads {

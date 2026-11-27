@@ -1138,10 +1138,22 @@
     "A-18": {
       "lane": "pay",
       "subject": "`/finance/transfers`, `/:id`",
+      "served": [
+        {
+          "route": "/finance/transfers",
+          "test": "apps/gateway/test/billing-finance-transfers-http.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/finance/transfers/:id",
+          "test": "apps/gateway/test/billing-finance-transfers-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",
-          "note": "not started (audit 2026-11-20): pay lane: transfers"
+          "note": "read-only Finance pages in review (invoices lane, with the pay lane's agreement); evidence added when the PR head is final"
         },
         "verified": {
           "state": "open"

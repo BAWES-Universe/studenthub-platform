@@ -164,9 +164,9 @@ function withVoidable(read: TransferInvoicePage, voidable: InvoiceVoidPage): Tra
 }
 
 /** Legacy `Transfer::statusList` wording. */
-const TRANSFER_STATUS_NAME: Readonly<Record<CompanyTransferStatus, string>> = { draft: "Draft", locked: "Locked", payment_sent: "Payment sent",
+export const TRANSFER_STATUS_NAME: Readonly<Record<CompanyTransferStatus, string>> = { draft: "Draft", locked: "Locked", payment_sent: "Payment sent",
   distributing: "Received, paying salaries", complete: "Transfer completed", cancelled: "Cancelled" };
-const transferStatus = (s: CompanyTransferStatus, received: string | null) => `${TRANSFER_STATUS_NAME[s]}${received ? ` (payment received ${longDate(received)})` : ""}`;
+export const transferStatus = (s: CompanyTransferStatus, received: string | null) => `${TRANSFER_STATUS_NAME[s]}${received ? ` (payment received ${longDate(received)})` : ""}`;
 
 function transfersHtml(page: CompanyTransferPage): string {
   const base = `/organization/${encodeURIComponent(page.orgId)}/transfers`;
