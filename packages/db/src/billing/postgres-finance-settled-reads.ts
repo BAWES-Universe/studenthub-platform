@@ -27,6 +27,11 @@ export interface FinanceSettledPage {
   readonly invoices: readonly TransferInvoiceListEntry[];
   readonly page: number;
   readonly more: boolean;
+  /**
+   * Companies on this page that have been deleted. Their balances and invoices stay (Finance must still see what
+   * they owe), but their own invoices page is closed, so the page names them as deleted without a link.
+   */
+  readonly deletedOrgIds: readonly string[];
 }
 
 /** A credit note settles an invoice whatever its payment status, so credited comes first. */
@@ -66,7 +71,10 @@ export class PostgresFinanceSettledReads {
         [companies, filter.status ?? null, limit + 1, (page - 1) * limit])).rows;
       const more = rows.length > limit;
       rows.length = Math.min(rows.length, limit);
-      return { balances, invoices: rows, page, more };
+      const shown = [...new Set([...balances.map((b) => b.orgId), ...rows.map((r) => r.orgId)])];
+      const deletedOrgIds = shown.length ? (await client.query<{ org_id: string }>(
+        "SELECT org_id FROM organization_deletions WHERE org_id = ANY($1::text[]) ORDER BY org_id", [shown])).rows.map((r) => r.org_id) : [];
+      return { balances, invoices: rows, page, more, deletedOrgIds };
     });
   }
 
