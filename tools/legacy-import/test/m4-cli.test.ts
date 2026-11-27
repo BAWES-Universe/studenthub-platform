@@ -9,6 +9,7 @@ import test from "node:test";
 import { M4_SOURCES, planM4, type M4Sources, type M4Table, type M4Writers } from "../src/m4-run.js";
 import { acceptWrite, acquireSharedLock, contactSetDigest, digestKeyFingerprint, documentSetDigest, main, PROMOTE_BATCH, type CliDeps, type M4Receipt, type Provenance, type WriteTarget } from "../src/m4-cli.js";
 import type { LegacyObjectReader } from "../src/m2-document-check.js";
+import type { StagedDocument, StagingObjects } from "../src/m2-copy.js";
 import { ContactPromotionError, LinkReportError, type ContactPromotionResult, type LinkReport } from "@studenthub/db/import";
 
 // Synthetic legacy rows only. SECRET marks every value that must never reach a receipt or a log.
@@ -25,6 +26,7 @@ const CIVIL_KEY = Buffer.alloc(32, 2).toString("base64");
 const CONTACT_VALUES = ["+96550001234", "96550001234", "50001234", "secret.handle", "290010112345", "secret.person", "Secret.Person"];
 const REFRESH = { ok: true, startedAt: "2026-11-23T01:00:00.000Z", finishedAt: "2026-11-23T01:05:00.000Z", totalRows: 42 };
 const MIRROR_ID = "3e11fa47-71ca-11e1-9e33-c80aa9429562";
+const STAGING_BUCKET_NAME = "sh-staging-legacy-docs";
 const GENERATION_ID = "6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b";
 
 function sources(): M4Sources {
@@ -69,10 +71,15 @@ interface FakeDb {
   linkReportReady: boolean;
   /** What the link report reads, or an error to throw. */
   links: LinkReport | Error;
+  /** Whether migration 0660 is applied, the bucket on the marker row, and the staged rows. */
+  documentsReady: boolean;
+  documentBucket: string | null;
+  stagedDocuments: Map<string, StagedDocument>;
 }
 const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY,
   promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64), linkReportReady: true,
-  links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplePrincipals": [], "link.contactTaken": [], "link.emailMismatch": [] } } });
+  links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplePrincipals": [], "link.contactTaken": [], "link.emailMismatch": [] } },
+  documentsReady: true, documentBucket: STAGING_BUCKET_NAME, stagedDocuments: new Map() });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -92,6 +99,8 @@ interface HarnessOptions {
   mirrorId?: string;
   /** The schema the mirror reader is connected to; default legacy_mirror. */
   mirrorSchema?: string;
+  /** The staging document bucket for doccopy; default an empty in-memory bucket. */
+  staging?: StagingObjects | (() => StagingObjects);
   /** The mirror's generation marker rows; default [GENERATION_ID]. */
   markers?: readonly string[];
 }
@@ -105,7 +114,7 @@ interface Harness {
   readonly err: string[];
   readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined };
   readonly file: (name: string) => string;
-  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck") => M4Receipt;
+  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy") => M4Receipt;
 }
 
 function harness(opts: HarnessOptions = {}): Harness {
@@ -176,6 +185,21 @@ function harness(opts: HarnessOptions = {}): Harness {
       if (db.links instanceof Error) throw db.links;
       return db.links;
     },
+    documentsReady: async () => db.documentsReady,
+    documentBucket: async () => db.documentBucket,
+    documentStaging: () => {
+      assert.equal(db.writer, me, "the staging table is written only by the lock holder");
+      return {
+        get: async (id, kind, generation) => db.stagedDocuments.get(`${id}/${kind}/${generation}`) ?? null,
+        insert: async (row) => {
+          if (db.sessionLost || db.writer !== me) throw new Error("m4.writerLost");
+          const k = `${row.legacyId}/${row.kind}/${row.generation}`;
+          if (db.stagedDocuments.has(k)) return "exists";
+          db.stagedDocuments.set(k, row);
+          return "inserted";
+        },
+      };
+    },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
     close: async () => {
@@ -222,6 +246,11 @@ function harness(opts: HarnessOptions = {}): Harness {
       if (typeof b === "function") return b();
       return b ?? { read: async () => { assert.equal(state.locked, true); return { kind: "missing" }; } };
     },
+    staging: () => {
+      const st = opts.staging;
+      if (typeof st === "function") return st();
+      return st ?? memoryStaging().objects;
+    },
     provenance: () => ({ head: REVISION, clean: true, artifact: ARTIFACT, ...opts.provenance }),
     now: () => new Date(opts.now ?? "2026-11-23T02:00:00.000Z"),
     log: (line) => out.push(line),
@@ -229,7 +258,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       err.push(line);
     },
   };
-  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
+  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
   return { dir, invocation, deps, calls, out, err, state, file, receipt };
 }
 
@@ -909,11 +938,22 @@ const pngChunk = (type: string, data: Buffer) => {
   b.writeUInt32BE(data.length); b.write(type, 4); data.copy(b, 8); b.writeUInt32BE(crc32(b.subarray(4, -4)), b.length - 4);
   return b;
 };
-const png = () => {
+const png = (color = 0) => {
   const h = Buffer.alloc(13); h.writeUInt32BE(1, 0); h.writeUInt32BE(1, 4); h[8] = 8; h[9] = 2;
-  return Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), pngChunk("IHDR", h), pngChunk("IDAT", deflateSync(Buffer.from([0, 0, 0, 0]))), pngChunk("IEND", Buffer.alloc(0))]);
+  return Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), pngChunk("IHDR", h), pngChunk("IDAT", deflateSync(Buffer.from([0, color, 0, 0]))), pngChunk("IEND", Buffer.alloc(0))]);
 };
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+
+/** A staging bucket in memory: create-only puts, never a delete. */
+function memoryStaging(bucket = new Map<string, Buffer>()) {
+  const puts: string[] = [];
+  const objects: StagingObjects = {
+    async read(key, max) { const o = bucket.get(key); return !o ? { kind: "missing" } : o.length > max ? { kind: "tooLarge" } : { kind: "found", bytes: Buffer.from(o) }; },
+    async put(key, bytes) { puts.push(key); if (bucket.has(key)) return "exists"; bucket.set(key, Buffer.from(bytes)); return "written"; },
+    async list(prefix) { return [...bucket.keys()].filter((k) => k.startsWith(prefix)); },
+  };
+  return { objects, bucket, puts };
+}
 
 /** M-4's fixture with document columns: the imported candidate 31 and the archived 32. */
 function docSources(): M4Sources {
@@ -1066,4 +1106,126 @@ test("doccheck turns a failed object read into a counted issue, and a failed leg
     assert.deepEqual([r.status, r.code], ["failed", "m2.read.country"]);
     assert.ok(!broken.err.join("\n").includes("Secret"));
   } finally { cleanup(broken); }
+});
+
+// doccopy (M-2 copy step). Synthetic objects; an accepted doccheck is produced by a real doccheck run.
+const copyEnv = { M4_STAGING_DOCUMENT_BUCKET: STAGING_BUCKET_NAME, M4_LEGACY_BUCKET: "sh-legacy-bucket", M4_LIVE_DOCUMENT_BUCKET: "sh-live-docs" };
+async function acceptedDoccheck(photo: Buffer) {
+  const dir = provenancedDir();
+  const legacy: LegacyObjectReader = { read: async (key) => (key === "photos/Secret-photo.png" ? { kind: "found", bytes: photo } : { kind: "missing" }) };
+  const check = harness({ dir, rows: docSources(), bucket: legacy });
+  assert.equal(await main(["doccheck"], check.deps), 0, check.err.join(" "));
+  return { dir, legacy, invocation: check.invocation, set: check.receipt("doccheck").documents!.set };
+}
+
+test("doccopy stages exactly the accepted documents under the verified generation, and a retry is unchanged", async () => {
+  const photo = png();
+  const { dir, legacy, invocation, set } = await acceptedDoccheck(photo);
+  const db = fakeDb();
+  const staging = memoryStaging();
+  const h = harness({ dir, db, rows: docSources(), bucket: legacy, staging: staging.objects, env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation } });
+  try {
+    assert.equal(await main(["doccopy"], h.deps), 0, h.err.join(" "));
+    const r = h.receipt("doccopy");
+    assert.deepEqual([r.status, r.acceptedDoccheck, r.mirror, r.target], ["ok", invocation, { generation: GENERATION_ID }, TARGET]);
+    assert.deepEqual({ ...r.copy, rules: undefined }, { approved: 1, handled: 1, bytes: photo.length, staged: set, matchesAccepted: true, complete: true, orphans: 0, rules: undefined });
+    assert.equal(r.copy!.rules.staged, 1);
+    const key = `legacy-import/${GENERATION_ID}/31/personal-photo/${sha256(photo)}`;
+    assert.deepEqual([...staging.bucket.keys()], [key]);
+    assert.deepEqual([...db.stagedDocuments.values()].map((d) => [d.legacyId, d.kind, d.generation, d.objectKey]), [["31", "personal-photo", GENERATION_ID, key]]);
+    assert.equal(db.writer, null, "the writer lock is released");
+    assert.equal(h.state.locked, false, "the refresh lock is released");
+    const report = JSON.parse(readFileSync(path.join(h.file("out"), `${h.invocation}.doccopy.report.json`), "utf8"));
+    assert.equal(statSync(path.join(h.file("out"), `${h.invocation}.doccopy.report.json`)).mode & 0o777, 0o600);
+    assert.deepEqual(report.outcomes, [{ legacyId: "31", kind: "personal-photo", rule: "staged" }]);
+    const everything = [readFileSync(path.join(h.file("out"), `${h.invocation}.doccopy.report.json`), "utf8"), JSON.stringify(r), h.out.join("\n"), h.err.join("\n")].join("\n");
+    assert.ok(!everything.includes("Secret"), "no legacy key or name leaves the run");
+    assert.ok(!JSON.stringify(r).includes('"31"'), "no legacy id in the receipt");
+  } finally { /* h shares the accepted doccheck's directory, removed below */ }
+  // A retry with the same accepted doccheck verifies what is there and writes nothing.
+  const again = harness({ dir: provenancedDir(), db, rows: docSources(), bucket: { read: async () => { throw new Error("no legacy read on retry"); } }, staging: staging.objects,
+    env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: path.join(dir, "out") } });
+  try {
+    assert.equal(await main(["doccopy"], again.deps), 0, again.err.join(" "));
+    const r = JSON.parse(readFileSync(path.join(dir, "out", `${again.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
+    assert.deepEqual([r.status, r.copy!.rules.unchanged, r.copy!.staged], ["ok", 1, set]);
+    assert.equal(staging.puts.length, 1, "no second write");
+  } finally { cleanup(again); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("doccopy is refused before any object read without a qualifying accepted doccheck, the staging target and bucket, or the same generation", async () => {
+  const photo = png();
+  const { dir, legacy, invocation } = await acceptedDoccheck(photo);
+  const out = path.join(dir, "out");
+  const receiptFile = path.join(out, `${invocation}.doccheck.receipt.json`), reportFile = path.join(out, `${invocation}.doccheck.report.json`);
+  const original = { receipt: readFileSync(receiptFile, "utf8"), report: readFileSync(reportFile, "utf8") };
+  const run = async (code: string, opts: HarnessOptions = {}, edit?: { receipt?: (r: Record<string, any>) => void; report?: (r: Record<string, any>) => void }) => {
+    writeFileSync(receiptFile, original.receipt); writeFileSync(reportFile, original.report);
+    if (edit?.receipt) { const r = JSON.parse(original.receipt); edit.receipt(r); writeFileSync(receiptFile, JSON.stringify(r)); }
+    if (edit?.report) { const r = JSON.parse(original.report); edit.report(r); writeFileSync(reportFile, JSON.stringify(r)); }
+    let legacyReads = 0;
+    const staging = memoryStaging();
+    const db = opts.db ?? fakeDb();
+    const h = harness({ dir: provenancedDir(), db, rows: docSources(), staging: staging.objects, bucket: { read: async (k, m) => { legacyReads++; return legacy.read(k, m); } }, ...opts,
+      env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out, ...opts.env } });
+    try {
+      assert.equal(await main(["doccopy"], h.deps), 2, code);
+      const r = JSON.parse(readFileSync(path.join(out, `${h.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
+      assert.deepEqual([r.status, r.code, r.copy], ["refused", code, undefined], code);
+      assert.deepEqual([legacyReads, staging.puts.length, db.stagedDocuments.size], [0, 0, 0], `${code}: no object read or write`);
+      assert.equal(h.state.locked, false);
+    } finally { cleanup(h); }
+  };
+  try {
+    await run("acceptedDoccheck", { env: { M4_ACCEPTED_DOCCHECK: randomUUID() } });
+    await run("acceptedDoccheck", {}, { receipt: (r) => { r.status = "failed"; } });
+    await run("acceptedDoccheck", {}, { receipt: (r) => { delete r.mirror; } });
+    await run("acceptedDoccheck", {}, { receipt: (r) => { r.documents.diagnostic = true; } });
+    await run("acceptedDoccheck", {}, { report: (r) => { r.diagnostic = true; } });
+    await run("acceptedDoccheck", {}, { receipt: (r) => { r.revision = "e".repeat(40); } });
+    await run("acceptedDoccheck", {}, { report: (r) => { r.mirror.generation = "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d"; } });
+    await run("acceptedDoccheck", {}, { receipt: (r) => { r.documents.set = "0".repeat(64); } });
+    // A report whose documents were altered no longer recomputes to its own set.
+    await run("acceptedDoccheck", {}, { report: (r) => { r.documents[0].size += 1; } });
+    // A verified build other than the one that ran the doccheck does not qualify; an unverified one is refused first.
+    await run("acceptedDoccheck", { provenance: { artifact: "f".repeat(64) }, env: { M4_ARTIFACT_DIGEST: "f".repeat(64) } });
+    await run("provenance", { provenance: { clean: false } });
+    await run("documentBucket", { env: { M4_STAGING_DOCUMENT_BUCKET: "sh-live-docs" } });
+    await run("documentBucket", { env: { M4_STAGING_DOCUMENT_BUCKET: "sh-legacy-bucket" } });
+    await run("documentBucket", { env: { M4_LIVE_DOCUMENT_BUCKET: undefined } });
+    await run("documentBucket", { db: { ...fakeDb(), documentBucket: "sh-other-bucket" } });
+    await run("documentBucket", { db: { ...fakeDb(), documentBucket: null } });
+    await run("stagingConfig", { staging: () => { throw new Error("m2.staging.config"); } });
+    await run("target", { db: { ...fakeDb(), marker: { environment: "staging", targetId: randomUUID() } } });
+    await run("schema", { db: { ...fakeDb(), documentsReady: false } });
+    await run("writerBusy", { db: { ...fakeDb(), writer: {} } });
+    await run("bounds", { env: { M4_DOCCOPY_MAX_DOCS: "0" } });
+    await run("locked", { lockHeld: false });
+    // The mirror now holds another generation, or the refresh report names another one.
+    await run("generationMismatch", { markers: ["0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d"] });
+    await run("generationMismatch", { dir: provenancedDir({ mirror: { serverId: MIRROR_ID, schema: "legacy_mirror", generation: "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d" } }) });
+    await run("staleCount", { dir: provenancedDir({ tables: { candidate: 3 } }) });
+    // The fresh plan no longer names an approved document.
+    const base = sources();
+    await run("selection", { rows: { ...base, candidate: [{ ...base.candidate[0]!, candidate_personal_photo: null }, base.candidate[1]!] } });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("doccopy that stops at a bound or finds changed bytes publishes incomplete and exits 3", async () => {
+  const photo = png();
+  const { dir, invocation } = await acceptedDoccheck(photo);
+  const out = path.join(dir, "out");
+  try {
+    const changed = harness({ dir: provenancedDir(), rows: docSources(), bucket: { read: async (k) => (k === "photos/Secret-photo.png" ? { kind: "found", bytes: png(9) } : { kind: "missing" }) },
+      env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out } });
+    assert.equal(await main(["doccopy"], changed.deps), 3);
+    const r = JSON.parse(readFileSync(path.join(out, `${changed.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
+    assert.deepEqual([r.status, r.copy!.rules["document.changed"], r.copy!.matchesAccepted, r.copy!.complete], ["incomplete", 1, false, true]);
+    cleanup(changed);
+    const bounded = harness({ dir: provenancedDir(), rows: docSources(), env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out, M4_DOCCOPY_MAX_BYTES: "1" } });
+    assert.equal(await main(["doccopy"], bounded.deps), 3);
+    const b = JSON.parse(readFileSync(path.join(out, `${bounded.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
+    assert.deepEqual([b.status, b.copy!.handled, b.copy!.complete], ["incomplete", 0, false]);
+    cleanup(bounded);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

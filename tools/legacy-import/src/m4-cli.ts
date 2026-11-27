@@ -101,6 +101,8 @@ import pg from "pg";
 import { CIVIL_KEY_CHECK, civilKeyOpens, linkReportCounts, readLinkReport, type LinkReport, PostgresCatalogueImportStore, ContactPromotionError, PostgresContactPromotion, type ContactPromotionResult, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonContactImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore, personContactDigest } from "@studenthub/db/import";
 import { CivilIdVault, PROFILE_PARITY_REVISION } from "@studenthub/profile";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
+import { copyCounts, copyLegacyDocuments, M2_DOCUMENT_COPY_REVISION, M2CopyError, selectApproved, type CopyRule, type DocumentStagingStore, type StagingObjects } from "./m2-copy.js";
+import { postgresDocumentStaging, STAGING_BUCKET, stagingBucket } from "./m2-staging.js";
 import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, GENERATION, lockPathFrom, MIRROR_GENERATION_TABLE, parseDatabaseUrl } from "./refresh.js";
 import { refreshIdentity } from "./twin/cli.js";
 import type { RefreshIdentity } from "./twin/report.js";
@@ -178,8 +180,8 @@ export function receipt(report: M4Report): string[] {
 export interface M4Receipt {
   readonly schemaVersion: 2;
   readonly invocation: string;
-  readonly kind: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck";
-  readonly status: "ok" | "started" | "refused_rows" | "failed" | "refused";
+  readonly kind: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy";
+  readonly status: "ok" | "started" | "refused_rows" | "incomplete" | "failed" | "refused";
   readonly at: string;
   /** Set once the run got as far as computing them. */
   readonly revision?: string;
@@ -216,6 +218,25 @@ export interface M4Receipt {
   readonly links?: ReturnType<typeof linkReportCounts>;
   /** For `doccheck`: counts only and the checked set's digest; ids, kinds and hashes are in the private report. */
   readonly documents?: DocCheckCounts;
+  /** For `doccopy`: the accepted doccheck it consumed. */
+  readonly acceptedDoccheck?: string;
+  /** For `doccopy`: counts per outcome, the staged set's digest and whether every approved document was handled. */
+  readonly copy?: DocCopyCounts;
+}
+
+export interface DocCopyCounts {
+  /** Approved documents in the accepted doccheck. */
+  readonly approved: number;
+  readonly handled: number;
+  readonly bytes: number;
+  readonly rules: Readonly<Record<CopyRule, number>>;
+  /** documentSetDigest over the documents verified in this run; equals the accepted set only when all verified. */
+  readonly staged: string;
+  /** Whether staged equals the accepted doccheck's documents.set. */
+  readonly matchesAccepted: boolean;
+  readonly complete: boolean;
+  /** Objects under this generation that no approved document accounts for (listed in the private report). */
+  readonly orphans: number;
 }
 
 export interface DocCheckCounts {
@@ -387,6 +408,12 @@ export interface WriteTarget {
   linkReportReady(): Promise<boolean>;
   /** The M-3 link report, read in one read-only snapshot; needs no writer lock. */
   linkReport(): Promise<LinkReport>;
+  /** Whether the document staging schema is migrated (M4_DOCCOPY_REQUIRED_MIGRATION applied, its table present). */
+  documentsReady(): Promise<boolean>;
+  /** The staging document bucket recorded on the staging marker row, or null when none is recorded. */
+  documentBucket(): Promise<string | null>;
+  /** The staging table bound to the lock-holding session; only after claimWriter. */
+  documentStaging(): DocumentStagingStore;
   /** Re-checks, on the lock session itself, that it is alive and still holds the lock. */
   stillHeld(): Promise<boolean>;
   /** Whether the lock session was lost or broken at any point. Once true, stays true. */
@@ -411,6 +438,10 @@ export const SCHEMA_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations 
  * address key 0658). Without it the promotion would decide addresses by the old rule.
  */
 export const M4_PROMOTE_REQUIRED_MIGRATION = "0659_drop_principal_email_rekey";
+/** The newest migration `doccopy` needs: the staging table and the target's document bucket (0660). */
+export const M4_DOCCOPY_REQUIRED_MIGRATION = "0660_legacy_candidate_documents";
+export const DOCUMENTS_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '${M4_DOCCOPY_REQUIRED_MIGRATION}')
+  AND to_regclass('public.legacy_candidate_documents') IS NOT NULL AS ready`;
 export const PROMOTION_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '${M4_PROMOTE_REQUIRED_MIGRATION}')
   AND to_regclass('public.legacy_contact_promotions') IS NOT NULL
   AND to_regprocedure('public.principal_email_key(text)') IS NOT NULL AS ready`;
@@ -575,6 +606,19 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
       try { return (await pool.query<{ ready: boolean }>(LINK_REPORT_READY_SQL)).rows[0]?.ready === true; } catch { return false; }
     },
     linkReport: () => readLinkReport(pool),
+    documentsReady: async () => {
+      try { return (await pool.query<{ ready: boolean }>(DOCUMENTS_READY_SQL)).rows[0]?.ready === true; } catch { return false; }
+    },
+    documentBucket: async () => {
+      try {
+        const { rows } = await pool.query<{ bucket: string | null }>("SELECT document_bucket AS bucket FROM legacy_import_target WHERE environment = 'staging'");
+        return rows.length === 1 ? rows[0]!.bucket : null;
+      } catch { return null; }
+    },
+    documentStaging: () => {
+      if (!writer) throw new Error("m4.writerNotClaimed");
+      return postgresDocumentStaging(writer);
+    },
     stillHeld: async () => (writer ? writer.fence() : false),
     lost: () => wasLost || (writer?.lost ?? false),
     close: async () => {
@@ -593,6 +637,8 @@ export interface CliDeps {
   readonly target: (env: NodeJS.ProcessEnv) => WriteTarget;
   /** The legacy bucket, read-only (doccheck only; default envBucket). Throws m2.bucket.config on a bad setting. */
   readonly bucket?: (env: NodeJS.ProcessEnv) => LegacyObjectReader;
+  /** The staging document bucket (doccopy only; default envStaging). Throws on a bad setting. */
+  readonly staging?: (env: NodeJS.ProcessEnv) => StagingObjects;
   readonly provenance: () => Provenance;
   readonly now: () => Date;
   readonly log: (line: string) => void;
@@ -603,6 +649,10 @@ export interface CliDeps {
 export const envBucket = (e: NodeJS.ProcessEnv): LegacyObjectReader => legacyBucketReader({ bucket: e.M4_LEGACY_BUCKET ?? "",
   region: e.M4_LEGACY_BUCKET_REGION ?? "", accessKeyId: e.M4_LEGACY_BUCKET_ACCESS_KEY_ID ?? "", secretAccessKey: e.M4_LEGACY_BUCKET_SECRET_ACCESS_KEY ?? "" });
 
+/** The staging document bucket from the run's environment (doccopy only). */
+export const envStaging = (e: NodeJS.ProcessEnv): StagingObjects => stagingBucket({ accountId: e.M4_STAGING_DOCUMENT_ACCOUNT_ID ?? "",
+  bucket: e.M4_STAGING_DOCUMENT_BUCKET ?? "", accessKeyId: e.M4_STAGING_DOCUMENT_ACCESS_KEY_ID ?? "", secretAccessKey: e.M4_STAGING_DOCUMENT_SECRET_ACCESS_KEY ?? "" });
+
 /** `built` is the provenance tools/legacy-import/m4-launch.mjs verified before loading this module. */
 export const defaultDeps = (env: NodeJS.ProcessEnv, built: Provenance): CliDeps => ({
   env,
@@ -610,6 +660,7 @@ export const defaultDeps = (env: NodeJS.ProcessEnv, built: Provenance): CliDeps 
   reader: (e) => mirrorReader(parseDatabaseUrl(e.M4_LEGACY_MIRROR_URL, "mirror")),
   target: (e) => postgresTarget(e.M4_DATABASE_URL ?? "", e.M4_IMPORT_ACTOR ?? "", e.M4_OPERATOR_ORG_ID ?? "", contactKeysFrom(e, "write")),
   bucket: envBucket,
+  staging: envStaging,
   provenance: () => built,
   now: () => new Date(),
   log: (line) => console.log(line),
@@ -625,7 +676,7 @@ class Refusal extends Error {}
 export async function main(argv: readonly string[], deps: CliDeps): Promise<number> {
   const { env } = deps;
   const mode = argv[0];
-  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote" && mode !== "linkreport" && mode !== "doccheck") { deps.error("m4: refused.usage"); return 2; }
+  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote" && mode !== "linkreport" && mode !== "doccheck" && mode !== "doccopy") { deps.error("m4: refused.usage"); return 2; }
   const invocation = env.M4_INVOCATION ?? "";
   // Without a fresh, unclaimed name there is nowhere this run's outcome could be published.
   if (!UUID.test(invocation)) { deps.error("m4: refused.invocation"); return 2; }
@@ -639,11 +690,12 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
   let order: readonly string[] = [];
   let links: M4Receipt["links"];
   let documents: M4Receipt["documents"];
+  let copy: M4Receipt["copy"];
   const publish = (status: M4Receipt["status"], code?: string, promotion?: PromotionCounts) => {
     const unconfirmed = status === "failed" && mode !== "promote" ? order.slice(confirmed.length) : undefined;
     writeWhole(receiptPath, { schemaVersion: 2, invocation, kind: mode, status, at: deps.now().toISOString(), ...bound,
       steps: confirmed.map(receiptStep), ...(unconfirmed ? { unconfirmed } : {}), ...(code ? { code } : {}),
-      ...(promotion ? { promotion } : {}), ...(links ? { links } : {}), ...(documents ? { documents } : {}) } satisfies M4Receipt);
+      ...(promotion ? { promotion } : {}), ...(links ? { links } : {}), ...(documents ? { documents } : {}), ...(copy ? { copy } : {}) } satisfies M4Receipt);
   };
   const refuse = (code: string): never => { throw new Refusal(code); };
 
@@ -658,6 +710,9 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     if (mode === "linkreport") return await linkReport(deps, revision, targetId, publish, reportPath, (b, l) => { bound = b; links = l; }, (t) => { target = t; });
     if (mode === "doccheck") {
       return await docCheck(deps, revision, publish, reportPath, (b, d) => { bound = b; documents = d; }, (l) => { lock = l; });
+    }
+    if (mode === "doccopy") {
+      return await docCopy(deps, revision, publish, reportPath, (b, c) => { bound = b; copy = c; }, (l) => { lock = l; }, (t) => { target = t; });
     }
     if (mode === "promote") return await promote(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
     const operator = env.M4_OPERATOR_ORG_ID ?? "";
@@ -966,12 +1021,8 @@ async function docCheck(deps: CliDeps, revision: string,
   const provenance = refreshProvenance(last);
   const reader = deps.reader(env);
   if (provenance) {
-    if (path.resolve(lockPathFrom(env)) !== provenance.lock) return refuse("lockMismatch");
-    let mirror: Readonly<Record<string, unknown>> | undefined;
-    try { mirror = (await reader.rows(MIRROR_IDENTITY_SQL, []))[0]; } catch { return fail("m2.read.mirror"); }
-    if (mirror?.id !== provenance.serverId || mirror?.schema !== provenance.schema) return refuse("mirrorMismatch");
-    // The copy itself: the generation the refresh wrote into the mirror, exactly one marker row.
-    if (Number(mirror?.markers) !== 1 || mirror?.generation !== provenance.generation) return refuse("generationMismatch");
+    const bad = await mirrorBinding(env, reader, provenance);
+    if (bad) return "refuse" in bad ? refuse(bad.refuse) : fail(bad.fail);
   }
   let sources;
   try { sources = await readM2Sources(reader); } catch (error) {
@@ -1002,4 +1053,159 @@ async function docCheck(deps: CliDeps, revision: string,
   deps.log(`documents candidates=${documents.candidates} mapped=${documents.mapped} checked=${documents.checked} bytes=${documents.bytes} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
   deps.log(`m4 doccheck ok invocation=${env.M4_INVOCATION} set=${documents.set}${verified ? ` generation=${verified.generation}` : " diagnostic=true"} revision=${revision} artifact=${artifact}`);
   return 0;
+}
+
+/**
+ * Binds a refresh report's provenance to the mirror actually read: the same lock file the refresh
+ * held, the same server and schema it copied into, and the generation it wrote into the mirror's
+ * own marker (exactly one row). Null when all hold.
+ */
+async function mirrorBinding(env: NodeJS.ProcessEnv, reader: LegacyReader, provenance: NonNullable<ReturnType<typeof refreshProvenance>>):
+  Promise<{ refuse: string } | { fail: string } | null> {
+  if (path.resolve(lockPathFrom(env)) !== provenance.lock) return { refuse: "lockMismatch" };
+  let mirror: Readonly<Record<string, unknown>> | undefined;
+  try { mirror = (await reader.rows(MIRROR_IDENTITY_SQL, []))[0]; } catch { return { fail: "m2.read.mirror" }; }
+  if (mirror?.id !== provenance.serverId || mirror?.schema !== provenance.schema) return { refuse: "mirrorMismatch" };
+  if (Number(mirror?.markers) !== 1 || mirror?.generation !== provenance.generation) return { refuse: "generationMismatch" };
+  return null;
+}
+
+/** Positive whole number from the environment, or the default; null when set but invalid. */
+function envBound(value: string | undefined, fallback: number): number | null {
+  if (value === undefined || value === "") return fallback;
+  const n = Number(value);
+  return /^[1-9][0-9]{0,12}$/.test(value) && Number.isSafeInteger(n) ? n : null;
+}
+
+/**
+ * `doccopy` (M-2): stages the documents an accepted doccheck approved into the staging bucket and
+ * `legacy_candidate_documents` (migration 0660), read again from the same mirror generation
+ * (m2-copy). Nothing reaches a person's documents; promotion is a later step that takes only a
+ * complete receipt whose staged set equals the accepted set.
+ *
+ * Before any object is read it requires:
+ * - the accepted doccheck (`M4_ACCEPTED_DOCCHECK`): its ok receipt and private report, both for that
+ *   invocation, with this run's verified build, a verified generation (never diagnostic), and the
+ *   same set in the receipt, the report and recomputed from the report's documents (`acceptedDoccheck`);
+ * - the staging database by its marker (`target`), the 0660 schema (`schema`), and a staging bucket
+ *   that is the one recorded on the marker and differs from legacy's and the live document bucket
+ *   (`M4_LIVE_DOCUMENT_BUCKET`, required) (`documentBucket`), then the one-writer lock (`writerBusy`);
+ * - under the refresh lock, a refresh whose generation is the accepted one, bound to the mirror read
+ *   (`generationMismatch`, `lockMismatch`, `mirrorMismatch`), the whole candidate table at the
+ *   refresh's count (`ownershipIncomplete`, `staleCount`), and an approved subset the fresh plan
+ *   names exactly (`selection`).
+ * The refresh lock is held from selection through the last source read. The run is bounded by
+ * M4_DOCCOPY_MAX_DOCS (200), M4_DOCCOPY_MAX_BYTES (256 MiB) and M4_DOCCOPY_MAX_MS (15 min).
+ * Exit 0 when complete and the staged set equals the accepted set; 3 when incomplete or any
+ * document did not verify; 2 refused before any object read; 1 failed.
+ */
+async function docCopy(deps: CliDeps, revision: string,
+  publish: (status: M4Receipt["status"], code?: string) => void, reportPath: string,
+  bind: (bound: Omit<M4Receipt, "schemaVersion" | "invocation" | "kind" | "status" | "at" | "steps">, copy?: DocCopyCounts) => void,
+  trackLock: (lock: SharedLock) => void, trackTarget: (target: WriteTarget) => void): Promise<number> {
+  const { env } = deps;
+  const refuse = (code: string): number => {
+    deps.error(`m4: refused.${code}`);
+    try { publish("refused", code); } catch { return 1; }
+    return 2;
+  };
+  const fail = (code: string): number => {
+    deps.error(`m4: ${code}`);
+    try { publish("failed", code); } catch { /* the exit code still says failed */ }
+    return 1;
+  };
+  const targetId = env.M4_TARGET_ID ?? "";
+  if (!UUID.test(targetId) || !env.M4_DATABASE_URL) return refuse("destination");
+  const artifact = env.M4_ARTIFACT_DIGEST ?? "";
+  const built = deps.provenance();
+  if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
+  const limits = { maxDocuments: envBound(env.M4_DOCCOPY_MAX_DOCS, 200), maxBytes: envBound(env.M4_DOCCOPY_MAX_BYTES, 256 * 1024 * 1024),
+    maxMs: envBound(env.M4_DOCCOPY_MAX_MS, 15 * 60 * 1000) };
+  if (limits.maxDocuments === null || limits.maxBytes === null || limits.maxMs === null) return refuse("bounds");
+
+  // The accepted doccheck, by its own receipt and private report.
+  const accepted = env.M4_ACCEPTED_DOCCHECK ?? "";
+  if (!UUID.test(accepted) || accepted === env.M4_INVOCATION) return refuse("acceptedDoccheck");
+  const dir = env.M4_OUTPUT_DIR || DEFAULT_M4_OUTPUT_DIR;
+  let check: Partial<M4Receipt> | undefined, checkReport: Record<string, unknown> | undefined;
+  try {
+    check = JSON.parse(readFileSync(path.join(dir, `${accepted}.doccheck.receipt.json`), "utf8")) as Partial<M4Receipt>;
+    checkReport = JSON.parse(readFileSync(path.join(dir, `${accepted}.doccheck.report.json`), "utf8")) as Record<string, unknown>;
+  } catch { check = undefined; }
+  const generation = check?.mirror?.generation;
+  const reportMirror = checkReport?.mirror as { generation?: unknown } | undefined;
+  if (!check || !checkReport || check.schemaVersion !== 2 || check.kind !== "doccheck" || check.invocation !== accepted || check.status !== "ok"
+    || checkReport.kind !== "doccheck" || checkReport.invocation !== accepted
+    || check.revision !== revision || check.artifact !== artifact || checkReport.revision !== revision || checkReport.artifact !== artifact
+    || typeof generation !== "string" || !GENERATION.test(generation) || reportMirror?.generation !== generation
+    || check.documents?.diagnostic || checkReport.diagnostic !== undefined
+    || typeof check.documents?.set !== "string" || checkReport.set !== check.documents.set || !Array.isArray(checkReport.documents)) return refuse("acceptedDoccheck");
+  const acceptedSet = check.documents.set;
+  let recomputed: string;
+  try { recomputed = documentSetDigest(checkReport.documents as never); } catch { recomputed = ""; }
+  if (recomputed !== acceptedSet) return refuse("acceptedDoccheck");
+  const base = { revision, artifact, target: targetId, acceptedDoccheck: accepted, mirror: { generation } };
+  bind(base);
+
+  // The staging side: its bucket, distinct from legacy's and the live one, and the staging database.
+  const bucketName = env.M4_STAGING_DOCUMENT_BUCKET ?? "";
+  // The operator names the live document bucket too, so the run can prove it is not writing there.
+  const live = env.M4_LIVE_DOCUMENT_BUCKET ?? "";
+  if (!STAGING_BUCKET.test(bucketName) || !live || bucketName === live || bucketName === env.M4_LEGACY_BUCKET) return refuse("documentBucket");
+  let objects: StagingObjects, legacy: LegacyObjectReader;
+  try { objects = (deps.staging ?? envStaging)(env); } catch { return refuse("stagingConfig"); }
+  try { legacy = (deps.bucket ?? envBucket)(env); } catch { return refuse("bucketConfig"); }
+  const target = deps.target(env);
+  trackTarget(target);
+  const marker = await target.marker();
+  if (marker?.environment !== "staging" || marker.targetId !== targetId) return refuse("target");
+  if (!await target.documentsReady()) return refuse("schema");
+  if (await target.documentBucket() !== bucketName) return refuse("documentBucket");
+  if (!await target.claimWriter()) return refuse("writerBusy");
+
+  const lock = await deps.lock(lockPathFrom(env));
+  trackLock(lock);
+  if (!lock.held) return refuse("locked");
+  let last: unknown;
+  try { last = JSON.parse(readFileSync(env.LEGACY_REFRESH_REPORT || REFRESH_REPORT_PATH, "utf8")); } catch { last = undefined; }
+  const refresh = refreshIdentity(last);
+  if (!refresh) return refuse("refreshNotOk");
+  const provenance = refreshProvenance(last);
+  if (!provenance || provenance.generation !== generation) return refuse("generationMismatch");
+  const today = kuwaitDay(deps.now().toISOString());
+  bind({ ...base, refresh, today });
+  const reader = deps.reader(env);
+  const bad = await mirrorBinding(env, reader, provenance);
+  if (bad) return "refuse" in bad ? refuse(bad.refuse) : fail(bad.fail);
+  let sources;
+  try { sources = await readM2Sources(reader); } catch (error) {
+    if (error instanceof M2InputError && error.code === "m2.ownershipIncomplete") return refuse("ownershipIncomplete");
+    return fail(error instanceof M2InputError ? error.code : "m2.read");
+  }
+  if (sources.candidate.length !== provenance.candidates) return refuse("staleCount");
+  const selection = selectApproved(checkReport.documents, planM2(sources, today).documents);
+  if (!selection) return refuse("selection");
+
+  publish("started");
+  const started = Date.now();
+  let result;
+  try {
+    result = await copyLegacyDocuments(selection, legacy, objects, target.documentStaging(), generation,
+      { doccheck: accepted, copy: env.M4_INVOCATION! }, { maxDocuments: limits.maxDocuments, maxBytes: limits.maxBytes, maxMs: limits.maxMs, now: () => Date.now() - started });
+  } catch (error) { return fail(error instanceof M2CopyError ? error.code : "m2.copy"); }
+  if (!await target.stillHeld()) return fail("m4.writerLost");
+
+  const rules = copyCounts(result);
+  const staged = documentSetDigest(result.verified);
+  const counts: DocCopyCounts = { approved: selection.length, handled: result.outcomes.length, bytes: result.bytes, rules, staged,
+    matchesAccepted: staged === acceptedSet, complete: result.complete, orphans: result.orphans.length };
+  writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "doccopy", at: deps.now().toISOString(), ...base, refresh, today,
+    revisions: { copy: M2_DOCUMENT_COPY_REVISION }, accepted: acceptedSet, staged, complete: result.complete,
+    outcomes: result.outcomes, orphans: result.orphans });
+  bind({ ...base, refresh, today }, counts);
+  const done = result.complete && counts.matchesAccepted;
+  publish(done ? "ok" : "incomplete");
+  deps.log(`copy approved=${counts.approved} handled=${counts.handled} bytes=${counts.bytes} orphans=${counts.orphans} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
+  deps.log(`m4 doccopy ${done ? "ok" : "incomplete"} invocation=${env.M4_INVOCATION} accepted=${accepted} generation=${generation} staged=${staged} complete=${result.complete}`);
+  return done ? 0 : 3;
 }
