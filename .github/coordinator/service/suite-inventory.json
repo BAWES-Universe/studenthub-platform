@@ -2440,6 +2440,7 @@
     "SHU-225 I8 (M7): a spent episode is never re-selectable",
     "SHU-225 I8: exhaustion and capped failures still end the episode (termination unchanged)",
     "a review that failed before running (busy reviewer sandbox) routes the same review again",
+    "REVIEW_RETRY_FRESH_ATTEMPT: a review that found the sandbox busy relaunches under a new attempt id each round, and the retry cap ends it",
     "SHU-225 I4: the successor is the same issue as the activation target and the committed scope",
     "SHU-225 I5: a fresh BUILD_READY with no review receipt routes exactly ONE bootstrapped review",
     "SHU-225 I5: with no bootstrap declared the routing still holds visibly (no behaviour change)",
@@ -20605,6 +20606,14 @@
     },
     {
       "name": "a review that failed before running (busy reviewer sandbox) routes the same review again",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "REVIEW_RETRY_FRESH_ATTEMPT: a review that found the sandbox busy relaunches under a new attempt id each round, and the retry cap ends it",
       "capabilities": [
         {
           "name": "shell_toolchain"
