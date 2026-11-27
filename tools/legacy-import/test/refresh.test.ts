@@ -15,6 +15,7 @@ import {
   runRefresh,
   writePrivileges,
   type DatabaseUrl,
+  MIRROR_GENERATION_TABLE,
   type MysqlPort,
 } from "../src/refresh.js";
 
@@ -52,6 +53,10 @@ function fakeMysql(overrides: Partial<MysqlPort> = {}, log: string[] = []): Mysq
     },
     async counts(_db, tables) {
       return Object.fromEntries(tables.map((table) => [table, mirror.get(table)!]));
+    },
+    async setGeneration(_target, generation) {
+      mirror.set(MIRROR_GENERATION_TABLE, generation ? 1 : 0);
+      log.push(`generation ${generation ?? "cleared"}`);
     },
     ...overrides,
   };
@@ -161,20 +166,33 @@ test("token tables are never copied", () => {
 
 test("a refresh copies every non-token table, prunes stale mirror tables, and reports counts only", async () => {
   const log: string[] = [];
-  const report = await runRefresh(loadConfig(env), fakeMysql({}, log), ticking());
+  const report = await runRefresh(loadConfig(env), fakeMysql({}, log), ticking(), () => "11111111-2222-4333-8444-555555555555");
   assert.equal(report.ok, true);
-  // Pruned before the copy (an excluded table never outlives a failed copy) and after it.
-  assert.deepEqual(log, ["keep candidate,company,transfer", "copy candidate,company,transfer", "keep candidate,company,transfer"]);
+  // The generation is cleared before the mirror changes and written only once the copy is counted.
+  // Pruned before the copy (an excluded table never outlives a failed copy) and after it; the marker stays.
+  const keep = "keep candidate,company,transfer,studenthub_refresh_generation";
+  assert.deepEqual(log, ["generation cleared", keep, "copy candidate,company,transfer", keep, "generation 11111111-2222-4333-8444-555555555555"]);
   assert.deepEqual(report.nonTransactional, []);
   assert.deepEqual(report.tables, { candidate: 3, company: 2, transfer: 4 });
   assert.deepEqual(report.excluded, ["candidate_token", "staff_token"]);
   assert.equal(report.totalRows, 9);
-  // The mirror's own identity, so a later reader can prove it reads this generation.
-  assert.deepEqual(report.mirror, { serverId: "uuid-staging", schema: "legacy_mirror" });
+  // The mirror's identity and generation, so a later reader can prove it reads this copy.
+  assert.deepEqual(report.mirror, { serverId: "uuid-staging", schema: "legacy_mirror", generation: "11111111-2222-4333-8444-555555555555" });
   assert.equal(report.durationMs, 1000);
   const text = JSON.stringify(report) + summary(report);
   for (const secret of ["s3cret", "m1rror", "legacy-replica", "staging-db", "reader"]) assert.equal(text.includes(secret), false, secret);
   assert.equal(summary(report), "legacy-refresh: ok tables=3 rows=9 excluded=2 ms=1000");
+});
+
+test("a run that fails after the marker is cleared leaves the mirror with no generation, and a bad id is never written", async () => {
+  const log: string[] = [];
+  const failed = await runRefresh(loadConfig(env), fakeMysql({ copy: async () => Promise.reject(new Error("x")) }, log), ticking());
+  assert.deepEqual([failed.code, failed.mirror, log], ["failed.copy", undefined, ["generation cleared", "keep candidate,company,transfer,studenthub_refresh_generation"]]);
+  const late: string[] = [];
+  const marker = await runRefresh(loadConfig(env), fakeMysql({}, late), ticking(), () => "not-a-uuid");
+  assert.deepEqual([marker.ok, marker.code, marker.mirror], [false, "failed.marker", undefined]);
+  assert.ok(!late.some((l) => l.includes("not-a-uuid")));
+  assert.equal(late.at(-1), "keep candidate,company,transfer,studenthub_refresh_generation", "the cleared marker stays cleared");
 });
 
 test("a writable source account refuses before anything is copied", async () => {
@@ -198,11 +216,14 @@ test("failures report a fixed code per step and never the error text", async () 
     [{ counts: async () => Promise.reject(leaky) }, "failed.counts"],
     [{ counts: async () => ({ candidate: 3 }) }, "target.countMissing"],
     [{ tables: async () => ["candidate_token"] }, "source.empty"],
+    [{ tables: async () => ["candidate", "StudentHub_Refresh_Generation"] }, "source.markerCollision"],
+    [{ setGeneration: async () => Promise.reject(leaky) }, "failed.marker"],
     [{ tables: async () => Promise.reject(new RefreshRefused("source.unsafeTableName")) }, "source.unsafeTableName"],
   ];
   for (const [override, code] of steps) {
     const report = await runRefresh(loadConfig(env), fakeMysql(override), ticking());
     assert.equal(report.ok, false, code);
+    assert.equal(report.mirror, undefined, "a failed run names no generation");
     assert.equal(report.code, code);
     assert.equal(JSON.stringify(report).includes("s3cret"), false);
     assert.equal(JSON.stringify(report).includes("legacy-replica"), false);
