@@ -15,6 +15,7 @@ const contractsSuite = suiteAt("contracts.test.js");
 const bankWriteSuite = suiteAt("bank-write.test.js");
 const gatewayPath = new URL("../../../dist/apps/gateway/src/bank-details.js", import.meta.url);
 const httpSuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/bank-details-http.test.js", import.meta.url));
+const pageSuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/bank-details-page.test.js", import.meta.url));
 const files = new Map(await Promise.all([contractsPath, resolutionPath, bankPath, storePath, bankWritePath, gatewayPath].map(async (path) => [path, await readFile(path, "utf8")])));
 const mutations = [
   ["overlap check dropped", contractsPath,
@@ -58,6 +59,9 @@ const mutations = [
   ["bank details accepted from any origin", gatewayPath,
     "if (request.headers.origin !== origin || request.headers[\"sec-fetch-site\"] === \"cross-site\")",
     "if (false)", "SHU182_BANK_HTTP_BOUNDARY", httpSuite],
+  ["bank details page accepts a form from any origin", gatewayPath,
+    "if (request.headers[\"sec-fetch-site\"] === \"cross-site\" || request.headers.origin !== origin)",
+    "if (false)", "C15_BANK_PAGE_BOUNDARY", pageSuite],
   ["preview serves the full IBAN", gatewayPath,
     "ibanMasked: `${parsed.iban.slice(0, 4)}${\"•\".repeat(parsed.iban.length - 8)}${parsed.iban.slice(-4)}`",
     "ibanMasked: parsed.iban", "SHU182_BANK_HTTP_FLOW", httpSuite],
