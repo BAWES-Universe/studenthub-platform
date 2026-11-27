@@ -8,6 +8,7 @@ import {
 } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createContextNavigation, type ContextNavigation } from "../src/context-navigation.js";
+import { createCompanyDirectory } from "../src/company-directory.js";
 import { renderError, type BrowserLoginApplication } from "../src/web-ui.js";
 
 const ORIGIN = "https://studenthub.example.invalid";
@@ -100,7 +101,7 @@ async function fixture(t: TestContext, options: Options = {}) {
   const services = Object.fromEntries((Object.keys(SERVICE_FIELDS) as Service[])
     .filter((name) => !options.missing?.includes(name)).map((name) => [name, relay(name)]));
   const login = {
-    ...rig.app, navigation, ...services,
+    ...rig.app, navigation, ...services, companies: createCompanyDirectory(rig.sessions, store, organizations),
     web: { origin: ORIGIN, returnTo: rig.config.allowedReturnUrls[1],
       profiles: new OwnProfileRepository({ principals: store, source: new InMemoryApprovedProfileAdapter({ links: [], rows: new Map() }), today: () => "2026-11-27" }) },
   } as unknown as BrowserLoginApplication;
@@ -160,9 +161,53 @@ test("ADMIN_PAGE admin sees every company control with today's values; staff see
   const owner = await (await f.get("/workspace?org_id=org-a&role=org-owner", "owner")).text();
   assert.doesNotMatch(owner, /Company admin/, "ADMIN_PAGE an owner's workspace has no link");
 
-  for (const query of ["?saved=deletion", "?saved=legal_name", "?saved=status&saved=hourly_rate", "?x=1"]) {
-    assert.equal((await f.get(`${PAGE}${query}`)).status, 400, `ADMIN_PAGE ${query} is 400`);
+  const staffWorkspace = await (await f.get("/workspace?org_id=org-a&role=staff", "staff")).text();
+  assert.match(staffWorkspace, /href="\/workspace\/companies\/org-a\/admin">Company admin<\/a>/, "ADMIN_PAGE the staff workspace links the page");
+
+  // A forged success link never produces a notice: the page takes no query at all.
+  for (const query of ["?saved=status", "?saved=hourly_rate", "?saved=deletion", "?saved=status&saved=hourly_rate", "?x=1"]) {
+    for (const who of ["admin", "staff"] as const) {
+      const forged = await f.get(`${PAGE}${query}`, who);
+      assert.equal(forged.status, 400, `ADMIN_PAGE ${who} ${query} is 400`);
+      assert.doesNotMatch(await forged.text(), /Saved/, `ADMIN_PAGE ${who} ${query} shows no saved notice`);
+    }
   }
+});
+
+test("ADMIN_NAVIGATION the workspace leads to the page: companies list, company panel, Company admin", async (t) => {
+  const f = await fixture(t);
+  for (const role of ["admin", "staff"] as const) {
+    const home = await (await f.get(`/workspace?org_id=root&role=${role}`, role)).text();
+    const list = /href="(\/workspace\/companies\?[^"]+)">Companies<\/a>/.exec(home)?.[1]?.replace(/&amp;/g, "&");
+    assert.ok(list, `ADMIN_NAVIGATION ${role} workspace links the companies list`);
+    const directory = await (await f.get(list, role)).text();
+    const row = /<th scope="row"><a href="([^"]+)">Synthetic Retail Group<\/a>/.exec(directory)?.[1]?.replace(/&amp;/g, "&");
+    assert.equal(row, `/workspace?org_id=org-a&role=${role}`, `ADMIN_NAVIGATION ${role} list links the company`);
+    const panel = await (await f.get(row!, role)).text();
+    const admin = /<a class="text-link" href="([^"]+)">Company admin<\/a>/.exec(panel)?.[1];
+    assert.equal(admin, PAGE, `ADMIN_NAVIGATION ${role} company panel links the page`);
+    assert.equal((await f.get(admin!, role)).status, 200, `ADMIN_NAVIGATION ${role} reaches the page`);
+  }
+});
+
+test("ADMIN_STAFF_LIMIT staff posting an admin-only field directly is refused before any service call", async (t) => {
+  const f = await fixture(t);
+  const unknown = await (await f.get("/workspace/companies/org-a/no-such-page", "staff")).text();
+  const adminReview = await (await f.post(PREVIEW, change("hourly_rate", "9"))).text();
+  const callsBefore = f.calls.length;
+  for (const [field, value] of [["hourly_rate", "9"], ["bonus_commission", "1"], ["currency_code", "USD"], ["deletion", "deleted"]] as const) {
+    const preview = await f.post(PREVIEW, change(field, value), "staff");
+    assert.equal(preview.status, 404, `ADMIN_STAFF_LIMIT staff preview ${field} is 404`);
+    assert.equal(await preview.text(), unknown, `ADMIN_STAFF_LIMIT staff preview ${field} is the unknown-path page`);
+    const form = f.confirmForm(adminReview); form.set("field", field); form.set("value", value);
+    const confirm = await f.post(CONFIRM, form, "staff");
+    assert.equal(confirm.status, 404, `ADMIN_STAFF_LIMIT staff confirm ${field} is 404`);
+    assert.equal(await confirm.text(), unknown, `ADMIN_STAFF_LIMIT staff confirm ${field} is the unknown-path page`);
+  }
+  const replay = await f.post(CONFIRM, f.confirmForm(adminReview), "staff");
+  assert.equal(replay.status, 404, "ADMIN_STAFF_LIMIT staff replaying an admin's reviewed form is 404");
+  assert.equal(f.calls.length, callsBefore, "ADMIN_STAFF_LIMIT no service saw a staff admin-only post");
+  assert.equal(f.commits.length, 0, "ADMIN_STAFF_LIMIT nothing saved");
 });
 
 test("ADMIN_ACCESS only staff and admin reach the page and its posts; everyone else gets the unknown-path 404", async (t) => {
@@ -206,19 +251,18 @@ test("ADMIN_FLOW preview names the current and new value, confirm saves once and
   const form = f.confirmForm(review);
   const saved = await f.post(CONFIRM, form);
   assert.equal(saved.status, 303, "ADMIN_FLOW confirm redirects");
-  assert.equal(saved.headers.get("location"), `${PAGE}?saved=status`);
+  assert.equal(saved.headers.get("location"), PAGE, "ADMIN_FLOW confirm returns to the page with no query");
   assert.deepEqual(f.commits, [{ service: "organizationStatus", orgId: "org-a", field: "status", value: "inactive" }], "ADMIN_FLOW one commit");
   const replay = await f.post(CONFIRM, form);
   assert.equal(replay.status, 409, "ADMIN_FLOW a replay is a conflict");
   assert.match(await replay.text(), new RegExp(CONFLICT), "ADMIN_FLOW conflict wording");
   assert.equal(f.commits.length, 1, "ADMIN_FLOW the replay saved nothing");
 
-  const page = await (await f.get(`${PAGE}?saved=hourly_rate`)).text();
-  assert.match(page, /<strong>Saved\.<\/strong> <span>Hourly rate: <span class="saved-value">1\.500<\/span><\/span>/, "ADMIN_FLOW saved notice shows the read value");
+  assert.doesNotMatch(await (await f.get(PAGE)).text(), /Saved/, "ADMIN_FLOW the page shows stored state, not a notice");
 
   const terms = await (await f.post(PREVIEW, change("bonus_commission", "25.5"))).text();
   assert.match(terms, /<dd class="new-value">25\.5%<\/dd>/, "ADMIN_FLOW bonus shown as a percentage");
-  assert.equal((await f.post(CONFIRM, f.confirmForm(terms))).headers.get("location"), `${PAGE}?saved=bonus_commission`);
+  assert.equal((await f.post(CONFIRM, f.confirmForm(terms))).headers.get("location"), PAGE);
   const cleared = await (await f.post(PREVIEW, change("currency_code", ""))).text();
   assert.match(cleared, /<dd class="new-value">Not set<\/dd>/, "ADMIN_FLOW an empty box clears");
   assert.deepEqual(f.calls.at(-1)?.body, { orgId: "org-a", field: "currency_code", value: "none" }, "ADMIN_FLOW an empty box is sent as none");

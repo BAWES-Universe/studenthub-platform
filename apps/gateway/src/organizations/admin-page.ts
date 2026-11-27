@@ -67,6 +67,14 @@ function adminPath(orgId: string): string {
   return `/workspace/companies/${encodeURIComponent(orgId)}/admin`;
 }
 
+/**
+ * Admin-only fields are refused to staff here, before any service is called. The services
+ * still make their own decision; this only keeps the page from relaying what it never offers.
+ */
+function mayChange(operator: { readonly role: OperatorRole }, field: AdminField): boolean {
+  return operator.role === "admin" || !FIELDS[field].adminOnly;
+}
+
 function service(ctx: GatewayRouteContext, field: AdminField): Relay | undefined {
   return ctx.login?.[FIELDS[field].service] as Relay | undefined;
 }
@@ -201,23 +209,19 @@ function historySection(history: StatusHistory): string {
 }
 
 async function adminPage(ctx: GatewayRouteContext, orgId: string, query: URLSearchParams): Promise<boolean> {
-  const saved = query.getAll("saved");
-  if (query.size > 1 || [...query.keys()].some((key) => key !== "saved") || saved.length > 1
-    || (saved.length === 1 && (!adminField(saved[0]) || saved[0] === "deletion"))) return invalid(ctx);
+  // The page takes no query. It shows only what is stored now, never a notice a link could forge.
+  if (query.size > 0) return invalid(ctx);
   const operator = await openOperator(ctx, sessionCookie(ctx.request.headers.cookie), orgId);
   if (operator.status !== 200) return operator.status === 503 ? unavailable(ctx) : refuse(ctx, operator.status);
   const { fields, role } = operator;
   const origin = Boolean(ctx.login?.web?.origin);
-  const savedField = saved[0] as AdminField | undefined;
-  const notice = savedField
-    ? `<section class="notice" role="status"><strong>Saved.</strong> <span>${escapeHtml(FIELDS[savedField].label)}: <span class="saved-value">${escapeHtml(shown(savedField, current(fields, savedField)))}</span></span></section>` : "";
-  const visible = ORDER.filter((field) => role === "admin" || !FIELDS[field].adminOnly);
+  const visible = ORDER.filter((field) => mayChange(operator, field));
   const off = !origin || visible.some((field) => !service(ctx, field))
     ? '<section class="notice" role="status"><strong>Some changes are unavailable right now.</strong></section>' : "";
   const forms = visible.map((field) => fieldForm(ctx, orgId, fields, field, origin)).join("");
   const effective = `<div><dt>${escapeHtml(ORGANIZATION_FIELD_CONTRACT.status.label)}</dt><dd class="read-only">${escapeHtml(shown("status", fields.status.state === "available" ? fields.status.value : null))}</dd></div>`;
   const workspace = `/workspace?${new URLSearchParams({ org_id: orgId, role })}`;
-  const body = `<main id="main" class="profile-main"><h1>Company admin</h1><p class="field-meta">${escapeHtml(operator.name)}</p>${notice}${off}<dl class="profile-fields">${effective}</dl>${forms}${historySection(operator.statusHistory)}<a class="text-link" href="${escapeHtml(workspace)}">Account manager and company details</a></main>`;
+  const body = `<main id="main" class="profile-main"><h1>Company admin</h1><p class="field-meta">${escapeHtml(operator.name)}</p>${off}<dl class="profile-fields">${effective}</dl>${forms}${historySection(operator.statusHistory)}<a class="text-link" href="${escapeHtml(workspace)}">Account manager and company details</a></main>`;
   ctx.writeHtml(ctx.response, 200, ctx.pageDocument("Company admin", body));
   return true;
 }
@@ -231,6 +235,7 @@ async function previewChange(ctx: GatewayRouteContext, orgId: string, operator: 
   const values = await readForm(ctx.request, ["field", "value"]);
   if (!values || !adminField(values.field)) return invalid(ctx, orgId);
   const field = values.field;
+  if (!mayChange(operator, field)) return refuse(ctx, 404);
   const relay = service(ctx, field);
   if (!relay) return unavailable(ctx, orgId);
   const value = submitted(field, values.value!);
@@ -249,17 +254,18 @@ async function previewChange(ctx: GatewayRouteContext, orgId: string, operator: 
   return true;
 }
 
-async function confirmChange(ctx: GatewayRouteContext, orgId: string): Promise<boolean> {
+async function confirmChange(ctx: GatewayRouteContext, orgId: string, operator: Extract<Operator, { readonly status: 200 }>): Promise<boolean> {
   const values = await readForm(ctx.request, ["orgId", "field", "value", ...TOKEN_KEYS.map((key) => `token.${key}`)]);
   if (!values || values.orgId !== orgId || !adminField(values.field)) return invalid(ctx, orgId);
   const field = values.field;
+  if (!mayChange(operator, values.field)) return refuse(ctx, 404);
   const relay = service(ctx, field);
   if (!relay) return unavailable(ctx, orgId);
   const token = Object.fromEntries(TOKEN_KEYS.map((key) => [key, values[`token.${key}`]]));
   const confirmed = await relay.confirm(sessionCookie(ctx.request.headers.cookie), { orgId, field, value: values.value, token });
   if (confirmed.status !== 200) return failed(ctx, confirmed, orgId);
   // A deleted company has no admin page left to return to.
-  const location = field === "deletion" ? "/workspace" : `${adminPath(orgId)}?${new URLSearchParams({ saved: field })}`;
+  const location = field === "deletion" ? "/workspace" : adminPath(orgId);
   ctx.response.writeHead(303, { location, "cache-control": "no-store" });
   ctx.response.end();
   return true;
@@ -286,7 +292,7 @@ export async function handleOrganizationAdminPage(ctx: GatewayRouteContext): Pro
     if (operator.status !== 200) return operator.status === 503 ? unavailable(ctx, orgId) : refuse(ctx, operator.status);
     const contentType = ctx.request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase();
     if (contentType !== "application/x-www-form-urlencoded") return invalid(ctx, orgId);
-    return action === "preview" ? await previewChange(ctx, orgId, operator) : await confirmChange(ctx, orgId);
+    return action === "preview" ? await previewChange(ctx, orgId, operator) : await confirmChange(ctx, orgId, operator);
   } catch {
     if (!ctx.response.headersSent) return unavailable(ctx, orgId);
     ctx.response.destroy();
