@@ -89,6 +89,8 @@ interface HarnessOptions {
   countDrift?: number;
   /** The mirror's `@@server_uuid`; default MIRROR_ID. */
   mirrorId?: string;
+  /** The schema the mirror reader is connected to; default legacy_mirror. */
+  mirrorSchema?: string;
 }
 
 interface Harness {
@@ -202,7 +204,7 @@ function harness(opts: HarnessOptions = {}): Harness {
         // Every read happens with the refresh lock held.
         assert.equal(state.locked, true);
         state.reads++;
-        if (sql.includes("@@server_uuid")) return [{ id: opts.mirrorId ?? MIRROR_ID }];
+        if (sql.includes("@@server_uuid")) return [{ id: opts.mirrorId ?? MIRROR_ID, schema: opts.mirrorSchema ?? "legacy_mirror" }];
         const table = /FROM `([a-z_]+)`$/.exec(sql)![1] as M4Table;
         if (sql.includes("COUNT(*)")) return [{ n: rows[table].length + (state.reads > 1 ? opts.countDrift ?? 0 : 0) }];
         return rows[table];
@@ -918,7 +920,7 @@ function docSources(): M4Sources {
 
 /** Writes a refresh report with mirror, lock and table provenance into the harness directory. */
 function withProvenance(dir: string, over: Record<string, unknown> = {}): string {
-  writeFileSync(path.join(dir, "refresh.json"), JSON.stringify({ ...REFRESH, mirror: { serverId: MIRROR_ID },
+  writeFileSync(path.join(dir, "refresh.json"), JSON.stringify({ ...REFRESH, mirror: { serverId: MIRROR_ID, schema: "legacy_mirror" },
     lock: path.join(dir, "lock"), tables: { candidate: 2, country: 0 }, ...over }));
   return dir;
 }
@@ -947,7 +949,7 @@ test("doccheck reads the whole candidate table and each object once under the re
     const r = h.receipt("doccheck");
     assert.deepEqual([r.kind, r.status, r.revision, r.artifact, r.today], ["doccheck", "ok", REVISION, ARTIFACT, "2026-11-23"]);
     assert.deepEqual(r.refresh, { startedAt: REFRESH.startedAt, finishedAt: REFRESH.finishedAt, totalRows: 42 });
-    assert.deepEqual(r.documents, { candidates: 2, mapped: 2, checked: 1, bytes: photo.length, set: documentSetDigest(checked),
+    assert.deepEqual(r.documents, { candidates: 2, mapped: 2, checked: 1, bytes: photo.length, set: documentSetDigest(checked), diagnostic: true,
       rules: { "document.badKey": 1, "document.sharedObject": 0, "document.missing": 1, "document.tooLarge": 0, "document.admission": 0, "document.readFailed": 0 } });
     assert.ok(!JSON.stringify(r).includes('"31"'), "no legacy id in the receipt");
     const reportFile = path.join(h.file("out"), `${h.invocation}.doccheck.report.json`);
@@ -991,12 +993,15 @@ test("doccheck is refused before any object is read without a verified build, it
   // The report describes another generation: another lock file, another mirror server, another count.
   assert.equal(await run({ dir: provenancedDir({ lock: "/var/lock/other-refresh.lock" }) }, "lockMismatch"), 0);
   assert.equal(await run({ mirrorId: "00000000-0000-1000-8000-000000000000" }, "mirrorMismatch"), 1);
+  // Same server (one MySQL instance holds both schemas) and the same row count, another schema.
+  assert.equal(await run({ mirrorSchema: "legacy_mirror_old" }, "mirrorMismatch"), 1);
+  assert.equal(await run({ dir: provenancedDir({ mirror: { serverId: MIRROR_ID, schema: "legacy_mirror_old" } }) }, "mirrorMismatch"), 1);
   assert.equal(await run({ dir: provenancedDir({ tables: { candidate: 3 } }) }, "staleCount"), 7);
 });
 
-test("doccheck against a refresh report without provenance runs as diagnostic only", async () => {
+test("doccheck is diagnostic only: without provenance, and with it, since no generation marker exists yet", async () => {
   // A report from before mirror, lock and table provenance: no mirror read, and the receipt says diagnostic.
-  for (const over of [{ mirror: undefined }, { lock: undefined }, { tables: {} }, null]) {
+  for (const over of [{ mirror: undefined }, { mirror: { serverId: MIRROR_ID } }, { lock: undefined }, { tables: {} }, null]) {
     const dir = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
     if (over) withProvenance(dir, over); else writeFileSync(path.join(dir, "refresh.json"), JSON.stringify(REFRESH));
     const sqls: string[] = [];
@@ -1013,11 +1018,13 @@ test("doccheck against a refresh report without provenance runs as diagnostic on
       assert.ok(h.out.some((l) => l.includes(" diagnostic=true ")));
     } finally { cleanup(h); }
   }
-  // With provenance the flag is absent.
-  const h = harness({ dir: provenancedDir(), rows: docSources() });
+  // A replacement copy into the same server and schema, under the same lock path, with the same
+  // count, matches every recorded value; nothing read from the mirror tells the generations apart,
+  // so the result stays non-authoritative.
+  const h = harness({ dir: provenancedDir({ startedAt: "2026-11-22T01:00:00.000Z", finishedAt: "2026-11-22T01:05:00.000Z" }), rows: docSources() });
   try {
     assert.equal(await main(["doccheck"], h.deps), 0);
-    assert.equal(h.receipt("doccheck").documents!.diagnostic, undefined);
+    assert.equal(h.receipt("doccheck").documents!.diagnostic, true);
   } finally { cleanup(h); }
 });
 

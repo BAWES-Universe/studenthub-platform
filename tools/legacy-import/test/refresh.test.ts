@@ -170,7 +170,7 @@ test("a refresh copies every non-token table, prunes stale mirror tables, and re
   assert.deepEqual(report.excluded, ["candidate_token", "staff_token"]);
   assert.equal(report.totalRows, 9);
   // The mirror's own identity, so a later reader can prove it reads this generation.
-  assert.deepEqual(report.mirror, { serverId: "uuid-staging" });
+  assert.deepEqual(report.mirror, { serverId: "uuid-staging", schema: "legacy_mirror" });
   assert.equal(report.durationMs, 1000);
   const text = JSON.stringify(report) + summary(report);
   for (const secret of ["s3cret", "m1rror", "legacy-replica", "staging-db", "reader"]) assert.equal(text.includes(secret), false, secret);

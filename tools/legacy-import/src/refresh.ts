@@ -264,10 +264,11 @@ export interface RefreshReport {
   readonly tables: Readonly<Record<string, number>>;
   readonly totalRows: number;
   /**
-   * For an ok run: the mirror server this run copied into (`@@server_uuid`), so a reader of the
-   * mirror can prove it reads the generation this report describes, not another server's.
+   * For an ok run: the mirror server (`@@server_uuid`) and schema this run copied into, so a reader
+   * can prove it reads that server and schema. This does not identify the generation: a later run
+   * into the same schema has the same values, so a reader must still treat its result as diagnostic.
    */
-  readonly mirror?: { readonly serverId: string };
+  readonly mirror?: { readonly serverId: string; readonly schema: string };
   /** For an ok run: the lock file the run held (resolved path), so readers can prove they share it. */
   readonly lock?: string;
 }
@@ -310,7 +311,7 @@ export async function runRefresh(
       nonTransactional,
       tables,
       totalRows: Object.values(tables).reduce((sum, n) => sum + n, 0),
-      ...(ok && mirrorId ? { mirror: { serverId: mirrorId } } : {}),
+      ...(ok && mirrorId ? { mirror: { serverId: mirrorId, schema: config.target.database } } : {}),
     };
   };
 

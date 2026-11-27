@@ -224,24 +224,25 @@ export interface DocCheckCounts {
   /** documentSetDigest over the checked documents: what a copy step must find again. */
   readonly set: string;
   /**
-   * Present (true) when the refresh report predates mirror, lock and table provenance, so this run
-   * could not prove it read the generation the report describes. Diagnostic only: never authorizes a copy.
+   * Always true for now: server, schema, lock and count bind the report to the mirror read, but no
+   * generation marker read from the mirror itself exists yet, so a replacement copy with the same
+   * server, schema, path and count cannot be told apart. Diagnostic only: never authorizes a copy.
    */
-  readonly diagnostic?: true;
+  readonly diagnostic: true;
 }
 
 /** The mirror's own identity, read through the same reader as the sources. */
-export const MIRROR_SERVER_ID_SQL = "SELECT JSON_OBJECT('id', @@server_uuid)";
+export const MIRROR_SERVER_ID_SQL = "SELECT JSON_OBJECT('id', @@server_uuid, 'schema', DATABASE())";
 
 /** What an ok refresh report says about the copy it made; undefined when the report predates it. */
-export function refreshProvenance(last: unknown): { serverId: string; lock: string; candidates: number } | undefined {
+export function refreshProvenance(last: unknown): { serverId: string; schema: string; lock: string; candidates: number } | undefined {
   if (!last || typeof last !== "object") return undefined;
-  const r = last as { mirror?: { serverId?: unknown }; lock?: unknown; tables?: Record<string, unknown> };
-  const serverId = r.mirror?.serverId;
+  const r = last as { mirror?: { serverId?: unknown; schema?: unknown }; lock?: unknown; tables?: Record<string, unknown> };
+  const { serverId, schema } = r.mirror ?? {};
   const candidates = r.tables?.candidate;
-  if (typeof serverId !== "string" || !serverId || typeof r.lock !== "string" || !r.lock
+  if (typeof serverId !== "string" || !serverId || typeof schema !== "string" || !schema || typeof r.lock !== "string" || !r.lock
     || !Number.isSafeInteger(candidates) || (candidates as number) < 0) return undefined;
-  return { serverId, lock: r.lock, candidates: candidates as number };
+  return { serverId, schema, lock: r.lock, candidates: candidates as number };
 }
 
 /**
@@ -916,10 +917,11 @@ async function linkReport(deps: CliDeps, revision: string, targetId: string,
  * the legacy bucket adapter (ranged GetObject only) and admits it with the platform's own rules.
  * It writes nothing to any database and copies nothing.
  *
- * When the refresh report carries provenance (mirror server id, lock path, candidate count), the run
- * proves it reads that generation: the same lock file (`lockMismatch`), the same mirror server
- * (`mirrorMismatch`) and the candidate count the refresh recorded (`staleCount`), all before any
- * object read. A report without it yields `documents.diagnostic: true`, which no copy accepts.
+ * When the refresh report carries provenance (mirror server id and schema, lock path, candidate
+ * count), the run refuses unless it holds the same lock file (`lockMismatch`), reads the same server
+ * and schema (`mirrorMismatch`) and finds the candidate count the refresh recorded (`staleCount`),
+ * all before any object read. Until a generation marker read from the mirror itself exists, every
+ * result is `documents.diagnostic: true`, which no copy accepts.
  *
  * The private report (mode 600, on the staging host only) lists each checked document's legacy id,
  * kind, type, size and sha256, and each issue's legacy id, column and rule; never a key, name or
@@ -965,9 +967,9 @@ async function docCheck(deps: CliDeps, revision: string,
   const reader = deps.reader(env);
   if (provenance) {
     if (path.resolve(lockPathFrom(env)) !== provenance.lock) return refuse("lockMismatch");
-    let serverId: unknown;
-    try { serverId = (await reader.rows(MIRROR_SERVER_ID_SQL, []))[0]?.id; } catch { return fail("m2.read.mirror"); }
-    if (typeof serverId !== "string" || serverId !== provenance.serverId) return refuse("mirrorMismatch");
+    let mirror: Readonly<Record<string, unknown>> | undefined;
+    try { mirror = (await reader.rows(MIRROR_SERVER_ID_SQL, []))[0]; } catch { return fail("m2.read.mirror"); }
+    if (mirror?.id !== provenance.serverId || mirror?.schema !== provenance.schema) return refuse("mirrorMismatch");
   }
   let sources;
   try { sources = await readM2Sources(reader); } catch (error) {
@@ -983,15 +985,15 @@ async function docCheck(deps: CliDeps, revision: string,
   const rules = { "document.badKey": 0, "document.sharedObject": 0, ...counts.rules } as Record<DocumentIssueRule | DocumentCheckRule, number>;
   for (const issue of plan.issues) rules[issue.rule]++;
   const documents: DocCheckCounts = { candidates: plan.candidates, mapped: plan.documents.length, checked: counts.checked,
-    bytes: counts.bytes, rules, set: documentSetDigest(check.checked), ...(provenance ? {} : { diagnostic: true as const }) };
+    bytes: counts.bytes, rules, set: documentSetDigest(check.checked), diagnostic: true };
   writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "doccheck", at: deps.now().toISOString(), ...bound,
     revisions: { mapper: M2_DOCUMENT_MAPPER_REVISION, check: M2_DOCUMENT_CHECK_REVISION }, set: documents.set,
-    ...(documents.diagnostic ? { diagnostic: true } : {}),
+    diagnostic: true,
     documents: check.checked.map(({ legacyId, kind, mime, size, sha256 }) => ({ legacyId, kind, mime, size, sha256 })),
     issues: [...plan.issues, ...check.issues].map(({ rule, legacyId, field }) => ({ rule, legacyId, field })) });
   bind(bound, documents);
   publish("ok");
   deps.log(`documents candidates=${documents.candidates} mapped=${documents.mapped} checked=${documents.checked} bytes=${documents.bytes} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
-  deps.log(`m4 doccheck ok invocation=${env.M4_INVOCATION} set=${documents.set}${documents.diagnostic ? " diagnostic=true" : ""} revision=${revision} artifact=${artifact}`);
+  deps.log(`m4 doccheck ok invocation=${env.M4_INVOCATION} set=${documents.set} diagnostic=true revision=${revision} artifact=${artifact}`);
   return 0;
 }
