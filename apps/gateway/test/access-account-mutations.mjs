@@ -22,6 +22,12 @@ const mutations = [
     "const out = Object.create(null);", "const out = {};"],
   ["count others from the capped list", "U03_OVER_LIMIT", "admin-access.js",
     "list.live - (sessions.some((item) => item.current) ? 1 : 0)", "sessions.length - (sessions.some((item) => item.current) ? 1 : 0)"],
+  ["read the person from somewhere other than the session", "U03_WHO", "admin-access.js",
+    "ports.reads.person(caller)", 'ports.reads.person("dana")'],
+  ["leave out who the session belongs to", "U03_WHO", "admin-access.js",
+    "${notice}${who}", "${notice}"],
+  ["show the name unescaped", "U03_WHO", "admin-access.js",
+    "<dd>${e(personName(person))}</dd></div><div><dt>Email</dt>", "<dd>${personName(person)}</dd></div><div><dt>Email</dt>"],
   ["mark another session as this browser", "U03_PAGE", "admin-access.js",
     '${item.current ? "This browser" : "Another browser or device"}', '${"This browser"}'],
 ];
