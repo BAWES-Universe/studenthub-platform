@@ -8446,9 +8446,10 @@ const LANE1_READ_PAGES_CONTRACTS = Object.freeze({
 });
 // Company note page (release matrix O-06, the note page) and company pay
 // contracts page (release matrix O-12), queued beside the re-queued
-// certificate detail card (SHU-735). Each adds one read path to an existing
-// page or API handler, reads through a service method main already has, and
-// shares no path with the other, with SHU-735 or with SHU-740.
+// certificate detail and reference data entry cards (SHU-754 and SHU-755).
+// Each adds one read path to an existing page or API handler, reads through a
+// service method main already has, and shares no path with the other, with
+// SHU-754 or with SHU-755.
 const SHU748_PATHS = Object.freeze(["apps/gateway/src/organizations/notes-page.ts", "apps/gateway/test/organization-note-detail.test.ts", "apps/gateway/test/organization-note-detail-mutations.mjs"]);
 const SHU748_ACCEPTANCE = "(1) NOTEDET_SHOW: a real cookie GET /organization/<orgId>/notes/<noteId> with an Accept of text/html, for a person whose notes list for <orgId> holds that note (operator staff and admin over the company, exactly the people the notes list serves), answers 200 text/html with cache-control no-store and the one note: its type label (the list's labels: Internal note, Phone call, Email, Meeting, Interview, Task) as the heading, the time it was written as a <time> element with its ISO datetime, and its full text with line breaks kept, every text value escaped, a breadcrumb link to /organization/<orgId> and a 'Notes' link back to /organization/<orgId>/notes; a HEAD answers as the list's HEAD does; (2) NOTEDET_MINE: the note is taken only from one call of the existing organizationNotes.list(session, orgId) and selected in memory by noteId; a note of another company, an unknown note id, a company the list refuses (its 404) and a malformed noteId (a single path segment other than preview and confirm that is not a decimal note id, /^[1-9][0-9]{0,18}$/) each answer 404 with byte-identical bodies equal to renderError(404), the malformed id without calling list(), and preview, confirm and receipt are never called; (3) NOTEDET_DENY: no session answers 401 exactly as the list answers it (renderError(401)); a company owner, a recruiter and a person who holds nothing at the company answer the list's 404; any query string on the note path is 400 as an invalid list query is; a method other than GET or HEAD on the note path answers exactly as at the bound head; (4) NOTEDET_PASSTHROUGH: GET /organization/<orgId>/notes (with and without ?saved=note), POST /organization/<orgId>/notes/preview and /confirm, GET /organization/<orgId>/notes/preview and /notes/confirm, /organization/<orgId>, /organization/<orgId>/stores, /organization/<orgId>/edit, the notes API GET /organization/notes/<orgId> and a deeper path such as /organization/<orgId>/notes/<noteId>/x all answer exactly as at the bound head; apps/gateway/test/organization-notes-page.test.ts passes unchanged; (5) NOTEDET_UNAVAILABLE: when list() throws, answers 503, returns a body without a notes array, or the notes service is not configured, the note path answers the list's 503 'Notes unavailable' page, never a stack and never another company's note; (6) mutants in apps/gateway/test/organization-note-detail-mutations.mjs, built as the brief's mutation rule says, each dying by an AssertionError on its named test's message: serve the first listed note whatever noteId was asked (NOTEDET_MINE), drop the escape on the note text in the note page (NOTEDET_SHOW), answer a thrown list() as 404 instead of 503 on the note path (NOTEDET_UNAVAILABLE), accept a query string on the note path (NOTEDET_DENY); every existing gateway test, apps/gateway/test/organization-notes-page.test.ts and organization-notes-page-mutations.mjs included, passes unchanged; npm run typecheck and npm test pass to the end, and nothing outside the card's three paths changes.";
 const SHU748_BRIEF = recruitDetailBrief([
@@ -8475,7 +8476,37 @@ const OVERNIGHT_READ_PAGES_CONTRACTS = Object.freeze({
   "SHU-748": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU748_PATHS, revision_paths: SHU748_PATHS, acceptance: SHU748_ACCEPTANCE, brief: SHU748_BRIEF }),
   "SHU-749": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU749_PATHS, revision_paths: SHU749_PATHS, acceptance: SHU749_ACCEPTANCE, brief: SHU749_BRIEF }),
 });
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS, ...RECUT_634_CONTRACTS, ...RECUT_635_CONTRACTS, ...RECUT_640_CONTRACTS, ...RECUT_643_CONTRACTS, ...COMPANY_PAGES_CONTRACTS, ...RECUT_667_CONTRACTS, ...BOX_BATCH_685_CONTRACTS, ...RECRUIT_DETAIL_CONTRACTS, ...RECUT_699_CONTRACTS, ...CERTIFICATE_DETAIL_CONTRACTS, ...LANE1_READ_PAGES_CONTRACTS, ...OVERNIGHT_READ_PAGES_CONTRACTS });
+// The box refused its install (CARD_RUN_BRANCH_NOT_AT_TARGET) because
+// coordinator/SHU-735 and coordinator/SHU-740 each hold a build commit main
+// lacks, and a card branch with its own commit is never moved: SHU-735's build
+// was never reviewed and SHU-740's run expired before its review. A stopped
+// card never runs again under its own id, so SHU-754 and SHU-755 re-queue the
+// two contracts unchanged and build again from main; the old branches stay as
+// they are. Each brief's sibling sentence now names the card that runs beside
+// it, since SHU-734 and SHU-739 have landed.
+const RECUT_735 = Object.freeze({ "SHU-735": "SHU-754", "SHU-740": "SHU-755" });
+const RECUT_735_SOURCES = Object.freeze({ "SHU-735": CERTIFICATE_DETAIL_CONTRACTS, "SHU-740": LANE1_READ_PAGES_CONTRACTS });
+const RECUT_735_SIBLINGS = Object.freeze({
+  "SHU-735": ["The interview detail card (SHU-734) edits apps/gateway/src/recruit/interviews-http.ts beside you and shares no path.", "The reference data entry card (SHU-755) edits apps/gateway/src/reference-data-page.ts beside you and shares no path."],
+  "SHU-740": ["The store detail card (SHU-739) edits apps/gateway/src/organizations/stores-page.ts beside you and shares no path.", "The certificate detail card (SHU-754) edits apps/gateway/src/reports/certificates-http.ts beside you and shares no path."],
+});
+const RECUT_735_REASONS = Object.freeze({
+  "SHU-735": "because its build pushed coordinator/SHU-735 and was never reviewed, and that branch's own commit keeps the box from running it again",
+  "SHU-740": "because its run expired before its review after its build pushed coordinator/SHU-740, and that branch's own commit keeps the box from running it again",
+});
+const RECUT_735_CONTRACTS = Object.fromEntries(Object.entries(RECUT_735).map(([from, to]) => {
+  const base = RECUT_735_SOURCES[from][from];
+  const recut = (text) => text.replace(new RegExp(`\\b${from}\\b`, "g"), to);
+  const acceptance0 = recut(base.acceptance);
+  const requeue = ` ${to} is ${from}'s contract re-queued under a fresh id ${RECUT_735_REASONS[from]}; ${from} never lands.`;
+  const [siblingOld, siblingNew] = RECUT_735_SIBLINGS[from];
+  let brief = replaceOnce(recut(base.brief), siblingOld, siblingNew, `${to} sibling`);
+  brief = replaceOnce(brief, acceptance0, `${acceptance0}${requeue}`, `${to} acceptance`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  if (!brief.endsWith(`${acceptance0}${requeue}`)) throw new Error(`the re-cut brief for ${to} must end with its acceptance`);
+  return [to, Object.freeze({ workspace_mode: base.workspace_mode, initial_build_paths: base.initial_build_paths, revision_paths: base.revision_paths, acceptance: `${acceptance0}${requeue}`, brief })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS, ...RECUT_634_CONTRACTS, ...RECUT_635_CONTRACTS, ...RECUT_640_CONTRACTS, ...RECUT_643_CONTRACTS, ...COMPANY_PAGES_CONTRACTS, ...RECUT_667_CONTRACTS, ...BOX_BATCH_685_CONTRACTS, ...RECRUIT_DETAIL_CONTRACTS, ...RECUT_699_CONTRACTS, ...CERTIFICATE_DETAIL_CONTRACTS, ...LANE1_READ_PAGES_CONTRACTS, ...OVERNIGHT_READ_PAGES_CONTRACTS, ...RECUT_735_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
