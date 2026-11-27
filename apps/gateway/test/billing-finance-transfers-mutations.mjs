@@ -12,6 +12,7 @@ const mutations = [
   ["accept a write", "FINANCE_TRANSFERS_GATE", 'if (req.method !== "GET") {', "if (false) {"],
   ["ask the reads with an unchecked id", "FINANCE_TRANSFERS_GATE", "const id = transferIdOf(detail[1]);", "const id = detail[1];"],
   ["link a transfer by its raw id", "FINANCE_TRANSFERS_LIST", "`${FINANCE_TRANSFERS_PATH}/${encodeURIComponent(id)}`", "`${FINANCE_TRANSFERS_PATH}/${id}`"],
+  ["call the whole salary total paid", "FINANCE_TRANSFERS_DETAIL", "Paid so far: ${esc(t.currencyCode)} ${esc(t.paidTotal)}", "Paid so far: ${esc(t.currencyCode)} ${esc(t.candidateTotal)}"],
   ["show an unpaid line as paid", "FINANCE_TRANSFERS_DETAIL", 'l.paid ? "Paid" : "Not paid yet"', '"Paid"'],
   ["print a person's name unescaped", "FINANCE_TRANSFERS_DETAIL", "<td>${esc(l.personName)}</td>", "<td>${l.personName}</td>"],
 ];

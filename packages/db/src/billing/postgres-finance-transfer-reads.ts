@@ -21,7 +21,10 @@ export interface FinanceTransferLine {
   readonly lineId: string; readonly personId: string; readonly personName: string; readonly storeName: string;
   readonly candidateTotal: string; readonly companyTotal: string; readonly paid: boolean;
 }
-export interface FinanceTransferDetail extends CompanyTransferEntry { readonly candidateTotal: string; readonly lines: readonly FinanceTransferLine[] }
+/** `candidateTotal` is what every line pays its person; `paidTotal` and `paidCount` are only the lines already marked paid. */
+export interface FinanceTransferDetail extends CompanyTransferEntry {
+  readonly candidateTotal: string; readonly paidTotal: string; readonly paidCount: number; readonly lines: readonly FinanceTransferLine[];
+}
 
 const TRANSFER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ";
@@ -65,9 +68,12 @@ export class PostgresFinanceTransferReads {
          FROM pay_transfer_lines l JOIN principals pr ON pr.id = l.person_id LEFT JOIN person_profiles pp ON pp.principal_id = l.person_id
            JOIN organization_stores s ON s.id = l.store_id
          WHERE l.transfer_id = $1 ORDER BY "personName", l.id`, [t.transferId])).rows;
-      const candidateTotal = (await client.query<{ total: string }>(
-        "SELECT COALESCE(sum(candidate_total), 0)::numeric(40,3)::text AS total FROM pay_transfer_lines WHERE transfer_id = $1", [t.transferId])).rows[0]!.total;
-      return { ...t, candidateTotal, lines };
+      const totals = (await client.query<{ candidateTotal: string; paidTotal: string; paidCount: number }>(
+        `SELECT COALESCE(sum(candidate_total), 0)::numeric(40,3)::text AS "candidateTotal",
+           COALESCE(sum(candidate_total) FILTER (WHERE paid), 0)::numeric(40,3)::text AS "paidTotal",
+           count(*) FILTER (WHERE paid)::int AS "paidCount"
+         FROM pay_transfer_lines WHERE transfer_id = $1`, [t.transferId])).rows[0]!;
+      return { ...t, candidateTotal: totals.candidateTotal, paidTotal: totals.paidTotal, paidCount: totals.paidCount, lines };
     });
   }
 

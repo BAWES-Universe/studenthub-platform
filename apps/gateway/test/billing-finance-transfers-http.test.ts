@@ -10,7 +10,7 @@ const FIN = "f".repeat(43), OTHER = "o".repeat(43);
 const OCT: CompanyTransferEntry = { transferId: "t:oct.1", orgId: "P", companyName: "Sultan <Co>", periodStart: "2026-10-01", periodEnd: "2026-10-31",
   currencyCode: "KWD", status: "distributing", lineCount: 2, companyTotal: "30.000", paymentReceivedOn: "2026-11-22" };
 const NOV: CompanyTransferEntry = { ...OCT, transferId: "t-nov", periodStart: "2026-11-01", periodEnd: "2026-11-30", status: "locked", paymentReceivedOn: null };
-const DETAIL: FinanceTransferDetail = { ...OCT, candidateTotal: "25.000", lines: [
+const DETAIL: FinanceTransferDetail = { ...OCT, candidateTotal: "25.000", paidTotal: "10.000", paidCount: 1, lines: [
   { lineId: "L-1", personId: "w1", personName: "Amal <Synthetic>", storeName: "Avenues", candidateTotal: "10.000", companyTotal: "12.000", paid: true },
   { lineId: "L-2", personId: "w2", personName: "Badr", storeName: "Avenues", candidateTotal: "15.000", companyTotal: "18.000", paid: false }] };
 
@@ -52,9 +52,9 @@ test("FINANCE_TRANSFERS_DETAIL a transfer shows each person's salary, the compan
   const html = await (await x.call("/finance/transfers/t%3Aoct.1", FIN, "text/html")).text();
   for (const text of ['<tr id="line-L-1"><td>Amal &lt;Synthetic&gt;</td><td>Avenues</td><td>KWD 10.000</td><td>KWD 12.000</td><td>Paid</td></tr>',
     '<tr id="line-L-2"><td>Badr</td><td>Avenues</td><td>KWD 15.000</td><td>KWD 18.000</td><td>Not paid yet</td></tr>',
-    "Billed to the company: KWD 30.000. Paid to people: KWD 25.000, 2 people.",
+    "Billed to the company: KWD 30.000. Salaries for 2 people: KWD 25.000. Paid so far: KWD 10.000, 1 of 2 lines.",
     '<a href="/finance/bank-results/transfers/t%3Aoct.1">Bank payments for this transfer</a>']) assert.ok(html.includes(text), text);
-  assert.doesNotMatch(html, /<Synthetic>/);
+  assert.doesNotMatch(html, /<Synthetic>|Paid to people/);
 });
 
 test("FINANCE_TRANSFERS_GATE sign in first; a company's own finance user, a missing transfer and a bad id or filter are the same not found; writes are not allowed", async (t) => {

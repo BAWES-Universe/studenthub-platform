@@ -75,7 +75,8 @@ function detailHtml(t: FinanceTransferDetail): string {
   const rows = t.lines.map((l) => `<tr id="line-${esc(l.lineId)}"><td>${esc(l.personName)}</td><td>${esc(l.storeName)}</td><td>${esc(t.currencyCode)} ${esc(l.candidateTotal)}</td>`
     + `<td>${esc(t.currencyCode)} ${esc(l.companyTotal)}</td><td>${l.paid ? "Paid" : "Not paid yet"}</td></tr>`).join("");
   return `<main><h1>Transfer</h1><p>${esc(t.companyName)}, ${esc(longDate(t.periodStart))} to ${esc(longDate(t.periodEnd))}. ${esc(transferStatus(t.status, t.paymentReceivedOn))}.</p>`
-    + `<p>Billed to the company: ${esc(t.currencyCode)} ${esc(t.companyTotal)}. Paid to people: ${esc(t.currencyCode)} ${esc(t.candidateTotal)}, ${t.lineCount} ${t.lineCount === 1 ? "person" : "people"}.</p>`
+    + `<p>Billed to the company: ${esc(t.currencyCode)} ${esc(t.companyTotal)}. Salaries for ${t.lineCount} ${t.lineCount === 1 ? "person" : "people"}: ${esc(t.currencyCode)} ${esc(t.candidateTotal)}. `
+    + `Paid so far: ${esc(t.currencyCode)} ${esc(t.paidTotal)}, ${t.paidCount} of ${t.lineCount} ${t.lineCount === 1 ? "line" : "lines"}.</p>`
     + (t.lines.length ? `<table><thead><tr><th>Person</th><th>Store</th><th>Salary</th><th>Billed</th><th>Paid</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>This transfer has no lines yet.</p>")
     + `<p><a href="${esc(`${BANK_RESULTS_PATH}/transfers/${encodeURIComponent(t.transferId)}`)}">Bank payments for this transfer</a></p>`
     + `<p><a href="${FINANCE_TRANSFERS_PATH}">All transfers</a></p></main>`;

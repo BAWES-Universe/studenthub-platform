@@ -68,8 +68,8 @@ test("FINANCE_TRANSFERS_PG_DETAIL a transfer's lines with both amounts and the p
   await transfer("T-oct", "P", "2026-10-01", [["L-2", "w2", "15.000", "18.000", false], ["L-1", "w1", "10.000", "12.000", true]]);
   await transfer("T-x", "X", "2026-10-01", [["L-9", "w2", "1.000", "1.000", false]]);
   const t = await reads().transfer("fin", "T-oct");
-  assert.deepEqual(t && [t.companyTotal, t.candidateTotal, t.lines.map((l) => [l.lineId, l.personId, l.storeName, l.candidateTotal, l.companyTotal, l.paid])],
-    ["30.000", "25.000", [["L-1", "w1", "Avenues", "10.000", "12.000", true], ["L-2", "w2", "Avenues", "15.000", "18.000", false]]]);
+  assert.deepEqual(t && [t.companyTotal, t.candidateTotal, t.paidTotal, t.paidCount, t.lines.map((l) => [l.lineId, l.personId, l.storeName, l.candidateTotal, l.companyTotal, l.paid])],
+    ["30.000", "25.000", "10.000", 1, [["L-1", "w1", "Avenues", "10.000", "12.000", true], ["L-2", "w2", "Avenues", "15.000", "18.000", false]]]);
   for (const [who, id] of [["cfin", "T-oct"], ["staff", "T-oct"], ["w1", "T-oct"], ["fin", "T-x"], ["fin", "T-none"], ["fin", "bad id"]] as const) {
     assert.equal(await reads().transfer(who, id), null, `${who} ${id}`);
   }

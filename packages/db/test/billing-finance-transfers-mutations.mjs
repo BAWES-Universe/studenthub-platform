@@ -14,6 +14,8 @@ const mutations = [
   ["show every company's transfers", "FINANCE_TRANSFERS_PG", "chains.filter((c) => this.#decision(grants, c.company, c.ancestors))", "chains.filter(() => true)"],
   ["ignore the status filter", "FINANCE_TRANSFERS_PG", "($2::text IS NULL OR t.status = $2)", "($2::text IS NULL OR true)"],
   ["hide that an older page exists", "FINANCE_TRANSFERS_PG", "const more = rows.length > limit;", "const more = false;"],
+  ["count unpaid lines as paid", "FINANCE_TRANSFERS_PG_DETAIL", "FILTER (WHERE paid), 0)", "FILTER (WHERE true), 0)"],
+  ["count unpaid lines in the paid count", "FINANCE_TRANSFERS_PG_DETAIL", "count(*) FILTER (WHERE paid)", "count(*)"],
   ["list the oldest period first", "FINANCE_TRANSFERS_PG", "ORDER BY t.period_end DESC, t.period_start DESC", "ORDER BY t.period_end ASC, t.period_start ASC"],
 ];
 const original = await readFile(store, "utf8");
