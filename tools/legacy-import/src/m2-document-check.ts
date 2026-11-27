@@ -30,7 +30,8 @@ export type LegacyObjectRead =
 
 /** Read-only access to legacy's permanent bucket. It must never write, copy or delete. */
 export interface LegacyObjectReader {
-  read(key: string, maxBytes: number): Promise<LegacyObjectRead>;
+  /** `signal`, when given, aborts the read (the copy step passes one; the doccheck uses the adapter's own deadline). */
+  read(key: string, maxBytes: number, signal?: AbortSignal): Promise<LegacyObjectRead>;
 }
 
 export type DocumentMime = "image/png" | "image/jpeg" | "application/pdf";
