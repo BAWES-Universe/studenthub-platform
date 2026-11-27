@@ -567,10 +567,17 @@
     "O-02": {
       "lane": "organizations",
       "subject": "`/organization/:orgId` \u2014 overview/read model",
+      "served": [
+        {
+          "route": "/organization/:orgId",
+          "test": "apps/gateway/test/organization-overview-page.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "backend only (audit 2026-11-20): organization profile API, no overview page"
+          "state": "done",
+          "evidence": "company overview page with tests, proven by checkServed; PR #632 at 6e122265"
         },
         "verified": {
           "state": "open"
