@@ -94,7 +94,7 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv } from "./push-broker.mjs";
-import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, reviewVerdictProvenanceValid, repairReviseOrder } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, reviewVerdictProvenanceValid, repairReviseOrder, retryAttemptFor } from "./review-routing.mjs";
 // SHU-249: the reviewer-lane set is derived from the ONE launch vocabulary, so
 // the activation record's accepted lanes and the routing module's review
 // capability can never drift apart.
@@ -490,7 +490,9 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
     // They come from the BLOCKED review receipt at the very head being revised.
     const findings = routed.order.scope_phase === "revision" && validReviewFindings(terminal.review_findings)
       && terminal.review_findings.target_sha === routed.order.target_sha ? terminal.review_findings : null;
-    const successor = findings ? { ...routed.order, review_findings: findings } : routed.order;
+    // A step whose last attempt FAILED (it ran nothing, e.g. REVIEW_SANDBOX_BUSY)
+    // goes again under a fresh retry attempt id, never the spent one.
+    const successor = retryAttemptFor(findings ? { ...routed.order, review_findings: findings } : routed.order, issueReceipts);
     return { ended: false, reason: `mid-episode: ${routed.order.role} successor is routable`, successor };
   }
   if (routed.ok && routed.terminal) return { ended: true, reason: "review PASS — the episode is complete" };
