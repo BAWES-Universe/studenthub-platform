@@ -205,10 +205,12 @@ organization's own documents. `PostgresDocumentPartitions` and
   and the ID-card photo by the subject person. A write locks only that owner's
   row and hydrates only that owner's objects; a read hydrates only the document
   it returns. A whole-store read or transaction is refused. Cross-owner needs
-  have their own bounded queries: the civil ID review list (`listCurrent`) reads
-  only people whose slot history has an active slot of those types and returns
-  only each current document's metadata, never retired versions, journals or
-  blob references; the operator cleanup count (`heldCount`) returns one number.
+  have their own bounded queries: the civil ID list (`listCurrent`) is a keyset
+  walk by (person, document id), at most 1000 rows per query plus one look-ahead
+  row, over only people whose slot history has an active slot of those types; it
+  returns only each current document's metadata, never retired versions, journals
+  or blob references, and the OCR sweep reads every page, so no photo is dropped
+  or repeated. The operator cleanup count (`heldCount`) returns one exact number.
   The 192 MiB hydration and 16 MiB metadata limits now apply per owner.
 - **Slot lock and history.** An owner's row is created empty on first use and
   locked `FOR UPDATE`, so upload, replace, remove and promotion of that owner's

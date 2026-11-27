@@ -3,7 +3,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import pg from 'pg';
 import { LifecycleError } from './candidate-lifecycle.js';
-import { DocumentError, documentReadHydrator, ownerOfScope, sameOwner, validateReferencedState, validateState, type CurrentDocument, type DocumentOwner, type DocumentState, type DocumentStore } from './index.js';
+import { DocumentError, documentReadHydrator, ownerOfScope, sameOwner, validateReferencedState, validateState, type CurrentCursor, type CurrentDocument, type CurrentPage, type DocumentOwner, type DocumentState, type DocumentStore } from './index.js';
 import type { UploadTicket } from './lifecycle-state.js';
 
 const digest = (bytes:Buffer):string => createHash('sha256').update(bytes).digest('hex');
@@ -114,22 +114,31 @@ export class PostgresDocumentPartitions {
     try {const rows=await this.reader.query('SELECT snapshot FROM candidate_document_partitions WHERE owner_kind = $1 AND owner_id = $2',[owner.kind,owner.id]);
       if(rows.rowCount===0)return emptyPackedSnapshot();if(rows.rowCount!==1)throw new Error();return rows.rows[0].snapshot as PackedSnapshot;}catch{throw new Error('unavailable');}
   }
-  /** Current documents of `types` in `orgId` across people, for listings such as the civil ID
-   * review queue. Only people whose slot history says such a slot is active are read, and only
-   * each document's metadata leaves the database: no retired version, journal or body. */
-  async listCurrent(orgId:string,types:readonly string[]):Promise<CurrentDocument[]>{
-    if(!ownerId.test(orgId)||!types.length||types.some(t=>typeof t!=='string'))throw new Error('unavailable');
+  /** One page of the current documents of `types` in `orgId` across people, in (person, document
+   * id) order after `page.after`, at most `page.limit` (1 to 1000) rows; `next` is the cursor of the
+   * last row when more remain, otherwise null. Only people whose slot history has such an active
+   * slot are read, and only each document's metadata leaves the database: no retired version,
+   * journal or body. Callers walk every page; nothing is dropped between pages. */
+  async listCurrent(orgId:string,types:readonly string[],page:CurrentPage):Promise<{documents:CurrentDocument[];next:CurrentCursor|null}>{
+    if(!ownerId.test(orgId)||!types.length||types.some(t=>typeof t!=='string')||!Number.isSafeInteger(page.limit)||page.limit<1||page.limit>1000
+      ||(page.after!==undefined&&(!ownerId.test(page.after.personId)||!/^[0-9a-f-]{36}$/.test(page.after.id))))throw new Error('unavailable');
     let rows;
     try {rows=(await this.reader.query(`SELECT jsonb_build_object('id', d.doc->'id', 'version', d.doc->'version', 'type', d.doc->'type', 'mime', d.doc->'mime', 'size', d.doc->'size', 'scope', d.doc->'scope') AS doc
-      FROM candidate_document_partitions p CROSS JOIN LATERAL jsonb_array_elements(p.snapshot->'state'->'documents') WITH ORDINALITY AS d(doc, ord)
-      WHERE p.owner_kind = 'person' AND p.owner_id IN (SELECT person_id FROM candidate_document_slots WHERE org_id = $1 AND type = ANY($2::text[]) AND state = 'active')
+      FROM candidate_document_partitions p CROSS JOIN LATERAL jsonb_array_elements(p.snapshot->'state'->'documents') AS d(doc)
+      WHERE p.owner_kind = 'person'
+        AND p.owner_id IN (SELECT person_id FROM candidate_document_slots WHERE org_id = $1 AND type = ANY($2::text[]) AND state = 'active'
+          AND ($3::text IS NULL OR person_id COLLATE "C" >= $3::text COLLATE "C"))
         AND d.doc->'scope'->>'orgId' = $1 AND d.doc->>'type' = ANY($2::text[])
-      ORDER BY p.owner_id COLLATE "C", d.ord`,[orgId,[...types]])).rows;}catch{throw new Error('unavailable');}
-    return rows.map(({doc})=>{
+        AND ($3::text IS NULL OR (p.owner_id COLLATE "C", d.doc->>'id' COLLATE "C") > ($3::text COLLATE "C", $4::text COLLATE "C"))
+      ORDER BY p.owner_id COLLATE "C", d.doc->>'id' COLLATE "C"
+      LIMIT $5`,[orgId,[...types],page.after?.personId??null,page.after?.id??null,page.limit+1])).rows;}catch{throw new Error('unavailable');}
+    const documents=rows.slice(0,page.limit).map(({doc})=>{
       if(!/^[0-9a-f-]{36}$/.test(doc.id)||!/^[0-9a-f-]{36}$/.test(doc.version)||!types.includes(doc.type)||typeof doc.mime!=='string'||!Number.isSafeInteger(doc.size)
-        ||doc.scope?.orgId!==orgId||typeof doc.scope?.personId!=='string')throw new Error('unavailable');
+        ||doc.scope?.orgId!==orgId||typeof doc.scope?.personId!=='string'||!ownerId.test(doc.scope.personId))throw new Error('unavailable');
       return doc as CurrentDocument;
     });
+    const last=documents[documents.length-1];
+    return {documents,next:rows.length>page.limit&&last?{personId:last.scope.personId!,id:last.id}:null};
   }
   /** The held cleanup count across owners (retired versions held plus staged upload bodies); one number leaves the database. */
   async heldCount():Promise<number>{
@@ -211,7 +220,7 @@ export class PartitionedR2DocumentStore implements DocumentStore {
   constructor(readonly partitions:PostgresDocumentPartitions,readonly objects:PrivateObjectPort){}
   partition(owner:DocumentOwner):DocumentStore{return new R2DocumentStore(this.partitions.port(owner),this.objects);}
   locate(documentId:string):Promise<DocumentOwner|null>{return this.partitions.locate(documentId);}
-  listCurrent(orgId:string,types:readonly string[]):Promise<CurrentDocument[]>{return this.partitions.listCurrent(orgId,types);}
+  listCurrent(orgId:string,types:readonly string[],page:CurrentPage):Promise<{documents:CurrentDocument[];next:CurrentCursor|null}>{return this.partitions.listCurrent(orgId,types,page);}
   heldCount():Promise<number>{return this.partitions.heldCount();}
   async transaction<T>():Promise<T>{throw new Error('unavailable');}
 }

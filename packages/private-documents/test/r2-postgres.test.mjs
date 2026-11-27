@@ -233,3 +233,32 @@ test('PART-05 volume: a cross-person listing reads bounded metadata, never unrel
   assert.equal(store.readPath,undefined,'no whole-store read exists');
  }finally{reader.query=query;}
 });
+
+test('PART-06 the civil ID listing walks bounded keyset pages: every match exactly once, none dropped at a page edge',unavailable,async()=>{
+ const org=`org-page-${randomBytes(4).toString('hex')}`,expected=new Set();
+ const people=Array.from({length:70},()=>person());
+ for(const [i,p] of people.entries()){
+  const types=i<60?['civil-id-front','civil-id-back']:['civil-id-front'];
+  const documents=types.map(type=>({id:randomUUID(),version:randomUUID(),type,mime:'image/png',size:10,scope:{orgId:org,personId:p},acl:'private',data:`r2:immutable/${randomUUID()}/${'b'.repeat(64)}`}));
+  for(const d of documents)expected.add(d.id);
+  await pool.query("INSERT INTO candidate_document_partitions (owner_kind, owner_id, snapshot) VALUES ('person',$1,$2::jsonb)",[p,JSON.stringify({state:{format:1,documents,retired:[]},blobs:Object.fromEntries(documents.map(d=>[d.data.slice(3),{key:d.data.slice(3),digest:'b'.repeat(64),size:10}]))})]);
+  await pool.query("INSERT INTO candidate_document_slots (person_id, org_id, type, state) SELECT $1, $2, t, 'active' FROM unnest($3::text[]) t",[p,org,types]);
+ }
+ assert.equal(expected.size,130);
+ const pages=[];const reader=snapshots.reader,query=reader.query.bind(reader);
+ reader.query=async(...args)=>{const r=await query(...args);pages.push(r.rows.length);return r;};
+ try{
+  const store=new PartitionedR2DocumentStore(snapshots,{read:async()=>{throw new Error('no body is read');},writeImmutable:async()=>{throw new Error('no write');}});
+  const listed=await listCivilIdPhotos(store,org,{pageSize:50});
+  const ids=listed.map(x=>x.documentId);
+  assert.equal(ids.length,130,'no match dropped');
+  assert.equal(new Set(ids).size,130,'no match repeated');
+  assert.deepEqual(new Set(ids),expected);
+  assert.deepEqual(pages,[51,51,30],'three bounded queries of at most one page plus one look-ahead row');
+  // A full last page ends cleanly with no empty extra page and nothing missing.
+  pages.length=0;
+  assert.equal((await listCivilIdPhotos(store,org,{pageSize:65})).length,130);
+  assert.deepEqual(pages,[66,65]);
+  await assert.rejects(store.listCurrent(org,['civil-id-front'],{limit:1001}),{message:'unavailable'});
+ }finally{reader.query=query;}
+});
