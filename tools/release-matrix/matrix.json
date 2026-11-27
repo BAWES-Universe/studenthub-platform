@@ -377,7 +377,8 @@
       "gates": {
         "built": {
           "state": "done",
-          "evidence": "My applications list (?applied=1) and request detail with the application status, proven by checkServed and REC7B_MY_APPLICATIONS; page from PR #524 at c1576639"
+          "evidence": "My applications list (?applied=1) and request detail with the application status, proven by checkServed and REC7B_MY_APPLICATIONS; page from PR #524 at c1576639",
+          "note": "served at /recruit/open-requests?applied=1 (My applications) and /recruit/open-requests/:id (the request with the application status); the subject's /applications and /applications/:id are legacy paths, not served and not aliased"
         },
         "verified": {
           "state": "open"
@@ -402,7 +403,8 @@
       "gates": {
         "built": {
           "state": "done",
-          "evidence": "invitations list and invitation detail pages with tests, proven by checkServed; PR #717 at ea46221e"
+          "evidence": "invitations list and invitation detail pages with tests, proven by checkServed; PR #717 at ea46221e",
+          "note": "served at /recruit/invitations and /recruit/invitations/:id; the subject's /invitations and /invitations/:id are legacy paths, not served and not aliased"
         },
         "verified": {
           "state": "open"
@@ -427,7 +429,8 @@
       "gates": {
         "built": {
           "state": "done",
-          "evidence": "my interviews list and interview detail pages with tests, proven by checkServed; PR #729 at 1d576abf and PR #741 at 37c19029"
+          "evidence": "my interviews list and interview detail pages with tests, proven by checkServed; PR #729 at 1d576abf and PR #741 at 37c19029",
+          "note": "served at /recruit/my-interviews and /recruit/interviews/:id; the subject's /interviews and /interviews/:id are legacy paths, not served and not aliased"
         },
         "verified": {
           "state": "open"
@@ -690,7 +693,8 @@
       "gates": {
         "built": {
           "state": "done",
-          "evidence": "stores list and store detail pages with tests, proven by checkServed; PR #645 at 58511221 and PR #737 at 699cd5a0"
+          "evidence": "stores list and store detail pages with tests, proven by checkServed; PR #645 at 58511221 and PR #737 at 699cd5a0",
+          "note": "served at /organization/:orgId/stores and /organization/:orgId/stores/:storeId; a bare /stores/:storeId is not served and not aliased"
         },
         "verified": {
           "state": "open"
