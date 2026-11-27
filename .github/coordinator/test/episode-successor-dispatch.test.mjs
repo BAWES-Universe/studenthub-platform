@@ -313,6 +313,71 @@ test("a review that failed before running (busy reviewer sandbox) routes the sam
   assert.equal(verdict.successor?.target_sha, SHA_WRITE, "at the same built head");
 });
 
+// 26 Nov: a review on the box found the reviewer sandbox held by another card's
+// review (REVIEW_SANDBOX_BUSY) and was "retried" every few minutes from 14:59Z
+// to 18:30Z under its one attempt id. The supervisor binds an attempt id to one
+// durable run, answered every resubmission with the failed run, and nothing ever
+// launched again; folded by attempt id, the card held one FAILED, so the cap of
+// three never ended it. This adapter keeps the supervisor's binding: a second
+// submission of a known attempt is answered with its stored run.
+test("REVIEW_RETRY_FRESH_ATTEMPT: a review that found the sandbox busy relaunches under a new attempt id each round, and the retry cap ends it", async () => {
+  const h = createEpisodeHarness();
+  const runs = new Map(); // attempt_id -> run id, never rebound
+  const submissions = [];
+  h.adapters["claude-code"] = {
+    async launchBuilder(o) {
+      submissions.push(o.attempt_id);
+      if (!runs.has(o.attempt_id)) {
+        runs.set(o.attempt_id, `supervisor_${o.attempt_id}`);
+        h.launched.push({ lane: "claude-code", attempt_id: o.attempt_id, target_sha: o.target_sha });
+      }
+      return { stage: "RUNNING", external_run_id: runs.get(o.attempt_id) };
+    },
+    async monitorRun() { return { stage: "FAILED", error_code: "REVIEW_SANDBOX_BUSY" }; },
+  };
+  const reviews = () => h.launched.filter((l) => l.lane === "claude-code");
+  try {
+    await h.runTick();
+    const build = h.latestFor("codex-builder");
+    await h.runTick();
+    h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+    h.completeRun(build.external_run_id);
+    await h.runTick();
+    assert.equal(h.receiptFor(build.attempt_id).verdict_stage, "BUILD_READY");
+
+    const routed = routing.freshAttempt(build.attempt_id, "review", 1);
+    const expected = [routed, routing.freshAttempt(routed, routing.RETRY_ATTEMPT_STAGE, 1), routing.freshAttempt(routed, routing.RETRY_ATTEMPT_STAGE, 2)];
+    for (const [round, attempt] of expected.entries()) {
+      let t = await h.runTick();
+      assert.equal(reviews().length, round + 1, `REVIEW_RETRY_RELAUNCHES round ${round + 1}\n${t.text}`);
+      assert.equal(reviews()[round].attempt_id, attempt, `REVIEW_RETRY_NEW_ATTEMPT round ${round + 1}`);
+      t = await h.runTick();
+      assert.equal(h.receiptFor(attempt).stage, "FAILED", t.text);
+      assert.equal(h.receiptFor(attempt).error_code, "REVIEW_SANDBOX_BUSY");
+    }
+    assert.equal(new Set(submissions).size, submissions.length, "REVIEW_RETRY_NEVER_RESUBMITS_AN_ATTEMPT");
+    assert.equal(h.receipts().filter((r) => r.stage === "FAILED").length, 3, "every round is a FAILED of its own");
+
+    // The third FAILED is the cap: the episode ends and nothing launches again.
+    for (let i = 0; i < 3; i++) {
+      const t = await h.runTick();
+      assert.match(t.text, /retryable failures exhausted \(3\/3\)/, "REVIEW_RETRY_CAP_ENDS_THE_EPISODE");
+    }
+    assert.equal(reviews().length, 3, "REVIEW_RETRY_CAPPED");
+    assert.equal(submissions.length, 3);
+  } finally {
+    h.cleanup();
+  }
+  // The id is the routed one until that attempt FAILED, and never a FAILED one.
+  const order = { ...successorOrder() };
+  assert.equal(routing.retryAttemptFor(order, []), order);
+  const failedOnce = [receipt({ attempt: order.attempt_id, stage: "FAILED", verdict: null })];
+  const retried = routing.retryAttemptFor(order, failedOnce);
+  assert.equal(retried.attempt_id, routing.freshAttempt(order.attempt_id, "retry", 1));
+  assert.equal(routing.retryAttemptFor(retried, failedOnce), retried, "re-applied on the same receipts it names the same attempt");
+  assert.equal(routing.retryAttemptFor(order, [{ ...failedOnce[0], stage: "RUNNING" }]), order, "only a FAILED attempt is retried under a new id");
+});
+
 test("SHU-225 I4: the successor is the same issue as the activation target and the committed scope", () => {
   const selection = reconcile.selectNextReservation({
     ready: [readyIssue()],
