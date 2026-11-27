@@ -112,6 +112,9 @@ import { legacyBucketReader } from "./m2-bucket.js";
 import { checkLegacyDocuments, documentCheckCounts, documentSetDigest, M2_DOCUMENT_CHECK_REVISION, type CheckedDocument, type DocumentCheckRule, type LegacyObjectReader } from "./m2-document-check.js";
 import { M2_DOCUMENT_MAPPER_REVISION, type DocumentIssueRule } from "./m2-documents.js";
 import { M2InputError, planM2, readM2Sources } from "./m2-run.js";
+import { DocumentPromotionError, LegacyDocumentPromotion, type DocumentPromotionOutcome, type StagedLegacyDocument } from "../../../packages/private-documents/src/legacy-promotion.js";
+import { PostgresDocumentPartitions, R2Objects } from "../../../packages/private-documents/src/r2-storage.js";
+import type { StagedDocument } from "./m2-copy.js";
 import { kuwaitDay, planIdentity, planM4, readM4Sources, receiptSafe, receiptStep, runM4, type M4Report, type M4Step, type M4Writers, type ReceiptStep } from "./m4-run.js";
 
 export const DEFAULT_M4_OUTPUT_DIR = "/var/lib/legacy-import/m4";
@@ -180,7 +183,7 @@ export function receipt(report: M4Report): string[] {
 export interface M4Receipt {
   readonly schemaVersion: 2;
   readonly invocation: string;
-  readonly kind: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy";
+  readonly kind: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote";
   readonly status: "ok" | "started" | "refused_rows" | "incomplete" | "failed" | "refused";
   readonly at: string;
   /** Set once the run got as far as computing them. */
@@ -224,6 +227,26 @@ export interface M4Receipt {
   readonly staging?: string;
   /** For `doccopy`: counts per outcome, the staged set's digest and whether every approved document was handled. */
   readonly copy?: DocCopyCounts;
+  /** For `docpromote`: the accepted doccopy it consumed. */
+  readonly acceptedCopy?: string;
+  /** For `docpromote`: counts per outcome only, never a principal or legacy id. */
+  readonly docPromotion?: DocPromotionCounts;
+}
+
+/** Outcomes of one `docpromote` run. Terminal ones are recorded in legacy_document_promotions. */
+export type DocPromotionRule = DocumentPromotionOutcome | "stagingUnreadable";
+export interface DocPromotionCounts {
+  /** Documents in the accepted copy (the selected set). */
+  readonly selected: number;
+  /** (person, kind) pairs this run handled. */
+  readonly handled: number;
+  readonly rules: Readonly<Record<DocPromotionRule, number>>;
+  /** The staged set the run promoted from (equals the accepted copy's staged digest). */
+  readonly staged: string;
+  /** True when the walk reached the end and nothing it met is left to try again. */
+  readonly complete: boolean;
+  /** True when the walk stopped at M4_DOCPROMOTE_MAX_DOCS or M4_DOCPROMOTE_MAX_MS. */
+  readonly bounded: boolean;
 }
 
 export interface DocCopyCounts {
@@ -425,6 +448,15 @@ export interface WriteTarget {
   documentStaging(): DocumentStagingStore;
   /** The copy's checkpoint table on the same session; only after claimWriter. */
   copyCheckpoints(): CopyCheckpointStore;
+  /** Whether the promotion record (0662) and the per-owner document store (0661, authoritative) are migrated. */
+  docPromotionReady(): Promise<boolean>;
+  /** Every staged row of one generation, read on the writer session; only after claimWriter. */
+  stagedGeneration(generation: string): Promise<readonly StagedDocument[]>;
+  /**
+   * Linked (person, staged document) pairs of one generation with no promotion record, in
+   * (principal, kind) C order strictly after `after`, at most `limit`; on the writer session.
+   */
+  pendingDocPromotions(generation: string, limit: number, after?: { readonly principalId: string; readonly kind: string }): Promise<readonly PendingDocPromotion[]>;
   /** Re-checks, on the lock session itself, that it is alive and still holds the lock. */
   stillHeld(): Promise<boolean>;
   /** Whether the lock session was lost or broken at any point. Once true, stays true. */
@@ -465,6 +497,14 @@ export const LINK_REPORT_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrat
   AND to_regclass('public.legacy_account_links') IS NOT NULL
   AND to_regclass('public.legacy_account_link_events') IS NOT NULL
   AND to_regclass('public.legacy_contact_promotions') IS NOT NULL AS ready`;
+/** What `docpromote` needs: the promotion record (0662) on the per-owner document store (0661). */
+export const M4_DOCPROMOTE_REQUIRED_MIGRATION = "0662_legacy_document_promotions";
+export const DOC_PROMOTION_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '${M4_DOCPROMOTE_REQUIRED_MIGRATION}')
+  AND EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0661_candidate_document_partitions')
+  AND to_regclass('public.legacy_document_promotions') IS NOT NULL
+  AND to_regclass('public.candidate_document_partitions') IS NOT NULL
+  AND EXISTS (SELECT 1 FROM candidate_document_store_authority WHERE singleton AND store = 'partitioned') AS ready`;
+export interface PendingDocPromotion { readonly principalId: string; readonly legacyId: string; readonly kind: string }
 /** How many pending principals `promote` takes at a time. */
 export const PROMOTE_BATCH = 500;
 
@@ -636,6 +676,27 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
       if (!writer) throw new Error("m4.writerNotClaimed");
       return postgresCopyCheckpoints(writer);
     },
+    docPromotionReady: async () => {
+      try { return (await pool.query<{ ready: boolean }>(DOC_PROMOTION_READY_SQL)).rows[0]?.ready === true; } catch { return false; }
+    },
+    stagedGeneration: async (generation) => {
+      if (!writer) throw new Error("m4.writerNotClaimed");
+      const { rows } = await writer.query<{ id: string; kind: StagedDocument["kind"]; mime: StagedDocument["mime"]; size: number; sha256: string; object_key: string }>(
+        `SELECT legacy_candidate_id AS id, kind, mime, size, sha256, object_key FROM legacy_candidate_documents WHERE generation = $1`, [generation]);
+      return rows.map((r) => ({ legacyId: r.id, kind: r.kind, generation, mime: r.mime, size: Number(r.size), sha256: r.sha256, objectKey: r.object_key }));
+    },
+    pendingDocPromotions: async (generation, limit, after) => {
+      if (!writer) throw new Error("m4.writerNotClaimed");
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) throw new TypeError("limit must be 1 to 10000");
+      const { rows } = await writer.query<{ principal_id: string; legacy_candidate_id: string; kind: string }>(
+        `SELECT l.principal_id, d.legacy_candidate_id, d.kind FROM legacy_candidate_documents d
+           JOIN legacy_account_links l ON l.legacy_candidate_id = d.legacy_candidate_id
+          WHERE d.generation = $1
+            AND NOT EXISTS (SELECT 1 FROM legacy_document_promotions p WHERE p.principal_id = l.principal_id AND p.kind = d.kind)
+            AND ($3::text IS NULL OR (l.principal_id COLLATE "C", d.kind COLLATE "C") > ($3::text COLLATE "C", $4::text COLLATE "C"))
+          ORDER BY l.principal_id COLLATE "C", d.kind COLLATE "C" LIMIT $2`, [generation, limit, after?.principalId ?? null, after?.kind ?? null]);
+      return rows.map((r) => ({ principalId: r.principal_id, legacyId: r.legacy_candidate_id, kind: r.kind }));
+    },
     stillHeld: async () => (writer ? writer.fence() : false),
     lost: () => wasLost || (writer?.lost ?? false),
     close: async () => {
@@ -656,6 +717,8 @@ export interface CliDeps {
   readonly bucket?: (env: NodeJS.ProcessEnv) => LegacyObjectReader;
   /** The staging document bucket (doccopy only; default envStaging). Throws on a bad setting. */
   readonly staging?: (env: NodeJS.ProcessEnv) => StagingObjects;
+  /** The promotion step over the live document store (docpromote only; default envPromoter). Throws on a bad setting. */
+  readonly promoter?: (env: NodeJS.ProcessEnv) => DocumentPromoter;
   /**
    * Ends the process at once (default process.exit). Used only when a storage write did not settle
    * after it was aborted: the locks are then not released in-process, and ending the process
@@ -676,6 +739,26 @@ export const envBucket = (e: NodeJS.ProcessEnv): LegacyObjectReader => legacyBuc
 export const envStaging = (e: NodeJS.ProcessEnv): StagingObjects => stagingBucket({ accountId: e.M4_STAGING_DOCUMENT_ACCOUNT_ID ?? "",
   bucket: e.M4_STAGING_DOCUMENT_BUCKET ?? "", accessKeyId: e.M4_STAGING_DOCUMENT_ACCESS_KEY_ID ?? "", secretAccessKey: e.M4_STAGING_DOCUMENT_SECRET_ACCESS_KEY ?? "" });
 
+/** The promotion step `docpromote` drives: one staged document into one person's slot. */
+export interface DocumentPromoter {
+  promote(principalId: string, staged: StagedLegacyDocument, bytes: Buffer, binding: { readonly acceptedCopy: string; readonly invocation: string }): Promise<DocumentPromotionOutcome>;
+  close(): Promise<void>;
+}
+
+/**
+ * The promotion over the target's per-owner document store and the live document bucket
+ * (M4_LIVE_DOCUMENT_ACCOUNT_ID, _BUCKET, _ACCESS_KEY_ID, _SECRET_ACCESS_KEY) for the candidate
+ * documents' organization (M4_DOCUMENT_ORG_ID). Throws on a bad setting.
+ */
+export const envPromoter = (e: NodeJS.ProcessEnv): DocumentPromoter => {
+  const objects = new R2Objects({ accountId: e.M4_LIVE_DOCUMENT_ACCOUNT_ID ?? "", bucket: e.M4_LIVE_DOCUMENT_BUCKET ?? "",
+    accessKeyId: e.M4_LIVE_DOCUMENT_ACCESS_KEY_ID ?? "", secretAccessKey: e.M4_LIVE_DOCUMENT_SECRET_ACCESS_KEY ?? "" });
+  if (!e.M4_DATABASE_URL) throw new Error("m2.promote.config");
+  const partitions = new PostgresDocumentPartitions(e.M4_DATABASE_URL);
+  const promotion = new LegacyDocumentPromotion({ partitions, objects, orgId: e.M4_DOCUMENT_ORG_ID ?? "" });
+  return { promote: (p, s, b, binding) => promotion.promote(p, s, b, binding), close: async () => { objects.close(); await partitions.close(); } };
+};
+
 /** `built` is the provenance tools/legacy-import/m4-launch.mjs verified before loading this module. */
 export const defaultDeps = (env: NodeJS.ProcessEnv, built: Provenance): CliDeps => ({
   env,
@@ -684,6 +767,7 @@ export const defaultDeps = (env: NodeJS.ProcessEnv, built: Provenance): CliDeps 
   target: (e) => postgresTarget(e.M4_DATABASE_URL ?? "", e.M4_IMPORT_ACTOR ?? "", e.M4_OPERATOR_ORG_ID ?? "", contactKeysFrom(e, "write")),
   bucket: envBucket,
   staging: envStaging,
+  promoter: envPromoter,
   halt: (code) => process.exit(code),
   provenance: () => built,
   now: () => new Date(),
@@ -700,7 +784,7 @@ class Refusal extends Error {}
 export async function main(argv: readonly string[], deps: CliDeps): Promise<number> {
   const { env } = deps;
   const mode = argv[0];
-  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote" && mode !== "linkreport" && mode !== "doccheck" && mode !== "doccopy") { deps.error("m4: refused.usage"); return 2; }
+  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote" && mode !== "linkreport" && mode !== "doccheck" && mode !== "doccopy" && mode !== "docpromote") { deps.error("m4: refused.usage"); return 2; }
   const invocation = env.M4_INVOCATION ?? "";
   // Without a fresh, unclaimed name there is nowhere this run's outcome could be published.
   if (!UUID.test(invocation)) { deps.error("m4: refused.invocation"); return 2; }
@@ -716,11 +800,12 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
   let links: M4Receipt["links"];
   let documents: M4Receipt["documents"];
   let copy: M4Receipt["copy"];
+  let docPromotion: M4Receipt["docPromotion"];
   const publish = (status: M4Receipt["status"], code?: string, promotion?: PromotionCounts) => {
     const unconfirmed = status === "failed" && mode !== "promote" ? order.slice(confirmed.length) : undefined;
     writeWhole(receiptPath, { schemaVersion: 2, invocation, kind: mode, status, at: deps.now().toISOString(), ...bound,
       steps: confirmed.map(receiptStep), ...(unconfirmed ? { unconfirmed } : {}), ...(code ? { code } : {}),
-      ...(promotion ? { promotion } : {}), ...(links ? { links } : {}), ...(documents ? { documents } : {}), ...(copy ? { copy } : {}) } satisfies M4Receipt);
+      ...(promotion ? { promotion } : {}), ...(links ? { links } : {}), ...(documents ? { documents } : {}), ...(copy ? { copy } : {}), ...(docPromotion ? { docPromotion } : {}) } satisfies M4Receipt);
   };
   const refuse = (code: string): never => { throw new Refusal(code); };
 
@@ -738,6 +823,9 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     }
     if (mode === "doccopy") {
       return await docCopy(deps, revision, publish, reportPath, (b, c) => { bound = b; copy = c; }, (l) => { lock = l; }, (t) => { target = t; }, () => { abandon = true; });
+    }
+    if (mode === "docpromote") {
+      return await docPromote(deps, revision, publish, (b, c) => { bound = b; docPromotion = c; }, (t) => { target = t; });
     }
     if (mode === "promote") return await promote(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
     const operator = env.M4_OPERATOR_ORG_ID ?? "";
@@ -1263,4 +1351,166 @@ async function docCopy(deps: CliDeps, revision: string,
   deps.log(`copy approved=${counts.approved} handled=${counts.handled} from=${result.checkpoint.from} credit=${result.checkpoint.credit} approvedBytes=${counts.approvedBytes} orphans=${counts.orphans} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
   deps.log(`m4 doccopy ${done ? "ok" : "incomplete"} invocation=${env.M4_INVOCATION} accepted=${accepted} generation=${generation} staged=${staged} complete=${result.complete}`);
   return done ? 0 : 3;
+}
+
+const DOC_PROMOTION_RULES: readonly DocPromotionRule[] = ["promoted", "personHeld", "alreadyPromoted", "notLinked", "linkChanged", "stagedChanged", "uploadInProgress", "stagingUnreadable"];
+/** Outcomes a later run settles by itself: the person and kind are recorded and never tried again. */
+const SETTLED = new Set<DocPromotionRule>(["promoted", "personHeld", "alreadyPromoted"]);
+
+/**
+ * `docpromote` (M-2): promotes the staged documents of one complete doccopy into linked people's
+ * empty slots (legacy-promotion, migration 0662). It reads no legacy data and needs no refresh lock.
+ *
+ * Before any object read it requires:
+ * - the verified build (`provenance`) and bounds (`bounds`);
+ * - the accepted doccopy (`M4_ACCEPTED_DOCCOPY`): its version-2 receipt and private report, status
+ *   ok, complete, staged set equal to its accepted set, orphan scan not truncated, the same build and
+ *   target, and a staged digest equal to `M4_EXPECTED_STAGED`, the digest the operator accepted; and
+ *   the doccheck it consumed, whose report's documents recompute to that digest: that is the selected
+ *   set (`acceptedCopy`);
+ * - the staging identity (`M4_STAGING_DOCUMENT_ACCOUNT_ID` and `_BUCKET`) whose fingerprint is the
+ *   receipt's and which the marker records, and a live bucket (`M4_LIVE_DOCUMENT_BUCKET`) that is
+ *   neither the staging nor the legacy bucket (`documentBucket`), and the live store's settings
+ *   (`promoterConfig`);
+ * - the staging marker and target (`target`), migrations 0661 (authoritative) and 0662 (`schema`),
+ *   then the one-writer lock (`writerBusy`), and under it every selected document staged in the
+ *   receipt's generation exactly as selected (`stagedInput`).
+ * It then walks the linked, unrecorded (person, kind) pairs of that generation in C order with a
+ * cursor, only those the selected set names, reads each staged object back from staging (bounded by
+ * its recorded size) and hands it to the promotion, which rechecks link, staged row and slot under
+ * the person's lock. Bounded by M4_DOCPROMOTE_MAX_DOCS (500) and M4_DOCPROMOTE_MAX_MS (15 min).
+ * The receipt carries counts per outcome only. Exit 0 when the walk reached the end and every pair
+ * it met is settled; 3 when bounded or a pair is left to retry (an upload in progress, a link that
+ * changed, a staged object that did not read back); 2 refused; 1 failed (the promotion's fixed
+ * code; each person commits on their own, so a re-run takes only the rest).
+ */
+async function docPromote(deps: CliDeps, revision: string, publish: (status: M4Receipt["status"], code?: string) => void,
+  bind: (bound: Omit<M4Receipt, "schemaVersion" | "invocation" | "kind" | "status" | "at" | "steps">, counts?: DocPromotionCounts) => void,
+  trackTarget: (target: WriteTarget) => void): Promise<number> {
+  const { env } = deps;
+  const refuse = (code: string): number => {
+    deps.error(`m4: refused.${code}`);
+    try { publish("refused", code); } catch { return 1; }
+    return 2;
+  };
+  const fail = (code: string): number => {
+    deps.error(`m4: ${code}`);
+    try { publish("failed", code); } catch { /* the exit code still says failed */ }
+    return 1;
+  };
+  const targetId = env.M4_TARGET_ID ?? "";
+  if (!UUID.test(targetId) || !env.M4_DATABASE_URL) return refuse("destination");
+  const artifact = env.M4_ARTIFACT_DIGEST ?? "";
+  const built = deps.provenance();
+  if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
+  const maxDocs = envBound(env.M4_DOCPROMOTE_MAX_DOCS, 500), maxMs = envBound(env.M4_DOCPROMOTE_MAX_MS, 15 * 60 * 1000);
+  if (maxDocs === null || maxMs === null) return refuse("bounds");
+
+  // The accepted copy, by its own receipt and report, and the selection its doccheck approved.
+  const accepted = env.M4_ACCEPTED_DOCCOPY ?? "";
+  const expected = env.M4_EXPECTED_STAGED ?? "";
+  if (!UUID.test(accepted) || accepted === env.M4_INVOCATION || !HEX64.test(expected)) return refuse("acceptedCopy");
+  const dir = env.M4_OUTPUT_DIR || DEFAULT_M4_OUTPUT_DIR;
+  const readJson = (name: string): Record<string, any> | undefined => {
+    try { return JSON.parse(readFileSync(path.join(dir, name), "utf8")) as Record<string, any>; } catch { return undefined; }
+  };
+  const copy = readJson(`${accepted}.doccopy.receipt.json`) as Partial<M4Receipt> | undefined;
+  const copyReport = readJson(`${accepted}.doccopy.report.json`);
+  const generation = copy?.mirror?.generation;
+  const doccheck = copy?.acceptedDoccheck;
+  const c = copy?.copy;
+  if (!copy || !copyReport || copy.schemaVersion !== 2 || copy.kind !== "doccopy" || copy.invocation !== accepted || copy.status !== "ok"
+    || copy.revision !== revision || copy.artifact !== artifact || copy.target !== targetId
+    || typeof generation !== "string" || !GENERATION.test(generation) || typeof doccheck !== "string" || !UUID.test(doccheck)
+    || typeof copy.staging !== "string" || !HEX64.test(copy.staging)
+    || !c || c.complete !== true || c.matchesAccepted !== true || c.orphansTruncated !== false || c.staged !== expected
+    || copyReport.kind !== "doccopy" || copyReport.invocation !== accepted || copyReport.acceptedDoccheck !== doccheck
+    || copyReport.mirror?.generation !== generation || copyReport.staging !== copy.staging || copyReport.target !== targetId
+    || copyReport.complete !== true || copyReport.staged !== expected || copyReport.accepted !== expected) return refuse("acceptedCopy");
+  const checkReport = readJson(`${doccheck}.doccheck.report.json`);
+  if (!checkReport || checkReport.kind !== "doccheck" || checkReport.invocation !== doccheck || checkReport.mirror?.generation !== generation
+    || checkReport.diagnostic !== undefined || !Array.isArray(checkReport.documents)) return refuse("acceptedCopy");
+  const selected = checkReport.documents as CheckedDocument[];
+  let recomputed: string;
+  try { recomputed = documentSetDigest(selected); } catch { recomputed = ""; }
+  if (recomputed !== expected) return refuse("acceptedCopy");
+  const tuple = (legacyId: string, kind: string) => `${legacyId}\u0000${kind}`;
+  const selection = new Map(selected.map((d) => [tuple(d.legacyId, d.kind), d] as const));
+  if (selection.size !== selected.length) return refuse("acceptedCopy");
+  const base = { revision, artifact, target: targetId, acceptedCopy: accepted, acceptedDoccheck: doccheck, mirror: { generation }, staging: copy.staging };
+  bind(base);
+
+  // The staging identity the copy wrote to, the live bucket apart from it and from legacy's.
+  const bucketName = env.M4_STAGING_DOCUMENT_BUCKET ?? "";
+  const accountId = env.M4_STAGING_DOCUMENT_ACCOUNT_ID ?? "";
+  const identity = stagingIdentity(accountId, bucketName);
+  const live = env.M4_LIVE_DOCUMENT_BUCKET ?? "";
+  if (!identity || stagingFingerprint(identity) !== copy.staging || !live || live === bucketName || live === env.M4_LEGACY_BUCKET) return refuse("documentBucket");
+  let objects: StagingObjects;
+  try { objects = (deps.staging ?? envStaging)(env); } catch { return refuse("stagingConfig"); }
+  const target = deps.target(env);
+  trackTarget(target);
+  const marker = await target.marker();
+  if (marker?.environment !== "staging" || marker.targetId !== targetId) return refuse("target");
+  if (!await target.docPromotionReady()) return refuse("schema");
+  const recorded = await target.documentBucket();
+  if (!recorded || recorded.account !== accountId || recorded.bucket !== bucketName) return refuse("documentBucket");
+  if (!await target.claimWriter()) return refuse("writerBusy");
+
+  // Under the writer lock: every selected document is staged in this generation exactly as selected.
+  const staged = new Map<string, StagedDocument>();
+  try {
+    for (const row of await target.stagedGeneration(generation)) staged.set(tuple(row.legacyId, row.kind), row);
+  } catch { return fail("m4.stagedRead"); }
+  const rows: StagedDocument[] = [];
+  for (const [key, d] of selection) {
+    const row = staged.get(key);
+    if (!row || row.mime !== d.mime || row.size !== d.size || row.sha256 !== d.sha256) return refuse("stagedInput");
+    rows.push(row);
+  }
+  if (documentSetDigest(rows) !== expected) return refuse("stagedInput");
+
+  let promoter: DocumentPromoter;
+  try { promoter = (deps.promoter ?? envPromoter)(env); } catch { return refuse("promoterConfig"); }
+  const rules = Object.fromEntries(DOC_PROMOTION_RULES.map((r) => [r, 0])) as Record<DocPromotionRule, number>;
+  let handled = 0, ended = false, bounded = false, open = 0;
+  const counts = (): DocPromotionCounts => ({ selected: selection.size, handled, rules: { ...rules }, staged: expected,
+    complete: ended && !bounded && open === 0, bounded });
+  publish("started");
+  const startedAt = Date.now();
+  const binding = { acceptedCopy: accepted, invocation: env.M4_INVOCATION! };
+  try {
+    let after: { principalId: string; kind: string } | undefined;
+    walk: for (;;) {
+      const batch = await target.pendingDocPromotions(generation, PROMOTE_BATCH, after);
+      if (batch.length === 0) { ended = true; break; }
+      for (const pair of batch) {
+        if (after && (pair.principalId < after.principalId || (pair.principalId === after.principalId && pair.kind <= after.kind))) throw new Error("m4.promoteOrder");
+        after = { principalId: pair.principalId, kind: pair.kind };
+        const row = staged.get(tuple(pair.legacyId, pair.kind));
+        if (!row || !selection.has(tuple(pair.legacyId, pair.kind))) continue;
+        if (handled >= maxDocs || Date.now() - startedAt >= maxMs) { bounded = true; break walk; }
+        handled++;
+        const bytes = await objects.read(row.objectKey, row.size, AbortSignal.timeout(60_000)).catch(() => null);
+        if (!bytes || bytes.kind !== "found" || bytes.bytes.length !== row.size || createHash("sha256").update(bytes.bytes).digest("hex") !== row.sha256) {
+          rules.stagingUnreadable++; open++; continue;
+        }
+        const outcome = await promoter.promote(pair.principalId, row as StagedLegacyDocument, bytes.bytes, binding);
+        rules[outcome]++;
+        if (!SETTLED.has(outcome)) open++;
+      }
+    }
+  } catch (error) {
+    bind(base, counts());
+    await promoter.close().catch(() => {});
+    return fail(error instanceof DocumentPromotionError ? error.code : error instanceof Error && error.message === "m4.promoteOrder" ? "m4.promoteOrder" : "m2.promote");
+  }
+  await promoter.close().catch(() => {});
+  if (!await target.stillHeld()) { bind(base, counts()); return fail("m4.writerLost"); }
+  const result = counts();
+  bind(base, result);
+  publish(result.complete ? "ok" : "incomplete");
+  deps.log(`docpromote selected=${result.selected} handled=${result.handled} ${DOC_PROMOTION_RULES.map((r) => `${r}=${rules[r]}`).join(" ")} bounded=${bounded}`);
+  deps.log(`m4 docpromote ${result.complete ? "ok" : "incomplete"} invocation=${env.M4_INVOCATION} accepted=${accepted} generation=${generation} staged=${expected}`);
+  return result.complete ? 0 : 3;
 }
