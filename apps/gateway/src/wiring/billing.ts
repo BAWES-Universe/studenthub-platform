@@ -1,8 +1,9 @@
 import pg from "pg";
-import { PostgresBankResultStore, PostgresFinanceSettledReads, PostgresFinanceTransferReads, PostgresPayHistoryReads, PostgresTransferInvoiceEffects, PostgresTransferInvoiceReads, PostgresTransferInvoiceVoids, bankResultLifecyclePolicy, operatorFinanceGate } from "@studenthub/db/billing";
+import { PostgresBankResultStore, PostgresFinanceContractReads, PostgresFinanceSettledReads, PostgresFinanceTransferReads, PostgresPayHistoryReads, PostgresTransferInvoiceEffects, PostgresTransferInvoiceReads, PostgresTransferInvoiceVoids, bankResultLifecyclePolicy, operatorFinanceGate } from "@studenthub/db/billing";
 import { TransferLifecycleService } from "../../../../packages/payroll/src/transfer-lifecycle.js";
 import { TRANSFER_INVOICE_VOID_ROLE } from "../../../../packages/billing/src/transfer-invoice-access.js";
 import { createBankResultsHttp, type BankResultsHttp } from "../billing/bank-results-http.js";
+import { createFinanceContractsHttp, type FinanceContractsHttp } from "../billing/finance-contracts-http.js";
 import { createFinanceSettledHttp, type FinanceSettledHttp } from "../billing/finance-settled-http.js";
 import { createFinanceTransfersHttp, type FinanceTransfersHttp } from "../billing/finance-transfers-http.js";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
@@ -21,7 +22,7 @@ type Access = ReturnType<typeof wireAccess>["services"];
  * AUB/KFH files are checked). BILLING_BANK_INFO (JSON) adds the bank block to unpaid invoices. StudentHub's finance users
  * void invoices with credit notes (F4.7) through same-origin posts from the gateway origin. All share one pool.
  */
-export function wireBilling(settings: WiringSettings, access: Access, env: Readonly<Record<string, string | undefined>>): Wired<{ readonly invoices: InvoicesHttp; readonly payHistory: PayHistoryHttp; readonly bankResults: BankResultsHttp; readonly financeTransfers: FinanceTransfersHttp; readonly financeSettled: FinanceSettledHttp }> {
+export function wireBilling(settings: WiringSettings, access: Access, env: Readonly<Record<string, string | undefined>>): Wired<{ readonly invoices: InvoicesHttp; readonly payHistory: PayHistoryHttp; readonly bankResults: BankResultsHttp; readonly financeTransfers: FinanceTransfersHttp; readonly financeSettled: FinanceSettledHttp; readonly financeContracts: FinanceContractsHttp }> {
   const bank = invoiceBankInfo(env.BILLING_BANK_INFO);
   const pool = new pg.Pool({ connectionString: settings.databaseUrl });
   const reads = new PostgresTransferInvoiceReads({ pool,
@@ -58,6 +59,8 @@ export function wireBilling(settings: WiringSettings, access: Access, env: Reado
       financeTransfers: createFinanceTransfersHttp({ sessions: access.loginStore.sessions, reads: new PostgresFinanceTransferReads(pool, fileGate, voidDecision) }),
       // A-20: StudentHub finance's invoices and balances across companies, behind the same gate and rule as A-18.
       financeSettled: createFinanceSettledHttp({ sessions: access.loginStore.sessions, reads: new PostgresFinanceSettledReads(pool, fileGate, voidDecision) }),
+      // A-17: StudentHub finance's contracts across companies, read only, company projection; same gate and rule as A-18.
+      financeContracts: createFinanceContractsHttp({ sessions: access.loginStore.sessions, reads: new PostgresFinanceContractReads(pool, fileGate, voidDecision) }),
       payHistory: createPayHistoryHttp({ sessions: access.loginStore.sessions, reads: new PostgresPayHistoryReads({ pool }) }),
     },
     async close() { await pool.end(); },
