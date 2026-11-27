@@ -323,9 +323,13 @@ function changeForm(choices: readonly BankChoice[], selected = "", name = "", er
 
 function refusalPage(write: BankDetailsPageWriter, status: number): void {
   if (status === 401) { write(401, PAGE_TITLE, ""); return; }
+  if (status === 503) {
+    // A 503 can follow a committed write (the receipt step failed), so it never claims nothing changed.
+    write(503, PAGE_TITLE, `<main id="main" class="profile-main"><h1>We couldn’t finish this right now.</h1><p>If you were saving a change, it may have gone through. Open your bank details to see what is saved now before you try again.</p><a class="button primary" href="${PAGE}">Open bank details</a></main>`);
+    return;
+  }
   const message = status === 409 ? "Your bank details changed while you were reviewing. Open them again and retry."
-    : status === 503 ? "Bank details are unavailable right now. Please try again in a moment."
-      : "This change is no longer available.";
+    : "This change is no longer available.";
   write(status, PAGE_TITLE, `<main id="main" class="profile-main"><h1>Your bank details weren’t changed.</h1><p>${message}</p><a class="button primary" href="${PAGE}">Back to bank details</a></main>`);
 }
 
@@ -379,12 +383,14 @@ export async function handleBankDetailsPage(
     const details = Object.fromEntries(PAGE_FIELDS.map((key) => [key, values[key]]));
     if (path === PAGE_REVIEW) {
       if (!exactKeys(values, PAGE_FIELDS)) { refusalPage(write, 400); return true; }
+      // Ownership first: someone without a bank details record gets the shared not-found answer
+      // before any correction form, whatever they typed.
+      const current = await service.current(sessionId);
+      if (current.status === 404) { writeNotFound(request, response); return true; }
+      if (current.status !== 200) { refusalPage(write, current.status); return true; }
       const missing = (["bankId", "iban", "beneficiaryName"] as const).filter((key) => values[key]!.trim() === "").map((key) => MISSING_MESSAGES[key]);
       if (missing.length) {
         // Empty or partly filled: every missing part is named, before anything is checked.
-        const current = await service.current(sessionId);
-        if (current.status === 404) { writeNotFound(request, response); return true; }
-        if (current.status !== 200) { refusalPage(write, current.status); return true; }
         const choices = await service.bankChoices();
         write(400, PAGE_TITLE, `<main id="main" class="profile-main"><h1>Change your bank details<span class="accent">.</span></h1>${changeForm(choices, values.bankId, values.beneficiaryName, missing)}<a class="text-link" href="${PAGE}">Cancel</a></main>`);
         return true;

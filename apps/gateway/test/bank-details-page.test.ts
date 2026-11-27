@@ -175,6 +175,9 @@ test("C15_BANK_PAGE_HIDDEN signed out is the signed-out page; someone without a 
   for (const page of [
     await call(staff.service, "/profile/bank", undefined),
     await call(staff.service, "/profile/bank/review", { bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" }),
+    // Ownership is checked before any correction form: a non-owner never sees one.
+    await call(staff.service, "/profile/bank/review", { bankId: BANK, iban: "not an iban", beneficiaryName: "Synthetic Person" }),
+    await call(staff.service, "/profile/bank/review", { bankId: "", iban: "", beneficiaryName: "" }),
     wildcard,
   ]) {
     assert.equal(page.status, 404);
@@ -235,6 +238,13 @@ test("C15_BANK_PAGE_QUIET a failing dependency answers 503 and nothing is logged
     assert.equal(failed.html.includes("database"), false);
     const noChoices = { ...x.service, bankChoices: async () => { throw new Error("catalogue down"); } } as BankDetailsService;
     assert.equal((await call(noChoices, "/profile/bank", undefined)).status, 503);
+    // A 503 at confirm can follow a committed write (the receipt step failed): the page never says nothing changed.
+    const receiptFailed = { ...x.service, confirm: async () => ({ status: 503 as const, body: { error: "receipt_failed" } }) } as BankDetailsService;
+    const again = await call(x.service, "/profile/bank/review", { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person" });
+    const unsure = await call(receiptFailed, "/profile/bank/confirm", hiddenFields(again.html));
+    assert.equal(unsure.status, 503);
+    assert.equal(unsure.html.includes("weren’t changed"), false, "C15_BANK_PAGE_QUIET a 503 never claims nothing changed");
+    assert.ok(unsure.html.includes("<h1>We couldn’t finish this right now.</h1><p>If you were saving a change, it may have gone through. Open your bank details to see what is saved now before you try again.</p><a class=\"button primary\" href=\"/profile/bank\">Open bank details</a>"), unsure.html);
   } finally {
     Object.assign(console, original);
   }
