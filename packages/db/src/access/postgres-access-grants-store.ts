@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { insertAuthorizationMutationAudit, resolveAuthorizationMutationContext } from "../authorization-audit.js";
 import { organizationLive } from "../organization-liveness.js";
@@ -40,6 +41,33 @@ export type AccessGrantApplyOutcome<R extends string = string> =
   | { readonly kind: "applied"; readonly before: Scope | null; readonly after: Scope | null }
   | { readonly kind: "unchanged" }
   | { readonly kind: "refused"; readonly reason: R | "token_already_used" | "state_changed" };
+
+/** G-02: one store manager change on the Access pages (A4's store_manager_access row). */
+export interface AccessStoreGrantChange {
+  readonly targetPrincipalId: string;
+  readonly storeId: string;
+  readonly action: "grant" | "revoke";
+  readonly reason: string;
+}
+
+export interface AccessStoreGrantSnapshotRow {
+  readonly callerGrants: readonly { readonly orgId: string; readonly role: string; readonly scope: string }[];
+  readonly targetExists: boolean;
+  /** The store with its company when the store is active and the company live; null otherwise. */
+  readonly store: null | { readonly storeId: string; readonly name: string; readonly orgId: string; readonly orgName: string; readonly orgAncestors: readonly string[] };
+  readonly held: boolean;
+  readonly paused: boolean;
+}
+
+export type AccessStoreGrantDecision<R extends string = string> =
+  | { readonly kind: "refused"; readonly reason: R }
+  | { readonly kind: "unchanged" }
+  | { readonly kind: "apply"; readonly before: boolean; readonly after: boolean };
+
+export type AccessStoreGrantOutcome<R extends string = string> =
+  | { readonly kind: "applied"; readonly before: boolean; readonly after: boolean }
+  | { readonly kind: "unchanged" }
+  | { readonly kind: "refused"; readonly reason: R | "token_already_used" | "token_expired" | "state_changed" };
 
 const ORG_LOCK_KEY = 5960;
 const PRINCIPAL_LOCK_KEY = 5959; // the key PostgresAuthzStore takes per principal
@@ -339,6 +367,155 @@ export class PostgresAccessGrantsStore {
        JOIN organizations o ON o.id = g.org_id
        WHERE g.principal_id = $1 ORDER BY lower(o.name), g.org_id, g.role`, [principalId]);
     return rows.map((row) => ({ orgId: row.org_id, orgName: row.org_name, role: row.role, scope: row.scope }));
+  }
+
+  // --- G-02: store manager access ----------------------------------------------
+
+  async storeSnapshot(callerId: string, change: AccessStoreGrantChange): Promise<AccessStoreGrantSnapshotRow> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const snapshot = await this.#storeSnapshot(client, callerId, change, false);
+      await client.query("COMMIT");
+      return snapshot;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * One transaction: lock, re-read, decide, then add or revoke the
+   * store_manager_access row and write the access_grant_events row with the
+   * token. Any failure rolls back both.
+   */
+  async applyStore<R extends string>(input: {
+    readonly callerId: string;
+    readonly request: AccessStoreGrantChange;
+    readonly tokenId: string;
+    readonly expectedHeld: boolean;
+    readonly decide: (snapshot: AccessStoreGrantSnapshotRow) => AccessStoreGrantDecision<R>;
+    readonly expiresAt: number;
+    readonly now: () => number;
+  }): Promise<AccessStoreGrantOutcome<R>> {
+    const { callerId, request } = input;
+    const client = await this.#pool.connect();
+    let broken = false;
+    try {
+      await client.query("BEGIN");
+      // A store never moves company (0202's trigger), so its company can be
+      // read before the locks; the locks are then the ones an invitation
+      // acceptance and a team-page removal take: the tree, the company, both
+      // principals in a fixed order.
+      const owner = await client.query<{ org_id: string }>("SELECT org_id FROM organization_stores WHERE id = $1", [request.storeId]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('studenthub:organizations:tree'))");
+      if (owner.rows[0]) {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [`access:org:${owner.rows[0].org_id}`, ORG_LOCK_KEY]);
+      }
+      for (const principal of [...new Set([request.targetPrincipalId, callerId])].sort()) {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [principal, PRINCIPAL_LOCK_KEY]);
+      }
+      const used = await client.query("SELECT 1 FROM access_grant_events WHERE token_id = $1", [input.tokenId]);
+      if (used.rowCount) {
+        await client.query("ROLLBACK");
+        return { kind: "refused", reason: "token_already_used" };
+      }
+      const snapshot = await this.#storeSnapshot(client, callerId, request, true);
+      if (input.now() >= input.expiresAt) {
+        await client.query("ROLLBACK");
+        return { kind: "refused", reason: "token_expired" };
+      }
+      if (snapshot.held !== input.expectedHeld) {
+        await client.query("ROLLBACK");
+        return { kind: "refused", reason: "state_changed" };
+      }
+      const decision = input.decide(snapshot);
+      if (decision.kind !== "apply") {
+        await client.query("ROLLBACK");
+        return decision;
+      }
+      const store = snapshot.store!;
+      const at = new Date(input.now());
+      if (decision.after) {
+        await client.query(
+          "INSERT INTO store_manager_access (id, org_id, store_id, principal_id, granted_by, created_at) VALUES ($1, $2, $3, $4, $5, $6)",
+          [randomUUID(), store.orgId, store.storeId, request.targetPrincipalId, callerId, at]);
+      } else {
+        await client.query(
+          `UPDATE store_manager_access SET revoked_at = $4, revoked_by = $5
+           WHERE store_id = $1 AND principal_id = $2 AND org_id = $3 AND revoked_at IS NULL`,
+          [store.storeId, request.targetPrincipalId, store.orgId, at, callerId]);
+      }
+      await client.query(
+        `INSERT INTO access_grant_events (target_principal_id, org_id, role, scope, action, actor_principal_id, reason, store_id, token_id)
+         VALUES ($1, $2, 'store-manager', 'store', $3, $4, $5, $6, $7)`,
+        [request.targetPrincipalId, store.orgId, decision.after ? "grant" : "revoke", callerId, request.reason, store.storeId, input.tokenId]);
+      await client.query("COMMIT");
+      return { kind: "applied", before: decision.before, after: decision.after };
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch { broken = true; }
+      if ((error as { code?: string }).code === "23505" &&
+        String((error as { constraint?: string }).constraint ?? "").includes("token_id")) {
+        return { kind: "refused", reason: "token_already_used" };
+      }
+      throw error;
+    } finally {
+      client.release(broken);
+    }
+  }
+
+  async #storeSnapshot(db: pg.PoolClient, callerId: string, change: AccessStoreGrantChange, lock: boolean): Promise<AccessStoreGrantSnapshotRow> {
+    const callerGrants = await db.query<{ org_id: string; role: string; scope: string }>(
+      `SELECT org_id, role, scope FROM grants WHERE principal_id = $1 ORDER BY id${lock ? " FOR SHARE" : ""}`, [callerId]);
+    const target = await db.query("SELECT 1 FROM principals WHERE id = $1", [change.targetPrincipalId]);
+    const found = await db.query<{ id: string; name: string; org_id: string; org_name: string; status: string }>(
+      `SELECT s.id, s.name, s.org_id, o.name AS org_name, s.status
+       FROM organization_stores s JOIN organizations o ON o.id = s.org_id
+       WHERE s.id = $1${lock ? " FOR SHARE OF s" : ""}`, [change.storeId]);
+    const row = found.rows[0];
+    const live = row !== undefined && row.status === "active" && await organizationLive(db, row.org_id, lock);
+    const ancestors = live ? await ancestorsOf(db, [row.org_id]) : new Map<string, string[]>();
+    const held = await db.query(
+      `SELECT 1 FROM store_manager_access WHERE store_id = $1 AND principal_id = $2 AND revoked_at IS NULL${lock ? " FOR UPDATE" : ""}`,
+      [change.storeId, change.targetPrincipalId]);
+    // A grant to a paused person would sit outside the pause's record and
+    // survive it. The pause takes this principal's lock, so under the lock
+    // this read is final.
+    const paused = await db.query("SELECT 1 FROM account_pauses WHERE principal_id = $1 AND resumed_at IS NULL", [change.targetPrincipalId]);
+    return Object.freeze({
+      callerGrants: Object.freeze(callerGrants.rows.map((grant) => Object.freeze({ orgId: grant.org_id, role: grant.role, scope: grant.scope }))),
+      targetExists: Boolean(target.rowCount),
+      paused: Boolean(paused.rowCount),
+      store: live ? Object.freeze({ storeId: row.id, name: row.name, orgId: row.org_id, orgName: row.org_name, orgAncestors: Object.freeze(ancestors.get(row.org_id) ?? []) }) : null,
+      held: Boolean(held.rowCount),
+    });
+  }
+
+  /** Active stores of live companies whose name starts with the query, with their company. */
+  async findStores(query: string): Promise<readonly { storeId: string; name: string; orgId: string; orgName: string }[]> {
+    const { rows } = await this.#pool.query<{ id: string; name: string; org_id: string; org_name: string }>(
+      `SELECT s.id, s.name, s.org_id, o.name AS org_name
+       FROM organization_stores s JOIN organizations o ON o.id = s.org_id
+       WHERE s.status = 'active' AND lower(s.name) LIKE $1 ESCAPE '\\'
+         AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = s.org_id)
+       ORDER BY lower(s.name), lower(o.name), s.id LIMIT $2`,
+      [likePrefix(query.trim()), LOOKUP_LIMIT]);
+    return rows.map((row) => ({ storeId: row.id, name: row.name, orgId: row.org_id, orgName: row.org_name }));
+  }
+
+  /** The store manager access a person holds now: not revoked, store active, company live. */
+  async storeGrants(principalId: string): Promise<readonly { storeId: string; name: string; orgId: string; orgName: string }[]> {
+    const { rows } = await this.#pool.query<{ store_id: string; name: string; org_id: string; org_name: string }>(
+      `SELECT a.store_id, s.name, a.org_id, o.name AS org_name
+       FROM store_manager_access a
+       JOIN organization_stores s ON s.id = a.store_id
+       JOIN organizations o ON o.id = a.org_id
+       WHERE a.principal_id = $1 AND a.revoked_at IS NULL AND s.status = 'active'
+         AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id = a.org_id)
+       ORDER BY lower(o.name), lower(s.name), a.store_id`, [principalId]);
+    return rows.map((row) => ({ storeId: row.store_id, name: row.name, orgId: row.org_id, orgName: row.org_name }));
   }
 }
 

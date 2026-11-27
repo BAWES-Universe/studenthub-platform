@@ -8,8 +8,10 @@ import {
   grantCatalogue,
   grantCatalogueView,
   effectiveAccess,
+  mayManageStoreAccess,
   mayOpenAccessAdmin,
   mayPauseAccount,
+  parseStoreGrant,
   parseGrantChange,
   parseGrantToken,
   parsePeopleQuery,
@@ -37,6 +39,11 @@ import {
   type CatalogueCapability,
   type CatalogueGiver,
   type OwnAccessRow,
+  type AccessStore,
+  type AccessStoreReads,
+  type StoreGrantRefusal,
+  type StoreGrantRequest,
+  type StoreGrantService,
 } from "../../../../packages/access/src/index.js";
 
 /**
@@ -47,6 +54,8 @@ import {
  * GET  /admin/access/people/{principalId} their grants, history, and the grant forms
  * POST /admin/access/preview              review one change, with a single-use token
  * POST /admin/access/confirm              apply it
+ * POST /admin/access/store-preview        G-02: review giving or taking away store manager access
+ * POST /admin/access/store-confirm        apply it
  * GET  /profile/access                    "Your access", read-only, for everyone signed in
  * GET  /account                           U-03: where the person is signed in, for everyone signed in
  * POST /account/sign-out-everywhere       U-03: end every StudentHub session of the person
@@ -66,6 +75,8 @@ export interface AccessPorts {
   readonly pauses?: { readonly reads: Pick<AccountPauseStore, "pause">; readonly writes?: AccountPauseService };
   /** A9: when StudentHub staff viewed the signed-in person's account, for their own Access page. */
   readonly views?: { viewedOn(principalId: string): Promise<readonly string[]> };
+  /** G-02: store manager access on the person page. Writes absent without the signing key. */
+  readonly stores?: { readonly reads: AccessStoreReads; readonly writes?: StoreGrantService };
   /** U-03: the person's own sessions. Absent: /account is not answered. */
   readonly account?: AccountSessionsStore;
 }
@@ -100,6 +111,24 @@ const REFUSAL_TEXT: Readonly<Record<GrantRefusal, string>> = Object.freeze({
   token_already_used: "This change was already confirmed.",
   state_changed: "This person’s access changed while you were reviewing. Review it again.",
 });
+
+const STORE_REFUSAL_TEXT: Readonly<Record<StoreGrantRefusal, string>> = Object.freeze({
+  self_change: "You can’t change your own access. Ask another administrator.",
+  unknown_person: "This person no longer exists.",
+  unknown_store: "This store was removed, or its company was deleted.",
+  not_allowed: "You don’t have the right to give or take away manager access to this store.",
+  not_held: "This person doesn’t manage this store any more.",
+  paused: "This person’s access is paused. Resume it before giving store manager access.",
+  token_invalid: "This review doesn’t match the change. Start again from the person’s page.",
+  token_expired: "This review expired after 15 minutes. Start again from the person’s page.",
+  token_already_used: "This change was already confirmed.",
+  state_changed: "This person’s store access changed while you were reviewing. Review it again.",
+});
+const STORE_REFUSAL_STATUS: Readonly<Record<StoreGrantRefusal, number>> = Object.freeze({
+  self_change: 403, unknown_person: 404, unknown_store: 404, not_allowed: 403, not_held: 409, paused: 409,
+  token_invalid: 409, token_expired: 409, token_already_used: 409, state_changed: 409,
+});
+const STORE_FIELDS = ["targetPrincipalId", "storeId", "action", "reason"] as const;
 
 const REFUSAL_STATUS: Readonly<Record<GrantRefusal, number>> = Object.freeze({
   self_change: 403, unknown_person: 404, unknown_organization: 404, not_allowed: 403, not_held: 409,
@@ -219,13 +248,49 @@ export interface PersonPageModel {
   readonly revocable: ReadonlySet<string>;
   readonly writable: boolean;
   readonly isSelf: boolean;
-  readonly done?: "granted" | "revoked" | "unchanged" | "paused" | "resumed";
+  readonly done?: "granted" | "revoked" | "unchanged" | "paused" | "resumed" | "store-granted" | "store-revoked";
   /** A6: the live pause, when the pause ports exist. */
   readonly pause?: AccountPause | null;
   /** A6: whether this caller may pause or resume this person. */
   readonly pausable?: boolean;
   /** A9: offer "View as this person". */
   readonly viewAs?: boolean;
+  /** G-02: store manager access, when the store ports exist. */
+  readonly stores?: PersonStoresModel;
+}
+
+export interface PersonStoresModel {
+  /** The stores they manage now; `manageable` when this caller may take it away. */
+  readonly held: readonly (AccessStore & { readonly manageable: boolean })[];
+  readonly query: string;
+  /** Search results, when a store name was searched; `manageable` when this caller may give it. */
+  readonly found: readonly (AccessStore & { readonly manageable: boolean })[] | undefined;
+  readonly writable: boolean;
+}
+
+function renderStoreSection(model: PersonPageModel): string {
+  const e = escapeHtml;
+  const stores = model.stores;
+  if (!stores) return "";
+  const { person } = model;
+  const changes = stores.writable && !model.isSelf;
+  const form = (store: AccessStore, action: "grant" | "revoke", id: string, label: string) =>
+    `<form method="post" action="/admin/access/store-preview"><input type="hidden" name="action" value="${action}"><input type="hidden" name="targetPrincipalId" value="${e(person.principalId)}"><input type="hidden" name="storeId" value="${e(store.storeId)}">${reasonField(id)}<button class="sign-out" type="submit">${e(label)}</button></form>`;
+  const held = stores.held.length === 0
+    ? `<p class="empty-contexts" role="status">${e(personName(person))} manages no store.</p>`
+    : `<div class="directory-table"><table><caption>Stores they manage</caption><thead><tr><th>Store</th><th>Company</th>${changes ? "<th>Change</th>" : ""}</tr></thead><tbody>${stores.held.map((store, index) =>
+      `<tr><th scope="row">${e(store.name)}</th><td>${e(store.orgName)}</td>${changes ? `<td>${store.manageable ? form(store, "revoke", `store-revoke-reason-${index}`, "Review taking it away") : "—"}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
+  const search = `<form class="directory-filters" method="get" action="${e(personHref(person.principalId))}" role="search"><label>Store name<input type="search" name="store" minlength="1" maxlength="200" value="${e(stores.query)}" required></label><button class="sign-out" type="submit">Find store</button></form>`;
+  const found = stores.found === undefined ? ""
+    : stores.found.length === 0 ? `<p class="empty-contexts" role="status">No store matches “${e(stores.query)}”.</p>`
+      : `<ul class="context-list">${stores.found.map((store, index) => `<li class="profile-card"><strong>${e(store.name)}</strong><p>${e(store.orgName)}</p>${
+        !store.manageable ? "<p>You can’t give manager access to this store.</p>"
+          : stores.held.some((item) => item.storeId === store.storeId) ? "<p>They already manage this store.</p>"
+            : model.pause ? "<p>Their access is paused, so nothing can be given now.</p>"
+              : form(store, "grant", `store-grant-reason-${index}`, "Review giving manager access")}</li>`).join("")}</ul>`;
+  const give = !stores.writable ? `<p class="sidebar-note">Changes are unavailable right now.</p>`
+    : model.isSelf ? "" : `${search}${found}`;
+  return `<section><h2>Store manager access</h2><p>A store manager sees one store, never a sibling store or the rest of the company. It adds no role.</p>${held}${give}</section>`;
 }
 
 const PAUSE_REFUSAL_TEXT: Readonly<Record<PauseRefusal, string>> = Object.freeze({
@@ -261,7 +326,8 @@ export function renderPersonAccess(model: PersonPageModel): string {
   const e = escapeHtml;
   const { person } = model;
   const notice = model.done === "granted" ? "The role was given." : model.done === "revoked" ? "The role was taken away." : model.done === "unchanged" ? "Nothing changed: the person already held this."
-    : model.done === "paused" ? "Access was paused." : model.done === "resumed" ? "Access was resumed." : "";
+    : model.done === "paused" ? "Access was paused." : model.done === "resumed" ? "Access was resumed."
+      : model.done === "store-granted" ? "Store manager access was given." : model.done === "store-revoked" ? "Store manager access was taken away." : "";
   const grantRows = model.grants.length === 0
     ? `<p class="empty-contexts" role="status">${e(personName(person))} holds no roles.</p>`
     : `<div class="directory-table"><table><caption>Roles held</caption><thead><tr><th>Organization</th><th>Role</th><th>Scope</th><th>Given by</th><th>When</th><th>Reason</th>${model.writable && !model.isSelf ? "<th>Change</th>" : ""}</tr></thead><tbody>${model.grants.map((grant, index) => {
@@ -283,7 +349,7 @@ export function renderPersonAccess(model: PersonPageModel): string {
   const history = model.history.length === 0 ? `<p class="empty-contexts">No changes recorded on this page yet.</p>`
     : `<div class="directory-table"><table><caption>Changes (latest ${model.history.length})</caption><thead><tr><th>When</th><th>Change</th><th>Organization</th><th>Role</th><th>Scope</th><th>By</th><th>Reason</th></tr></thead><tbody>${model.history.map((event) =>
       `<tr><td>${e(dateText(event.occurredAt))}</td><td>${event.action === "grant" ? "Given" : "Taken away"}</td><td>${e(event.orgName)}</td><td>${e(ROLE_NAMES[event.role] ?? event.role)}</td><td>${e(SCOPE_NAMES[event.scope] ?? event.scope)}</td><td>${e(personName(event.actor))}</td><td>${e(event.reason)}</td></tr>`).join("")}</tbody></table></div>`;
-  return layout(`<p><a class="text-link" href="/admin/access">← Find another person</a></p><div class="profile-heading"><h1>${e(personName(person))}<span class="accent">.</span></h1></div><p>${e(person.email ?? "No email address recorded")}</p>${notice ? `<section class="notice context-notice" role="status"><strong>${e(notice)}</strong></section>` : ""}${renderPauseSection(model)}<section><h2>Roles</h2>${grantRows}<p><a class="text-link" href="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}/audit`)}">What their access does now →</a></p></section><section><h2>Give a role</h2>${give}</section><section><h2>History</h2>${history}</section>`, "access");
+  return layout(`<p><a class="text-link" href="/admin/access">← Find another person</a></p><div class="profile-heading"><h1>${e(personName(person))}<span class="accent">.</span></h1></div><p>${e(person.email ?? "No email address recorded")}</p>${notice ? `<section class="notice context-notice" role="status"><strong>${e(notice)}</strong></section>` : ""}${renderPauseSection(model)}<section><h2>Roles</h2>${grantRows}<p><a class="text-link" href="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}/audit`)}">What their access does now →</a></p></section><section><h2>Give a role</h2>${give}</section>${renderStoreSection(model)}<section><h2>History</h2>${history}</section>`, "access");
 }
 
 function renderGrantEffect(name: string, orgName: string, effect: GrantChangeEffect): string {
@@ -360,6 +426,39 @@ export function renderGrantReview(input: {
     ? input.result.before === null ? "Give this role" : "Widen this role to the sub-companies"
     : "Take this role away";
   return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(personName(person))}’s next request. Confirm within 15 minutes.</p>${facts}${input.effect ? renderGrantEffect(personName(person), input.orgName, input.effect) : ""}<form method="post" action="/admin/access/confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
+}
+
+export function renderStoreGrantReview(input: {
+  readonly person: AccessPerson;
+  readonly store: AccessStore;
+  readonly request: StoreGrantRequest;
+  readonly result: { readonly kind: "unchanged" } | { readonly kind: "change"; readonly token: GrantToken };
+}): string {
+  const e = escapeHtml;
+  const { request, person, store } = input;
+  const name = personName(person);
+  const back = personHref(person.principalId);
+  const facts = `<dl class="profile-fields"><div><dt>Person</dt><dd>${e(name)}</dd></div><div><dt>Store</dt><dd>${e(store.name)}</dd></div><div><dt>Company</dt><dd>${e(store.orgName)}</dd></div><div><dt>Access</dt><dd>Store manager, this store only</dd></div><div><dt>Reason</dt><dd>${e(request.reason)}</dd></div></dl>`;
+  if (input.result.kind === "unchanged") {
+    return layout(`<div class="profile-heading"><h1>Nothing to change<span class="accent">.</span></h1></div><p>${e(name)} already manages this store.</p>${facts}<a class="button primary" href="${e(back)}">Back to ${e(name)}</a>`, "access");
+  }
+  const { token } = input.result;
+  const hidden = [
+    ...STORE_FIELDS.map((key) => [key, request[key]] as const),
+    ...GRANT_TOKEN_KEYS.map((key) => [`token.${key}`, token[key]] as const),
+  ].map(([key, value]) => `<input type="hidden" name="${e(key)}" value="${e(value)}">`).join("");
+  const verb = request.action === "grant" ? "Give store manager access" : "Take store manager access away";
+  const effect = request.action === "grant"
+    ? `${e(name)} will be able to see and run ${e(store.name)}, and nothing else at ${e(store.orgName)}.`
+    : `${e(name)} will no longer be able to see or run ${e(store.name)}. Their other access is not changed.`;
+  return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(name)}’s next request. Confirm within 15 minutes.</p>${facts}<section class="grant-effect"><h2>What changes for them</h2><p>${effect}</p></section><form method="post" action="/admin/access/store-confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
+}
+
+export function renderStoreGrantRefusal(reason: StoreGrantRefusal | "invalid_request" | "unavailable", back: string): string {
+  const text = reason === "invalid_request" ? "Some details were missing or not valid. The reason must be 3 to 500 characters."
+    : reason === "unavailable" ? "Access changes are unavailable right now. Please try again in a moment."
+      : STORE_REFUSAL_TEXT[reason];
+  return layout(`<div class="error-page"><h1>Nothing was changed.</h1><p>${escapeHtml(text)}</p><a class="button primary" href="${escapeHtml(back)}">Back</a></div>`, "access");
 }
 
 /** A confirm whose outcome is unknown: the change may or may not have been made. */
@@ -439,6 +538,7 @@ export async function handleAccess(
   const auditMatch = AUDIT.exec(path);
   const isAdminPath = path === "/admin/access" || path === "/admin/access/catalogue" || path === "/admin/access/preview" || path === "/admin/access/confirm" || personMatch !== null
     || auditMatch !== null
+    || ((path === "/admin/access/store-preview" || path === "/admin/access/store-confirm") && ports?.stores !== undefined)
     || (pauseMatch !== null && ports?.pauses !== undefined);
   if (!isOwn && !isAdminPath) return false;
   if (!ports) return false;
@@ -478,14 +578,25 @@ export async function handleAccess(
     const person = await ports.reads.person(principalId);
     if (!person) return false;
     const orgQuery = (url.searchParams.get("org") ?? "").trim().slice(0, 200);
-    const [grants, history, found, pause] = await Promise.all([
+    const storeQuery = (url.searchParams.get("store") ?? "").trim().slice(0, 200);
+    const [grants, history, found, pause, storesHeld, storesFound] = await Promise.all([
       ports.reads.grants(principalId),
       ports.reads.history(principalId),
       orgQuery ? ports.reads.findOrganizations(orgQuery) : Promise.resolve(undefined),
       ports.pauses ? ports.pauses.reads.pause(principalId) : Promise.resolve(undefined),
+      ports.stores ? ports.stores.reads.storeGrants(principalId) : Promise.resolve([]),
+      ports.stores && storeQuery ? ports.stores.reads.findStores(storeQuery) : Promise.resolve(undefined),
     ]);
-    // Ancestors of the held grants' organizations, for the "take away" offer: one batched read.
-    const held = await ports.reads.organizations([...new Set(grants.map((grant) => grant.orgId))]);
+    // Ancestors of the held grants' and the stores' companies, for the
+    // "take away" and "give" offers: one batched read.
+    const held = await ports.reads.organizations([...new Set([
+      ...grants.map((grant) => grant.orgId), ...storesHeld.map((store) => store.orgId), ...(storesFound ?? []).map((store) => store.orgId),
+    ])]);
+    // The offer only: the confirm re-reads and re-decides under the locks.
+    const manageable = (store: AccessStore) => {
+      const org = held.find((item) => item.orgId === store.orgId);
+      return org !== undefined && mayManageStoreAccess(callerGrants, org.orgId, org.ancestors);
+    };
     const revocable = new Set<string>();
     for (const grant of grants) {
       const org = held.find((item) => item.orgId === grant.orgId);
@@ -496,18 +607,27 @@ export async function handleAccess(
       }
     }
     const done = url.searchParams.get("done");
+    const doneKinds = ["granted", "revoked", "unchanged", "paused", "resumed", "store-granted", "store-revoked"] as const;
     write(200, personName(person), renderPersonAccess({
       person, grants, history, orgQuery,
       organizations: found?.map((org) => ({ ...org, options: grantCatalogue({ callerGrants, targetOrgId: org.orgId, targetAncestors: org.ancestors, ...(ports.operatorOrgIds ? { operatorOrgIds: ports.operatorOrgIds } : {}) }) })),
       revocable,
       writable: ports.writes !== undefined,
       isSelf: principalId === caller,
-      ...(done === "granted" || done === "revoked" || done === "unchanged" || done === "paused" || done === "resumed" ? { done } : {}),
+      ...((doneKinds as readonly (string | null)[]).includes(done) ? { done: done as (typeof doneKinds)[number] } : {}),
       ...(ports.pauses ? {
         pause: pause ?? null,
         pausable: ports.pauses.writes !== undefined && mayPauseAccount(caller, principalId, callerGrants,
           pause ? pause.grants : grants, ports.operatorOrgIds),
         viewAs: ports.views !== undefined && mayPauseAccount(caller, principalId, callerGrants, pause ? pause.grants : grants, ports.operatorOrgIds),
+      } : {}),
+      ...(ports.stores ? {
+        stores: {
+          held: storesHeld.map((store) => ({ ...store, manageable: manageable(store) })),
+          query: storeQuery,
+          found: storesFound?.map((store) => ({ ...store, manageable: manageable(store) })),
+          writable: ports.stores.writes !== undefined,
+        },
       } : {}),
     }));
     return true;
@@ -566,6 +686,10 @@ export async function handleAccess(
       else res.destroy();
     }
     return true;
+  }
+
+  if ((path === "/admin/access/store-preview" || path === "/admin/access/store-confirm") && ports.stores) {
+    return handleStoreGrant(req, res, ports.stores, ports.reads, caller, origin, write, path);
   }
 
   // Writes: same-origin form posts to the two write paths only; any other
@@ -639,6 +763,73 @@ export async function handleAccess(
     // A failed preview wrote nothing. A failed confirm may have committed
     // before the error reached us, so it never claims that nothing changed.
     if (!res.headersSent) write(503, "Access", path === "/admin/access/confirm" ? renderUnconfirmed(back) : renderAccessRefusal("unavailable", back));
+    else res.destroy();
+    return true;
+  }
+}
+
+/**
+ * G-02 store manager access: the same same-origin form post, preview with a
+ * single-use token, and confirm as a role change. An unknown person is the
+ * unknown-path 404, as on the person page.
+ */
+async function handleStoreGrant(req: IncomingMessage, res: ServerResponse,
+  stores: NonNullable<AccessPorts["stores"]>, reads: AccessReadStore, caller: string, origin: string | undefined,
+  write: AccessPageWriter, path: string): Promise<boolean> {
+  if (req.method !== "POST") return false;
+  if (!origin || req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {
+    req.resume();
+    write(403, "Access", renderStoreGrantRefusal("invalid_request", "/admin/access"));
+    return true;
+  }
+  const form = await readForm(req);
+  const request = form ? parseStoreGrant(form) : undefined;
+  const back = request ? personHref(request.targetPrincipalId) : "/admin/access";
+  const preview = path === "/admin/access/store-preview";
+  const allowed = new Set<string>([...STORE_FIELDS, ...(preview ? [] : GRANT_TOKEN_KEYS.map((key) => `token.${key}`))]);
+  if (!form || !request || Object.keys(form).some((key) => !allowed.has(key))) {
+    write(400, "Access", renderStoreGrantRefusal("invalid_request", back));
+    return true;
+  }
+  if (!stores.writes) {
+    write(503, "Access", renderStoreGrantRefusal("unavailable", back));
+    return true;
+  }
+  try {
+    if (preview) {
+      const result = await stores.writes.preview(caller, request);
+      if (!result.ok && result.reason === "unknown_person") return false;
+      if (!result.ok) {
+        write(STORE_REFUSAL_STATUS[result.reason], "Access", renderStoreGrantRefusal(result.reason, back));
+        return true;
+      }
+      // The person's name only: the store and every fact the decision used
+      // come from the snapshot that issued the token.
+      const person = await reads.person(request.targetPrincipalId);
+      if (!person) return false;
+      write(200, "Review store access change", renderStoreGrantReview({
+        person, store: result.store, request,
+        result: result.kind === "unchanged" ? { kind: "unchanged" } : { kind: "change", token: result.token },
+      }));
+      return true;
+    }
+    const token = parseGrantToken(Object.fromEntries(GRANT_TOKEN_KEYS.map((key) => [key, form[`token.${key}`]])));
+    if (!token) {
+      write(409, "Access", renderStoreGrantRefusal("token_invalid", back));
+      return true;
+    }
+    const outcome = await stores.writes.confirm(caller, request, token);
+    if (outcome.kind === "refused" && outcome.reason === "unknown_person") return false;
+    if (outcome.kind === "refused") {
+      write(STORE_REFUSAL_STATUS[outcome.reason], "Access", renderStoreGrantRefusal(outcome.reason, back));
+      return true;
+    }
+    const done = outcome.kind === "unchanged" ? "unchanged" : outcome.after ? "store-granted" : "store-revoked";
+    res.writeHead(303, { location: personHref(request.targetPrincipalId, { done }), "cache-control": "no-store" });
+    res.end();
+    return true;
+  } catch {
+    if (!res.headersSent) write(503, "Access", preview ? renderStoreGrantRefusal("unavailable", back) : renderUnconfirmed(back));
     else res.destroy();
     return true;
   }
