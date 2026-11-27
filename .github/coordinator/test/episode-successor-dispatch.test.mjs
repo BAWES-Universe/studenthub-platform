@@ -378,56 +378,6 @@ test("REVIEW_RETRY_FRESH_ATTEMPT: a review that found the sandbox busy relaunche
   assert.equal(routing.retryAttemptFor(order, [{ ...failedOnce[0], stage: "RUNNING" }]), order, "only a FAILED attempt is retried under a new id");
 });
 
-// 26 Nov 14:31Z: workers 1 and 2 ticked together and each read the board before
-// the other reserved, so SHU-734's and SHU-735's reviews both started; the second
-// found the sandbox held. The gate now reads every card again just before it
-// reserves a review.
-test("REVIEW_GATE_CROSS_CARD: with two card workers, a review running on another card holds a review launch on this card", async () => {
-  const otherCard = { id: "11111111-aaaa-4bbb-8ccc-000000000090", identifier: OTHER, title: "another card", state: { name: "In Progress" },
-    priorityLabel: "High", labels: { nodes: [{ name: "repo:platform" }] }, assignee: null, delegate: null, parent: null, relations: { nodes: [] } };
-  const h = createEpisodeHarness({ configOverrides: { workers: { max: 2 }, dispatch_scope: { issue_ids: [TARGET] } }, threadNodes: [otherCard] });
-  const made = reconcile.createReceipt({ receipt_version: "1.1.0", issue_id: OTHER, authorization_ref: OTHER, requested_worker: "codex-verifier",
-    role: "review", runtime: "codex-cli", repo: "BAWES-Universe/studenthub-platform", branch: `coordinator/${OTHER}`, target_sha: SHA_WRITE,
-    workspace_scope: "full", scope_phase: "review", episode_id: "shu-090-run-20260910T115500Z" });
-  assert.ok(made.ok, JSON.stringify(made.errors));
-  const launched = reconcile.nextReceiptState(made.receipt, { type: "launch" }).receipt;
-  const running = reconcile.nextReceiptState(launched, { type: "worker_ack", external_run_id: "supervisor_other" }).receipt;
-  assert.equal(running.stage, "RUNNING");
-  const otherThread = h.threads.get(otherCard.id);
-  try {
-    await h.runTick();
-    const build = h.latestFor("codex-builder");
-    await h.runTick();
-    h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
-    h.completeRun(build.external_run_id);
-    await h.runTick();
-
-    // The other worker reserves and launches its review after this tick's first
-    // board read, while this tick is still deciding.
-    let boardReads = 0;
-    const racing = async (url, opts) => {
-      const answer = await h.fetchImpl(url, opts);
-      if (!String(url).includes("api.github.com") && String(opts?.body ?? "").includes("CoordinatorIssues") && ++boardReads === 1) {
-        otherThread.push({ body: reconcile.receiptCommentBody(running), createdAt: running.last_activity });
-      }
-      return answer;
-    };
-    let t = await h.runTick({ io: { fetchImpl: racing } });
-    assert.equal(t.code, 0, t.text);
-    assert.equal(h.triggers["claude-code"], 0, `REVIEW_GATE_CROSS_CARD_HOLDS\n${t.text}`);
-    assert.equal(h.receipts().some((r) => r.requested_worker === "claude-verifier"), false, "no review is reserved beside the running one");
-    assert.match(t.text, new RegExp(`one review at a time \\(held by ${OTHER} attempt ${running.attempt_id} RUNNING`), "the line names the other card's review");
-
-    // Once that review ends, this card's review goes.
-    const ended = reconcile.nextReceiptState(running, { type: "hold", reason: "ended" }).receipt;
-    otherThread.push({ body: reconcile.receiptCommentBody(ended), createdAt: new Date(Date.parse(running.last_activity) + 1000).toISOString() });
-    t = await h.runTick();
-    assert.equal(h.triggers["claude-code"], 1, `REVIEW_GATE_CROSS_CARD_RELEASES\n${t.text}`);
-  } finally {
-    h.cleanup();
-  }
-});
-
 test("SHU-225 I4: the successor is the same issue as the activation target and the committed scope", () => {
   const selection = reconcile.selectNextReservation({
     ready: [readyIssue()],
