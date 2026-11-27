@@ -89,6 +89,43 @@ test('SWEEP-02 the sweep sees one snapshot: a photo replaced while it runs is ei
  }finally{await writer.query('ROLLBACK').catch(()=>{});writer.release();}
 });
 
+/** Resolves once a backend running a statement that mentions `needle` is waiting on a lock. */
+async function waitsOnLock(needle){
+ for(let i=0;i<200;i++){const {rowCount}=await pool.query("SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE $1",[`%${needle}%`]);if(rowCount)return;await new Promise(r=>setTimeout(r,25));}
+ throw new Error(`no backend waited on ${needle}`);
+}
+
+test('SWEEP-04 an overlapping sweep or a worker writing a job makes the sweep wait, never fail it with a serialization error',unavailable,async()=>{
+ const run=randomBytes(4).toString('hex'),org=`org-race-${run}`,person=`rc${run}`;
+ await pool.query('INSERT INTO principals (id) VALUES ($1)',[person]);
+ const first={id:randomUUID(),version:randomUUID(),type:'civil-id-front',mime:'image/png',size:100,scope:{orgId:org,personId:person},acl:'private',data:'r2:x'};
+ await pool.query("INSERT INTO candidate_document_partitions (owner_kind, owner_id, snapshot) VALUES ('person',$1,$2::jsonb)",[person,JSON.stringify({state:{format:1,documents:[first],retired:[]},blobs:{}})]);
+ await pool.query("INSERT INTO candidate_document_slots (person_id, org_id, type, state) VALUES ($1,$2,'civil-id-front','active')",[person,org]);
+ const store=new PostgresCivilIdOcrStore({pool,orgId:org});
+ await store.beginStoreSweep('2026-12-01T00:00:00Z');
+ const other=await pool.connect();
+ try{
+  // 1. Another sweep holds the throttle row and commits while this one waits: this one skips, as the throttle intends.
+  await other.query('BEGIN');
+  await other.query("UPDATE civil_id_ocr_baseline SET last_sweep_at='2026-12-01T00:05:00Z' WHERE org_id=$1",[org]);
+  const skipped=store.beginStoreSweep('2026-12-01T00:05:00Z');
+  await waitsOnLock('civil_id_ocr_baseline');
+  await other.query('COMMIT');
+  assert.deepEqual(await skipped,{baseline:false,queued:0},'the overlapping sweep is skipped, not failed');
+  // 2. The person replaces the photo, and a worker holds the old photo's job while the sweep supersedes it.
+  const second={...first,version:randomUUID()};
+  await pool.query("UPDATE candidate_document_partitions SET snapshot=$2::jsonb WHERE owner_kind='person' AND owner_id=$1",[person,JSON.stringify({state:{format:1,documents:[second],retired:[first]},blobs:{}})]);
+  await other.query('BEGIN');
+  await other.query("UPDATE civil_id_ocr_jobs SET updated_at=updated_at WHERE org_id=$1 AND document_version=$2::uuid",[org,first.version]);
+  const swept=store.beginStoreSweep('2026-12-01T00:10:00Z');
+  await waitsOnLock('UPDATE civil_id_ocr_jobs j SET superseded_at');
+  await other.query('COMMIT');
+  assert.deepEqual(await swept,{baseline:false,queued:1},'the sweep waits for the worker, then queues the new photo');
+  const jobs=(await pool.query('SELECT document_version::text AS v, superseded_at IS NOT NULL AS gone FROM civil_id_ocr_jobs WHERE org_id=$1 ORDER BY created_at',[org])).rows;
+  assert.deepEqual(jobs,[{v:first.version,gone:true},{v:second.version,gone:false}]);
+ }finally{await other.query('ROLLBACK').catch(()=>{});other.release();}
+});
+
 test('SWEEP-03 the OCR run uses the in-store sweep and a per-person back lookup, never the whole list',async()=>{
  const store=new InMemoryCivilIdOcrStore();let sweeps=0,backs=0;
  store.beginStoreSweep=async at=>{sweeps++;return store.beginSweep([front,back],at);};
