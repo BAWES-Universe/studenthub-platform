@@ -1341,8 +1341,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): /admin/jobs and /admin/outbox pages"
+          "state": "done",
+          "evidence": "PR #760 at 0c91a99d042f631edd6a7aa0804b77d782950cd4"
         },
         "verified": {
           "state": "open"
