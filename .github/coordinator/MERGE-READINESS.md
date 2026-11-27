@@ -56,6 +56,13 @@ store:
 6. append and read back `COMPLETED` only when the landed tree equals the
    approved head tree.
 
+"Read back" means: after Linear acknowledges the create, the issue is read
+again up to five times (waits of 0, 1, 2, 4 and 8 seconds), never written
+again. A trusted copy of the same attempt with different immutable fields
+fails at once; a record still unseen after the last read fails closed as
+`merge-attempt write was not durably visible`, before any merge call. Linear
+can acknowledge a comment before its reads show it (SHU-749, 27 Nov 2026).
+
 GitHub's REST merge endpoint binds `sha` to the head; it has no expected-base-SHA
 parameter. Base freshness therefore requires GitHub's server-enforced strict
 status-check protection, in addition to the base ref/SHA and ancestry checks

@@ -59,6 +59,10 @@ function harness(options = {}) {
   let mergeCalls = 0;
   let githubReads = 0;
   let linearWrites = 0;
+  // Readback fixtures: hide the newest write from the next N merge-issue
+  // reads, fail the next N reads outright, or show a conflicting copy.
+  let hiddenReads = 0, failedReads = 0;
+  const sleeps = [];
   let loseMergeResponse = Boolean(options.loseMergeResponse);
   const issueLabels = options.issueLabels ?? [];
   const fetchImpl = async (url, request = {}) => {
@@ -69,13 +73,20 @@ function harness(options = {}) {
         state: { name: 'In Progress' }, priorityLabel: 'No priority', labels: { nodes: [{ name: 'repo:example/repo' }] }, assignee: null, delegate: null,
         parent: null, relations: { nodes: [] } }], () => structuredClone(comments)), pageInfo: { hasNextPage: false, endCursor: null } } };
       else if (query.includes('CoordinatorIssueComments')) data = { issue: { comments: { nodes: structuredClone(comments) } } };
+      else if (query.includes('CoordinatorMergeIssue') && failedReads > 0) { failedReads--; return { ok: false, status: 500, json: async () => ({}) }; }
       else if (query.includes('CoordinatorMergeIssue')) data = { issue: { id: 'linear-900', identifier: 'SHU-900', title: 'Routine change',
         state: { name: 'In Progress', type: 'started' }, labels: { nodes: issueLabels.map(name => ({ name })) },
         relations: { nodes: options.blocked ? [{ type: 'blockedBy', relatedIssue: { identifier: 'SHU-1', state: { name: 'In Progress', type: 'started' } } }] : [] },
-        comments: { nodes: structuredClone(comments) } } };
+        comments: { nodes: structuredClone(hiddenReads > 0 ? (hiddenReads--, comments.slice(0, -1)) : comments) } } };
       else if (query.includes('commentCreate')) {
         linearWrites++;
         comments.push({ body: variables.body, createdAt: `2026-09-14T00:10:${String(linearWrites).padStart(2, '0')}.000Z`, user: { id: ACTOR, displayName: 'Coordinator' } });
+        hiddenReads = options.readbackLag ?? 0;
+        failedReads = options.readbackFailures ?? 0;
+        if (options.conflictOnWrite && linearWrites === 1) {
+          const copy = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(variables.body)[1]);
+          comments.push({ body: mergeAttemptCommentBody({ ...copy, approved_tree_sha: WRONG_TREE }), createdAt: '2026-09-14T00:09:59.000Z', user: { id: ACTOR, displayName: 'Coordinator' } });
+        }
         data = { commentCreate: { success: true, comment: { id: `comment-${linearWrites}` } } };
       } else throw new Error(`unexpected Linear query: ${query.slice(0, 80)}`);
       return { ok: true, status: 200, json: async () => ({ data }) };
@@ -118,8 +129,8 @@ function harness(options = {}) {
     linear_receipt_actor_ids: [ACTOR] };
   const args = { receipts: [pair.writer, pair.review], issues: [{ id: 'SHU-900', linearId: 'linear-900' }],
     linearToken: 'linear', githubToken: 'github', config, env: { ENABLE_ROUTINE_MERGE: 'true' }, fetchImpl,
-    now: () => new Date('2026-09-14T00:30:00.000Z'), stdout() {} };
-  return { args, comments, consume: () => consumeMergeReadiness(args), mergeCalls: () => mergeCalls,
+    now: () => new Date('2026-09-14T00:30:00.000Z'), stdout() {}, sleep: async ms => { sleeps.push(ms); } };
+  return { args, comments, sleeps, consume: () => consumeMergeReadiness(args), mergeCalls: () => mergeCalls,
     githubReads: () => githubReads, linearWrites: () => linearWrites,
     attempts: () => parseMergeAttemptsFromComments(comments, [ACTOR]).records };
 }
@@ -440,3 +451,39 @@ for (const phase of ['pre-merge', 'recovery', 'merged-restart']) {
     assert.deepEqual([h.attempts().at(-1)?.pr_number, h.attempts().at(-1)?.base_ref], [7, 'main']);
   });
 }
+
+const READBACK = 'READBACK_MUTATION: an acknowledged merge-attempt write is only re-read, a bounded number of times, and never written or merged on uncertain state';
+
+test('delayed-visibility-readback-recovers-with-one-create-and-one-merge', async () => {
+  const h = harness({ readbackLag: 2 });
+  const result = await h.consume();
+  assert.equal(result.merges, 1, READBACK);
+  assert.equal(h.mergeCalls(), 1, READBACK);
+  assert.equal(h.linearWrites(), 2, READBACK);
+  assert.deepEqual(h.attempts().map(record => record.state), ['COMPLETED'], READBACK);
+  assert.deepEqual(h.sleeps, [1000, 2000, 1000, 2000], READBACK);
+});
+
+test('readback-read-failures-are-retried-read-only', async () => {
+  const h = harness({ readbackFailures: 1 });
+  const result = await h.consume();
+  assert.equal(result.merges, 1, READBACK);
+  assert.equal(h.mergeCalls(), 1, READBACK);
+  assert.equal(h.linearWrites(), 2, READBACK);
+});
+
+test('unresolved-readback-fails-closed-before-merge', async () => {
+  const h = harness({ readbackLag: 99 });
+  await assert.rejects(h.consume(), /merge-attempt write was not durably visible/, READBACK);
+  assert.equal(h.mergeCalls(), 0, READBACK);
+  assert.equal(h.linearWrites(), 1, READBACK);
+  assert.deepEqual(h.sleeps, [1000, 2000, 4000, 8000], READBACK);
+});
+
+test('conflicting-readback-fails-at-once-before-merge', async () => {
+  const h = harness({ conflictOnWrite: true });
+  await assert.rejects(h.consume(), /merge-attempt write conflicts with a durable record/, READBACK);
+  assert.equal(h.mergeCalls(), 0, READBACK);
+  assert.equal(h.linearWrites(), 1, READBACK);
+  assert.deepEqual(h.sleeps, [], READBACK);
+});
