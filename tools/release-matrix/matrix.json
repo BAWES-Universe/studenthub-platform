@@ -1192,8 +1192,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "read-only Finance invoices and balances in review (invoices lane, F4); evidence added when the PR head is final"
+          "state": "done",
+          "evidence": "read-only Finance invoices and balances with tests, proven by checkServed; PR #757 at f210e99c"
         },
         "verified": {
           "state": "open"
