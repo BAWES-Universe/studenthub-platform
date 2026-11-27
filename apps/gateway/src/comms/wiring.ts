@@ -4,9 +4,9 @@ import type { AuthzStore } from "@studenthub/contracts";
 import { PostgresStaffMessagesStore } from "@studenthub/db/comms";
 import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { PostgresWorkStaffTimeStore } from "@studenthub/db/work";
-import { PostgresCampaignsStore, PostgresRevenueStore, PostgresFiringSpikeStore, PostgresIdCardsStore, PostgresMorningSummaryStore, PostgresStatisticsStore } from "@studenthub/db/reports";
+import { PostgresCampaignsStore, PostgresCandidateStatisticsStore, PostgresRevenueStore, PostgresFiringSpikeStore, PostgresIdCardsStore, PostgresMorningSummaryStore, PostgresStatisticsStore } from "@studenthub/db/reports";
 import { DEFAULT_OPERATOR_ORG_IDS, type OrganizationDirectory } from "@studenthub/organizations";
-import { CampaignsService, RevenueService, CertificatesService, IdCardsService, IdCardVerifier, MorningSummaryService, OperationsService, RecruiterActivityService, StatisticsService, FiringHitMapService, type IdCardPhotoSource, type StatisticsCompanies, type IdCardPublicPhotoSource } from "../../../../packages/reports/src/index.js";
+import { CampaignsService, CandidateStatisticsService, RevenueService, CertificatesService, IdCardsService, IdCardVerifier, MorningSummaryService, OperationsService, RecruiterActivityService, StatisticsService, FiringHitMapService, type IdCardPhotoSource, type StatisticsCompanies, type IdCardPublicPhotoSource } from "../../../../packages/reports/src/index.js";
 import { openPersonalPhotoSourceFromEnv } from "../../../../packages/private-documents/src/personal-photo-source.js";
 import { StaffMessagesService } from "../../../../packages/comms/src/staff-messages.js";
 import { blockListOf, mayViewFinanceReports, parseTrustedProxies } from "../../../../packages/access/src/index.js";
@@ -91,6 +91,8 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
   // it reads the pay lane's transfer lines, never writes.
   const finance = { async mayViewRevenue(principalId: string) { return mayViewFinanceReports(await options.authzStore.listGrantsForPrincipal(principalId), DEFAULT_OPERATOR_ORG_IDS); } };
   const revenue = new RevenueService(new PostgresRevenueStore({ pool }), finance);
+  // A person's own statistics read the pay lane's lines and the recruit lane's interviews, never write.
+  const candidateStatistics = new CandidateStatisticsService(new PostgresCandidateStatisticsStore({ pool }));
   return { http: { isStaff: authority.isStaff, send: (sender, input) => service.send(sender, input),
     deliveryLog: (person, offset, limit) => emails.deliveryLog(person, offset, limit),
     morningSummary: { today: viewer => summary.today(viewer), subscribe: (viewer, on) => summary.subscribe(viewer, on) },
@@ -101,7 +103,7 @@ export function wireStaffMessages(options: { readonly connectionString: string; 
         recruiters: (viewer, range) => recruiters.page(viewer, range), operations: viewer => operations.page(viewer) },
       campaigns: { campaignsPage: viewer => campaigns.page(viewer), campaignCreate: (viewer, input) => campaigns.create(viewer, input),
         campaignUpdate: (viewer, id, input) => campaigns.update(viewer, id, input), campaignRetire: (viewer, id) => campaigns.retire(viewer, id) },
-      revenue: { mayViewRevenue: viewer => finance.mayViewRevenue(viewer), page: viewer => revenue.page(viewer) }, publicPhoto: (token, key, client) => idCards.publicPhoto(token, key, client),
+      revenue: { mayViewRevenue: viewer => finance.mayViewRevenue(viewer), page: viewer => revenue.page(viewer) }, candidateStatistics: { own: person => candidateStatistics.own(person) }, publicPhoto: (token, key, client) => idCards.publicPhoto(token, key, client),
       // The public check is limited per client address, read behind the same trusted proxies as the abuse gate.
       publicLimit: options.idCardVerifyKey && env ? publicCheckLimit({ trustedProxies: blockListOf(parseTrustedProxies(env.GATEWAY_TRUSTED_PROXIES)),
         // A key derived from the verification key, so the recorded client hash is the same across gateway processes and restarts.
