@@ -67,4 +67,5 @@ test("REC6_HTTP_PAGE pages escape every value, show internal notes only to staff
   assert.equal((await call(`/recruit/interviews/${INT}/cancel`, form(`requestId=${REQ}`))).page!.status, 409);
   const mine = (await call("/recruit/my-interviews", { html: true })).page!.body;
   assert.ok(mine.includes("Cashier") && mine.includes("Phone") && mine.includes("2026-11-18 10:30 (Kuwait)"));
+  assert.ok(mine.includes(`<a class="text-link" href="/recruit/interviews/${INT}">Cashier</a>`), "each interview links to its detail page");
 });
