@@ -1,0 +1,465 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { Readable } from "node:stream";
+import { test } from "node:test";
+import { createGatewayServer, createLoginApplication } from "../src/index.js";
+import { createSyntheticLoginRig } from "@studenthub/login-contract";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { CommitInput, Receipt, SafeWriteStore } from "@studenthub/safe-write-contract";
+import { bankDetailsRecordRef, bankDetailsValue, InMemoryFinanceReferenceResolver } from "@studenthub/pay-contracts";
+import { principalAuditRef } from "@studenthub/db/access";
+import { createBankDetails, handleBankDetailsPage, type BankDetailsService } from "../src/bank-details.js";
+
+// C-15: the candidate's own bank details page. Synthetic fixtures only: a made-up person,
+// banks and checksum-valid test IBANs.
+const ORIGIN = "https://studenthub.example.invalid";
+const SESSION = "c".repeat(43);
+const OTHER_SESSION = "d".repeat(43);
+const PERSON = "candidate-person";
+const SECRET = "c15-bank-details-page-secret-at-least-32-bytes";
+const BANK = "3333abcd-3333-4333-8333-33333333abcd";
+const OTHER_BANK = "4444abcd-4444-4444-8444-44444444abcd";
+const IBAN = "KW81CBKU0000000000001234560101";
+const NEW_IBAN = IBAN;
+const CHOICES = [{ id: BANK, name: "Synthetic Bank <One>" }, { id: OTHER_BANK, name: "Second Synthetic Bank" }];
+
+interface Sweep { run: () => void; callback: () => void; delayMs: number; cancelled: boolean }
+
+function rig(options: { candidate?: boolean; stored?: string | null } = {}) {
+  let value: string | null = options.stored ?? null;
+  const receipts = new Map<string, Receipt>();
+  const banks = new InMemoryFinanceReferenceResolver();
+  banks.set("bank", BANK);
+  banks.set("bank", OTHER_BANK);
+  const store = {
+    forPrincipal(principalId: string): SafeWriteStore {
+      return {
+        ownedRecord: (ref) => options.candidate !== false && principalId === PERSON && ref === principalAuditRef(PERSON)
+          ? bankDetailsRecordRef(PERSON) : null,
+        readField: () => value,
+        commit: (input: CommitInput) => {
+          if (value !== input.expectedBefore) return { ok: false, reason: "state_changed" };
+          value = input.value;
+          receipts.set(input.receipt.receiptRef, input.receipt);
+          return { ok: true };
+        },
+      };
+    },
+    readReceipt: async (principalId: string, ref: string) => principalId === PERSON ? receipts.get(ref) ?? null : null,
+  };
+  // The same person signed in twice: each session is its own.
+  const sessions = { get: async (id: string) => id === SESSION || id === OTHER_SESSION ? { id, personId: PERSON } : undefined };
+  let at = Date.now();
+  const clock = { now: () => new Date(at) };
+  // The expiry sweep is driven by hand: the test decides when "later" is.
+  const sweeps: Sweep[] = [];
+  const sweep = (run: () => void, delayMs: number) => {
+    // A timer that has fired is spent, like a cancelled one.
+    const entry: Sweep = { run: () => { entry.cancelled = true; run(); }, callback: run, delayMs, cancelled: false };
+    sweeps.push(entry);
+    return { cancel: () => { entry.cancelled = true; } };
+  };
+  const make = () => createBankDetails({ sessions: sessions as never, store, banks, secret: SECRET, clock, sweep, choices: async () => CHOICES });
+  const service = make();
+  return {
+    service, make, sweeps, value: () => value, set: (next: string | null) => { value = next; }, advance: (ms: number) => { at += ms; },
+    pending: () => sweeps.filter((entry) => !entry.cancelled),
+  };
+}
+
+interface Page { readonly handled: boolean; readonly status: number; readonly title: string; readonly html: string; readonly headers: Record<string, string>; readonly raw: string }
+
+async function call(service: BankDetailsService | undefined, path: string, form: string | Record<string, string> | undefined, overrides: {
+  method?: string; origin?: string; contentType?: string; cookie?: string | null; accept?: string; site?: string;
+} = {}): Promise<Page> {
+  const raw = form === undefined ? "" : typeof form === "string" ? form : new URLSearchParams(form).toString();
+  const method = overrides.method ?? (form === undefined ? "GET" : "POST");
+  const req = Readable.from(method === "GET" ? [] : [raw]) as IncomingMessage;
+  req.url = path;
+  req.method = method;
+  req.headers = {
+    origin: overrides.origin ?? ORIGIN,
+    accept: overrides.accept ?? "text/html",
+    "content-type": overrides.contentType ?? "application/x-www-form-urlencoded",
+    ...(overrides.site ? { "sec-fetch-site": overrides.site } : {}),
+    ...(overrides.cookie === null ? {} : { cookie: overrides.cookie ?? `__Host-studenthub_session=${SESSION}` }),
+  };
+  let status = 0, title = "", html = "", body = "";
+  let headers: Record<string, string> = {};
+  const fake = {
+    headersSent: false,
+    writeHead(code: number, next: Record<string, string>) { status = code; headers = next; fake.headersSent = true; return fake; },
+    setHeader() { return fake; },
+    end(chunk?: string) { body = chunk ?? ""; return fake; },
+    destroy() { return fake; },
+  };
+  const handled = await handleBankDetailsPage(req, fake as unknown as ServerResponse, service, ORIGIN,
+    (code, pageTitle, content) => { status = code; title = pageTitle; html = content; });
+  return { handled, status, title, html, headers, raw: body };
+}
+
+const hiddenFields = (html: string) => Object.fromEntries([...html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)]
+  .map(([, name, value]) => [name!, value!.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")]));
+const stored = (iban = IBAN) => bankDetailsValue({ bankId: BANK, iban, beneficiaryName: "Synthetic Person" });
+const MASKED = "KW81••••••••••••••••••••••0101";
+
+test("C15_BANK_PAGE shows the person's own details masked, never the full IBAN, with a change form", async () => {
+  const x = rig({ stored: stored() });
+  const page = await call(x.service, "/profile/bank", undefined);
+  assert.equal(page.handled, true);
+  assert.equal(page.status, 200);
+  assert.equal(page.title, "Bank details");
+  assert.ok(page.html.includes(MASKED), "masked IBAN shown");
+  assert.equal(page.html.includes(IBAN), false, "full IBAN never on the page");
+  assert.equal(page.html.includes("0000000000001234"), false, "no middle digits");
+  assert.ok(page.html.includes("Synthetic Bank &lt;One&gt;"), "bank name, escaped");
+  assert.equal(page.html.includes("<One>"), false);
+  assert.ok(page.html.includes("Synthetic Person"));
+  assert.match(page.html, /<form method="post" action="\/profile\/bank\/review" novalidate>/);
+  assert.match(page.html, /<input name="iban" required autocomplete="off"[^>]*>/);
+  assert.equal(/name="iban"[^>]*value=/.test(page.html), false, "the IBAN field starts empty");
+  assert.ok(page.html.includes('<option value="4444abcd-4444-4444-8444-44444444abcd">Second Synthetic Bank</option>'));
+  assert.equal(page.html.includes("were saved"), false);
+
+  const none = await call(rig().service, "/profile/bank", undefined);
+  assert.equal(none.status, 200);
+  assert.ok(none.html.includes("You haven’t added bank details yet."));
+  assert.ok(none.html.includes("<h2>Add your bank details</h2>"));
+});
+
+test("C15_BANK_PAGE_FLOW review shows before and after masked, confirm saves through the checked write, then the page says so", async () => {
+  const x = rig({ stored: stored() });
+  const review = await call(x.service, "/profile/bank/review", { bankId: OTHER_BANK.toUpperCase(), iban: "kw81 cbku 0000 0000 0000 1234 5601 01", beneficiaryName: "  Synthetic   Person Two " });
+  assert.equal(review.status, 200, review.html);
+  assert.equal(review.title, "Review bank details");
+  assert.match(review.html, /<h2>Now<\/h2><dl class="profile-facts"><dt>Bank<\/dt><dd>Synthetic Bank &lt;One&gt;<\/dd><dt>IBAN<\/dt><dd><span class="masked">KW81•+0101<\/span>/);
+  assert.match(review.html, /<h2>After the change<\/h2><dl class="profile-facts"><dt>Bank<\/dt><dd>Second Synthetic Bank<\/dd><dt>IBAN<\/dt><dd><span class="masked">KW81•+0101<\/span><\/dd><dt>Account holder<\/dt><dd>Synthetic Person Two<\/dd>/);
+  assert.equal(x.value(), stored(), "a review changes nothing");
+  const hidden = hiddenFields(review.html);
+  // The page carries only an opaque review reference: the typed values and the token stay on the server.
+  assert.deepEqual(Object.keys(hidden), ["review"]);
+  assert.match(hidden.review!, /^[0-9a-f]{64}$/);
+  for (const raw of [IBAN, "1234", "kw81 cbku", "CBKU", "mac", "Digest", "token"]) assert.equal(review.html.includes(raw), false, `C15_BANK_PAGE_FLOW review body carries no ${raw}`);
+
+  const confirm = await call(x.service, "/profile/bank/confirm", hidden);
+  assert.equal(confirm.status, 303);
+  assert.match(confirm.headers.location ?? "", /^\/profile\/bank\?saved=[0-9a-f]{64}$/);
+  assert.equal(confirm.headers["cache-control"], "no-store");
+  assert.equal(x.value(), bankDetailsValue({ bankId: OTHER_BANK, iban: NEW_IBAN, beneficiaryName: "Synthetic Person Two" }));
+
+  const after = await call(x.service, confirm.headers.location!, undefined);
+  assert.ok(after.html.includes('<p class="notice" role="status">Your bank details were saved.</p>'));
+  // A synthetic reread: a fresh service over the same stored row shows the saved details, masked.
+  const reread = await call(rig({ stored: x.value() }).service, "/profile/bank", undefined);
+  assert.match(reread.html, /<dt>Bank<\/dt><dd>Second Synthetic Bank<\/dd><dt>IBAN<\/dt><dd><span class="masked">KW81•+0101<\/span><\/dd><dt>Account holder<\/dt><dd>Synthetic Person Two<\/dd>/);
+  assert.equal(reread.html.includes(IBAN), false);
+  assert.equal(reread.html.includes("were saved"), false, "a plain reread claims no save");
+  const replay = await call(x.service, "/profile/bank/confirm", hidden);
+  assert.equal(replay.status, 409, "a used review is refused");
+  assert.ok(replay.html.includes("Your bank details weren’t changed."));
+});
+
+test("C15_BANK_PAGE_INPUT a refused entry keeps only the picked bank, never writes a typed value back, and saves nothing", async () => {
+  const x = rig();
+  for (const [form, message] of [
+    [{ bankId: BANK, iban: "KW00NOTANIBAN", beneficiaryName: "Synthetic Person" }, "Enter a valid IBAN."],
+    [{ bankId: "not-a-bank", iban: IBAN, beneficiaryName: "Synthetic Person" }, "Choose your bank from the list."],
+    [{ bankId: "9999abcd-9999-4999-8999-99999999abcd", iban: IBAN, beneficiaryName: "Synthetic Person" }, "Choose your bank from the list."],
+    [{ bankId: BANK, iban: IBAN, beneficiaryName: "x" }, "Enter the account holder's name"],
+  ] as const) {
+    const page = await call(x.service, "/profile/bank/review", form);
+    assert.equal(page.status, 400, JSON.stringify(form));
+    assert.ok(page.html.includes(`role="alert">${message.replace("'", "&#39;")}`), page.html);
+    assert.match(page.html, /aria-invalid="true"/);
+    assert.equal(page.html.includes(form.iban), false, "the IBAN is not echoed");
+    assert.equal(/name="iban"[^>]*value=/.test(page.html), false);
+    assert.equal(/name="beneficiaryName"[^>]*value=/.test(page.html), false, "C15_BANK_PAGE_INPUT the name is not echoed");
+    assert.equal(page.html.includes("Synthetic Person"), false);
+    assert.equal(page.html.includes("not-a-bank") || page.html.includes("9999abcd"), false, "an unknown bank id is not echoed");
+  }
+  const kept = await call(x.service, "/profile/bank/review", { bankId: BANK, iban: "bad", beneficiaryName: "<b>Synthetic</b>" });
+  assert.equal(kept.html.includes("Synthetic&lt;") || kept.html.includes("&lt;b&gt;"), false, "the typed name never comes back");
+  assert.ok(kept.html.includes(`<option value="${BANK}" selected>`), "a bank picked from the list stays picked");
+  assert.equal(x.value(), null);
+});
+
+test("C15_BANK_PAGE_HIDDEN signed out is the signed-out page; someone without a bank record gets the shared not-found answer", async () => {
+  const x = rig({ stored: stored() });
+  const signedOut = await call(x.service, "/profile/bank", undefined, { cookie: null });
+  assert.equal(signedOut.status, 401);
+  assert.equal(signedOut.html, "", "the route renders the shared signed-out page");
+
+  const staff = rig({ candidate: false, stored: stored() });
+  const unknown = await call(staff.service, "/no/such/page", undefined);
+  assert.equal(unknown.handled, false);
+  const wildcard = await call(undefined, "/profile/bank", undefined);
+  for (const page of [
+    await call(staff.service, "/profile/bank", undefined),
+    await call(staff.service, "/profile/bank/review", { bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" }),
+    // Ownership is checked before any correction form: a non-owner never sees one.
+    await call(staff.service, "/profile/bank/review", { bankId: BANK, iban: "not an iban", beneficiaryName: "Synthetic Person" }),
+    await call(staff.service, "/profile/bank/review", { bankId: "", iban: "", beneficiaryName: "" }),
+    wildcard,
+  ]) {
+    assert.equal(page.status, 404);
+    assert.equal(page.title, "", "not a bank page");
+    assert.equal(page.raw, wildcard.raw, "byte-identical to the shared not-found page");
+    assert.equal(page.raw.includes("Synthetic Person"), false);
+    assert.equal(page.raw.includes(MASKED), false);
+  }
+  const json = await call(staff.service, "/profile/bank", undefined, { accept: "application/json" });
+  assert.equal(json.status, 404);
+  assert.equal(json.raw, '{"ok":false,"error":"not_found"}');
+  assert.equal(staff.value(), stored(), "nothing changed");
+});
+
+test("C15_BANK_PAGE_BOUNDARY origin, method, form shape and review binding are enforced; only page paths are taken", async () => {
+  const x = rig();
+  const form = { bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" };
+  assert.equal((await call(x.service, "/profile/bank/review", form, { origin: "https://evil.example.invalid" })).status, 403);
+  assert.equal((await call(x.service, "/profile/bank/review", form, { site: "cross-site" })).status, 403);
+  assert.equal((await call(x.service, "/profile/bank/review", JSON.stringify(form), { contentType: "application/json" })).status, 400);
+  assert.equal((await call(x.service, "/profile/bank/review", `${new URLSearchParams(form)}&iban=${IBAN}`)).status, 400, "duplicate key");
+  assert.equal((await call(x.service, "/profile/bank/review", { ...form, extra: "1" })).status, 400, "extra key");
+  assert.equal((await call(x.service, "/profile/bank/review", { bankId: BANK, iban: IBAN })).status, 400, "missing key");
+  assert.equal((await call(x.service, "/profile/bank/review", undefined, { method: "GET" })).status, 404);
+  assert.equal((await call(x.service, "/profile/bank", form, { method: "POST" })).status, 404);
+  assert.equal((await call(x.service, "/profile/bank/review", form, { cookie: null })).status, 401);
+  assert.equal((await call(undefined, "/profile/bank/review", form)).status, 503);
+  for (const path of ["/candidate/bank-details/preview", "/candidate/bank-details/confirm", "/profile/banking", "/profile/bank/"]) {
+    assert.equal((await call(x.service, path, form)).handled, false, path);
+  }
+
+  const review = await call(x.service, "/profile/bank/review", form);
+  const hidden = hiddenFields(review.html);
+  // Confirm takes the review reference and nothing else: typed values cannot ride along.
+  assert.equal((await call(x.service, "/profile/bank/confirm", { ...hidden, iban: "KW81CBKU0000000000001234569999" })).status, 400);
+  assert.equal((await call(x.service, "/profile/bank/confirm", {})).status, 400);
+  assert.equal((await call(x.service, "/profile/bank/confirm", { review: "a".repeat(64) })).status, 409, "an unknown review");
+  assert.equal((await call(x.service, "/profile/bank/confirm", { review: "x" })).status, 409);
+  assert.equal((await call(x.service, "/profile/bank/confirm", hidden, { cookie: null })).status, 401);
+  assert.equal((await call(x.service, "/profile/bank/confirm", hidden, { origin: "https://evil.example.invalid" })).status, 403);
+  assert.equal(x.value(), null, "nothing saved by any refused confirm");
+  assert.equal((await call(x.service, "/profile/bank/confirm", hidden)).status, 303);
+  assert.equal(x.value(), stored());
+});
+
+test("C15_BANK_PAGE_QUIET a failing dependency answers 503 and nothing is logged on any path", async () => {
+  const x = rig({ stored: stored() });
+  const logged: unknown[] = [];
+  const original = { log: console.log, error: console.error, warn: console.warn, info: console.info };
+  for (const key of Object.keys(original) as (keyof typeof original)[]) console[key] = (...args: unknown[]) => { logged.push(args); };
+  try {
+    const review = await call(x.service, "/profile/bank/review", { bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" });
+    await call(x.service, "/profile/bank/confirm", hiddenFields(review.html));
+    await call(x.service, "/profile/bank", undefined);
+    const broken = { ...x.service, current: async () => { throw new Error(`database said ${IBAN}`); } } as BankDetailsService;
+    const failed = await call(broken, "/profile/bank", undefined);
+    assert.equal(failed.status, 503);
+    assert.equal(failed.html.includes(IBAN), false);
+    assert.equal(failed.html.includes("database"), false);
+    const noChoices = { ...x.service, bankChoices: async () => { throw new Error("catalogue down"); } } as BankDetailsService;
+    assert.equal((await call(noChoices, "/profile/bank", undefined)).status, 503);
+    // A 503 at confirm can follow a committed write (the receipt step failed): the page never says nothing changed.
+    const receiptFailed = { ...x.service, confirmReview: async () => ({ status: 503 as const, body: { error: "receipt_failed" } }) } as BankDetailsService;
+    const again = await call(x.service, "/profile/bank/review", { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person" });
+    const unsure = await call(receiptFailed, "/profile/bank/confirm", hiddenFields(again.html));
+    assert.equal(unsure.status, 503);
+    assert.equal(unsure.html.includes("weren’t changed"), false, "C15_BANK_PAGE_QUIET a 503 never claims nothing changed");
+    assert.ok(unsure.html.includes("<h1>We couldn’t finish this right now.</h1><p>If you were saving a change, it may have gone through. Open your bank details to see what is saved now before you try again.</p><a class=\"button primary\" href=\"/profile/bank\">Open bank details</a>"), unsure.html);
+  } finally {
+    Object.assign(console, original);
+  }
+  assert.deepEqual(logged, []);
+});
+
+test("C15_BANK_PAGE_GATEWAY the gateway serves the page, the review and the save; the JSON API stays as it was", async (t) => {
+  const x = rig({ stored: stored() });
+  const login = createSyntheticLoginRig(createLoginApplication);
+  const originHolder = { value: "" };
+  const app = { ...login.app, bankDetails: x.service, web: { get origin() { return originHolder.value; }, profiles: {} } };
+  const server = createGatewayServer(undefined, undefined, undefined, app as never);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  originHolder.value = `http://127.0.0.1:${address.port}`;
+  const cookie = `__Host-studenthub_session=${SESSION}`;
+  const page = await fetch(`${originHolder.value}/profile/bank`, { headers: { cookie, accept: "text/html" } });
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get("cache-control"), "no-store");
+  assert.match(html, /<title>[^<]*Bank details/);
+  assert.ok(html.includes(MASKED) && !html.includes(IBAN));
+  const headers = { cookie, accept: "text/html", origin: originHolder.value, "sec-fetch-site": "same-origin", "content-type": "application/x-www-form-urlencoded" };
+  const review = await (await fetch(`${originHolder.value}/profile/bank/review`, { method: "POST", headers,
+    body: new URLSearchParams({ bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person" }) })).text();
+  const done = await fetch(`${originHolder.value}/profile/bank/confirm`, { method: "POST", headers, body: new URLSearchParams(hiddenFields(review)), redirect: "manual" });
+  assert.equal(done.status, 303);
+  assert.match(done.headers.get("location") ?? "", /^\/profile\/bank\?saved=[0-9a-f]{64}$/);
+  const shown = await (await fetch(`${originHolder.value}${done.headers.get("location")}`, { headers: { cookie, accept: "text/html" } })).text();
+  assert.ok(shown.includes("Your bank details were saved.") && shown.includes("Second Synthetic Bank"));
+  assert.equal(x.value(), bankDetailsValue({ bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person" }));
+  const signedOut = await fetch(`${originHolder.value}/profile/bank`, { headers: { accept: "text/html" } });
+  assert.equal(signedOut.status, 401);
+  assert.match(await signedOut.text(), /Sign in/);
+  const api = await fetch(`${originHolder.value}/candidate/bank-details/preview`, { method: "POST",
+    headers: { cookie, origin: originHolder.value, "content-type": "application/json" },
+    body: JSON.stringify({ bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" }) });
+  assert.equal(api.status, 200);
+  assert.equal(((await api.json()) as { after: { ibanMasked: string } }).after.ibanMasked, MASKED);
+});
+
+test("C15_BANK_PAGE_FORMS empty and partial forms name every missing part, invalid ones say what to fix, and nothing claims a save", async () => {
+  const x = rig({ stored: stored() });
+  const empty = await call(x.service, "/profile/bank/review", { bankId: "", iban: "", beneficiaryName: "" });
+  assert.equal(empty.status, 400);
+  assert.ok(empty.html.includes('<div id="bank-error" class="form-error" role="alert"><p>Your bank details weren’t saved yet:</p><ul><li>Choose your bank.</li><li>Enter your IBAN.</li><li>Enter the account holder&#39;s name.</li></ul></div>'), empty.html);
+  for (const [form, expected] of [
+    [{ bankId: BANK, iban: "", beneficiaryName: "" }, ["Enter your IBAN.", "Enter the account holder&#39;s name."]],
+    [{ bankId: "", iban: "KW81 CBKU 0000 0000 0000 1234 5601 01", beneficiaryName: "Synthetic Person" }, ["Choose your bank."]],
+    [{ bankId: BANK, iban: "   ", beneficiaryName: "Synthetic Person" }, ["Enter your IBAN."]],
+  ] as const) {
+    const page = await call(x.service, "/profile/bank/review", form);
+    assert.equal(page.status, 400, JSON.stringify(form));
+    for (const message of expected) assert.ok(page.html.includes(message), `${message} in ${page.html}`);
+    assert.equal(/name="iban"[^>]*value=/.test(page.html), false, "the IBAN is not echoed");
+    assert.equal(page.html.includes("1234"), false, "no part of a typed IBAN comes back");
+    assert.equal(page.html.includes("were saved"), false);
+  }
+  // Invalid entries get one message saying what to fix (C15_BANK_PAGE_INPUT covers each kind).
+  const invalid = await call(x.service, "/profile/bank/review", { bankId: BANK, iban: "KW81CBKU0000000000001234569999", beneficiaryName: "Synthetic Person" });
+  assert.ok(invalid.html.includes('role="alert">Enter a valid IBAN.'));
+  assert.equal(invalid.html.includes("9999"), false);
+  assert.equal(x.value(), stored(), "nothing saved by any refused form");
+
+  // The saved notice needs this person's own receipt, not a hand-typed link.
+  for (const path of ["/profile/bank?saved", `/profile/bank?saved=${"a".repeat(64)}`, "/profile/bank?saved=x", `/profile/bank?saved=${"a".repeat(64)}&x=1`]) {
+    const page = await call(x.service, path, undefined);
+    assert.equal(page.status, 200, path);
+    assert.equal(page.html.includes("were saved"), false, path);
+  }
+  const review = await call(x.service, "/profile/bank/review", { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person" });
+  const done = await call(x.service, "/profile/bank/confirm", hiddenFields(review.html));
+  const other = rig({ stored: stored() });
+  assert.equal((await call(other.service, done.headers.location!, undefined)).html.includes("were saved"), false, "another store's receipt is not this one's");
+  assert.equal((await call(x.service, done.headers.location!, undefined, { cookie: null })).status, 401);
+});
+
+test("C15_BANK_PAGE_REVIEW_REF a review is bound to its session, expires with its token, is used once, and a changed record needs a fresh review", async () => {
+  const form = { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person Two" };
+  const saved = bankDetailsValue(form);
+
+  // Another session of the same person cannot use it; the owning session still can.
+  const x = rig({ stored: stored() });
+  const review = hiddenFields((await call(x.service, "/profile/bank/review", form)).html);
+  const other = await call(x.service, "/profile/bank/confirm", review, { cookie: `__Host-studenthub_session=${OTHER_SESSION}` });
+  assert.equal(other.status, 409, "C15_BANK_PAGE_REVIEW_REF other session");
+  assert.equal(x.value(), stored());
+  assert.equal((await call(x.service, "/profile/bank/confirm", review)).status, 303, "same session");
+  assert.equal(x.value(), saved);
+
+  // A newer review in the same session replaces the older one.
+  const y = rig({ stored: stored() });
+  const first = hiddenFields((await call(y.service, "/profile/bank/review", form)).html);
+  const second = hiddenFields((await call(y.service, "/profile/bank/review", form)).html);
+  assert.notEqual(first.review, second.review);
+  assert.equal((await call(y.service, "/profile/bank/confirm", first)).status, 409, "the replaced review");
+  assert.equal((await call(y.service, "/profile/bank/confirm", second)).status, 303);
+
+  // Expiry: past the token's lifetime the review is refused and nothing is written.
+  const z = rig({ stored: stored() });
+  const late = hiddenFields((await call(z.service, "/profile/bank/review", form)).html);
+  z.advance(24 * 60 * 60 * 1000);
+  const expired = await call(z.service, "/profile/bank/confirm", late);
+  assert.equal(expired.status, 409, "C15_BANK_PAGE_REVIEW_REF expiry");
+  assert.ok(expired.html.includes("This review has expired"));
+  assert.equal(z.value(), stored());
+
+  // The record changed after the review: refused, nothing written; a fresh reread and review then saves.
+  const w = rig({ stored: stored() });
+  const stale = hiddenFields((await call(w.service, "/profile/bank/review", form)).html);
+  const elsewhere = bankDetailsValue({ bankId: BANK, iban: IBAN, beneficiaryName: "Changed Elsewhere" });
+  w.set(elsewhere);
+  const changed = await call(w.service, "/profile/bank/confirm", stale);
+  assert.equal(changed.status, 409, "C15_BANK_PAGE_REVIEW_REF changed record");
+  assert.equal(w.value(), elsewhere);
+  assert.equal((await call(w.service, "/profile/bank/confirm", stale)).status, 409, "a refused review is not reusable");
+  const reread = await call(w.service, "/profile/bank", undefined);
+  assert.ok(reread.html.includes("Changed Elsewhere"), "the reread shows what is saved now");
+  const fresh = hiddenFields((await call(w.service, "/profile/bank/review", form)).html);
+  assert.equal((await call(w.service, "/profile/bank/confirm", fresh)).status, 303);
+  assert.equal(w.value(), saved);
+});
+
+test("C15_BANK_PAGE_IDLE expired reviews leave memory with no further request, through one bounded timer that carries no review data", async () => {
+  const x = rig({ stored: stored() });
+  const form = { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person Two" };
+  const review = hiddenFields((await call(x.service, "/profile/bank/review", form)).html);
+  assert.equal(x.service.openReviews(), 1);
+  assert.equal(x.pending().length, 1, "one sweep is armed");
+  const [armed] = x.pending();
+  assert.ok(armed!.delayMs >= 1000 && armed!.delayMs <= 24 * 60 * 60 * 1000, `bounded delay ${armed!.delayMs}`);
+  assert.equal(armed!.callback.length, 0, "the sweep takes no arguments");
+  for (const raw of [IBAN, "Synthetic Person Two", review.review!]) assert.equal(armed!.callback.toString().includes(raw), false);
+
+  // A second session's review keeps one timer, not two.
+  await call(x.service, "/profile/bank/review", form, { cookie: `__Host-studenthub_session=${OTHER_SESSION}` });
+  assert.equal(x.service.openReviews(), 2);
+  assert.equal(x.pending().length, 1, "C15_BANK_PAGE_IDLE at most one timer");
+
+  // Early firing removes nothing and re-arms; once past expiry, firing alone empties the store.
+  x.advance(armed!.delayMs - 10);
+  x.pending()[0]!.run();
+  assert.equal(x.service.openReviews(), 2, "nothing expires early");
+  assert.equal(x.pending().length, 1);
+  assert.equal(x.pending()[0]!.delayMs, 1000, "C15_BANK_PAGE_IDLE the sweep never re-arms sooner than a second");
+  x.advance(24 * 60 * 60 * 1000);
+  x.pending()[0]!.run();
+  assert.equal(x.service.openReviews(), 0, "C15_BANK_PAGE_IDLE idle expiry");
+  assert.equal(x.pending().length, 0, "no timer once nothing is held");
+  assert.equal((await call(x.service, "/profile/bank/confirm", review)).status, 409);
+  assert.equal(x.value(), stored());
+
+  // Using a review clears its timer too.
+  const used = hiddenFields((await call(x.service, "/profile/bank/review", form)).html);
+  assert.equal((await call(x.service, "/profile/bank/confirm", used)).status, 303);
+  assert.equal(x.service.openReviews(), 0);
+  assert.equal(x.pending().length, 0);
+
+  // The real scheduler is an unref'd timer, so it never holds the process open.
+  const real = createBankDetails({ sessions: { get: async () => ({ id: SESSION, personId: PERSON }) } as never,
+    store: { forPrincipal: () => ({ ownedRecord: () => bankDetailsRecordRef(PERSON), readField: () => null, commit: () => ({ ok: true }) }), readReceipt: async () => null } as never,
+    banks: (() => { const b = new InMemoryFinanceReferenceResolver(); b.set("bank", BANK); return b; })(), secret: SECRET });
+  assert.equal((await real.stageReview(SESSION, { bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" })).status, 200);
+  assert.equal(real.openReviews(), 1);
+});
+
+test("C15_BANK_PAGE_TOPOLOGY one gateway process: preview and confirm meet; another process or a restart asks for a fresh review and writes nothing", async () => {
+  // The deployment runs a single gateway process, so the production preview → confirm path meets one review store.
+  const compose = await readFile(new URL("../../../../deploy/coolify/compose.yaml", import.meta.url), "utf8");
+  const entry = await readFile(new URL("../../../../deploy/coolify/gateway-entrypoint.sh", import.meta.url), "utf8");
+  assert.equal((compose.match(/^ {2}gateway:$/gm) ?? []).length, 1, "one gateway service");
+  assert.equal(/replicas|scale:|mode: global/.test(compose), false, "C15_BANK_PAGE_TOPOLOGY no scaled gateway: move staged reviews to shared storage first");
+  assert.match(entry, /^exec node dist\/apps\/gateway\/src\/index\.js$/m, "one node process");
+  assert.equal(/node:cluster|worker_threads/.test(await readFile(new URL("../../../../apps/gateway/src/index.ts", import.meta.url), "utf8")), false);
+
+  // Another process (or the same one after a restart): its own empty store refuses the review as expired.
+  const x = rig({ stored: stored() });
+  const form = { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person Two" };
+  const review = hiddenFields((await call(x.service, "/profile/bank/review", form)).html);
+  const restarted = x.make();
+  const refused = await call(restarted, "/profile/bank/confirm", review);
+  assert.equal(refused.status, 409);
+  assert.ok(refused.html.includes("This review has expired"), refused.html);
+  assert.ok(refused.html.includes('href="/profile/bank"'), "the way back is a fresh review");
+  assert.equal(x.value(), stored(), "nothing written");
+  // Re-review there works, and the signed token and receipt checks still decide the save.
+  const fresh = hiddenFields((await call(restarted, "/profile/bank/review", form)).html);
+  const done = await call(restarted, "/profile/bank/confirm", fresh);
+  assert.equal(done.status, 303);
+  assert.equal(x.value(), bankDetailsValue(form));
+  assert.ok((await call(restarted, done.headers.location!, undefined)).html.includes("were saved"));
+  // The old process's review is now stale: its token's expected-before no longer matches.
+  assert.equal((await call(x.service, "/profile/bank/confirm", review)).status, 409);
+  assert.equal(x.value(), bankDetailsValue(form));
+});
