@@ -14,9 +14,9 @@ async function rig(t: TestContext, login?: unknown) {
     fetch(base + path, { method, headers: { accept, ...(cookie ? { cookie } : {}) }, redirect: "manual" });
 }
 
-test("U07_ERROR every kind is an accessible page with its own status, no account data and no caching", async (t) => {
+test("U07_ERROR every kind is an accessible page: not found is 404, a failure page someone was sent to is 200; no account data and no caching", async (t) => {
   const call = await rig(t);
-  const expected = { "not-found": 404, server: 503, "app-error": 500, offline: 503 } as const;
+  const expected = { "not-found": 404, server: 200, "app-error": 200, offline: 200 } as const;
   assert.deepEqual([...ERROR_KINDS], Object.keys(expected));
   for (const kind of ERROR_KINDS) {
     const r = await call(`/error/${kind}`, "text/html", "GET", "__Host-studenthub_session=someone");
@@ -41,10 +41,10 @@ test("U07_ERROR an unknown kind is not found; API callers get JSON; other method
   assert.equal(unknown.status, 404);
   assert.equal(await unknown.text(), errorPage("not-found").html);
   const json = await call("/error/app-error", "application/json");
-  assert.equal(json.status, 500);
+  assert.equal(json.status, 200);
   assert.deepEqual(await json.json(), { ok: false, error: "app_error" });
   assert.equal((await call("/error/server", "text/html", "POST")).status, 405);
-  assert.equal((await call("/error/server", "text/html", "HEAD")).status, 503);
+  assert.equal((await call("/error/server", "text/html", "HEAD")).status, 200);
   assert.equal((await call("/error/server/extra")).status, 404, "a deeper path is the wildcard");
 });
 
@@ -82,4 +82,23 @@ test("U07_ERROR an unhandled failure is the server page for a browser and the sa
   const api = await call("/notifications", "application/json");
   assert.equal(api.status, 503);
   assert.deepEqual(await api.json(), { ok: false, error: "service_unavailable" });
+});
+
+test("U07_ERROR opening a failure page records no server failure; the wildcard and a real failure keep their outcomes", async (t) => {
+  const records: { outcome: string; reason: string }[] = [];
+  const telemetry = { record(_span: unknown, component: string, _journey: unknown, outcome: string, reason: string) { if (component === "gateway") records.push({ outcome, reason }); } };
+  const failing = { web: { origin: ORIGIN }, notifications: { open: async () => { throw new Error("boom"); } } };
+  const server = createGatewayServer(undefined, undefined, undefined, failing as never, null, telemetry as never);
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const get = async (path: string) => { const r = await fetch(base + path, { headers: { accept: "text/html" } }); await r.text(); await new Promise(r => setImmediate(r)); return r.status; };
+  for (const kind of ["server", "app-error", "offline"]) assert.equal(await get(`/error/${kind}`), 200, kind);
+  assert.deepEqual(records.map(r => r.outcome), ["success", "success", "success"], "a failure page someone was sent to is not a server failure");
+  records.length = 0;
+  assert.equal(await get("/error/not-found"), 404); assert.equal(await get("/no/such/page"), 404);
+  assert.deepEqual(records.map(r => r.outcome), ["refused", "refused"]);
+  records.length = 0;
+  assert.equal(await get("/notifications"), 503);
+  assert.deepEqual(records, [{ outcome: "failure", reason: "unhandled_failure" }], "a real failure still counts");
 });

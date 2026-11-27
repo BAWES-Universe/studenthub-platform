@@ -27,11 +27,14 @@ export function errorPage(kind: ErrorKind): { readonly status: number; readonly 
   return { status: p.status, html: pageDocument(p.title, `<header class="topbar"><a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a></header><main id="main" class="error-page"><div class="eyebrow">STUDENTHUB</div><h1>${p.title}</h1><p>${p.message}</p><a class="button primary" href="/">Start again from StudentHub <span aria-hidden="true">→</span></a></main>`) };
 }
 
-/** Answers a failure state as a page for a browser and as the same JSON as before for anyone else. */
-export function writeFailure(request: IncomingMessage, response: ServerResponse, kind: ErrorKind): void {
+/**
+ * Answers a failure state as a page for a browser and as JSON for anyone else, with `status`
+ * (the kind's own status unless given).
+ */
+export function writeFailure(request: IncomingMessage, response: ServerResponse, kind: ErrorKind, status = PAGES[kind].status): void {
   const p = PAGES[kind];
-  if (wantsHtml(request.headers.accept)) { const page = errorPage(kind); writeHtml(response, page.status, page.html); return; }
-  response.writeHead(p.status, { "content-type": "application/json", "cache-control": "no-store", vary: "Accept" });
+  if (wantsHtml(request.headers.accept)) { writeHtml(response, status, errorPage(kind).html); return; }
+  response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", vary: "Accept" });
   response.end(JSON.stringify({ ok: false, error: p.code }));
 }
 
@@ -47,12 +50,17 @@ export function writeNotFound(request: IncomingMessage, response: ServerResponse
   response.end(JSON.stringify({ ok: false, error: "not_found" }));
 }
 
-/** Handles `/error/<kind>`; false for any other path. An unknown kind is the not-found page. */
+/**
+ * Handles `/error/<kind>`; false for any other path. An unknown kind is the not-found page (404).
+ * A known failure kind is shown with 200: it is a page the person was sent to, and the failure
+ * itself was already answered, with its own status and telemetry, on the request that failed, so
+ * opening the page must not count as another server failure.
+ */
 export function handleErrorPage(request: IncomingMessage, response: ServerResponse, path: string): boolean {
   const match = ERROR_PATH.exec(path);
   if (!match) return false;
   if (request.method !== "GET" && request.method !== "HEAD") { response.writeHead(405, { allow: "GET, HEAD" }); response.end(); return true; }
   const kind = isKind(match[1]!) ? match[1] : "not-found";
-  writeFailure(request, response, kind);
+  writeFailure(request, response, kind, kind === "not-found" ? 404 : 200);
   return true;
 }
