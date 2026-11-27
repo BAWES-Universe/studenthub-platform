@@ -5,12 +5,13 @@ import { fileURLToPath } from "node:url";
 
 const dist = new URL("../../../dist/apps/gateway/", import.meta.url), page = new URL("src/organizations/candidates-page.js", dist), suite = fileURLToPath(new URL("test/organization-candidates-page.test.js", dist)), hook = new URL("./helpers/swap-module.mjs", import.meta.url).href;
 const cases = [
-  ["show another person's placements", "ORGCAND_DETAIL", "only this person, latest first", "const shown = personId === undefined ? all : all.filter((a) => a.personId === personId);", "const shown = all;"],
   ["open a person never placed there", "ORGCAND_DENY", "owner /organization/org-a/candidates/dina", "if (personId !== undefined && shown.length === 0)\n            return error(ctx, 404);", "if (false)\n            return error(ctx, 404);"],
   ["drop the name escaping", "ORGCAND_LIST", "owner", "${esc(p.name)}</a></th>`", "${p.name}</a></th>`"],
   ["count an ended placement as working now", "ORGCAND_LIST", "owner", "const placedNow = (a, today) => a.startDate <= today && (a.endDate === null || a.endDate >= today);", "const placedNow = (a, today) => a.startDate <= today;"],
   ["list ended people first", "ORGCAND_LIST", "owner", "Number(b.now) - Number(a.now)", "Number(a.now) - Number(b.now)"],
   ["accept a query", "ORGCAND_DENY", "a query is refused", "if (requestUrl.searchParams.size !== 0)\n        return error(ctx, 400);", "if (false)\n        return error(ctx, 400);"],
+  ["hide the placement cap", "ORGCAND_CAP", "the capped list says so", "const capped = all.length >= ASSIGNMENT_LIST_LIMIT;", "const capped = false;"],
+  ["read every person for one person's page", "ORGCAND_JOURNEY", "the person page reads only that person", "forOrganization(viewer, orgId, undefined, personId)", "forOrganization(viewer, orgId, undefined, undefined)"],
   ["answer a failing read as not found", "ORGCAND_UNAVAILABLE", "/organization/org-a/candidates", "catch {\n        return unavailable(ctx);\n    }\n}", "catch {\n        return error(ctx, 404);\n    }\n}"],
 ];
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

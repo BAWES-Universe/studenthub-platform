@@ -3,7 +3,7 @@ import test, { type TestContext } from "node:test";
 import { InMemoryAuthzStore } from "@studenthub/contracts";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import { InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES } from "@studenthub/organizations";
-import { PlacementService, type Assignment, type WorkGrant } from "../../../packages/work/src/index.js";
+import { ASSIGNMENT_LIST_LIMIT, PlacementService, type Assignment, type WorkGrant } from "../../../packages/work/src/index.js";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createContextNavigation } from "../src/context-navigation.js";
 
@@ -33,18 +33,22 @@ const ASSIGNMENTS = [
 const NAMES = new Map([["amal", "Amal <Synthetic>"], ["badr", "Badr"], ["carl", "Carl"], ["dina", "Dina"]]);
 const STORES = new Map([[S.a, "A <Store>"], [S.second, "Second"], [S.kids, "Kids store"], [S.b, "Outside store"]]);
 
-async function fixture(t: TestContext, option: { configured?: boolean; failing?: boolean } = {}) {
+async function fixture(t: TestContext, option: { configured?: boolean; failing?: boolean; extra?: readonly Assignment[] } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   for (const [personId, id] of Object.entries(sessions)) await rig.sessions.put({ id, personId });
   const authz = new InMemoryAuthzStore({ principals: Object.keys(sessions).map((id) => ({ id, pbuuids: [`${id}@example.invalid`] })), organizations: [{ id: "root", name: "Root" }, { id: "org-a", name: "A", parentOrgId: "root" }, { id: "org-b", name: "B", parentOrgId: "root" }] });
+  for (const [who, grants] of Object.entries(GRANTS)) if (who !== "groupOwner") await authz.grantMany(who, grants.map((g) => ({ orgId: g.orgId, role: g.role, ...(g.scope === "subtree" ? { scope: "subtree" as const } : {}) })));
   const calls: string[] = [];
   const ancestors = (org: string): string[] => PARENT[org] ? [PARENT[org]!, ...ancestors(PARENT[org]!)] : [];
   const store = {
     organizationAncestors: async (org: string) => org === "root" || PARENT[org] ? ancestors(org) : undefined,
-    listAssignments: async (f: { orgIds?: readonly string[]; includeSubtree?: boolean }) => {
-      calls.push(`list:${f.orgIds?.join(",")}:${f.includeSubtree}`);
+    listAssignments: async (f: { orgIds?: readonly string[]; includeSubtree?: boolean; personId?: string }) => {
+      calls.push(`list:${f.orgIds?.join(",")}:${f.includeSubtree}:${f.personId ?? "*"}`);
       if (option.failing) throw new Error("database down");
-      return ASSIGNMENTS.filter((a) => f.orgIds!.includes(a.orgId) || (f.includeSubtree && ancestors(a.orgId).some((o) => f.orgIds!.includes(o))));
+      // Like the Postgres store: newest first, at most ASSIGNMENT_LIST_LIMIT.
+      return [...(option.extra ?? []), ...ASSIGNMENTS].filter((a) => (f.personId === undefined || a.personId === f.personId)
+        && (f.orgIds!.includes(a.orgId) || (f.includeSubtree && ancestors(a.orgId).some((o) => f.orgIds!.includes(o)))))
+        .sort((a, b) => b.startDate.localeCompare(a.startDate) || a.id.localeCompare(b.id)).slice(0, ASSIGNMENT_LIST_LIMIT);
     },
   };
   const placements = new PlacementService({ store: store as never, grants: { listGrantsForPrincipal: async (id) => GRANTS[id] ?? [] }, newId: () => "unused" });
@@ -124,4 +128,29 @@ test("ORGCAND_UNAVAILABLE no work service or a failing read is unavailable, neve
       const response = await f.request(path, "owner"); assert.equal(response.status, 503, path); assert.match(await response.text(), /Candidates unavailable/);
     }
   }
+});
+
+test("ORGCAND_JOURNEY the company overview links Candidates, the list links each person, and the person page opens", async (t) => {
+  const f = await fixture(t);
+  const overview = await (await f.request("/organization/org-a", "owner")).text();
+  const list = /href="(\/organization\/org-a\/candidates)">Candidates</.exec(overview)?.[1];
+  assert.equal(list, "/organization/org-a/candidates", "the overview links Candidates");
+  const page = await (await f.request(list!, "owner")).text();
+  const person = /href="(\/organization\/org-a\/candidates\/[^"]+)">Amal/.exec(page)?.[1];
+  assert.equal(person, "/organization/org-a/candidates/amal", "the list links the person");
+  const detail = await f.request(person!, "owner");
+  assert.equal(detail.status, 200); assert.match(await detail.text(), /<h1>Amal &lt;Synthetic&gt;<\/h1>/);
+  assert.ok(f.calls.includes("list:org-a:false:amal"), "the person page reads only that person");
+  assert.doesNotMatch(page + await (await f.request(person!, "owner")).text(), /most recent placements/, "a complete read says nothing about a cap");
+});
+
+test("ORGCAND_CAP a read that hits the placement cap says older placements and people may be missing", async (t) => {
+  const many = Array.from({ length: ASSIGNMENT_LIST_LIMIT }, (_, i) => placed(`p${i}`, "org-a", S.a, `2025-${String(1 + (i % 12)).padStart(2, "0")}-01`, "2025-12-31"));
+  const f = await fixture(t, { extra: many });
+  const page = await (await f.request("/organization/org-a/candidates", "owner")).text();
+  assert.match(page, /<p role="status">This list is built from the 500 most recent placements, so people placed only before them are not listed/, "the capped list says so");
+  assert.equal(page.includes("/organization/org-a/candidates/badr"), false, "an older person fell past the cap");
+  const badr = await (await f.request("/organization/org-a/candidates/badr", "owner")).text();
+  assert.match(badr, /<td>1 January 2020 to 30 June 2020<\/td>/, "the person page still finds them");
+  assert.doesNotMatch(badr, /most recent placements/, "one person's read is not capped");
 });

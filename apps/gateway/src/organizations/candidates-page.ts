@@ -1,5 +1,5 @@
 import type { GatewayRouteContext } from "../routes/context.js";
-import { kuwaitDate, type Assignment } from "../../../../packages/work/src/index.js";
+import { ASSIGNMENT_LIST_LIMIT, kuwaitDate, type Assignment } from "../../../../packages/work/src/index.js";
 import { longDate } from "../../../../packages/reports/src/id-card-pdf.js";
 import { ORGANIZATION_PAGE_RESERVED, organizationPageOrgId } from "./overview-page.js";
 
@@ -11,7 +11,9 @@ import { ORGANIZATION_PAGE_RESERVED, organizationPageOrgId } from "./overview-pa
  * Both read the work lane's placements through `placements.forOrganization`, which decides who may see them:
  * StudentHub staff, and the company's owners and recruiters (sub-companies only with a subtree grant). Everyone
  * else, and a person never placed at the company, gets the same not found. A page shows the person's name, the
- * store and the placement dates only: no profile, contact, document or pay field.
+ * store and the placement dates only: no profile, contact, document or pay field. The read returns the newest
+ * ASSIGNMENT_LIST_LIMIT placements (the detail asks for that one person's); a page holding that many says it may
+ * be missing older ones. The company overview links the list.
  */
 const PAGE = /^\/organization\/([^/]+)\/candidates(?:\/([^/]+))?$/;
 const PERSON_ID = /^[A-Za-z0-9._:@-]{1,256}$/;
@@ -64,10 +66,12 @@ export async function handleOrganizationCandidatesPage(ctx: GatewayRouteContext)
     const session = sessionCookie(ctx.request.headers.cookie);
     const viewer = session ? await work.personFor(session) : undefined;
     if (!viewer) return error(ctx, 401);
-    const all = await work.placements.forOrganization(viewer, orgId);
+    const all = await work.placements.forOrganization(viewer, orgId, undefined, personId);
     if (!all) return error(ctx, 404);
     const shown = personId === undefined ? all : all.filter((a) => a.personId === personId);
     if (personId !== undefined && shown.length === 0) return error(ctx, 404);
+    // The read returns the newest ASSIGNMENT_LIST_LIMIT placements; holding that many means older ones may be missing.
+    const capped = all.length >= ASSIGNMENT_LIST_LIMIT;
     const [names, stores] = await Promise.all([
       work.personNames ? work.personNames([...new Set(shown.map((a) => a.personId))]) : new Map<string, string>(),
       work.storeNames ? work.storeNames([...new Set(shown.map((a) => a.storeId))]) : new Map<string, string>(),
@@ -84,7 +88,7 @@ export async function handleOrganizationCandidatesPage(ctx: GatewayRouteContext)
       const person = people[0]!;
       const rows = person.placements.map((a) => `<tr><th scope="row">${esc(storeName(a))}</th><td>${esc(period(a))}</td><td>${placedNow(a, today) ? "Working now" : a.startDate > today ? "Starts later" : "Ended"}</td></tr>`).join("");
       const body = `<main id="main" class="profile-main">${crumbs(`<a href="${base}/candidates">Candidates</a>`)}<h1>${esc(person.name)}</h1>`
-        + `<h2>Placements at this company</h2><table><thead><tr><th>Store</th><th>Period</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></main>`;
+        + `<h2>Placements at this company</h2>${capped ? `<p role="status">Only the ${ASSIGNMENT_LIST_LIMIT} most recent placements are shown; older ones are not listed here.</p>` : ""}<table><thead><tr><th>Store</th><th>Period</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></main>`;
       ctx.writeHtml(ctx.response, 200, ctx.pageDocument(person.name, body));
       return true;
     }
@@ -94,7 +98,7 @@ export async function handleOrganizationCandidatesPage(ctx: GatewayRouteContext)
         + `<td>${esc([...new Set(latest.map(storeName))].join(", "))}</td><td>${esc(p.now ? "Working now" : period(p.placements[0]!))}</td></tr>`;
     }).join("");
     const listing = rows ? `<table><thead><tr><th>Person</th><th>Store</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>` : "<p>No one has been placed at this company yet.</p>";
-    ctx.writeHtml(ctx.response, 200, ctx.pageDocument("Candidates", `<main id="main" class="profile-main">${crumbs()}<h1>Candidates</h1><p>People placed at this company's stores, those working now first.</p>${listing}</main>`));
+    ctx.writeHtml(ctx.response, 200, ctx.pageDocument("Candidates", `<main id="main" class="profile-main">${crumbs()}<h1>Candidates</h1><p>People placed at this company's stores, those working now first.</p>${capped ? `<p role="status">This list is built from the ${ASSIGNMENT_LIST_LIMIT} most recent placements, so people placed only before them are not listed, and older placements are left out.</p>` : ""}${listing}</main>`));
     return true;
   } catch {
     return unavailable(ctx);

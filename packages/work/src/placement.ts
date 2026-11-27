@@ -25,6 +25,9 @@ export interface ContractResolutionRecord {
   readonly contractId: string | null;
 }
 
+/** The most placements one `listAssignments` call returns (newest first); the Postgres store's LIMIT. */
+export const ASSIGNMENT_LIST_LIMIT = 500;
+
 export interface Assignment {
   readonly id: string;
   readonly personId: string;
@@ -123,6 +126,7 @@ export interface PlacementStore {
   assignment(id: string): Promise<Assignment | undefined>;
   assignmentForRecruitCard(recruitCardId: string): Promise<Assignment | undefined>;
   request(id: string): Promise<AssignmentRequest | undefined>;
+  /** Newest first, at most ASSIGNMENT_LIST_LIMIT rows: a caller holding exactly that many may be missing older ones. */
   listAssignments(filter: { readonly personId?: string; readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly storeId?: string }): Promise<readonly Assignment[]>;
   /**
    * Placements whose dates overlap `from`..`to` (an open end overlaps every later day),
@@ -440,15 +444,16 @@ export class PlacementService {
 
   /**
    * The people placed at an organization's stores (sub-companies included for
-   * a subtree grant). Staff see every company; a company sees its own.
+   * a subtree grant), optionally one store or one person. Staff see every
+   * company; a company sees its own. At most ASSIGNMENT_LIST_LIMIT, newest first.
    */
-  async forOrganization(actorId: string, orgId: string, storeId?: string): Promise<readonly Assignment[] | undefined> {
+  async forOrganization(actorId: string, orgId: string, storeId?: string, personId?: string): Promise<readonly Assignment[] | undefined> {
     const ancestors = await this.#store.organizationAncestors(orgId);
     if (ancestors === undefined) return undefined;
     const grants = await this.#grants.listGrantsForPrincipal(actorId);
     const reach = orgReach(grants, [...STAFF_ROLES, ...COMPANY_ROLES], orgId, ancestors);
     if (reach === "none") return undefined;
-    return this.#store.listAssignments({ orgIds: [orgId], includeSubtree: reach === "subtree", ...(storeId ? { storeId } : {}) });
+    return this.#store.listAssignments({ orgIds: [orgId], includeSubtree: reach === "subtree", ...(storeId ? { storeId } : {}), ...(personId ? { personId } : {}) });
   }
 
   /**
