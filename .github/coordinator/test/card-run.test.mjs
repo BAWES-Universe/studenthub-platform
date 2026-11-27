@@ -7766,7 +7766,8 @@ function recoverHost(options = {}) {
       if (route === "/pulls/77") return b2Respond(200, pullNow());
       if (route === "/pulls?state=open&per_page=100&page=1") {
         if (options.pullsStatus) return b2Respond(options.pullsStatus, { message: "Service Unavailable" });
-        return b2Respond(200, [...(host.land.merged ? [] : [pullNow()]), ...(options.pulls ?? [])]);
+        const listed = options.listedHead ? { ...pullNow(), head: { ...pullNow().head, sha: options.listedHead } } : pullNow();
+        return b2Respond(200, [...(host.land.merged ? [] : [listed]), ...(options.pulls ?? [])]);
       }
       if (options.carried && options.carriedFails && route === `/compare/${PASSED}...${options.carried}`) {
         if (options.carriedFails === "network") throw new TypeError("fetch failed", { cause: { code: "ETIMEDOUT" } });
@@ -8087,9 +8088,9 @@ test("Landing recovery: a proof that can never pass for this head is recorded on
     assert.equal(claimText(host), claim, `${label}: the stopped claim is untouched`);
     // The next start passes the stopped card over and runs the fresh one.
     const config = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
+    const reads = recoverOnlyReads(host);
     const next = await nextCard(host.io, LAND_PATHS, config, REV);
     assert.deepEqual(next, { id: "SHU-305" }, `${label}: a fresh card still dispatches`);
-    const reads = recoverOnlyReads(host);
     assert.equal(recoverOnlyReads(host), reads, `${label}: the refused proof is not read again`);
     // With one worker the queue stops behind it, and says why.
     const one = await nextCard(host.io, LAND_PATHS, { ...config, workers: { max: 1 } }, REV);
@@ -8148,7 +8149,8 @@ test("Landing recovery: a read that fails while proving the pull requests or the
     ["the carried head's lineage answers 200 with a body that cannot be read", { carried: CARRIED, carriedFails: "body" }],
     ["the carried head's commit answers 200 with a body that cannot be read", { carried: CARRIED, commitFails: "body" }],
   ]) {
-    const host = recoverHost({ workerMax: 2, apart: true, ...options });
+    // One worker: the queue stops behind the card, so the start says why.
+    const host = recoverHost(options);
     const claim = claimText(host);
     const result = await recoverStart(host);
     assert.equal(result.skipped, "RECOVER_UNREADABLE", `${label}: ${JSON.stringify(result)}`);
@@ -8188,6 +8190,108 @@ test("Landing recovery: a worker's start that finds its recovery died while land
   assert.equal(host.files.get(autoClaim(paths, REV, "SHU-301")).text, stopped, "the stopped PASS claim is untouched");
   assert.equal(host.files.get(`${paths.stateDir}/card-recover-${PASSED}-SHU-301.json`).text, record, "the record stays as it was: never run again");
   for (const [file, text] of Object.entries(others)) assert.equal(host.files.get(file).text, text, file);
+});
+
+test("Landing recovery: a recovery's status binds a dead lock only when its record belongs to the dead run; a later ordinary run that died keeps the fail-closed handling", async () => {
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const source = recoverHost({ workerMax: 2, apart: true });
+  const w2land = cardRunPaths(2, LAND_PATHS);
+  let landing = null;
+  const rename = source.fs.renameSync;
+  source.fs.renameSync = (from, to) => {
+    const result = rename(from, to);
+    if (to === statusPath(w2land) && !landing) landing = source.files.get(to).text;
+    return result;
+  };
+  await autoRun({ io: source.io, paths: w2land });
+  // An earlier recovery left its landing status (its finished write failed) and
+  // its own record, claimed by another pid. A later ordinary run of worker 2
+  // then died before its first status write, holding its own unfinished claim.
+  const { host, paths } = await deadRunHost();
+  const stopped = `${JSON.stringify({ ...recoverClaim(), worker: 2 })}\n`;
+  host.files.set(autoClaim(paths, REV, "SHU-301"), { text: stopped, mode: 0o600, uid: 0, gid: 0 });
+  host.files.set(statusPath(paths), { text: landing, mode: 0o600, uid: 0, gid: 0 });
+  host.files.set(`${paths.stateDir}/card-recover-${PASSED}-SHU-301.json`, { text: `${JSON.stringify({ card: "SHU-301", state: "claimed", worker: 2, pid: DEAD_PID + 1 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  const later = autoClaim(paths, REV, "SHU-305");
+  const laterText = `${JSON.stringify({ card: "SHU-305", revision: REV, claimed_at: "2026-11-27T18:00:00.000Z", worker: 2, pid: DEAD_PID })}\n`;
+  host.files.set(later, { text: laterText, mode: 0o600, uid: 0, gid: 0 });
+  const { output } = await main(["auto", "--worker", "2"], host.io, PATHS);
+  assert.notEqual(output.skipped, "RECOVERED", `the later run's unfinished claim is never passed over: ${JSON.stringify(output)}`);
+  assert.equal(host.files.has(paths.lock), true, "the dead lock is kept: the run it held is not proven");
+  assert.equal(host.files.get(later).text, laterText, "the later claim is not marked as if it were the recovery's");
+  assert.equal(host.files.get(autoClaim(paths, REV, "SHU-301")).text, stopped, "the stopped PASS claim is untouched");
+});
+
+test("Landing recovery: a landing token that cannot be used is reported before the one attempt is claimed, so a later start with the token recovers", async () => {
+  for (const [label, broken] of [
+    ["no token file", (host) => host.files.delete(LAND_PATHS.landEnv)],
+    ["a token file in the wrong custody", (host) => { host.files.get(LAND_PATHS.landEnv).mode = 0o640; }],
+    ["a token file without the token", (host) => { host.files.get(LAND_PATHS.landEnv).text = "OTHER=1\n"; }],
+  ]) {
+    const host = recoverHost();
+    const token = { ...host.files.get(LAND_PATHS.landEnv) };
+    const claim = claimText(host);
+    broken(host);
+    const first = await recoverStart(host);
+    assert.ok(first.skipped, `${label}: ${JSON.stringify(first)}`);
+    assert.equal(host.files.has(recoverFile()), false, `${label}: no recovery record is written`);
+    assert.equal(host.files.has(LAND_PATHS.lock), false, `${label}: the run lock is released`);
+    recoverUntouched(host, label, claim);
+    host.files.set(LAND_PATHS.landEnv, token);
+    const again = await recoverStart(host);
+    assert.equal(again.outcome, "LANDING_RECOVERY", `${label}: ${JSON.stringify(again)}`);
+    assert.equal(again.land.outcome, "MERGED", label);
+  }
+});
+
+test("Landing recovery: a pause that lands between the claim and the landing's first step leaves the one attempt for a later start", async () => {
+  const host = recoverHost();
+  const claim = claimText(host);
+  const write = host.fs.writeFileSync;
+  let armed = true;
+  host.fs.writeFileSync = (file, ...rest) => {
+    const result = write(file, ...rest);
+    if (armed && file === recoverFile()) { armed = false; write(LAND_PATHS.pause, "owner\n", { mode: 0o600 }); }
+    return result;
+  };
+  const first = await recoverStart(host);
+  assert.equal(first.skipped, "PAUSED", JSON.stringify(first));
+  assert.equal(host.files.has(recoverFile()), false, "the record is not consumed");
+  assert.equal(host.files.has(LAND_PATHS.lock), false, "the run lock is released");
+  assert.equal(readStatus(host.io, LAND_PATHS).step, "finished", "the run's status ends, so the watch never reads it as a run that died");
+  recoverUntouched(host, "paused", claim);
+  host.files.delete(LAND_PATHS.pause);
+  const again = await recoverStart(host);
+  assert.equal(again.outcome, "LANDING_RECOVERY", JSON.stringify(again));
+  assert.equal(again.land.outcome, "MERGED");
+});
+
+test("Landing recovery: the pull request listed at another head than it was read at is retried, never recorded; a competing pull request stays a refusal", async () => {
+  const host = recoverHost({ listedHead: "87".repeat(20) });
+  const claim = claimText(host);
+  const result = await recoverStart(host);
+  assert.equal(result.skipped, "RECOVER_UNREADABLE", JSON.stringify(result));
+  assert.equal(host.files.has(recoverFile()), false, "nothing is recorded, so a later start proves the new head");
+  recoverUntouched(host, "moved", claim);
+});
+
+test("Landing recovery: with two workers a proof that cannot be read now passes the card over for this start only; a card queued after it still waits", async () => {
+  // SHU-305 is apart from SHU-301: this start runs it instead.
+  const host = recoverHost({ workerMax: 2, apart: true, pullsStatus: 503, onTick: passFor("SHU-305") });
+  const result = await recoverStart(host);
+  assert.notEqual(result.skipped, "RECOVER_UNREADABLE", `the start goes on to another card: ${JSON.stringify(result)}`);
+  assert.equal(result.card, "SHU-305", JSON.stringify(result));
+  assert.equal(host.files.has(recoverFile()), false, "nothing is recorded for SHU-301: the next start proves it again");
+  const config = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
+  const later = await nextCard(host.io, LAND_PATHS, config, REV);
+  assert.equal(later.recover?.reviewed_head, PASSED, `a later start tries SHU-301 again: ${JSON.stringify(later)}`);
+  // A card that builds on SHU-301 is never selected while SHU-301 is passed over.
+  const after = { ...config, card_lanes: config.card_lanes.map((lane) => (lane.id === "SHU-305" ? { ...lane, after: ["SHU-301"] } : lane)) };
+  const behind = recoverHost({ workerMax: 2, apart: true, pullsStatus: 503 });
+  behind.files.set(B2_CONFIG_FILE, { text: JSON.stringify(after), mode: 0o644, uid: 0, gid: 0 });
+  const held = await recoverStart(behind);
+  assert.equal(held.skipped, "RECOVER_UNREADABLE", JSON.stringify(held));
+  assert.equal(behind.files.has(autoClaim(LAND_PATHS, REV, "SHU-305")), false, "the card queued after it is not run");
 });
 
 // Landing recovery across installs: a run stopped under an earlier installed
