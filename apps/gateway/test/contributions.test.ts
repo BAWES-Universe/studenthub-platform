@@ -31,6 +31,7 @@ test("PREP_NAV default area contributions preserve profile navigation", () => {
     { key: "account", order: 310 },
     { key: "statistics", order: 320 },
     { key: "pay", order: 325 },
+    { key: "bank", order: 327 },
     { key: "certificates", order: 330 },
     { key: "idCard", order: 335 },
   ]);

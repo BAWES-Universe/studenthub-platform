@@ -23,6 +23,13 @@
 // may be proven hand-landed exactly as above, at the head the repair's own
 // review passed (repaired_head), never at the failed head.
 //
+// Landing recovery (card-recover.mjs): a finished recovery record counts
+// like a claim. One that merged is the box's own landing. One that stopped,
+// or whose merge could not be read back (LAND_ERROR), is proven landed only as
+// above: GitHub shows the run's pull request merged into main at the reviewed
+// head, or at the head the recovery landed from or updated to when that head
+// holds exactly the reviewed change, with the merge on main's first parents.
+//
 // M15: with more than one card worker a landing first brings its pull request
 // up to main, and a landing that stopped after that left the pull request at
 // the updated head, recorded in the claim (or round) as updated_head. A merge
@@ -79,6 +86,31 @@ function repairRounds(io, paths, id) {
   }
   return rounds;
 }
+
+// Landing recovery: every finished recovery record for this card, named by
+// the reviewed head it recovered and the card.
+function recoveryRounds(io, paths, id) {
+  const name = new RegExp(`^card-recover-([0-9a-f]{40})-${id}\\.json$`);
+  const rounds = [];
+  for (const file of io.fs.readdirSync(paths.stateDir)) {
+    const match = name.exec(file);
+    if (!match) continue;
+    try {
+      const round = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, file), "utf8"));
+      if (round?.card === id && round.reviewed_head === match[1] && round.state === "finished") rounds.push(round);
+    } catch { /* an unreadable record proves nothing */ }
+  }
+  return rounds;
+}
+const mergedByRecovery = (round) => round.land === "MERGED" && SHA_RE.test(round.merge_commit ?? "");
+// A recovery that did not merge, as the claim it stands for: the reviewed
+// head, and the head it landed from or updated to when that is another.
+function recoveryAsClaim(round) {
+  const landed = SHA_RE.test(round.updated_head ?? "") ? round.updated_head : round.head;
+  return { outcome: "PASS", land: HAND_LAND_OUTCOMES.has(round.land) ? round.land : "CI_TIMEOUT", repo: round.repo, pr: round.pr,
+    reviewed_head: round.reviewed_head, ...(SHA_RE.test(landed ?? "") && landed !== round.reviewed_head ? { updated_head: landed } : {}), revision: round.revision ?? null };
+}
+const recoveryCandidate = (round) => HAND_LAND_OUTCOMES.has(round.land) || REPAIR_HAND_LAND_OUTCOMES.has(round.land);
 
 const mergedByRepair = (round) => round.outcome === "PASS" && round.ok === true && round.land === "MERGED"
   && Number.isSafeInteger(round.pr) && SHA_RE.test(round.repaired_head ?? "");
@@ -173,9 +205,12 @@ export async function cardLanded(io, paths, id, { repo = null, gh = null, record
   if (claims.some(mergedByTimer)) return { landed: true, by: "timer" };
   const rounds = repairRounds(io, paths, id);
   if (rounds.some(mergedByRepair)) return { landed: true, by: "repair" };
+  const recoveries = recoveryRounds(io, paths, id);
+  if (recoveries.some(mergedByRecovery)) return { landed: true, by: "recovery" };
   if (recordedHandLanding(io, paths, id)) return { landed: true, by: "hand" };
   const candidates = [...claims.filter((claim) => handLandCandidate(claim, repo)),
-    ...rounds.filter((round) => repairHandLandCandidate(round, repo)).map(roundAsClaim)];
+    ...rounds.filter((round) => repairHandLandCandidate(round, repo)).map(roundAsClaim),
+    ...recoveries.filter(recoveryCandidate).map(recoveryAsClaim).filter((claim) => handLandCandidate(claim, repo))];
   if (!candidates.length || !gh) return { landed: false };
   let reason = null;
   for (const claim of candidates) {

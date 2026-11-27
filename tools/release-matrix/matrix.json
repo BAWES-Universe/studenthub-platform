@@ -362,10 +362,23 @@
     "C-07": {
       "lane": "recruit",
       "subject": "`/applications`, `/applications/:id` \u2014 applications/request detail",
+      "served": [
+        {
+          "route": "/recruit/open-requests",
+          "test": "apps/gateway/test/recruit-request-applications-http.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/recruit/open-requests/:id",
+          "test": "apps/gateway/test/recruit-request-applications-http.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): apply exists; no page listing the person's own applications"
+          "state": "done",
+          "evidence": "My applications list (?applied=1) and request detail with the application status, proven by checkServed and REC7B_MY_APPLICATIONS; page from PR #524 at c1576639",
+          "note": "served at /recruit/open-requests?applied=1 (My applications) and /recruit/open-requests/:id (the request with the application status); the subject's /applications and /applications/:id are legacy paths, not served and not aliased"
         },
         "verified": {
           "state": "open"
@@ -375,10 +388,23 @@
     "C-08": {
       "lane": "recruit",
       "subject": "`/invitations`, `/invitations/:id`",
+      "served": [
+        {
+          "route": "/recruit/invitations",
+          "test": "apps/gateway/test/recruit-invitations-http.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/recruit/invitations/:id",
+          "test": "apps/gateway/test/recruit-invitation-detail.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-22): /recruit/invitations list with accept/decline; no invitation detail page"
+          "state": "done",
+          "evidence": "invitations list and invitation detail pages with tests, proven by checkServed; PR #717 at ea46221e",
+          "note": "served at /recruit/invitations and /recruit/invitations/:id; the subject's /invitations and /invitations/:id are legacy paths, not served and not aliased"
         },
         "verified": {
           "state": "open"
@@ -388,10 +414,23 @@
     "C-09": {
       "lane": "recruit",
       "subject": "`/interviews`, `/interviews/:id`",
+      "served": [
+        {
+          "route": "/recruit/my-interviews",
+          "test": "apps/gateway/test/recruit-interviews-http.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/recruit/interviews/:id",
+          "test": "apps/gateway/test/recruit-interview-detail.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-22): /recruit/my-interviews list; no interview detail page"
+          "state": "done",
+          "evidence": "my interviews list and interview detail pages with tests, proven by checkServed; PR #729 at 1d576abf and PR #741 at 37c19029",
+          "note": "served at /recruit/my-interviews and /recruit/interviews/:id; the subject's /interviews and /interviews/:id are legacy paths, not served and not aliased"
         },
         "verified": {
           "state": "open"
@@ -521,10 +560,17 @@
     "C-15": {
       "lane": "people",
       "subject": "`/profile/bank`",
+      "served": [
+        {
+          "route": "/profile/bank",
+          "test": "apps/gateway/test/bank-details-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "backend only (audit 2026-11-20): bank details preview/confirm API, no page"
+          "state": "done",
+          "evidence": "PR #767 at 125238e07456c2c528d7af67715733b3ad4bcaf9"
         },
         "verified": {
           "state": "open"
@@ -534,10 +580,22 @@
     "C-16": {
       "lane": "people",
       "subject": "`/profile/certificates`, `/profile/certificates/:id`",
+      "served": [
+        {
+          "route": "/profile/certificates",
+          "test": "apps/gateway/test/certificate-detail.test.ts",
+          "via": "handler"
+        },
+        {
+          "route": "/profile/certificates/:id",
+          "test": "apps/gateway/test/certificate-detail.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): certificate PDF and ID card page; no certificates list page"
+          "state": "done",
+          "evidence": "certificates list and certificate detail pages with tests, proven by checkServed; PR #754 at 60bd9160"
         },
         "verified": {
           "state": "open"
@@ -567,10 +625,17 @@
     "O-02": {
       "lane": "organizations",
       "subject": "`/organization/:orgId` \u2014 overview/read model",
+      "served": [
+        {
+          "route": "/organization/:orgId",
+          "test": "apps/gateway/test/organization-overview-page.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "backend only (audit 2026-11-20): organization profile API, no overview page"
+          "state": "done",
+          "evidence": "company overview page with tests, proven by checkServed; PR #632 at 6e122265"
         },
         "verified": {
           "state": "open"
@@ -580,10 +645,17 @@
     "O-03": {
       "lane": "organizations",
       "subject": "`/organization/:orgId/edit`",
+      "served": [
+        {
+          "route": "/organization/:orgId/edit",
+          "test": "apps/gateway/test/organization-edit-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "backend only (audit 2026-11-20): profile preview/confirm API, no edit page"
+          "state": "done",
+          "evidence": "owner edit page with preview and confirm, proven by checkServed; PR #647 at 34bd7928"
         },
         "verified": {
           "state": "open"
@@ -613,10 +685,23 @@
     "O-05": {
       "lane": "organizations",
       "subject": "`/organization/:orgId/stores`, `/stores/:storeId`",
+      "served": [
+        {
+          "route": "/organization/:orgId/stores",
+          "test": "apps/gateway/test/organization-stores-page.test.ts",
+          "via": "gateway"
+        },
+        {
+          "route": "/organization/:orgId/stores/:storeId",
+          "test": "apps/gateway/test/organization-store-detail.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "backend only (audit 2026-11-20): stores API, no page"
+          "state": "done",
+          "evidence": "stores list and store detail pages with tests, proven by checkServed; PR #645 at 58511221 and PR #737 at 699cd5a0",
+          "note": "served at /organization/:orgId/stores and /organization/:orgId/stores/:storeId; a bare /stores/:storeId is not served and not aliased"
         },
         "verified": {
           "state": "open"
@@ -951,10 +1036,17 @@
     "A-06": {
       "lane": "organizations",
       "subject": "`/organizations/:orgId/admin`",
+      "served": [
+        {
+          "route": "/workspace/companies/:orgId/admin",
+          "test": "apps/gateway/test/organization-admin-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "backend only (audit 2026-11-20): status, terms, approved-to-hire, account manager, deletion APIs; no admin page"
+          "state": "done",
+          "evidence": "PR #769 at e3554b0b093b55ffde1b7953286ca5ca9cd2c021"
         },
         "verified": {
           "state": "open"

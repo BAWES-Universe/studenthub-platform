@@ -285,6 +285,21 @@ organization's own documents. `PostgresDocumentPartitions` and
   set, and otherwise restores `candidate_document_snapshot` exactly as frozen
   and drops every 0661 object and its ledger row. After the first write the old
   row is stale and recovery is forward only.
+- **Legacy promotion (migration 0662).** The cutover's promotion step
+  (`LegacyDocumentPromotion`, run by `m4 docpromote`) is a writer like any
+  other: it takes the person's row lock through the same transaction, with SQL
+  on that connection to recheck the legacy link, the staged row and the slot
+  history, and it fills a slot only when that slot has no history, no current
+  or retired version and no upload in progress. Its record
+  `legacy_document_promotions` commits with the document. A person's own upload
+  that started after a promotion sees the promoted version as current and must
+  name it to replace it; one that started first makes the promotion wait for a
+  later run. It writes only into the document store and organization this
+  database records as its own (the staging marker's promotion destination,
+  0662). A promoted civil ID photo is recorded as already seen by OCR
+  (`noted`) in the same transaction, so the sweep never queues it and
+  promotion adds no OCR cost or review. See `docs/lanes/cutover/PLAN.md`,
+  "Promotion step".
 
 **Read-audit decision:** successful list (including empty lists), delivery issuance,
 and delivery redemption now commit durable `list`, `issueDelivery`, and `deliver`

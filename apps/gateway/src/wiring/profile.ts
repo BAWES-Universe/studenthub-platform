@@ -4,6 +4,7 @@ import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonLocati
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import type { SessionStore } from "@studenthub/login-contract";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
+import { PostgresCatalogueStore } from "@studenthub/db/catalogue";
 import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, kuwaitDate, type ApprovedProfileAdapter, type CivilIdOcrStore, type CivilIdStore, type OwnProfileReader } from "@studenthub/profile";
 import { createPeopleDirectory } from "../people-directory.js";
 import { createBankDetails } from "../bank-details.js";
@@ -108,6 +109,8 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   // SHU-182: a candidate's own bank details, behind the same signing key.
   const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: databaseUrl }) : undefined;
   const banks = safeWriteKey ? new PostgresFinanceReferenceResolver({ connectionString: databaseUrl }) : undefined;
+  // C-15: the bank choice on /profile/bank, read-only, on the existing read pool.
+  const bankCatalogue = new PostgresCatalogueStore(profileReadPool);
   const sessions = browserSessionPool ? {
     put: access.loginStore.sessions.put,
     delete: access.loginStore.sessions.delete,
@@ -173,7 +176,8 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       } : {}),
       ...(personProfiles && safeWriteKey ? { profileEdit: createProfileEdit({ sessions: access.loginStore.sessions, store: personProfiles, secret: safeWriteKey }) } : {}),
       ...(bankDetailsStore && banks && safeWriteKey
-        ? { bankDetails: createBankDetails({ sessions: access.loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
+        ? { bankDetails: createBankDetails({ sessions: access.loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey,
+          choices: async () => (await bankCatalogue.listActive("bank", undefined, 500)).map(({ id, name }) => ({ id, name })) }) }
         : {}),
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),

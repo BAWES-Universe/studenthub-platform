@@ -73,8 +73,13 @@ export class R2Objects implements PrivateObjectPort, DirectUploadPort {
 }
 export interface PackedSnapshot {state:DocumentState;blobs:Record<string,{key:string;digest:string;size:number}>}
 export const emptyPackedSnapshot=():PackedSnapshot=>({state:{format:1,documents:[],retired:[]},blobs:{}});
+/** SQL on the owner transaction's own connection, inside its lock (promotion's link, slot and ledger checks). */
+export interface PartitionSql {
+  query(text:string,values?:unknown[]):Promise<{rows:Record<string,unknown>[];rowCount:number|null}>;
+}
 export interface SnapshotPort {
-  transaction<T>(fn:(snapshot:PackedSnapshot)=>Promise<T>):Promise<T>;
+  /** `sql` runs on the same transaction, after the owner row is locked; ports without SQL pass none. */
+  transaction<T>(fn:(snapshot:PackedSnapshot,sql?:PartitionSql)=>Promise<T>):Promise<T>;
   /** Independent durable quarantine reservation BEFORE any immutable object PUT.
    * It survives metadata rollback. No implementation may delete these objects. */
   reserve(key:string):Promise<void>;
@@ -165,7 +170,7 @@ export class PostgresDocumentPartitions {
     checkKey(key);
     await this.journal.query('INSERT INTO candidate_document_object_reservations (object_key) VALUES ($1) ON CONFLICT DO NOTHING',[key]);
   }
-  async transaction<T>(owner:DocumentOwner,fn:(snapshot:PackedSnapshot)=>Promise<T>):Promise<T>{
+  async transaction<T>(owner:DocumentOwner,fn:(snapshot:PackedSnapshot,sql:PartitionSql)=>Promise<T>):Promise<T>{
     checkOwner(owner);
     const c=await this.pool.connect();let destroy=false;
     try {
@@ -181,7 +186,8 @@ export class PostgresDocumentPartitions {
       const rows=await c.query('SELECT snapshot FROM candidate_document_partitions WHERE owner_kind = $1 AND owner_id = $2 FOR UPDATE',[owner.kind,owner.id]);
       if(rows.rowCount!==1)throw new Error();
       const value=rows.rows[0].snapshot as PackedSnapshot;
-      const before=JSON.stringify(value),result=await fn(value),after=JSON.stringify(value);
+      const sql:PartitionSql={query:(text,values)=>c.query(text,values) as Promise<{rows:Record<string,unknown>[];rowCount:number|null}>};
+      const before=JSON.stringify(value),result=await fn(value,sql),after=JSON.stringify(value);
       if(Buffer.byteLength(after)>16*1024*1024)throw new Error();
       if(before!==after){
         ownedBy(owner,value.state);
@@ -250,8 +256,14 @@ export class R2DocumentStore implements DocumentStore {
       audit:entry=>snapshots.auditRead!(entry)
     };
   }
-  async transaction<T>(fn:(state:DocumentState)=>Promise<T>):Promise<T>{
-    return this.snapshots.transaction(async packed=>{
+  transaction<T>(fn:(state:DocumentState)=>Promise<T>):Promise<T>{return this.run(state=>fn(state));}
+  /** A transaction whose callback also gets SQL on the same connection, inside the owner's lock.
+   * Only a port with SQL (PostgresDocumentPartitions) offers it; anything else is refused. */
+  transactionWithSql<T>(fn:(state:DocumentState,sql:PartitionSql)=>Promise<T>):Promise<T>{
+    return this.run((state,sql)=>{if(!sql)throw new Error('unavailable');return fn(state,sql);});
+  }
+  private run<T>(fn:(state:DocumentState,sql?:PartitionSql)=>Promise<T>):Promise<T>{
+    return this.snapshots.transaction(async (packed,sql)=>{
       if (!packed || typeof packed!=='object' || !packed.state || !packed.blobs || typeof packed.blobs!=='object'
         || !Array.isArray(packed.state.documents) || !Array.isArray(packed.state.retired)) throw new Error('unavailable');
       const s=structuredClone(packed.state);
@@ -267,7 +279,7 @@ export class R2DocumentStore implements DocumentStore {
         row.data=bytes.toString('base64');
       }
       validateState(s);
-      const result=await fn(s);validateState(s);
+      const result=await fn(s,sql);validateState(s);
       if(Buffer.byteLength(JSON.stringify(s))>256*1024*1024)throw new Error('unavailable');
       const next:PackedSnapshot={state:s,blobs:{}};
       for(const row of items()){
