@@ -130,11 +130,13 @@ export interface AccessEventRow {
   readonly orgId: string;
   readonly orgName: string;
   readonly role: string;
-  readonly scope: GrantScope;
+  readonly scope: GrantScope | "store";
   readonly action: "grant" | "revoke";
   readonly actor: { readonly principalId: string; readonly displayName: string | null };
   readonly reason: string;
   readonly occurredAt: string;
+  /** Set for store manager events: the store's name, or its id once the store row is gone. */
+  readonly storeName?: string;
 }
 
 export interface AccessOrganization {
