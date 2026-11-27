@@ -209,8 +209,19 @@ organization's own documents. `PostgresDocumentPartitions` and
   walk by (person, document id), at most 1000 rows per query plus one look-ahead
   row, over only people whose slot history has an active slot of those types; it
   returns only each current document's metadata, never retired versions, journals
-  or blob references, and the OCR sweep reads every page, so no photo is dropped
-  or repeated. The operator cleanup count (`heldCount`) returns one exact number.
+  or blob references. The OCR sweep no longer lists photos in the process at all:
+  on this store it reads the view `candidate_current_documents` (migration 0663,
+  driven by active slots) in one statement, into a temporary table, so it sees
+  one snapshot of every person and no photo row reaches the worker; the expiry
+  fallback looks up one person's back photo. The transaction is READ COMMITTED,
+  so an overlapping sweep or a worker writing a job makes it wait, never fail
+  (SWEEP-04). SWEEP-01 measures it at 50,000 people (100,000 photos). Photos
+  placed by the legacy promotion are never queued for OCR: the promotion records
+  each civil ID photo it places as already seen (`noted`), in its own
+  transaction, as the first sweep does for the photos present when OCR was
+  switched on, so promotion adds no OCR cost and no review. A person's own later
+  upload is read as usual. The operator
+  cleanup count (`heldCount`) returns one exact number.
   The 192 MiB hydration and 16 MiB metadata limits now apply per owner.
 - **Slot lock and history.** An owner's row is created empty on first use and
   locked `FOR UPDATE`, so upload, replace, remove and promotion of that owner's
@@ -239,6 +250,32 @@ organization's own documents. `PostgresDocumentPartitions` and
   under its old name: its document reads and writes fail `unavailable` rather
   than serve or change stale state, until it is replaced. Deploy the build with
   the migration; nothing outside these tables reads the old name.
+- **Quiesced handover, checked.** Which environment a handover runs against is
+  approved on the operator's environment record (the Hermes card naming it).
+  The operator then prints the database's diagnostic `target` fingerprint (a
+  hash of the cluster id where readable, the database oid and name, the schema
+  and the store table's oid, which the 0661 rename keeps) with its `targetBasis`
+  (`cluster`, or `catalog` when the cluster id is not readable); both checks
+  require `HANDOVER_APPROVED_TARGET` to equal it and print both, and the
+  postcheck recomputes them (`otherTarget`), so a run pointed at another
+  database by mistake is refused. The fingerprint is diagnostic, not proof of
+  environment identity: names and catalog oids can recur across clusters
+  (`catalog` is the weaker basis) and a physical clone keeps even the cluster
+  id. `store-handover-cli.js precheck`, run with the
+  gateway and worker stopped and before 0661, refuses (`locked`) while any other
+  transaction holds or awaits a lock on any relation in the store's schema (an
+  idle transaction that touched any table there still holds one) or a prepared
+  transaction exists, and prints the old row's element counts and digest only.
+  `postcheck <precheck file>`, run after 0661 and before the new build takes
+  traffic, requires 0661 recorded, the store authoritative with no write yet, the
+  frozen old row at exactly the precheck's digest (`changedSinceCheck` catches a
+  write that slipped in between) and the owner rows holding exactly the counted
+  elements (`countMismatch`, over all six counts). The precheck file must hold
+  exactly the target, digest and six nonnegative integer counts, or it is refused
+  (`precheckInvalid`) before any comparison. Both read only. The precheck is
+  point-in-time evidence: it shows the store quiet when it ran, not that it stayed
+  quiet; the frozen digest in the postcheck is what catches a write after it.
+  HANDOVER-01 to 03 cover each refusal.
 - **Rollback boundary, durable and checkable.** `candidate_document_store_authority`
   records `first_write_at` in the same transaction as the first owner write;
   every writer holds that row (exclusively until the first write, shared after).

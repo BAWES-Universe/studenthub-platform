@@ -6,12 +6,21 @@ export class CivilIdOcrError extends Error { constructor(readonly code:CivilIdOc
 export interface CivilIdOcrReader { read(photo:{bytes:Buffer;mime:string}):Promise<readonly string[]> }
 export class FakeCivilIdOcrReader implements CivilIdOcrReader { calls=0; constructor(readonly lines:readonly string[]=[]){ } async read(){this.calls++;return this.lines;} }
 export interface CivilIdPhoto {principalId:string;side:"front"|"back";documentId:string;version:string;size:number}
-export interface CivilIdPhotoSource { list():Promise<readonly CivilIdPhoto[]>; read(photo:{documentId:string;version:string}):Promise<{bytes:Buffer;mime:string}|null> }
+export interface CivilIdPhotoSource {
+ list():Promise<readonly CivilIdPhoto[]>; read(photo:{documentId:string;version:string}):Promise<{bytes:Buffer;mime:string}|null>;
+ /** The photos live in the job store's own database (per-owner store, migration 0663): the sweep reads them there, in one
+  * snapshot, and `list` is never called. */
+ readonly inStore?:boolean;
+ /** A person's current back photo, for the expiry fallback without the whole list. */
+ back?(principalId:string):Promise<CivilIdPhoto|null>;
+}
 export type OcrStatus="pending"|"running"|"read"|"unreadable"|"failed"|"noted";
 export interface CivilIdOcrJob extends CivilIdPhoto {id:string;status:OcrStatus;attempts:number;notBefore:string;leaseOwner:string|null;leaseExpiresAt:string|null;failureCode:CivilIdOcrFailureCode|null;country:CivilIdCountry|null;numberCiphertext:Buffer|null;keyVersion:number|null;last4:string|null;expiry:string|null;fallbackVersion:string|null;supersededAt:string|null;resolved:"accepted"|"dismissed"|null;createdAt:string;updatedAt:string}
 export interface CivilIdSuggestion {id:string;state:"read"|"unreadable"|"failed";last4:string|null;country:CivilIdCountry|null;expiry:string|null;expired:boolean}
 export interface CivilIdOcrStore {
  beginSweep(photos:readonly CivilIdPhoto[],at:string):Promise<{baseline:boolean;queued:number}>;
+ /** The same sweep with the current photos read by the store itself (see CivilIdPhotoSource.inStore). */
+ beginStoreSweep?(at:string):Promise<{baseline:boolean;queued:number}>;
  claim(owner:string,at:string,leaseExpires:string,limit:number):Promise<readonly CivilIdOcrJob[]>;
  current(documentId:string,version:string):Promise<boolean>;
  complete(id:string,owner:string,result:{country:CivilIdCountry|null;numberCiphertext:Buffer|null;keyVersion:number|null;last4:string|null;expiry:string|null;fallbackVersion:string|null},at:string):Promise<boolean>;
@@ -46,7 +55,7 @@ export class InMemoryCivilIdOcrStore implements CivilIdOcrStore {
 }
 
 export async function runCivilIdOcr(o:{store:CivilIdOcrStore;photos:CivilIdPhotoSource;reader:CivilIdOcrReader;vault:CivilIdVault;clock?:{now():Date};workerId:string;leaseMs:number;batchSize:number}){
- const now=o.clock?.now()??new Date(),at=now.toISOString(),photos=await o.photos.list(),sweep=await o.store.beginSweep(photos,at);const jobs=await o.store.claim(o.workerId,at,new Date(now.getTime()+o.leaseMs).toISOString(),o.batchSize);let processed=0;
- for(const j of jobs){if(!await o.store.current(j.documentId,j.version)){await o.store.unreadable(j.id,o.workerId,at);continue;}if(j.side==="back"){await o.store.unreadable(j.id,o.workerId,at);continue;}try{const photo=await o.photos.read(j);if(!photo){await o.store.fail(j.id,o.workerId,"image_missing",at);continue;}if(photo.bytes.length>5*1024*1024){await o.store.fail(j.id,o.workerId,"image_too_large",at);continue;}let parsed=parseCivilIdLines(await o.reader.read(photo)),fallbackVersion:string|null=null;if(!parsed.expiry){const back=photos.find(p=>p.principalId===j.principalId&&p.side==="back");if(back){const b=await o.photos.read(back);if(b&&b.bytes.length<=5*1024*1024){const bp=parseCivilIdLines(await o.reader.read(b));parsed={...parsed,expiry:bp.expiry};fallbackVersion=back.version;}}}if(!parsed.number&&!parsed.expiry)await o.store.unreadable(j.id,o.workerId,at);else {const sealed=parsed.number&&parsed.country?o.vault.seal(j.principalId,parsed.country,parsed.number):null;await o.store.complete(j.id,o.workerId,{country:parsed.country,numberCiphertext:sealed?.ciphertext??null,keyVersion:sealed?.keyVersion??null,last4:parsed.number?.slice(-4)??null,expiry:parsed.expiry,fallbackVersion},at);}processed++;}catch(e){const code=e instanceof CivilIdOcrError?e.code:"provider_unavailable";const retry=code==="provider_unavailable"?new Date(now.getTime()+60_000).toISOString():undefined;await o.store.fail(j.id,o.workerId,code,at,retry);}}
+ const now=o.clock?.now()??new Date(),at=now.toISOString(),inStore=o.photos.inStore===true&&o.store.beginStoreSweep!==undefined,photos=inStore?null:await o.photos.list(),sweep=inStore?await o.store.beginStoreSweep!(at):await o.store.beginSweep(photos!,at);const jobs=await o.store.claim(o.workerId,at,new Date(now.getTime()+o.leaseMs).toISOString(),o.batchSize);let processed=0;
+ for(const j of jobs){if(!await o.store.current(j.documentId,j.version)){await o.store.unreadable(j.id,o.workerId,at);continue;}if(j.side==="back"){await o.store.unreadable(j.id,o.workerId,at);continue;}try{const photo=await o.photos.read(j);if(!photo){await o.store.fail(j.id,o.workerId,"image_missing",at);continue;}if(photo.bytes.length>5*1024*1024){await o.store.fail(j.id,o.workerId,"image_too_large",at);continue;}let parsed=parseCivilIdLines(await o.reader.read(photo)),fallbackVersion:string|null=null;if(!parsed.expiry){const back=o.photos.back?await o.photos.back(j.principalId):photos?.find(p=>p.principalId===j.principalId&&p.side==="back")??null;if(back){const b=await o.photos.read(back);if(b&&b.bytes.length<=5*1024*1024){const bp=parseCivilIdLines(await o.reader.read(b));parsed={...parsed,expiry:bp.expiry};fallbackVersion=back.version;}}}if(!parsed.number&&!parsed.expiry)await o.store.unreadable(j.id,o.workerId,at);else {const sealed=parsed.number&&parsed.country?o.vault.seal(j.principalId,parsed.country,parsed.number):null;await o.store.complete(j.id,o.workerId,{country:parsed.country,numberCiphertext:sealed?.ciphertext??null,keyVersion:sealed?.keyVersion??null,last4:parsed.number?.slice(-4)??null,expiry:parsed.expiry,fallbackVersion},at);}processed++;}catch(e){const code=e instanceof CivilIdOcrError?e.code:"provider_unavailable";const retry=code==="provider_unavailable"?new Date(now.getTime()+60_000).toISOString():undefined;await o.store.fail(j.id,o.workerId,code,at,retry);}}
  return {swept:sweep.queued,processed};
 }
