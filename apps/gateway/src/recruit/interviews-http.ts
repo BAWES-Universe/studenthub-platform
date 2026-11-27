@@ -130,7 +130,7 @@ ${b.seesInternal ? `<p><label for="i-${html(v.interviewId)}">Internal note (staf
 }
 
 export function renderMyInterviews(list: readonly PersonInterviewView[]): string {
-  const item = (v: PersonInterviewView) => `<li><h2>${html(v.positionTitle)}</h2><p>${html(v.company)} · ${html(v.store)} · <span class="badge">${STATUS[v.status]}</span></p><p>${[`${v.kuwaitTime} (Kuwait)`, `${v.durationMinutes} min`, MODE[v.mode], v.location].filter((x): x is string => Boolean(x)).map(html).join(" · ")}</p>${v.outcome ? `<p>${OUTCOME[v.outcome]}</p>` : ""}</li>`;
+  const item = (v: PersonInterviewView) => `<li><h2><a class="text-link" href="/recruit/interviews/${html(encodeURIComponent(v.interviewId))}">${html(v.positionTitle)}</a></h2><p>${html(v.company)} · ${html(v.store)} · <span class="badge">${STATUS[v.status]}</span></p><p>${[`${v.kuwaitTime} (Kuwait)`, `${v.durationMinutes} min`, MODE[v.mode], v.location].filter((x): x is string => Boolean(x)).map(html).join(" · ")}</p>${v.outcome ? `<p>${OUTCOME[v.outcome]}</p>` : ""}</li>`;
   return `<main id="main" class="profile-main"><h1>Interviews<span class="accent">.</span></h1>${list.length ? `<ol class="plain">${list.map(item).join("")}</ol>` : "<p>You have no interviews yet.</p>"}</main>`;
 }
 
