@@ -175,6 +175,14 @@ test("G02_STORE_PAGE the person page lists their stores and offers a store only 
   // Your own page offers no change.
   const own = await (await http.get("/admin/access/people/admin-1?store=Sal", "admin-1")).text();
   assert.doesNotMatch(own, /store-preview/);
+  // The history names the store for a store manager event; a role event keeps its scope words.
+  (ports.reads as { history: AccessReadStore["history"] }).history = async () => [
+    { orgId: "acme", orgName: "Acme <Trading>", role: "store-manager", scope: "store", action: "grant", actor: { principalId: "admin-1", displayName: "Grace Admin" }, reason: "Runs it", occurredAt: "2026-11-27T08:00:00.000Z", storeName: "Salmiya <Branch>" },
+    { orgId: "acme", orgName: "Acme <Trading>", role: "recruiter", scope: "self", action: "grant", actor: { principalId: "admin-1", displayName: "Grace Admin" }, reason: "Hires", occurredAt: "2026-11-27T07:00:00.000Z" },
+  ];
+  const history = await (await http.get("/admin/access/people/candidate-1", "admin-1")).text();
+  assert.match(history, /<td>Store manager<\/td><td>Store: Salmiya &lt;Branch&gt;<\/td>/);
+  assert.match(history, /<td>Recruiter<\/td><td>This organization only<\/td>/);
 });
 
 test("G02_STORE_CONFIRM a preview shows the store change, the confirm applies it once, and taking it away goes the same way", async (t) => {
@@ -184,7 +192,7 @@ test("G02_STORE_CONFIRM a preview shows the store change, the confirm applies it
   assert.equal(preview.status, 200);
   const html = await preview.text();
   assert.match(html, /<dt>Person<\/dt><dd>Dana Candidate<\/dd>.*<dt>Store<\/dt><dd>Salmiya &lt;Branch&gt;<\/dd>.*<dt>Company<\/dt><dd>Acme &lt;Trading&gt;<\/dd>/s);
-  assert.match(html, /Dana Candidate will be able to see and run Salmiya &lt;Branch&gt;, and nothing else at Acme &lt;Trading&gt;\./);
+  assert.match(html, /Dana Candidate will be able to see and run Salmiya &lt;Branch&gt;\. This covers this store only\. Their other access is not changed\./);
   assert.match(html, /<form method="post" action="\/admin\/access\/store-confirm">/);
   assert.equal(events.length, 0, "a preview writes nothing");
   const fields = hiddenFields(html);

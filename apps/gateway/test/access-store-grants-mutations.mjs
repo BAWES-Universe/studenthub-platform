@@ -22,6 +22,8 @@ try {
     ["accept a cross-origin post", page, 'req.resume();\n        write(403, "Access", renderStoreGrantRefusal("invalid_request", "/admin/access"));\n        return true;', "", suite, "G02_STORE_CONFIRM"],
     ["accept extra fields", page, "if (!form || !request || Object.keys(form).some((key) => !allowed.has(key))) {", "if (!form || !request) {", suite, "G02_STORE_GUARDS"],
     ["say nothing changed after an unknown outcome", page, 'preview ? renderStoreGrantRefusal("unavailable", back) : renderUnconfirmed(back)', 'renderStoreGrantRefusal("unavailable", back)', suite, "G02_STORE_GUARDS"],
+    ["show a store event by its scope only", page, "event.storeName === undefined ? SCOPE_NAMES", "true ? SCOPE_NAMES", suite, "G02_STORE_PAGE"],
+    ["promise more than this store", page, "This covers this store only. Their other access is not changed.", "", suite, "G02_STORE_CONFIRM"],
   ];
   for (const [, , , , file, pattern] of mutants) assert.equal(run(file, pattern).status, 0, `baseline ${pattern}`);
   for (const [name, relative, from, to, testFile, pattern] of mutants) {

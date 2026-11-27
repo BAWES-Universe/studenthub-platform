@@ -348,7 +348,7 @@ export function renderPersonAccess(model: PersonPageModel): string {
       : `${orgSearch}${orgResults}`;
   const history = model.history.length === 0 ? `<p class="empty-contexts">No changes recorded on this page yet.</p>`
     : `<div class="directory-table"><table><caption>Changes (latest ${model.history.length})</caption><thead><tr><th>When</th><th>Change</th><th>Organization</th><th>Role</th><th>Scope</th><th>By</th><th>Reason</th></tr></thead><tbody>${model.history.map((event) =>
-      `<tr><td>${e(dateText(event.occurredAt))}</td><td>${event.action === "grant" ? "Given" : "Taken away"}</td><td>${e(event.orgName)}</td><td>${e(ROLE_NAMES[event.role] ?? event.role)}</td><td>${e(SCOPE_NAMES[event.scope] ?? event.scope)}</td><td>${e(personName(event.actor))}</td><td>${e(event.reason)}</td></tr>`).join("")}</tbody></table></div>`;
+      `<tr><td>${e(dateText(event.occurredAt))}</td><td>${event.action === "grant" ? "Given" : "Taken away"}</td><td>${e(event.orgName)}</td><td>${e(ROLE_NAMES[event.role] ?? event.role)}</td><td>${e(event.storeName === undefined ? SCOPE_NAMES[event.scope] ?? event.scope : `Store: ${event.storeName}`)}</td><td>${e(personName(event.actor))}</td><td>${e(event.reason)}</td></tr>`).join("")}</tbody></table></div>`;
   return layout(`<p><a class="text-link" href="/admin/access">← Find another person</a></p><div class="profile-heading"><h1>${e(personName(person))}<span class="accent">.</span></h1></div><p>${e(person.email ?? "No email address recorded")}</p>${notice ? `<section class="notice context-notice" role="status"><strong>${e(notice)}</strong></section>` : ""}${renderPauseSection(model)}<section><h2>Roles</h2>${grantRows}<p><a class="text-link" href="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}/audit`)}">What their access does now →</a></p></section><section><h2>Give a role</h2>${give}</section>${renderStoreSection(model)}<section><h2>History</h2>${history}</section>`, "access");
 }
 
@@ -449,7 +449,7 @@ export function renderStoreGrantReview(input: {
   ].map(([key, value]) => `<input type="hidden" name="${e(key)}" value="${e(value)}">`).join("");
   const verb = request.action === "grant" ? "Give store manager access" : "Take store manager access away";
   const effect = request.action === "grant"
-    ? `${e(name)} will be able to see and run ${e(store.name)}, and nothing else at ${e(store.orgName)}.`
+    ? `${e(name)} will be able to see and run ${e(store.name)}. This covers this store only. Their other access is not changed.`
     : `${e(name)} will no longer be able to see or run ${e(store.name)}. Their other access is not changed.`;
   return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(name)}’s next request. Confirm within 15 minutes.</p>${facts}<section class="grant-effect"><h2>What changes for them</h2><p>${effect}</p></section><form method="post" action="/admin/access/store-confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
 }
