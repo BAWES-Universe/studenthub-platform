@@ -1,4 +1,4 @@
-import { R2Objects, R2DocumentStore, PostgresDocumentSnapshot, type DirectUploadPort } from '../../../packages/private-documents/src/r2-storage.js';
+import { R2Objects, PartitionedR2DocumentStore, PostgresDocumentPartitions, type DirectUploadPort } from '../../../packages/private-documents/src/r2-storage.js';
 import { PostgresAuthzStore, PostgresLoginStore } from '@studenthub/db/access';
 import type { AuthzStore } from '@studenthub/contracts';
 import type { SessionStore } from '@studenthub/login-contract';
@@ -37,9 +37,9 @@ export async function createRuntimeCandidateDocumentsFromEnv(env: NodeJS.Process
       const objects=new R2Objects({accountId:env.DOCUMENT_R2_ACCOUNT_ID!,bucket:env.DOCUMENT_R2_BUCKET!,
         accessKeyId:env.DOCUMENT_R2_ACCESS_KEY_ID!,secretAccessKey:env.DOCUMENT_R2_SECRET_ACCESS_KEY!});
       closers.push(()=>objects.close());
-      const snapshots=new PostgresDocumentSnapshot(env.DATABASE_URL);closers.push(()=>snapshots.close());
-      store=new R2DocumentStore(snapshots,objects);
-      directUploads={authorize:async t=>{await snapshots.reserve(t.objectKey);return objects.authorize(t);},read:t=>objects.read(t)};
+      const partitions=new PostgresDocumentPartitions(env.DATABASE_URL);closers.push(()=>partitions.close());
+      store=new PartitionedR2DocumentStore(partitions,objects);
+      directUploads={authorize:async t=>{await partitions.reserve(t.objectKey);return objects.authorize(t);},read:t=>objects.read(t)};
     }
     const authz = new PostgresAuthzStore({connectionString:env.DATABASE_URL});closers.push(()=>authz.close());
     const login = new PostgresLoginStore({connectionString:env.DATABASE_URL});closers.push(()=>login.close());
