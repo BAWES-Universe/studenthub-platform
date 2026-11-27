@@ -73,6 +73,29 @@ export function recoverCandidate(claim, { id, repo }) {
     && SHA_RE.test(claim.reviewed_head ?? "") && ACTIVATION_ID_RE.test(claim.activation_id ?? "");
 }
 
+// Every claim this card's timer runs wrote at an installed revision other than
+// this one that a recovery may start from, newest first. A run stopped under
+// an earlier install keeps its claim under that revision's name, and the
+// start at the current revision finds no claim of its own (or only a refused
+// one), so the stop is looked for at every revision, as card-landed.mjs reads
+// claims. Only a claim that names this card and the revision in its own file
+// name counts; anything unreadable proves nothing.
+export function carriedRecoverClaims(io, paths, id, { repo, revision }) {
+  const name = new RegExp(`^card-run-auto-([0-9a-f]{40})-${String(id).replace(/[^A-Z0-9-]/g, "")}\\.json$`);
+  let files;
+  try { files = io.fs.readdirSync(paths.stateDir); } catch { return []; }
+  const claims = [];
+  for (const file of files) {
+    const match = name.exec(file);
+    if (!match || match[1] === revision) continue;
+    try {
+      const claim = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, file), "utf8"));
+      if (claim?.revision === match[1] && recoverCandidate(claim, { id, repo })) claims.push(claim);
+    } catch { /* an unreadable claim proves nothing */ }
+  }
+  return claims.sort((a, b) => String(b.claimed_at ?? "").localeCompare(String(a.claimed_at ?? "")) || a.revision.localeCompare(b.revision));
+}
+
 export function recoverSkip(code, detail) {
   throw Object.assign(new Error(`${code}: ${detail}`), { code, recoverSkip: true });
 }
@@ -105,6 +128,14 @@ export function recoverStep(io, paths, id, claim, { live = () => false } = {}) {
   }
   if (round.refused) return { note: `; its one landing recovery was refused (${round.refused}: ${round.reason ?? "no reason"}): ${file}` };
   return { note: `; its one landing recovery finished (${round.land ?? "no landing"}): ${file}` };
+}
+
+// The same step for the newest claim carried from an earlier installed
+// revision: one recoverable stop per card is looked at, the newest, so an
+// older passed head that a newer run superseded is never proven again.
+export function carriedRecoverStep(io, paths, id, { repo, revision, live = () => false }) {
+  const [claim] = carriedRecoverClaims(io, paths, id, { repo, revision });
+  return claim ? recoverStep(io, paths, id, claim, { live }) : {};
 }
 
 export const RECOVER_ISSUE_QUERY = `
@@ -151,8 +182,18 @@ async function proveAndClaim({ io, paths, config, id, claim, credentials, fetchI
   if (!SHA_RE.test(head ?? "")) recoverSkip("RECOVER_UNREADABLE", `#${claim.pr} has no readable head`);
   // A head other than the reviewed one counts only as a plain merge of main
   // into it that keeps the reviewed blobs; anything else needs a new review.
+  // A read that failed while proving it (an error, a timeout, any answer that
+  // is not a success) proves nothing either way: unreadable, tried again later.
   if (head !== claim.reviewed_head) {
-    const why = await updatedHeadHolds(gh, { repo, passed: claim.reviewed_head, head });
+    const failedReads = [];
+    const watched = async (method, url, ...rest) => {
+      let response;
+      try { response = await gh(method, url, ...rest); } catch (error) { failedReads.push(error?.message ?? "error"); throw error; }
+      if (!response?.ok) failedReads.push(`HTTP ${response?.status ?? "unknown"}`);
+      return response;
+    };
+    const why = await updatedHeadHolds(watched, { repo, passed: claim.reviewed_head, head });
+    if (why && failedReads.length) recoverSkip("RECOVER_UNREADABLE", `#${claim.pr} at ${head} could not be read to prove it holds the change reviewed at ${claim.reviewed_head} (${failedReads[0]})`);
     if (why) recoverSkip("RECOVER_HEAD_UNPROVEN", `#${claim.pr} is at ${head}, which is not proven to hold exactly the change reviewed at ${claim.reviewed_head} (${why}); it needs a new review and is never reset`);
   }
   // The PASS is still the newest word on the card's branch.
@@ -173,6 +214,8 @@ async function proveAndClaim({ io, paths, config, id, claim, credentials, fetchI
   }
   if (!issue || issue.identifier !== id) recoverSkip("RECOVER_UNREADABLE", `${id} cannot be read from Linear`);
   const pulls = await readOpenPulls({ repo, token: credentials.GITHUB_TOKEN, fetchImpl });
+  // A listing that could not be read whole proves nothing: unreadable, tried again later.
+  if (pulls.complete !== true) recoverSkip("RECOVER_UNREADABLE", `the open pull requests claiming ${id} could not be read completely${pulls.reason ? ` (${pulls.reason})` : ""}`);
   const claimedBy = { complete: pulls.complete === true, items: (pulls.items ?? []).filter((pull) => pullRequestClaimsIssue(pull, id)), reason: pulls.reason ?? null };
   const owners = Array.isArray(config.linear_callback_actor_ids) ? config.linear_callback_actor_ids : [];
   const eligible = repairEligible({ issue: { id: issue.identifier, state: issue.state?.name ?? null, assignee: issue.assignee ?? null, delegate: issue.delegate ?? null },

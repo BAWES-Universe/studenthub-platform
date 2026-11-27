@@ -7762,7 +7762,15 @@ function recoverHost(options = {}) {
       reads.push(`${request.method ?? "GET"} ${route}`);
       assert.equal(request.method ?? "GET", "GET", "a recovery only reads GitHub with the coordinator's token");
       if (route === "/pulls/77") return b2Respond(200, pullNow());
-      if (route === "/pulls?state=open&per_page=100&page=1") return b2Respond(200, [...(host.land.merged ? [] : [pullNow()]), ...(options.pulls ?? [])]);
+      if (route === "/pulls?state=open&per_page=100&page=1") {
+        if (options.pullsStatus) return b2Respond(options.pullsStatus, { message: "Service Unavailable" });
+        return b2Respond(200, [...(host.land.merged ? [] : [pullNow()]), ...(options.pulls ?? [])]);
+      }
+      if (options.carried && options.carriedFails && route === `/compare/${PASSED}...${options.carried}`) {
+        if (options.carriedFails === "network") throw new TypeError("fetch failed", { cause: { code: "ETIMEDOUT" } });
+        return b2Respond(options.carriedFails, { message: "Service Unavailable" });
+      }
+      if (options.carried && options.commitFails && route === `/commits/${options.carried}`) return b2Respond(options.commitFails, { message: "Service Unavailable" });
       const carried = carriedRead(route);
       if (carried) return carried;
       return b2Respond(404, { message: "Not Found" });
@@ -8121,5 +8129,138 @@ test("Landing recovery: the run lock is held until the recovery's record and its
     assert.ok(seen.slice(release + 1).every((entry) => entry.status === undefined || entry.release), `${label}: no status is written after the lock is released: ${JSON.stringify(seen)}`);
     assert.equal(readStatus(host.io, LAND_PATHS).step, "finished");
     assert.equal(host.files.has(LAND_PATHS.lock), false, `${label}: the lock is released`);
+  }
+});
+
+test("Landing recovery: a read that fails while proving the pull requests or the carried head is retried on a later start, never recorded as a refusal", async () => {
+  const CARRIED = "87".repeat(20);
+  for (const [label, options] of [
+    ["the open pull requests answer 503", { pullsStatus: 503 }],
+    ["the open pull requests answer 403", { pullsStatus: 403 }],
+    ["the carried head's lineage answers 503", { carried: CARRIED, carriedFails: 503 }],
+    ["the carried head's lineage times out", { carried: CARRIED, carriedFails: "network" }],
+    ["the carried head's commit answers 503", { carried: CARRIED, commitFails: 503 }],
+  ]) {
+    const host = recoverHost({ workerMax: 2, apart: true, ...options });
+    const claim = claimText(host);
+    const result = await recoverStart(host);
+    assert.equal(result.skipped, "RECOVER_UNREADABLE", `${label}: ${JSON.stringify(result)}`);
+    assert.equal(host.files.has(recoverFile()), false, `${label}: nothing is recorded, so a later start proves again`);
+    recoverUntouched(host, label, claim);
+  }
+});
+
+test("Landing recovery: a worker's start that finds its recovery died while landing recovers the worker and leaves the stopped claim and the record as they are", async () => {
+  // The status a recovery on worker 2 writes while it lands, read from a real run.
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const source = recoverHost({ workerMax: 2, apart: true });
+  const w2land = cardRunPaths(2, LAND_PATHS);
+  let landing = null;
+  const rename = source.fs.renameSync;
+  source.fs.renameSync = (from, to) => {
+    const result = rename(from, to);
+    if (to === statusPath(w2land) && !landing) landing = source.files.get(to).text;
+    return result;
+  };
+  assert.equal((await autoRun({ io: source.io, paths: w2land })).outcome, "LANDING_RECOVERY");
+  assert.equal(JSON.parse(landing).step, "landing");
+  // Worker 2 died there: its lock holds a dead pid, its status is that one, and
+  // the card's claim is the stopped PASS the recovery started from.
+  const { host, paths, others } = await deadRunHost();
+  const stopped = `${JSON.stringify({ ...recoverClaim(), worker: 2 })}\n`;
+  host.files.set(autoClaim(paths, REV, "SHU-301"), { text: stopped, mode: 0o600, uid: 0, gid: 0 });
+  host.files.set(statusPath(paths), { text: landing, mode: 0o600, uid: 0, gid: 0 });
+  const record = `${JSON.stringify({ card: "SHU-301", state: "claimed", worker: 2, pid: DEAD_PID })}\n`;
+  host.files.set(`${paths.stateDir}/card-recover-${PASSED}-SHU-301.json`, { text: record, mode: 0o600, uid: 0, gid: 0 });
+  const { code, output } = await main(["auto", "--worker", "2"], host.io, PATHS);
+  assert.equal(output.skipped, "RECOVERED", JSON.stringify(output));
+  assert.equal(code, 0);
+  assert.equal(host.files.has(PATHS.pause), false, "no pause");
+  assert.equal(host.files.has(paths.lock), false, "the dead recovery's lock is released");
+  assert.equal(readStatus(host.io, paths).step, "recovered");
+  assert.equal(host.files.get(autoClaim(paths, REV, "SHU-301")).text, stopped, "the stopped PASS claim is untouched");
+  assert.equal(host.files.get(`${paths.stateDir}/card-recover-${PASSED}-SHU-301.json`).text, record, "the record stays as it was: never run again");
+  for (const [file, text] of Object.entries(others)) assert.equal(host.files.get(file).text, text, file);
+});
+
+// Landing recovery across installs: a run stopped under an earlier installed
+// revision keeps its claim under that revision's name, and the start at the
+// current revision finds no claim of its own (or only one it cannot recover).
+const CARRIED_REV = "0c".repeat(20);
+const CARRIED_REV_2 = "0b".repeat(20);
+// The stopped claim moved under an earlier revision: none (or the given one) at REV.
+function carriedHost(options = {}) {
+  const host = recoverHost(options);
+  const stopped = JSON.parse(claimText(host));
+  host.files.delete(autoClaim(LAND_PATHS, REV, "SHU-301"));
+  const older = (revision, fields = {}) => {
+    const file = autoClaim(LAND_PATHS, revision, "SHU-301");
+    host.files.set(file, { text: `${JSON.stringify({ ...stopped, revision, ...fields })}\n`, mode: 0o600, uid: 0, gid: 0 });
+    return file;
+  };
+  host.olderClaim = older(CARRIED_REV, options.older ?? {});
+  host.olderText = host.files.get(host.olderClaim).text;
+  if (options.oldest) host.oldestClaim = older(CARRIED_REV_2, options.oldest);
+  if (options.current) host.files.set(autoClaim(LAND_PATHS, REV, "SHU-301"), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, ...options.current })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  host.config = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
+  return host;
+}
+
+test("Landing recovery: a passed run stopped under an earlier installed revision, with no claim at this one, is recovered once and never run again", async () => {
+  const host = carriedHost();
+  const next = await nextCard(host.io, LAND_PATHS, host.config, REV);
+  assert.equal(next.id, "SHU-301");
+  assert.equal(next.recover?.revision, CARRIED_REV, `the earlier revision's stopped claim is recovered, not a fresh run: ${JSON.stringify(next)}`);
+  const result = await recoverStart(host);
+  assert.equal(result.outcome, "LANDING_RECOVERY", JSON.stringify(result));
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(host.land.merges, 1);
+  assert.equal(host.ticks, 0, "nothing armed or built");
+  const record = recoverRecord(host);
+  assert.equal(record.state, "finished");
+  assert.equal(record.revision, CARRIED_REV, "the record names the revision the run stopped under");
+  assert.equal(record.recover_of, EPISODE);
+  assert.equal(host.files.get(host.olderClaim).text, host.olderText, "the stopped claim is kept as it was");
+  assert.equal(host.files.has(autoClaim(LAND_PATHS, REV, "SHU-301")), false, "no claim is written at this revision");
+  const again = await recoverStart(host);
+  assert.notEqual(again.outcome, "LANDING_RECOVERY", JSON.stringify(again));
+  assert.equal(host.land.merges, 1, "a second start lands nothing");
+});
+
+test("Landing recovery: a stop under an earlier revision is recovered when this revision's own claim is a start that was refused", async () => {
+  const host = carriedHost({ current: { claimed_at: "2026-11-27T10:00:00.000Z", outcome: "REFUSED", ok: false, reason: "CARD_RUN_CARD_OWNED: SHU-301 is assigned" } });
+  const current = host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text;
+  const result = await recoverStart(host);
+  assert.equal(result.outcome, "LANDING_RECOVERY", JSON.stringify(result));
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(recoverRecord(host).revision, CARRIED_REV);
+  assert.equal(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text, current, "this revision's claim is kept as it was");
+  assert.equal(host.files.get(host.olderClaim).text, host.olderText);
+});
+
+test("Landing recovery: across several earlier revisions only the newest stopped run is recovered, and with two workers it runs beside other cards", async () => {
+  const OLD_HEAD = "2".repeat(40);
+  const host = carriedHost({ workerMax: 2, oldest: { claimed_at: "2026-09-01T09:00:00.000Z", reviewed_head: OLD_HEAD, activation_id: "shu-301-run-20260901T090000Z" } });
+  const next = await nextCard(host.io, LAND_PATHS, host.config, REV);
+  assert.equal(next.recover?.revision, CARRIED_REV, JSON.stringify(next));
+  assert.equal(next.recover?.reviewed_head, PASSED);
+  const result = await recoverStart(host);
+  assert.equal(result.outcome, "LANDING_RECOVERY", JSON.stringify(result));
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(host.files.has(recoverFile(OLD_HEAD)), false, "the superseded head is never proven or recorded");
+});
+
+test("Landing recovery: a stop under an earlier revision whose recovery already ended, or with landing_repair off, starts the card as before", async () => {
+  // Off: the earlier stop is not looked at, exactly as before recovery existed.
+  const off = carriedHost({ on: false });
+  assert.deepEqual(await nextCard(off.io, LAND_PATHS, off.config, REV), { id: "SHU-301" });
+  // Its one recovery was refused: no second one.
+  const refused = carriedHost();
+  refused.files.set(recoverFile(), { text: `${JSON.stringify({ card: "SHU-301", revision: CARRIED_REV, reviewed_head: PASSED, state: "finished", land: null, refused: "RECOVER_NOT_ELIGIBLE", reason: "test" })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  assert.deepEqual(await nextCard(refused.io, LAND_PATHS, refused.config, REV), { id: "SHU-301" });
+  // A claim for another card, another repository, or naming another revision than its file proves nothing.
+  for (const [label, fields] of [["another repository", { repo: "someone/fork" }], ["a revision its file does not name", { revision: CARRIED_REV_2 }], ["a BLOCK", { outcome: "BLOCK" }]]) {
+    const host = carriedHost({ older: fields });
+    assert.deepEqual(await nextCard(host.io, LAND_PATHS, host.config, REV), { id: "SHU-301" }, label);
   }
 });

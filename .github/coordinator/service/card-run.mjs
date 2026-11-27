@@ -97,7 +97,7 @@ import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal, COORDINATOR_ENV } from "./card-prepare.mjs";
 import { landCard, readLandToken, boundedFetch, github, updatedHeadHolds, CARD_LAND_ENV, LAND_LIMITS, LAND_LOCK } from "./card-land.mjs";
 import { cardLanded } from "./card-landed.mjs";
-import { recoverCandidate, recoverStep, recoverRecordPath, claimRecovery } from "./card-recover.mjs";
+import { recoverCandidate, recoverStep, recoverRecordPath, claimRecovery, carriedRecoverStep } from "./card-recover.mjs";
 import { threadReviewer } from "./card-threads.mjs";
 import { selfInstall, RUNTIME_TEST_MODULES, INSTALL_LOCK, installLockHeld } from "./card-install.mjs";
 import { WORKSPACE_STATE_DIR, workerWorkspaceStateDir, SUPERVISOR_STORE_DIRNAME, workerUnitsFromInstalled } from "./units.mjs";
@@ -608,9 +608,17 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
     if (parallel && needs.some((need) => stoppedIds.has(need))) { stoppedIds.add(id); continue; }
     if (parallel && needs.some((need) => !landedIds.has(need))) { waiting += 1; continue; }
     const claim = autoClaim(paths, revision, id);
+    // Landing recovery (card-recover.mjs): a passed run stopped at landing
+    // under an earlier installed revision keeps its claim under that
+    // revision's name. A start at this revision with no claim of its own, or
+    // one that cannot be recovered, recovers that stop first.
+    const recoverLive = (round) => parallel && claimLive(io, paths, round);
+    const carried = () => landingRepairOn(config) ? carriedRecoverStep(io, paths, id, { repo: config.pilot_repo ?? null, revision, live: recoverLive }) : {};
     if (!io.fs.existsSync(claim)) {
+      const older = carried();
+      if (older.live) { running.push(lanePaths(config, id)); waiting += 1; continue; }
       if (parallel && running.some((files) => pathsOverlap(files, lanePaths(config, id)))) { waiting += 1; continue; }
-      return { id };
+      return older.next ?? { id };
     }
     let ran = null;
     try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { /* reported as unreadable */ }
@@ -624,8 +632,8 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
     // Landing recovery (card-recover.mjs): with landing_repair on, a passed run
     // that stopped at landing on a wait that ran out or a landing error lands
     // its own pull request once, under the box's landing.
-    const recovery = !repair && landingRepairOn(config) && recoverCandidate(ran, { id, repo: config.pilot_repo ?? null })
-      ? recoverStep(io, paths, id, ran, { live: (round) => parallel && claimLive(io, paths, round) }) : null;
+    const recovery = repair || !landingRepairOn(config) ? null
+      : recoverCandidate(ran, { id, repo: config.pilot_repo ?? null }) ? recoverStep(io, paths, id, ran, { live: recoverLive }) : carried();
     if (recovery?.live) { running.push(lanePaths(config, id)); waiting += 1; continue; }
     if (recovery?.next) {
       if (parallel && running.some((files) => pathsOverlap(lanePaths(config, id), files))) { waiting += 1; continue; }
@@ -1688,17 +1696,26 @@ function writeRecoverPause(io, paths, text) {
 // tell which is the dead run's and stops, as it does when a claim cannot be
 // read or written.
 // The claim file of the run the worker's status names, or null when the
-// status names no unfinished run. A status that cannot be read throws.
+// status names no unfinished run, or false when the run was a landing
+// recovery, which has no claim. A status that cannot be read throws.
 function deadRunClaim(io, paths) {
   let status = null;
   try { status = JSON.parse(io.fs.readFileSync(statusPath(paths), "utf8")); }
   catch (error) { if (error.code !== "ENOENT") throw Object.assign(new Error("status unreadable"), { code: error.code ?? "STATUS_UNREADABLE" }); }
+  // A landing recovery (autoRecover) wrote no claim: its status is bound to
+  // its own record, which stays unfinished and is never run again, and the
+  // card's claim it started from already has its outcome. No claim is the
+  // dead run's, so none is marked (false: known to be none; null: unknown).
+  if (status && typeof status === "object" && !["finished", "recovered"].includes(status.step) && typeof status.recovery_record === "string"
+    && /^card-recover-[0-9a-f]{40}-[A-Z][A-Z0-9]*-\d+\.json$/.test(status.recovery_record)) return false;
   return status && typeof status === "object" && !["finished", "recovered"].includes(status.step)
     && typeof status.card === "string" && /^[0-9a-f]{40}$/.test(status.revision ?? "") ? autoClaim(paths, status.revision, status.card) : null;
 }
 function markDeadClaims(io, paths, pid, at, named) {
   const marked = [];
   const failed = [];
+  // A dead landing recovery's: it wrote no claim, so there is none to mark.
+  if (named === false) return { marked, failed };
   let names = [];
   try { names = io.fs.readdirSync(paths.stateDir); }
   catch (error) {
@@ -1824,9 +1841,12 @@ async function autoRecover({ io, paths, limits, config, revision, next, skip }) 
       // The run's status, as every card run keeps it, so the outside watch reads
       // a recovery that is landing, and one that ended, like any landing run.
       const invocation = typeof io.invocation === "function" ? io.invocation() : null;
+      // Bound to the recovery's own record, not to the card's claim: a start
+      // that finds this recovery died recovers the worker and leaves the
+      // stopped claim (which already has its outcome) and the record as they are.
       status = createStatus({ io, paths, run: { run_id: claimed.round.record.activation_id,
         invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: id, kind: "card", trigger: "timer", revision,
-        ...(await statusQueue(io, paths, config)) } });
+        recovery_record: path.basename(claimed.round.file), ...(await statusQueue(io, paths, config)) } });
       status.write({ step: "landing", ticks: 0, last_tick_at: null, armed_at: null, outcome: "LANDING_RECOVERY" });
       let custody;
       try { custody = readLandToken(io, paths.landEnv); } catch { custody = { token: null, refused: "the landing token file cannot be read" }; }
@@ -1844,7 +1864,8 @@ async function autoRecover({ io, paths, limits, config, revision, next, skip }) 
     if (!holder.round) return skip("NOT_READY", `the landing recovery of ${id} stopped before its record was written (${land?.reason ?? "no reason"})`);
     // Still under the lock: the record, then the run's finished status (a
     // status that could not be set up before the landing is set up now).
-    status ??= createStatus({ io, paths, run: { run_id: holder.round.record.activation_id, invocation: null, card: id, kind: "card", trigger: "timer", revision } });
+    status ??= createStatus({ io, paths, run: { run_id: holder.round.record.activation_id, invocation: null, card: id, kind: "card", trigger: "timer", revision,
+      recovery_record: path.basename(holder.round.file) } });
     try {
       advanceRound(io, holder.round, "finished", { finished_at: io.now().toISOString(), land: land?.outcome ?? "LAND_ERROR",
         landed_head: land?.updated_head ?? land?.reviewed_head ?? null, ...(land?.updated_head ? { updated_head: land.updated_head } : {}),
