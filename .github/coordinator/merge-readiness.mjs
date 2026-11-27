@@ -336,16 +336,37 @@ function initialHoldRecord({ source, authorityRef, code, reason, snapshot = {}, 
   };
 }
 
-async function appendRecord({ record, issueId, linearToken, fetchImpl, allowedActorIds }) {
+// Linear acknowledges a comment before every read path can see it (SHU-749,
+// 27 Nov: the PREPARED record was written but the one immediate read missed
+// it). After an acknowledged create the record is only READ again, a bounded
+// number of times, never written again: a conflicting trusted record fails at
+// once, and a record still unseen after the last read fails closed as before.
+export const MERGE_ATTEMPT_READBACK_DELAYS_MS = Object.freeze([0, 1000, 2000, 4000, 8000]);
+const defaultSleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function appendRecord({ record, issueId, linearToken, fetchImpl, allowedActorIds, sleep = defaultSleep, readbackDelays = MERGE_ATTEMPT_READBACK_DELAYS_MS }) {
   const body = mergeAttemptCommentBody(record);
   const committed = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId, body }, linearToken, fetchImpl);
   if (committed?.commentCreate?.success !== true) throw new Error('merge-attempt write was not acknowledged');
-  const issue = await fetchMergeIssue({ issueId, token: linearToken, fetchImpl });
-  const parsed = parseMergeAttemptsFromComments(issue?.comments?.nodes ?? [], allowedActorIds);
-  if (parsed.conflicts.has(record.attempt_id) || !parsed.records.some(candidate => candidate.attempt_id === record.attempt_id && candidate.state === record.state && JSON.stringify(candidate) === JSON.stringify(record))) {
-    throw new Error('merge-attempt write was not durably visible');
+  for (const delay of readbackDelays) {
+    if (delay > 0) await sleep(delay);
+    let issue;
+    try { issue = await fetchMergeIssue({ issueId, token: linearToken, fetchImpl }); } catch (error) {
+      // A spent budget or quota is the whole tick's HOLD or failure, never a read to retry.
+      if (['LINEAR_RATE_LIMITED', 'LINEAR_COMMENT_CAP', 'LINEAR_QUOTA_UNCLASSIFIED'].includes(error?.code)) throw error;
+      continue;
+    }
+    if (!Array.isArray(issue?.comments?.nodes)) continue;
+    const parsed = parseMergeAttemptsFromComments(issue.comments.nodes, allowedActorIds);
+    if (parsed.conflicts.has(record.attempt_id) ||
+      parsed.records.some(candidate => candidate.attempt_id === record.attempt_id && !sameImmutable(candidate, record))) {
+      throw new Error('merge-attempt write conflicts with a durable record');
+    }
+    if (parsed.records.some(candidate => candidate.attempt_id === record.attempt_id && candidate.state === record.state && JSON.stringify(candidate) === JSON.stringify(record))) {
+      return issue;
+    }
   }
-  return issue;
+  throw new Error('merge-attempt write was not durably visible');
 }
 
 function holdFrom(prepared, code, reason, now) {
@@ -400,6 +421,8 @@ async function authorityNow({ source, card, linearToken, githubToken, fetchImpl,
 export async function consumeMergeReadiness({
   receipts = [], issues = [], linearToken = '', githubToken = '', config = {}, env = {}, fetchImpl = fetch,
   stdout = () => {}, now = () => new Date(),
+  // Injected in tests; the merge-attempt readback waits between its reads.
+  sleep = defaultSleep,
   // Opt-in (the card-run landing passes true): every reported check, not only
   // the required ones, must be green at both pre-merge authority re-fetches.
   requireAllChecks = false,
@@ -450,14 +473,14 @@ export async function consumeMergeReadiness({
     if (!authorityCheck.ok) {
       const held = existing ? holdFrom(existing, authorityCheck.code, authorityCheck.reason, now()) : initialHoldRecord({ source, authorityRef: authority.authority_ref,
         code: authorityCheck.code, reason: authorityCheck.reason, snapshot: authorityCheck.snapshot, now: now(), head });
-      await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });
+      await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep });
       writes++;
       stdout(`merge-readiness: ${source.issue_id} HOLD=${authorityCheck.code} — ${authorityCheck.reason}`);
       continue;
     }
     const initialBinding = bindingHold(existing, authorityCheck.snapshot, now());
     if (initialBinding) {
-      await appendRecord({ record: initialBinding, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+      await appendRecord({ record: initialBinding, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep }); writes++;
       continue;
     }
     if (authorityCheck.snapshot.merged) {
@@ -465,7 +488,7 @@ export async function consumeMergeReadiness({
       const recovered = authorityCheck.snapshot.landed_tree_sha !== recoveredBase.approved_tree_sha
         ? holdFrom(recoveredBase, 'TREE_MISMATCH', 'landed squash tree does not match the approved head tree', now())
         : completedFrom(recoveredBase, authorityCheck.snapshot, now());
-      await appendRecord({ record: recovered, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });
+      await appendRecord({ record: recovered, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep });
       writes++;
       stdout(`merge-readiness: ${source.issue_id} ${recovered.state} at ${head}`);
       continue;
@@ -473,7 +496,7 @@ export async function consumeMergeReadiness({
 
     if (!existing) {
       existing = makeRecord({ source, snapshot: authorityCheck.snapshot, authorityRef: authority.authority_ref, now: now(), head });
-      await appendRecord({ record: existing, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });
+      await appendRecord({ record: existing, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep });
       writes++;
     }
 
@@ -482,7 +505,7 @@ export async function consumeMergeReadiness({
     authorityCheck = await authorityNow({ source, card, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy, head });
     if (!authorityCheck.ok) {
       const held = holdFrom(existing, authorityCheck.code, authorityCheck.reason, now());
-      await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });
+      await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep });
       writes++;
       stdout(`merge-readiness: ${source.issue_id} HOLD=${held.hold_code} — ${held.reason}`);
       continue;
@@ -490,21 +513,21 @@ export async function consumeMergeReadiness({
     const snapshot = authorityCheck.snapshot;
     const changedBinding = bindingHold(existing, snapshot, now());
     if (changedBinding) {
-      await appendRecord({ record: changedBinding, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+      await appendRecord({ record: changedBinding, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep }); writes++;
       continue;
     }
     if (snapshot.merged) {
       const recovered = snapshot.landed_tree_sha !== existing.approved_tree_sha
         ? holdFrom(existing, 'TREE_MISMATCH', 'landed squash tree does not match the approved head tree', now())
         : completedFrom(existing, snapshot, now());
-      await appendRecord({ record: recovered, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+      await appendRecord({ record: recovered, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep }); writes++;
       stdout(`merge-readiness: ${source.issue_id} ${recovered.state} at ${existing.approved_head_sha}`);
       continue;
     }
     if (snapshot.base_sha !== existing.base_sha || snapshot.tree_sha !== existing.approved_tree_sha) {
       const held = holdFrom(existing, snapshot.base_sha !== existing.base_sha ? 'BASE_ADVANCED' : 'TREE_MISMATCH',
         'pre-merge object bindings changed after the durable merge intent', now());
-      await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+      await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep }); writes++;
       continue;
     }
 
@@ -513,7 +536,7 @@ export async function consumeMergeReadiness({
       try { guard = await beforeMerge(); } catch { guard = null; }
       if (guard?.ok !== true) {
         const held = holdFrom(existing, 'BLOCKING_REVIEW_THREAD', 'the landing\'s last review thread check failed right before the merge', now());
-        await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+        await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep }); writes++;
         stdout(`merge-readiness: ${source.issue_id} HOLD=${held.hold_code} — ${held.reason}`);
         continue;
       }
@@ -531,23 +554,23 @@ export async function consumeMergeReadiness({
     if (!recovered.ok || !recovered.merged) {
       const held = holdFrom(existing, mergeResponse?.ok === false && mergeResponse?.status === 409 ? 'STALE_HEAD' : 'AMBIGUOUS_MERGE_RESPONSE',
         'conditional merge did not produce a uniquely verifiable landed pull request', now());
-      await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+      await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep }); writes++;
       stdout(`merge-readiness: ${source.issue_id} HOLD=${held.hold_code} — ${held.reason}`);
       continue;
     }
     const recoveredBinding = bindingHold(existing, recovered, now());
     if (recoveredBinding) {
-      await appendRecord({ record: recoveredBinding, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+      await appendRecord({ record: recoveredBinding, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep }); writes++;
       continue;
     }
     if (recovered.landed_tree_sha !== existing.approved_tree_sha) {
       const held = holdFrom(existing, 'TREE_MISMATCH', 'landed squash tree does not match the approved head tree', now());
-      await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+      await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep }); writes++;
       stdout(`merge-readiness: ${source.issue_id} HOLD=TREE_MISMATCH`);
       continue;
     }
     const completed = completedFrom(existing, recovered, now());
-    await appendRecord({ record: completed, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });
+    await appendRecord({ record: completed, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds, sleep });
     writes++; merges++;
     stdout(`merge-readiness: ${source.issue_id} COMPLETED head=${completed.approved_head_sha} merge=${completed.merge_commit_sha} tree=${completed.landed_tree_sha}`);
   }

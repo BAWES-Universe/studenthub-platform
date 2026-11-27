@@ -562,6 +562,8 @@ export const RUN_OUTCOME_TEXT = Object.freeze({
   // 2026-11-14: a card worker's run whose process died; its next start reverted it.
   DIED: "the run's process died before it finished; the worker's next start reverted it and released its lock",
   REPAIR_TEST_WEAKENED: "the repair skipped, removed or loosened a test, or changed how tests run; nothing was handed off or merged",
+  // Landing recovery (card-recover.mjs)
+  LANDING_RECOVERY: "a passed card whose landing stopped was landed again, once, at a head proven to hold exactly the reviewed change",
 });
 
 // How a held merge recovers: the attempt's HOLD is final, so only a new
@@ -612,6 +614,10 @@ export function renderRunReport(result) {
   if (result.repair) {
     lines.push(`Landing repair of pull request #${result.repair.pr}: one revise of ${result.repair.failed_head} after episode ${plainReason(result.repair.repair_of)}, from ${result.repair.check_runs?.length ?? 0} failing check run(s).`);
   }
+  // Landing recovery: which pull request, from which stopped landing.
+  if (result.recover) {
+    lines.push(`Landing recovery of pull request #${result.recover.pr}: the PASS of episode ${plainReason(result.recover.recover_of)} at ${result.recover.reviewed_head}, whose landing stopped (${plainReason(result.recover.stopped_land)}), landed from ${result.recover.head}.`);
+  }
   if (result.reason) lines.push(`Reason: ${plainReason(result.reason)}`);
   // Self-heal: a refused start whose run was given back says so.
   if (Number.isInteger(result.retry?.attempt)) {
@@ -626,6 +632,11 @@ export function renderRunReport(result) {
       : `${branch.branch} was already at ${branch.base ? `main at ${branch.base}` : "the revision"}`) : null,
   ].filter(Boolean);
   if (before.length) lines.push(`Before arming: ${before.join("; ")}.`);
+  if (result.outcome === "LANDING_RECOVERY") {
+    if (result.land) lines.push(...landingLines(result.land));
+    lines.push("Nothing was armed: a landing recovery only lands the pull request the review passed.");
+    return lines.join("\n");
+  }
   if (result.outcome === "REPAIR_INTERRUPTED") {
     lines.push("Nothing was armed by this start; the interrupted repair is never run again at this revision.");
     return lines.join("\n");

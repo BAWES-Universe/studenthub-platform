@@ -941,6 +941,13 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   const repo = config?.pilot_repo;
   // Self-repair B2: the repair this landing finishes, or null.
   const repair = plan.repair ?? null;
+  // Landing recovery (card-recover.mjs): the stopped landing this one
+  // finishes, or null. It lands the run's own pull request, read by number at
+  // the head its recovery proved, as a landing with more than one worker
+  // does: brought up to main by the exact-blobs rule and merged under the
+  // host-wide landing lock, so it is serialised with every final landing.
+  const recover = plan.recover ?? null;
+  if (recover) parallel = true;
   let repairHeld = null;
   const activationId = plan.record.activation_id;
   const paused = () => Boolean(pausePath) && io.fs.existsSync(pausePath);
@@ -980,14 +987,22 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     head = terminal.target_sha;
 
     const opened = repair ? await repairPull(gh, { repo, branch, number: repair.pr, head, seen: () => { reviewedHead = head; } })
-      : await findOrOpenPull(gh, { repo, branch, card, title: issue.title, activationId, head });
+      : recover ? await repairPull(gh, { repo, branch, number: recover.pr, head: recover.head, seen: () => {} })
+        : await findOrOpenPull(gh, { repo, branch, card, title: issue.title, activationId, head });
     if (repair) gh.repairBinding = { number: repair.pr };
     pr = opened.pr;
-    if (!headMatches(pr, { repo, branch, head })) {
-      stop("LAND_HEAD_MISMATCH", `pull request #${pr?.number} is at ${pr?.head?.sha ?? "an unknown head"}, not the passed ${head}`);
+    // A recovery starts from the head its proof read: the passed head, or a
+    // plain merge of main into it that kept the passed blobs.
+    const startHead = recover ? recover.head : head;
+    if (!headMatches(pr, { repo, branch, head: startHead })) {
+      stop("LAND_HEAD_MISMATCH", `pull request #${pr?.number} is at ${pr?.head?.sha ?? "an unknown head"}, not the ${recover ? "proven" : "passed"} ${startHead}`);
+    }
+    if (recover && startHead !== head) {
+      const why = await updatedHeadHolds(gh, { repo, passed: head, head: startHead });
+      if (why) stop("LAND_HEAD_MISMATCH", `pull request #${pr.number} at ${startHead} does not hold exactly the change reviewed at ${head}: ${why}`);
     }
     reviewedHead = head;
-    landHead = head;
+    landHead = startHead;
     const prFields = { pr: pr.number, opened: opened.opened, head, reviewed_head: head };
     const landed = () => ({ ...prFields, ...(landHead !== head ? { updated_head: landHead } : {}) });
     // Self-repair B2: the repaired head must not have weakened a test.
@@ -1110,6 +1125,15 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
 
     if (paused()) return result("LAND_PAUSED", { ...landed(), reason: `${pausePath} exists; the pull request stays open and unmerged` });
     if (policy || reviewed?.size) await guardThreads(gh, { repo, number: pr.number }, settled, policy, reviewed ?? undefined);
+
+    // Landing recovery: a merge attempt the stopped landing (or anything
+    // else) already recorded for this PASS at the head being landed is never
+    // resumed; a recovery only ever writes a new attempt, for a new head.
+    if (recover) {
+      const earlier = parseMergeAttemptsFromComments(await readCommentThread(), actorIds).records
+        .find((r) => r.source_attempt_id === terminal.attempt_id && r.approved_head_sha === landHead);
+      if (earlier) stop("LAND_ERROR", `a merge attempt (${earlier.attempt_id}, ${earlier.state}) is already recorded for this PASS at ${landHead}; a landing recovery never resumes one`);
+    }
 
     // The handoff: the terminal PASS plus merge-readiness, the very record the
     // coordinator's own consumer writes, through its writer.
