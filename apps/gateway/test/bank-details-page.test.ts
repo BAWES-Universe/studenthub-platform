@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { test } from "node:test";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
@@ -21,6 +22,8 @@ const OTHER_BANK = "4444abcd-4444-4444-8444-44444444abcd";
 const IBAN = "KW81CBKU0000000000001234560101";
 const NEW_IBAN = IBAN;
 const CHOICES = [{ id: BANK, name: "Synthetic Bank <One>" }, { id: OTHER_BANK, name: "Second Synthetic Bank" }];
+
+interface Sweep { run: () => void; callback: () => void; delayMs: number; cancelled: boolean }
 
 function rig(options: { candidate?: boolean; stored?: string | null } = {}) {
   let value: string | null = options.stored ?? null;
@@ -48,8 +51,20 @@ function rig(options: { candidate?: boolean; stored?: string | null } = {}) {
   const sessions = { get: async (id: string) => id === SESSION || id === OTHER_SESSION ? { id, personId: PERSON } : undefined };
   let at = Date.now();
   const clock = { now: () => new Date(at) };
-  const service = createBankDetails({ sessions: sessions as never, store, banks, secret: SECRET, clock, choices: async () => CHOICES });
-  return { service, value: () => value, set: (next: string | null) => { value = next; }, advance: (ms: number) => { at += ms; } };
+  // The expiry sweep is driven by hand: the test decides when "later" is.
+  const sweeps: Sweep[] = [];
+  const sweep = (run: () => void, delayMs: number) => {
+    // A timer that has fired is spent, like a cancelled one.
+    const entry: Sweep = { run: () => { entry.cancelled = true; run(); }, callback: run, delayMs, cancelled: false };
+    sweeps.push(entry);
+    return { cancel: () => { entry.cancelled = true; } };
+  };
+  const make = () => createBankDetails({ sessions: sessions as never, store, banks, secret: SECRET, clock, sweep, choices: async () => CHOICES });
+  const service = make();
+  return {
+    service, make, sweeps, value: () => value, set: (next: string | null) => { value = next; }, advance: (ms: number) => { at += ms; },
+    pending: () => sweeps.filter((entry) => !entry.cancelled),
+  };
 }
 
 interface Page { readonly handled: boolean; readonly status: number; readonly title: string; readonly html: string; readonly headers: Record<string, string>; readonly raw: string }
@@ -374,4 +389,77 @@ test("C15_BANK_PAGE_REVIEW_REF a review is bound to its session, expires with it
   const fresh = hiddenFields((await call(w.service, "/profile/bank/review", form)).html);
   assert.equal((await call(w.service, "/profile/bank/confirm", fresh)).status, 303);
   assert.equal(w.value(), saved);
+});
+
+test("C15_BANK_PAGE_IDLE expired reviews leave memory with no further request, through one bounded timer that carries no review data", async () => {
+  const x = rig({ stored: stored() });
+  const form = { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person Two" };
+  const review = hiddenFields((await call(x.service, "/profile/bank/review", form)).html);
+  assert.equal(x.service.openReviews(), 1);
+  assert.equal(x.pending().length, 1, "one sweep is armed");
+  const [armed] = x.pending();
+  assert.ok(armed!.delayMs >= 1000 && armed!.delayMs <= 24 * 60 * 60 * 1000, `bounded delay ${armed!.delayMs}`);
+  assert.equal(armed!.callback.length, 0, "the sweep takes no arguments");
+  for (const raw of [IBAN, "Synthetic Person Two", review.review!]) assert.equal(armed!.callback.toString().includes(raw), false);
+
+  // A second session's review keeps one timer, not two.
+  await call(x.service, "/profile/bank/review", form, { cookie: `__Host-studenthub_session=${OTHER_SESSION}` });
+  assert.equal(x.service.openReviews(), 2);
+  assert.equal(x.pending().length, 1, "C15_BANK_PAGE_IDLE at most one timer");
+
+  // Early firing removes nothing and re-arms; once past expiry, firing alone empties the store.
+  x.advance(armed!.delayMs - 10);
+  x.pending()[0]!.run();
+  assert.equal(x.service.openReviews(), 2, "nothing expires early");
+  assert.equal(x.pending().length, 1);
+  assert.equal(x.pending()[0]!.delayMs, 1000, "C15_BANK_PAGE_IDLE the sweep never re-arms sooner than a second");
+  x.advance(24 * 60 * 60 * 1000);
+  x.pending()[0]!.run();
+  assert.equal(x.service.openReviews(), 0, "C15_BANK_PAGE_IDLE idle expiry");
+  assert.equal(x.pending().length, 0, "no timer once nothing is held");
+  assert.equal((await call(x.service, "/profile/bank/confirm", review)).status, 409);
+  assert.equal(x.value(), stored());
+
+  // Using a review clears its timer too.
+  const used = hiddenFields((await call(x.service, "/profile/bank/review", form)).html);
+  assert.equal((await call(x.service, "/profile/bank/confirm", used)).status, 303);
+  assert.equal(x.service.openReviews(), 0);
+  assert.equal(x.pending().length, 0);
+
+  // The real scheduler is an unref'd timer, so it never holds the process open.
+  const real = createBankDetails({ sessions: { get: async () => ({ id: SESSION, personId: PERSON }) } as never,
+    store: { forPrincipal: () => ({ ownedRecord: () => bankDetailsRecordRef(PERSON), readField: () => null, commit: () => ({ ok: true }) }), readReceipt: async () => null } as never,
+    banks: (() => { const b = new InMemoryFinanceReferenceResolver(); b.set("bank", BANK); return b; })(), secret: SECRET });
+  assert.equal((await real.stageReview(SESSION, { bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" })).status, 200);
+  assert.equal(real.openReviews(), 1);
+});
+
+test("C15_BANK_PAGE_TOPOLOGY one gateway process: preview and confirm meet; another process or a restart asks for a fresh review and writes nothing", async () => {
+  // The deployment runs a single gateway process, so the production preview → confirm path meets one review store.
+  const compose = await readFile(new URL("../../../../deploy/coolify/compose.yaml", import.meta.url), "utf8");
+  const entry = await readFile(new URL("../../../../deploy/coolify/gateway-entrypoint.sh", import.meta.url), "utf8");
+  assert.equal((compose.match(/^ {2}gateway:$/gm) ?? []).length, 1, "one gateway service");
+  assert.equal(/replicas|scale:|mode: global/.test(compose), false, "C15_BANK_PAGE_TOPOLOGY no scaled gateway: move staged reviews to shared storage first");
+  assert.match(entry, /^exec node dist\/apps\/gateway\/src\/index\.js$/m, "one node process");
+  assert.equal(/node:cluster|worker_threads/.test(await readFile(new URL("../../../../apps/gateway/src/index.ts", import.meta.url), "utf8")), false);
+
+  // Another process (or the same one after a restart): its own empty store refuses the review as expired.
+  const x = rig({ stored: stored() });
+  const form = { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person Two" };
+  const review = hiddenFields((await call(x.service, "/profile/bank/review", form)).html);
+  const restarted = x.make();
+  const refused = await call(restarted, "/profile/bank/confirm", review);
+  assert.equal(refused.status, 409);
+  assert.ok(refused.html.includes("This review has expired"), refused.html);
+  assert.ok(refused.html.includes('href="/profile/bank"'), "the way back is a fresh review");
+  assert.equal(x.value(), stored(), "nothing written");
+  // Re-review there works, and the signed token and receipt checks still decide the save.
+  const fresh = hiddenFields((await call(restarted, "/profile/bank/review", form)).html);
+  const done = await call(restarted, "/profile/bank/confirm", fresh);
+  assert.equal(done.status, 303);
+  assert.equal(x.value(), bankDetailsValue(form));
+  assert.ok((await call(restarted, done.headers.location!, undefined)).html.includes("were saved"));
+  // The old process's review is now stale: its token's expected-before no longer matches.
+  assert.equal((await call(x.service, "/profile/bank/confirm", review)).status, 409);
+  assert.equal(x.value(), bankDetailsValue(form));
 });

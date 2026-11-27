@@ -47,7 +47,21 @@ export interface BankDetailsService {
   stageReview(sessionId: string | undefined, body: unknown): Promise<BankDetailsResult>;
   /** Confirms a staged review: same session and person, before it expires, once. */
   confirmReview(sessionId: string | undefined, reviewRef: string): Promise<BankDetailsResult>;
+  /** How many staged reviews are held now: a count only, for tests and health checks. */
+  openReviews(): number;
 }
+
+/** Runs the expiry sweep later; returns a way to cancel it. Never given review data. */
+export type ReviewSweepScheduler = (run: () => void, delayMs: number) => { cancel(): void };
+
+const unrefTimer: ReviewSweepScheduler = (run, delayMs) => {
+  const timer = setTimeout(run, delayMs);
+  timer.unref();
+  return { cancel: () => clearTimeout(timer) };
+};
+
+/** The sweep never waits less than this, so a stream of reviews cannot spin it. */
+const MIN_SWEEP_MS = 1000;
 
 /** Staged reviews held at once; the oldest goes first past this. */
 const MAX_REVIEWS = 1000;
@@ -122,6 +136,7 @@ export function createBankDetails(ports: {
   readonly secret: SafeWriteSecret;
   readonly clock?: SafeWriteClock;
   readonly choices?: () => Promise<readonly BankChoice[]>;
+  readonly sweep?: ReviewSweepScheduler;
 }): BankDetailsService {
   const check = catalogueBankDetailsCheck(ports.banks);
   const writer = (principalId: string) => buildBankDetailsWrite({
@@ -139,14 +154,31 @@ export function createBankDetails(ports: {
     return session?.personId;
   }
 
-  // The page's staged reviews. They live in this process only: a review that is
-  // not found (expired, already used, another session, a restart) is refused and
-  // the person reviews again; nothing is ever written from a missing review.
+  // The page's staged reviews. They live in this gateway process only. The
+  // deployment runs one gateway process (deploy/coolify/compose.yaml, one
+  // `gateway` service, no replicas; gateway-entrypoint.sh execs one node), so
+  // preview and confirm reach the same map. A review that is not found (expired,
+  // already used, another session, a restart or another process) is refused as
+  // expired and the person reviews again; nothing is ever written from a missing
+  // review. If the gateway is ever scaled out, this map must move to shared storage
+  // first: C15_BANK_PAGE_TOPOLOGY fails when the compose file changes that.
   const reviews = new Map<string, StagedReview>();
   const now = () => (ports.clock ? ports.clock.now() : new Date()).getTime();
+  const schedule = ports.sweep ?? unrefTimer;
+  let sweep: { cancel(): void } | undefined;
   function prune(): void {
     const at = now();
     for (const [ref, review] of reviews) if (review.expiresAt <= at) reviews.delete(ref);
+  }
+  // One timer at most, set for the earliest expiry: expired reviews leave memory
+  // even when no request follows. The callback carries no review data.
+  function arm(): void {
+    sweep?.cancel();
+    sweep = undefined;
+    if (reviews.size === 0) return;
+    let earliest = Infinity;
+    for (const review of reviews.values()) earliest = Math.min(earliest, review.expiresAt);
+    sweep = schedule(() => { sweep = undefined; prune(); arm(); }, Math.max(MIN_SWEEP_MS, earliest - now()));
   }
 
   const service: BankDetailsService = {
@@ -219,6 +251,7 @@ export function createBankDetails(ports: {
         sessionDigest, principalId, token: preview.token, expiresAt: Date.parse(preview.token.expiresAt),
         body: Object.fromEntries(DETAIL_KEYS.map((key) => [key, (body as Record<string, unknown>)[key]])),
       });
+      arm();
       return { status: 200, body: { before: preview.before, after: preview.after, reviewRef } };
     },
 
@@ -229,8 +262,13 @@ export function createBankDetails(ports: {
       // Another session's reference is not found, and stays usable by its own session.
       if (!review || review.sessionDigest !== digest(sessionId!) || review.principalId !== principalId) return refusal("token_not_issued");
       reviews.delete(reviewRef);
+      arm();
       if (now() >= review.expiresAt) return refusal("token_expired");
       return service.confirm(sessionId, { ...review.body, token: review.token });
+    },
+
+    openReviews() {
+      return reviews.size;
     },
   };
   return service;
