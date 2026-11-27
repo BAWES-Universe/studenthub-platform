@@ -192,7 +192,7 @@ test("G02_STORE_CONFIRM a preview shows the store change, the confirm applies it
   assert.equal(preview.status, 200);
   const html = await preview.text();
   assert.match(html, /<dt>Person<\/dt><dd>Dana Candidate<\/dd>.*<dt>Store<\/dt><dd>Salmiya &lt;Branch&gt;<\/dd>.*<dt>Company<\/dt><dd>Acme &lt;Trading&gt;<\/dd>/s);
-  assert.match(html, /Dana Candidate will be able to see and run Salmiya &lt;Branch&gt;\. This covers this store only\. Their other access is not changed\./);
+  assert.match(html, /This gives Dana Candidate store manager access to Salmiya &lt;Branch&gt;\. It covers this store only\. Their other access is not changed\./);
   assert.match(html, /<form method="post" action="\/admin\/access\/store-confirm">/);
   assert.equal(events.length, 0, "a preview writes nothing");
   const fields = hiddenFields(html);
@@ -222,7 +222,7 @@ test("G02_STORE_CONFIRM a preview shows the store change, the confirm applies it
   assert.doesNotMatch(again, /store-confirm/);
 
   const revoke = await (await http.post("/admin/access/store-preview", "admin-1", { ...storeForm, action: "revoke", reason: "Moved to Hawally" })).text();
-  assert.match(revoke, /Dana Candidate will no longer be able to see or run Salmiya &lt;Branch&gt;\./);
+  assert.match(revoke, /This takes away Dana Candidate’s store manager access to Salmiya &lt;Branch&gt;\. Access they have through a role at Acme &lt;Trading&gt; is not changed\./);
   const done = await http.post("/admin/access/store-confirm", "admin-1", hiddenFields(revoke));
   assert.equal(done.headers.get("location"), "/admin/access/people/candidate-1?done=store-revoked");
   assert.ok(!managers.has(`candidate-1\u0000${SALMIYA}`));

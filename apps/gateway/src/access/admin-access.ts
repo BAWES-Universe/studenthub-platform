@@ -1,3 +1,6 @@
+  const effect = request.action === "grant"
+    ? `This gives ${e(name)} store manager access to ${e(store.name)}. It covers this store only. Their other access is not changed.`
+    : `This takes away ${e(name)}’s store manager access to ${e(store.name)}. Access they have through a role at ${e(store.orgName)} is not changed.`;
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@studenthub/login-contract";
@@ -451,7 +454,7 @@ export function renderStoreGrantReview(input: {
   const effect = request.action === "grant"
     ? `${e(name)} will be able to see and run ${e(store.name)}. This covers this store only. Their other access is not changed.`
     : `${e(name)} will no longer be able to see or run ${e(store.name)}. Their other access is not changed.`;
-  return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>The change applies on ${e(name)}’s next request. Confirm within 15 minutes.</p>${facts}<section class="grant-effect"><h2>What changes for them</h2><p>${effect}</p></section><form method="post" action="/admin/access/store-confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
+  return layout(`<div class="profile-heading"><h1>Review: ${e(verb.toLowerCase())}<span class="accent">.</span></h1></div><p>Nothing changes until you confirm. Confirm within 15 minutes.</p>${facts}<section class="grant-effect"><h2>What changes for them</h2><p>${effect}</p></section><form method="post" action="/admin/access/store-confirm">${hidden}<button class="button primary" type="submit">${e(verb)}</button></form><a class="text-link" href="${e(back)}">Cancel</a>`, "access");
 }
 
 export function renderStoreGrantRefusal(reason: StoreGrantRefusal | "invalid_request" | "unavailable", back: string): string {
