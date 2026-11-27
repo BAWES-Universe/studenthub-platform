@@ -1332,6 +1332,13 @@
     "A-28": {
       "lane": "platform",
       "subject": "`/platform/operations`",
+      "served": [
+        {
+          "route": "/platform/operations",
+          "test": "apps/gateway/test/platform-operations.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",
