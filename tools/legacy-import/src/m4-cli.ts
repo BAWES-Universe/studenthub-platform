@@ -101,7 +101,7 @@ import pg from "pg";
 import { CIVIL_KEY_CHECK, civilKeyOpens, linkReportCounts, readLinkReport, type LinkReport, PostgresCatalogueImportStore, ContactPromotionError, PostgresContactPromotion, type ContactPromotionResult, PostgresContactImportStore, PostgresOrganizationImportStore, PostgresPersonContactImportStore, PostgresPersonSnapshotImportStore, PostgresStoreImportStore, personContactDigest } from "@studenthub/db/import";
 import { CivilIdVault, PROFILE_PARITY_REVISION } from "@studenthub/profile";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
-import { copyCounts, copyLegacyDocuments, M2_DOCUMENT_COPY_REVISION, M2CopyError, selectApproved, type CopyRule, type DocumentStagingStore, type StagingObjects } from "./m2-copy.js";
+import { copyCounts, copyLegacyDocuments, M2_DOCUMENT_COPY_REVISION, M2CopyError, selectApproved, type CopyContinuation, type CopyRule, type DocumentStagingStore, type StagingObjects } from "./m2-copy.js";
 import { postgresDocumentStaging, STAGING_BUCKET, stagingBucket } from "./m2-staging.js";
 import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, GENERATION, lockPathFrom, MIRROR_GENERATION_TABLE, parseDatabaseUrl } from "./refresh.js";
 import { refreshIdentity } from "./twin/cli.js";
@@ -227,16 +227,24 @@ export interface M4Receipt {
 export interface DocCopyCounts {
   /** Approved documents in the accepted doccheck. */
   readonly approved: number;
+  /** Documents this run handled, and the chain so far (earlier runs it continued included). */
   readonly handled: number;
+  readonly chainHandled: number;
+  /** Bytes this run read against M4_DOCCOPY_MAX_BYTES. */
   readonly bytes: number;
+  /** Rule counts over the chain. */
   readonly rules: Readonly<Record<CopyRule, number>>;
-  /** documentSetDigest over the documents verified in this run; equals the accepted set only when all verified. */
+  /** The doccopy invocation this run continued, if any. */
+  readonly continued?: string;
+  /** documentSetDigest over the documents the chain verified; equals the accepted set only when all verified. */
   readonly staged: string;
   /** Whether staged equals the accepted doccheck's documents.set. */
   readonly matchesAccepted: boolean;
   readonly complete: boolean;
-  /** Objects under this generation that no approved document accounts for (listed in the private report). */
+  /** Objects under this generation that no approved document accounts for ((legacy id, kind) pairs in the private report). */
   readonly orphans: number;
+  /** True when the orphan scan stopped at its page bound before the last page. */
+  readonly orphansTruncated: boolean;
 }
 
 export interface DocCheckCounts {
@@ -1095,9 +1103,13 @@ function envBound(value: string | undefined, fallback: number): number | null {
  *   refresh's count (`ownershipIncomplete`, `staleCount`), and an approved subset the fresh plan
  *   names exactly (`selection`).
  * The refresh lock is held from selection through the last source read. The run is bounded by
- * M4_DOCCOPY_MAX_DOCS (200), M4_DOCCOPY_MAX_BYTES (256 MiB) and M4_DOCCOPY_MAX_MS (15 min).
- * Exit 0 when complete and the staged set equals the accepted set; 3 when incomplete or any
- * document did not verify; 2 refused before any object read; 1 failed.
+ * M4_DOCCOPY_MAX_DOCS (200), M4_DOCCOPY_MAX_BYTES (256 MiB), M4_DOCCOPY_MAX_OBJECT_BYTES (10 MiB, hard
+ * per object, at most MAX_BYTES), M4_DOCCOPY_MAX_MS (15 min), M4_DOCCOPY_OP_TIMEOUT_MS (60 s per
+ * storage call) and M4_DOCCOPY_MAX_LIST_PAGES (100 pages of 1000 keys for the orphan scan).
+ * M4_DOCCOPY_CONTINUE names an earlier `incomplete` doccopy of the same accepted doccheck, build and
+ * generation; this run starts where it stopped (`continuation`).
+ * Exit 0 when the chain is complete, the staged set equals the accepted set and the orphan scan was
+ * not truncated; 3 otherwise (continue with this invocation); 2 refused; 1 failed.
  */
 async function docCopy(deps: CliDeps, revision: string,
   publish: (status: M4Receipt["status"], code?: string) => void, reportPath: string,
@@ -1120,8 +1132,9 @@ async function docCopy(deps: CliDeps, revision: string,
   const built = deps.provenance();
   if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
   const limits = { maxDocuments: envBound(env.M4_DOCCOPY_MAX_DOCS, 200), maxBytes: envBound(env.M4_DOCCOPY_MAX_BYTES, 256 * 1024 * 1024),
-    maxMs: envBound(env.M4_DOCCOPY_MAX_MS, 15 * 60 * 1000) };
-  if (limits.maxDocuments === null || limits.maxBytes === null || limits.maxMs === null) return refuse("bounds");
+    maxObjectBytes: envBound(env.M4_DOCCOPY_MAX_OBJECT_BYTES, 10 * 1024 * 1024), maxMs: envBound(env.M4_DOCCOPY_MAX_MS, 15 * 60 * 1000),
+    opTimeoutMs: envBound(env.M4_DOCCOPY_OP_TIMEOUT_MS, 60 * 1000), maxListPages: envBound(env.M4_DOCCOPY_MAX_LIST_PAGES, 100) };
+  if (Object.values(limits).some((n) => n === null) || limits.maxObjectBytes! > limits.maxBytes!) return refuse("bounds");
 
   // The accepted doccheck, by its own receipt and private report.
   const accepted = env.M4_ACCEPTED_DOCCHECK ?? "";
@@ -1146,6 +1159,22 @@ async function docCopy(deps: CliDeps, revision: string,
   if (recomputed !== acceptedSet) return refuse("acceptedDoccheck");
   const base = { revision, artifact, target: targetId, acceptedDoccheck: accepted, mirror: { generation } };
   bind(base);
+
+  // An earlier incomplete run of the same chain to continue from; the copy core checks the rest.
+  const continued = env.M4_DOCCOPY_CONTINUE || undefined;
+  let continuation: CopyContinuation | undefined;
+  if (continued !== undefined) {
+    let prior: Partial<M4Receipt> | undefined, priorReport: Record<string, unknown> | undefined;
+    try {
+      prior = JSON.parse(readFileSync(path.join(dir, `${continued}.doccopy.receipt.json`), "utf8")) as Partial<M4Receipt>;
+      priorReport = JSON.parse(readFileSync(path.join(dir, `${continued}.doccopy.report.json`), "utf8")) as Record<string, unknown>;
+    } catch { prior = undefined; }
+    if (!UUID.test(continued) || continued === env.M4_INVOCATION || !prior || !priorReport || prior.kind !== "doccopy" || prior.invocation !== continued
+      || prior.status !== "incomplete" || !prior.copy || prior.copy.complete || prior.acceptedDoccheck !== accepted || prior.revision !== revision || prior.artifact !== artifact
+      || prior.mirror?.generation !== generation || priorReport.invocation !== continued || priorReport.acceptedDoccheck !== accepted
+      || !priorReport.continuation || typeof priorReport.continuation !== "object") return refuse("continuation");
+    continuation = priorReport.continuation as CopyContinuation;
+  }
 
   // The staging side: its bucket, distinct from legacy's and the live one, and the staging database.
   const bucketName = env.M4_STAGING_DOCUMENT_BUCKET ?? "";
@@ -1187,23 +1216,28 @@ async function docCopy(deps: CliDeps, revision: string,
   if (!selection) return refuse("selection");
 
   publish("started");
-  const started = Date.now();
   let result;
   try {
-    result = await copyLegacyDocuments(selection, legacy, objects, target.documentStaging(), generation,
-      { doccheck: accepted, copy: env.M4_INVOCATION! }, { maxDocuments: limits.maxDocuments, maxBytes: limits.maxBytes, maxMs: limits.maxMs, now: () => Date.now() - started });
-  } catch (error) { return fail(error instanceof M2CopyError ? error.code : "m2.copy"); }
+    result = await copyLegacyDocuments(selection, { legacy, objects, store: target.documentStaging() },
+      { generation, build: artifact, invocations: { doccheck: accepted, copy: env.M4_INVOCATION! } },
+      { maxDocuments: limits.maxDocuments!, maxBytes: limits.maxBytes!, maxObjectBytes: limits.maxObjectBytes!, maxMs: limits.maxMs!,
+        opTimeoutMs: limits.opTimeoutMs!, maxListPages: limits.maxListPages!, listPageSize: 1000, now: () => Date.now() }, continuation);
+  } catch (error) {
+    if (error instanceof M2CopyError && error.code === "m2.copy.continuation") return refuse("continuation");
+    return fail(error instanceof M2CopyError ? error.code : "m2.copy");
+  }
   if (!await target.stillHeld()) return fail("m4.writerLost");
 
   const rules = copyCounts(result);
   const staged = documentSetDigest(result.verified);
-  const counts: DocCopyCounts = { approved: selection.length, handled: result.outcomes.length, bytes: result.bytes, rules, staged,
-    matchesAccepted: staged === acceptedSet, complete: result.complete, orphans: result.orphans.length };
+  const counts: DocCopyCounts = { approved: selection.length, handled: result.outcomes.length, chainHandled: result.continuation.next, bytes: result.bytes, rules,
+    ...(continued ? { continued } : {}), staged, matchesAccepted: staged === acceptedSet, complete: result.complete,
+    orphans: result.orphans.count, orphansTruncated: result.orphans.truncated };
   writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "doccopy", at: deps.now().toISOString(), ...base, refresh, today,
-    revisions: { copy: M2_DOCUMENT_COPY_REVISION }, accepted: acceptedSet, staged, complete: result.complete,
-    outcomes: result.outcomes, orphans: result.orphans });
+    revisions: { copy: M2_DOCUMENT_COPY_REVISION }, accepted: acceptedSet, staged, complete: result.complete, ...(continued ? { continued } : {}),
+    outcomes: result.outcomes, continuation: result.continuation, orphans: result.orphans });
   bind({ ...base, refresh, today }, counts);
-  const done = result.complete && counts.matchesAccepted;
+  const done = result.complete && counts.matchesAccepted && !result.orphans.truncated;
   publish(done ? "ok" : "incomplete");
   deps.log(`copy approved=${counts.approved} handled=${counts.handled} bytes=${counts.bytes} orphans=${counts.orphans} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);
   deps.log(`m4 doccopy ${done ? "ok" : "incomplete"} invocation=${env.M4_INVOCATION} accepted=${accepted} generation=${generation} staged=${staged} complete=${result.complete}`);

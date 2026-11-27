@@ -79,20 +79,17 @@ export function stagingBucket(config: StagingBucketConfig, client?: StagingSende
         throw failed();
       }
     },
-    async list(prefix) {
-      if (!STAGING_PREFIX.test(prefix)) throw failed();
-      const keys: string[] = [];
-      let token: string | undefined;
+    async list(prefix, page) {
+      // One page, in key order, after `page.after`: the copy core bounds how many pages it reads.
+      if (!STAGING_PREFIX.test(prefix) || !Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 1000
+        || (page.after !== undefined && !page.after.startsWith(prefix))) throw failed();
       try {
-        do {
-          const page = await within((abortSignal) => sender.send(new ListObjectsV2Command({ Bucket: config.bucket, Prefix: prefix, ContinuationToken: token }),
-            { abortSignal })) as { Contents?: { Key?: unknown }[]; IsTruncated?: boolean; NextContinuationToken?: string };
-          for (const item of page.Contents ?? []) if (typeof item.Key === "string") keys.push(item.Key);
-          token = page.IsTruncated ? page.NextContinuationToken : undefined;
-          if (page.IsTruncated && !token) throw failed();
-        } while (token);
+        const listed = await within((abortSignal) => sender.send(new ListObjectsV2Command({ Bucket: config.bucket, Prefix: prefix, MaxKeys: page.limit,
+          ...(page.after === undefined ? {} : { StartAfter: page.after }) }), { abortSignal })) as { Contents?: { Key?: unknown }[]; IsTruncated?: boolean };
+        const keys = (listed.Contents ?? []).map((item) => item.Key);
+        if (!keys.every((k): k is string => typeof k === "string") || keys.length > page.limit || (listed.IsTruncated && keys.length === 0)) throw failed();
+        return listed.IsTruncated ? { keys, next: keys[keys.length - 1]! } : { keys };
       } catch { throw failed(); }
-      return keys;
     },
   };
 }
