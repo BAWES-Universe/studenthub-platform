@@ -304,6 +304,28 @@ export function freshAttempt(priorAttemptId, stage, round) {
   return `${hex}-${stageTag}-4${prior.slice(1, 4)}-8${prior.slice(4, 7)}-${prior.slice(0, 8)}${roundTag}`;
 }
 
+// A step whose attempt ended FAILED carries no verdict, so the episode routes
+// the same step again from the same predecessor and routing derives the same
+// attempt id. The supervisor binds each attempt id to its one durable run and
+// answers a second submission with that run: a review that found the reviewer
+// sandbox busy (REVIEW_SANDBOX_BUSY) was "retried" under its own id from 14:59Z
+// to 18:30Z without anything launching, and since receipts fold by attempt id
+// the card only ever held one FAILED, so max_failed_attempts never stopped it.
+// Each retry round therefore gets an id of its own, derived from the routed id
+// and the round: the same on every tick, used by no earlier receipt, and every
+// FAILED round counts toward the cap.
+export const RETRY_ATTEMPT_STAGE = "retry";
+
+export function retryAttemptFor(order, receipts = []) {
+  if (!order || typeof order.attempt_id !== "string") return order;
+  const failed = new Set((receipts ?? []).filter((r) => r?.stage === "FAILED" && typeof r.attempt_id === "string").map((r) => r.attempt_id));
+  let attempt = order.attempt_id;
+  for (let round = 1; failed.has(attempt) && round <= failed.size; round++) {
+    attempt = freshAttempt(order.attempt_id, RETRY_ATTEMPT_STAGE, round);
+  }
+  return attempt === order.attempt_id ? order : { ...order, attempt_id: attempt };
+}
+
 // Render a routed work order as the machine-readable directive posted to the
 // Linear card. The card — not a human relay — is the instruction channel: the
 // named actor reads role/runtime/exact head/stage and executes without anyone
