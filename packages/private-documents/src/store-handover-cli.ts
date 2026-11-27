@@ -1,5 +1,7 @@
 // Operator entry for the 0661 handover checks (store-handover.ts). Reads DATABASE_URL and, for the checks,
-// HANDOVER_APPROVED_TARGET: the fingerprint `target` printed for the approved database.
+// HANDOVER_APPROVED_TARGET: the diagnostic fingerprint `target` printed for the database the operator's
+// environment record approves. It catches a run pointed at another database by mistake; it is not proof
+// of environment identity (store-handover.ts), and with `targetBasis: catalog` it is weaker still.
 //   node dist/packages/private-documents/src/store-handover-cli.js target
 //   HANDOVER_APPROVED_TARGET=<fingerprint> node .../store-handover-cli.js precheck > handover-pre.json
 //   HANDOVER_APPROVED_TARGET=<fingerprint> node .../store-handover-cli.js postcheck handover-pre.json
@@ -24,7 +26,7 @@ export async function handoverMain(argv: readonly string[], env: NodeJS.ProcessE
   const client = new pg.Client({ connectionString: env.DATABASE_URL, application_name: 'document-store-handover' });
   try {
     await client.connect();
-    if (mode === 'target') { out(JSON.stringify({ target: await target(client) })); return 0; }
+    if (mode === 'target') { out(JSON.stringify(await target(client))); return 0; }
     const result = mode === 'precheck' ? await precheck(client) : await postcheck(client, expected!);
     if (result.target !== approved) { err('handover: refused.otherTarget'); return 2; }
     out(JSON.stringify(result));

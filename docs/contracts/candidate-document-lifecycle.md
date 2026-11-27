@@ -250,12 +250,18 @@ organization's own documents. `PostgresDocumentPartitions` and
   under its old name: its document reads and writes fail `unavailable` rather
   than serve or change stale state, until it is replaced. Deploy the build with
   the migration; nothing outside these tables reads the old name.
-- **Quiesced handover, checked.** The operator first prints the database's
-  `target` fingerprint (a hash of the cluster id where readable, the database
-  oid and name, the schema and the store table's oid, which the 0661 rename
-  keeps) and approves it; both checks require `HANDOVER_APPROVED_TARGET` to equal
-  it and print it in their result, so evidence from an identical store elsewhere
-  never passes (`otherTarget`). `store-handover-cli.js precheck`, run with the
+- **Quiesced handover, checked.** Which environment a handover runs against is
+  approved on the operator's environment record (the Hermes card naming it).
+  The operator then prints the database's diagnostic `target` fingerprint (a
+  hash of the cluster id where readable, the database oid and name, the schema
+  and the store table's oid, which the 0661 rename keeps) with its `targetBasis`
+  (`cluster`, or `catalog` when the cluster id is not readable); both checks
+  require `HANDOVER_APPROVED_TARGET` to equal it and print both, and the
+  postcheck recomputes them (`otherTarget`), so a run pointed at another
+  database by mistake is refused. The fingerprint is diagnostic, not proof of
+  environment identity: names and catalog oids can recur across clusters
+  (`catalog` is the weaker basis) and a physical clone keeps even the cluster
+  id. `store-handover-cli.js precheck`, run with the
   gateway and worker stopped and before 0661, refuses (`locked`) while any other
   transaction holds or awaits a lock on any relation in the store's schema (an
   idle transaction that touched any table there still holds one) or a prepared
