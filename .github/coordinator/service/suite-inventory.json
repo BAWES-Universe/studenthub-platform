@@ -4703,6 +4703,7 @@
     "Re-carry: one worker whose pull request reads behind main with green checks carries main, waits at the new head and merges it under the landing lock",
     "Re-carry: a behind read with checks not yet green never carries, and a fresh head is never updated",
     "Re-carry: main that keeps moving during the wait stops the landing after baseRounds, nothing handed off or merged",
+    "Re-carry: a stale behind read on a head that already holds main is paced, takes no round, and ends at the wait's bound",
     "Re-carry: a carry that changes the pull request's own blobs, or conflicts, stops as before with nothing merged",
     "Report: \"Landed:\" is written only for a merge; any other landing outcome says its pull request stays open",
     "M15 W4: the landing lock, the updates and their reads keep the run inside TimeoutStartSec",
@@ -4909,6 +4910,7 @@
     "SHU-86 mutation M341 report a dead run recovered when the claim its status names was never marked",
     "SHU-86 mutation M342 wait out the landing bound on a pull request behind main with green checks",
     "SHU-86 mutation M343 carry main without bound while main keeps moving",
+    "SHU-86 mutation M345 spend a round on a stale behind read of a head that holds main",
     "SHU-86 mutation M344 report an unmerged landing as landed",
     "2026-11-14: a card worker's start that finds its lock held by a dead pid reverts the worker, records the run DIED and releases the lock",
     "2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing",
@@ -34375,6 +34377,10 @@
       "capabilities": []
     },
     {
+      "name": "Re-carry: a stale behind read on a head that already holds main is paced, takes no round, and ends at the wait's bound",
+      "capabilities": []
+    },
+    {
       "name": "Re-carry: a carry that changes the pull request's own blobs, or conflicts, stops as before with nothing merged",
       "capabilities": []
     },
@@ -35196,6 +35202,10 @@
     },
     {
       "name": "SHU-86 mutation M343 carry main without bound while main keeps moving",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M345 spend a round on a stale behind read of a head that holds main",
       "capabilities": []
     },
     {

@@ -6821,6 +6821,22 @@ test("Re-carry: main that keeps moving during the wait stops the landing after b
   assert.equal(host.files.has(LAND_LOCK), false);
 });
 
+test("Re-carry: a stale behind read on a head that already holds main is paced, takes no round, and ends at the wait's bound", async () => {
+  // GitHub's mergeable_state lags: it still reads behind on a fresh head.
+  const host = landingHost({ mainSeq: [REV], mergeableState: "behind" });
+  const waitMs = 10 * 60 * 1000;
+  const before = host.clock;
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /mergeable_state behind/);
+  assert.equal(host.land.updates, 0, "a head that holds main is never carried");
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+  const waited = host.clock - before;
+  assert.ok(waited >= waitMs && waited <= waitMs + 2 * LAND_LIMITS.pollMs, `waited ${waited}`);
+  assert.ok(host.land.checkReads >= waitMs / LAND_LIMITS.pollMs, `${host.land.checkReads} paced reads`);
+});
+
 test("Re-carry: a carry that changes the pull request's own blobs, or conflicts, stops as before with nothing merged", async () => {
   const changed = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, deltaChanged: true });
   const stopped = await oneWorkerLand(changed);

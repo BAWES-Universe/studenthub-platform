@@ -2020,9 +2020,16 @@ const CASES = [
   {
     name: "M343 carry main without bound while main keeps moving",
     file: "service/card-land.mjs",
-    from: "      if (checks.outcome === \"BEHIND\") {\n        if (round >= limits.baseRounds) {",
-    to: "      if (checks.outcome === \"BEHIND\") {\n        if (round >= 99) { // SHU86-M343",
+    from: "\n        if (round >= limits.baseRounds) {",
+    to: "\n        if (round >= 99) { // SHU86-M343",
     pattern: "Re-carry: main that keeps moving during the wait",
+  },
+  {
+    name: "M345 spend a round on a stale behind read of a head that holds main",
+    file: "service/card-land.mjs",
+    from: "        if ((await mainAt(gh, repo, landHead)).fresh) {\n          if (io.now().getTime() >= waitUntil) {",
+    to: "        if (false) { // SHU86-M345\n          if (io.now().getTime() >= waitUntil) {",
+    pattern: "Re-carry: a stale behind read on a head that already holds main",
   },
   {
     name: "M344 report an unmerged landing as landed",

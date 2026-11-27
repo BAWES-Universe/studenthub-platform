@@ -1121,9 +1121,20 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
         landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead, limits });
         target.head = landHead;
       }
-      const wait = parallel ? { ...limits, waitMs: Math.max(0, waitUntil - io.now().getTime()) } : limits;
+      const wait = { ...limits, waitMs: Math.max(0, waitUntil - io.now().getTime()) };
       checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined, true);
       if (checks.outcome === "BEHIND") {
+        // GitHub's mergeable_state can lag: a head that already holds main's
+        // tip needs no carry. That read is paced, takes no round, and the
+        // landing ends at the one wait's bound as before.
+        if ((await mainAt(gh, repo, landHead)).fresh) {
+          if (io.now().getTime() >= waitUntil) {
+            return result("CI_TIMEOUT", { ...landed(), reason: `not green within ${Math.round(limits.waitMs / 60000)} minutes: ${checks.reason}` });
+          }
+          io.sleep(limits.pollMs);
+          round -= 1;
+          continue;
+        }
         if (round >= limits.baseRounds) {
           return result("LAND_BASE_MOVING", { ...landed(), reason: `main moved under pull request #${pr.number} in each of ${round} rounds; nothing was handed off or merged` });
         }
