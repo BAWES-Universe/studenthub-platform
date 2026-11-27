@@ -122,7 +122,7 @@ test("PAY_BANK_ACCEPTANCE one transfer, a paid line and a held line: both people
   assert.ok(held, "the held row names Badr's line, unpaid, linked to its transfer");
   assert.equal(decodeURIComponent(held[1]!.split("/").pop()!), transfer);
   const record = await page(held[1]!);
-  assert.match(record, new RegExp(`<tr id="line-${escaped(heldLine)}">[\\s\\S]*?<td>Unpaid</td><td><a href="/finance/bank-results/${fileId}">[^<]*</a> row 4: held\\.`), "the held line reads unpaid, with the file and row that held it");
-  assert.match(record, new RegExp(`<tr id="line-${escaped(paidLine)}">[\\s\\S]*?<td>Paid: bank reference REF-`), "and the paid line beside it, with its bank payment");
+  assert.match(record, new RegExp(`<tr id="line-${escaped(heldLine)}">(?:(?!</tr>)[\\s\\S])*?<td>Unpaid</td><td><a href="/finance/bank-results/${fileId}">[^<]*</a> row 4: held\\.`), "the held line reads unpaid, with the file and row that held it");
+  assert.match(record, new RegExp(`<tr id="line-${escaped(paidLine)}">(?:(?!</tr>)[\\s\\S])*?<td>Paid: bank reference REF-`), "and the paid line beside it, with its bank payment");
   assert.match(await page(`/finance/bank-results/${fileId}`), new RegExp(`<a href="[^"]+#line-${escaped(heldLine)}">${escaped(heldLine)}</a>`), "the file itself links the held line too");
 });
