@@ -10,19 +10,34 @@
 -- order) and the blob references those rows use. No object is copied, moved or
 -- deleted: object keys, digests and sizes are carried as they are.
 --
--- Authority. From this migration on the owner rows are the only writable store.
--- The old row is kept, frozen, as the rollback record: a trigger refuses every
--- insert, update or delete on it, so an older build can never write beside the
--- new one. Rollback boundary: until the first owner row changes after this
--- migration, reverting is dropping these tables and the trigger (the old row is
--- untouched). Once any owner row has accepted a write, the old row is stale and
--- is never written or read as authoritative again.
+-- Handover. The migration runs in one transaction. It first takes an ACCESS
+-- EXCLUSIVE lock on the old table, before reading it, and holds it to commit: an
+-- old writer that committed first is read and placed exactly once; one that comes
+-- later waits, then finds the table gone. The old table is then renamed to
+-- candidate_document_snapshot_0661_rollback and frozen by a trigger, so an older
+-- build can neither write nor read it under its old name: old writers and old
+-- readers both fail `unavailable` instead of serving or changing stale state.
+--
+-- Rollback boundary. The authority row records the first owner write
+-- (first_write_at), set in the same transaction as that write; every writer holds
+-- the authority row FOR SHARE. While first_write_at is null, rollback
+-- (docs/contracts/candidate-document-store-rollback-0661.sql) restores the old
+-- table unchanged under its name and drops these objects; it locks the authority
+-- row FOR UPDATE and refuses once any owner write has committed. After that,
+-- recovery is forward only.
+
+LOCK TABLE candidate_document_snapshot IN ACCESS EXCLUSIVE MODE;
 
 CREATE TABLE candidate_document_store_authority (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   store text NOT NULL CHECK (store = 'partitioned'),
-  switched_at timestamptz NOT NULL DEFAULT now()
+  switched_at timestamptz NOT NULL DEFAULT now(),
+  first_write_at timestamptz
 );
+-- Whether rollback to the old table is still allowed: true only before the first owner write.
+CREATE OR REPLACE FUNCTION candidate_document_store_rollback_allowed() RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT first_write_at IS NULL FROM candidate_document_store_authority WHERE singleton
+$$;
 
 CREATE TABLE candidate_document_partitions (
   owner_kind text NOT NULL CHECK (owner_kind IN ('person', 'org')),
@@ -182,15 +197,16 @@ $$;
 
 INSERT INTO candidate_document_store_authority (store) VALUES ('partitioned');
 
--- The old row is the frozen rollback record from here on.
+-- The old row is the frozen rollback record from here on, under a name no older build uses.
+ALTER TABLE candidate_document_snapshot RENAME TO candidate_document_snapshot_0661_rollback;
 CREATE OR REPLACE FUNCTION reject_candidate_document_snapshot_write() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  RAISE EXCEPTION 'candidate_document_snapshot is frozen; candidate_document_partitions is the store';
+  RAISE EXCEPTION 'candidate_document_snapshot_0661_rollback is frozen; candidate_document_partitions is the store';
 END;
 $$;
 CREATE TRIGGER candidate_document_snapshot_frozen
-  BEFORE INSERT OR UPDATE OR DELETE ON candidate_document_snapshot
+  BEFORE INSERT OR UPDATE OR DELETE ON candidate_document_snapshot_0661_rollback
   FOR EACH ROW EXECUTE FUNCTION reject_candidate_document_snapshot_write();
 CREATE TRIGGER candidate_document_snapshot_frozen_truncate
-  BEFORE TRUNCATE ON candidate_document_snapshot
+  BEFORE TRUNCATE ON candidate_document_snapshot_0661_rollback
   FOR EACH STATEMENT EXECUTE FUNCTION reject_candidate_document_snapshot_write();

@@ -12,6 +12,7 @@ import {png} from './candidate-fixtures.mjs';
 const url=process.env.DATABASE_URL;
 const unavailable={skip:!url?'requires configured scratch PostgreSQL':false};
 const migration=name=>readFileSync(new URL(`../../db/migrations/${name}`,import.meta.url),'utf8');
+const rollback=readFileSync(new URL('../../../docs/contracts/candidate-document-store-rollback-0661.sql',import.meta.url),'utf8');
 const sha=v=>createHash('sha256').update(v).digest('hex');
 const schema=`m0661_${randomBytes(6).toString('hex')}`;
 let admin;
@@ -45,18 +46,60 @@ async function legacyRow(objects){
 
 test('PART-MIG 0661 splits the single row into owners with parity, and every behaviour carries over',unavailable,async()=>{
  const objects=new Map(),old=await legacyRow(objects),keysBefore=[...objects.keys()].sort();
- // Build the pre-0661 tables in a scratch schema, load the old row, then run 0661 itself.
- const c=await admin.connect();
+ // Build the pre-0661 tables in a scratch schema and load the old row.
+ const scoped=`${url}${url.includes('?')?'&':'?'}options=${encodeURIComponent(`-c search_path=${schema}`)}`;
+ const session=async()=>{const x=new pg.Client({connectionString:scoped});await x.connect();return x;};
+ const c=await session(),legacy=await session(),mig=await session();
+ const pids=new Map();for(const x of [legacy,mig])pids.set(x,(await x.query('SELECT pg_backend_pid() AS p')).rows[0].p);
+ const blocked=async x=>{const p=pids.get(x);for(let i=0;i<200;i++){if((await c.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock'",[p])).rowCount)return;await new Promise(r=>setTimeout(r,25));}assert.fail('session never waited on the lock');};
+ const exists=async name=>(await c.query('SELECT to_regclass($1) IS NOT NULL AS e',[`${schema}.${name}`])).rows[0].e;
+ let expected;
  try{
   await c.query(`CREATE SCHEMA ${schema}`);await c.query(`SET search_path = ${schema}`);
   await c.query(migration('0145_candidate_private_documents.sql'));await c.query(migration('0220_candidate_document_read_audit.sql'));
   await c.query('CREATE TABLE principals (id text PRIMARY KEY, display_name text, email text)');
+  await c.query('CREATE TABLE schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
+  await c.query("INSERT INTO schema_migrations (version) VALUES ('0661_candidate_document_partitions')");
   await c.query('UPDATE candidate_document_snapshot SET snapshot = $1::jsonb',[JSON.stringify(old.packed)]);
-  await c.query(migration('0661_candidate_document_partitions.sql'));
+
+  // Race 1: an old writer holds the row; 0661 waits for it and then includes its write exactly once.
+  await legacy.query('BEGIN');
+  expected=(await legacy.query('SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true FOR UPDATE')).rows[0].snapshot;
+  const raced={id:randomUUID(),operation:'list',principalRef:sha('alice'),at:1800000000001};
+  expected.state.lifecycle.audit.push(raced);
+  await legacy.query('UPDATE candidate_document_snapshot SET snapshot = $1::jsonb WHERE singleton = true',[JSON.stringify(expected)]);
+  await mig.query('BEGIN');
+  const running=mig.query(migration('0661_candidate_document_partitions.sql'));
+  await blocked(mig);
+  await legacy.query('COMMIT');await running;await mig.query('COMMIT');
+  const alice=(await c.query("SELECT snapshot FROM candidate_document_partitions WHERE owner_kind='person' AND owner_id='alice'")).rows[0].snapshot;
+  assert.equal(alice.state.lifecycle.audit.filter(a=>a.id===raced.id).length,1,'the racing old write is placed exactly once');
+
+  // Old readers and writers are fenced: the old name no longer exists; the frozen copy refuses writes.
+  await assert.rejects(c.query('SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true'),/does not exist/);
+  await assert.rejects(c.query('UPDATE candidate_document_snapshot_0661_rollback SET snapshot = snapshot'),/frozen/);
+  assert.deepEqual((await c.query('SELECT snapshot FROM candidate_document_snapshot_0661_rollback')).rows[0].snapshot,expected,'the old row is kept unchanged');
+  assert.equal((await c.query('SELECT candidate_document_store_rollback_allowed() AS ok')).rows[0].ok,true);
+
+  // Rollback before the first owner write restores the old table exactly and removes every 0661 object.
+  await c.query(rollback);
+  assert.deepEqual((await c.query('SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true')).rows[0].snapshot,expected);
+  for(const name of ['candidate_document_partitions','candidate_document_ids','candidate_document_slots','candidate_document_store_authority','candidate_document_snapshot_0661_rollback'])assert.equal(await exists(name),false,name);
+  assert.equal((await c.query("SELECT count(*)::int AS n FROM schema_migrations WHERE version='0661_candidate_document_partitions'")).rows[0].n,0);
+  await c.query('UPDATE candidate_document_snapshot SET snapshot = snapshot');
+
+  // Race 2: 0661 holds its lock; an old write waits, then is refused, and nothing it held is lost.
+  await mig.query('BEGIN');await mig.query(migration('0661_candidate_document_partitions.sql'));
+  await legacy.query('BEGIN');
+  const late=legacy.query('SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true FOR UPDATE').then(()=>null,e=>e);
+  await blocked(legacy);
+  await mig.query('COMMIT');
+  assert.match(String((await late)?.message),/does not exist|frozen/,'the late old write is refused');await legacy.query('ROLLBACK');
+
   const rows=(await c.query('SELECT owner_kind, owner_id, snapshot FROM candidate_document_partitions ORDER BY owner_kind, owner_id')).rows;
   assert.deepEqual(rows.map(r=>[r.owner_kind,r.owner_id]),[['org','org-a'],['person','alice'],['person','bob'],['person','carol']]);
   // Each owner holds exactly its share of every array, in the old order, and the blob references its rows use.
-  const st=old.packed.state,l=st.lifecycle,owner=r=>({kind:r.owner_kind,id:r.owner_id});
+  const st=expected.state,l=st.lifecycle,owner=r=>({kind:r.owner_kind,id:r.owner_id});
   const mine=(o,d)=>o.kind==='org'?d.scope.personId===undefined&&d.scope.orgId===o.id:d.scope.personId===o.id;
   for(const r of rows){
    const o=owner(r),s=r.snapshot.state,ids=new Set([...st.documents,...st.retired].filter(d=>mine(o,d)).map(d=>d.id));
@@ -67,18 +110,15 @@ test('PART-MIG 0661 splits the single row into owners with parity, and every beh
    assert.deepEqual(s.lifecycle.audit,l.audit.filter(x=>o.kind==='person'&&x.principalRef===sha(o.id)));
    assert.deepEqual(s.lifecycle.cleanup,l.cleanup.filter(x=>ids.has(x.documentId)));
   }
-  assert.deepEqual(Object.assign({},...rows.map(r=>r.snapshot.blobs)),old.packed.blobs,'every blob reference kept, digests and sizes unchanged');
+  assert.deepEqual(Object.assign({},...rows.map(r=>r.snapshot.blobs)),expected.blobs,'every blob reference kept, digests and sizes unchanged');
   assert.deepEqual((await c.query('SELECT type, person_id, state FROM candidate_document_slots ORDER BY person_id')).rows,
    [{type:'personal-photo',person_id:'alice',state:'active'},{type:'personal-photo',person_id:'bob',state:'cleared'}]);
   assert.equal((await c.query('SELECT count(*)::int AS n FROM candidate_document_ids')).rows[0].n,new Set([...st.documents,...st.retired].map(d=>d.id)).size);
   assert.equal((await c.query('SELECT store FROM candidate_document_store_authority')).rows[0].store,'partitioned');
-  await assert.rejects(c.query('UPDATE candidate_document_snapshot SET snapshot = snapshot'));
-  assert.deepEqual((await c.query('SELECT snapshot FROM candidate_document_snapshot')).rows[0].snapshot,old.packed,'the old row is kept unchanged');
- }finally{await c.query('RESET search_path');c.release();}
+ }finally{await legacy.end();await mig.end();}
  assert.deepEqual([...objects.keys()].sort(),keysBefore,'the migration copies and deletes no object');
 
  // The same people, through the new store.
- const scoped=`${url}${url.includes('?')?'&':'?'}options=${encodeURIComponent(`-c search_path=${schema}`)}`;
  const partitions=new PostgresDocumentPartitions(scoped);
  try{
   const store=new PartitionedR2DocumentStore(partitions,{read:async k=>Buffer.from(objects.get(k)),writeImmutable:async(k,b)=>{objects.set(k,Buffer.from(b));}});
@@ -97,5 +137,11 @@ test('PART-MIG 0661 splits the single row into owners with parity, and every beh
   assert.equal((await service.cleanup()).held,old.held-1);
   // An organization's own document is found by its id.
   assert.equal((await new PrivateDocuments({...old.options,store}).metadata(cred.dave,old.org.id)).version,old.org.version);
- }finally{await partitions.close();}
+  // The first owner write is recorded durably, and rollback is refused from then on, changing nothing.
+  assert.notEqual((await c.query('SELECT first_write_at FROM candidate_document_store_authority')).rows[0].first_write_at,null);
+  assert.equal((await c.query('SELECT candidate_document_store_rollback_allowed() AS ok')).rows[0].ok,false);
+  await assert.rejects(c.query(rollback),/rollback refused/);await c.query('ROLLBACK');
+  assert.equal(await exists('candidate_document_partitions'),true);
+  await assert.rejects(c.query('SELECT 1 FROM candidate_document_snapshot'),/does not exist/);
+ }finally{await partitions.close();await c.end();}
 });

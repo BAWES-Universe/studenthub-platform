@@ -204,9 +204,12 @@ organization's own documents. `PostgresDocumentPartitions` and
   document id it names (`candidate_document_ids`), staff and employer delivery
   and the ID-card photo by the subject person. A write locks only that owner's
   row and hydrates only that owner's objects; a read hydrates only the document
-  it returns. A whole-store transaction is refused. The civil ID review list and
-  the operator cleanup count read every owner's metadata, never bodies. The
-  192 MiB hydration and 16 MiB metadata limits now apply per owner.
+  it returns. A whole-store read or transaction is refused. Cross-owner needs
+  have their own bounded queries: the civil ID review list (`listCurrent`) reads
+  only people whose slot history has an active slot of those types and returns
+  only each current document's metadata, never retired versions, journals or
+  blob references; the operator cleanup count (`heldCount`) returns one number.
+  The 192 MiB hydration and 16 MiB metadata limits now apply per owner.
 - **Slot lock and history.** An owner's row is created empty on first use and
   locked `FOR UPDATE`, so upload, replace, remove and promotion of that owner's
   slots share one lock even before a document exists. In the same transaction,
@@ -225,15 +228,24 @@ organization's own documents. `PostgresDocumentPartitions` and
   migration, as does any count or blob-reference mismatch. The id index and slot
   history are backfilled from active and retired versions. No object is copied,
   moved or deleted.
-- **One authoritative writer, handover and rollback boundary.** 0661 records
-  `candidate_document_store_authority = partitioned` and freezes the old row with
-  a trigger that refuses every write, so an older build still running during a
-  deploy fails `unavailable` instead of writing beside the new store; deploy the
-  build with the migration and expect document writes from old instances to fail
-  until they are replaced. Until the first owner row changes after 0661, rollback
-  is dropping the 0661 tables, functions and triggers; the old row is untouched.
-  Once any owner row has accepted a write, the old row is stale and is never
-  written or treated as authoritative again: recovery is forward only.
+- **One authoritative writer.** 0661 runs in one transaction and first takes an
+  `ACCESS EXCLUSIVE` lock on the old table, before it reads it, held to commit.
+  An old write that committed first is read and placed exactly once; a later
+  one waits and is then refused. The old table is renamed to
+  `candidate_document_snapshot_0661_rollback` and frozen by a trigger, so an
+  older build still running during a deploy can neither write nor read it
+  under its old name: its document reads and writes fail `unavailable` rather
+  than serve or change stale state, until it is replaced. Deploy the build with
+  the migration; nothing outside these tables reads the old name.
+- **Rollback boundary, durable and checkable.** `candidate_document_store_authority`
+  records `first_write_at` in the same transaction as the first owner write;
+  every writer holds that row (exclusively until the first write, shared after).
+  `candidate_document_store_rollback_allowed()` says whether rollback is still
+  allowed. The rollback script, `docs/contracts/candidate-document-store-rollback-0661.sql`,
+  locks the authority row, refuses and changes nothing once `first_write_at` is
+  set, and otherwise restores `candidate_document_snapshot` exactly as frozen
+  and drops every 0661 object and its ledger row. After the first write the old
+  row is stale and recovery is forward only.
 
 **Read-audit decision:** successful list (including empty lists), delivery issuance,
 and delivery redemption now commit durable `list`, `issueDelivery`, and `deliver`

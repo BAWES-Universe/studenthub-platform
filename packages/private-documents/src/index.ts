@@ -28,6 +28,8 @@ export interface DocumentState {
     retired: StoredDocument[];
     lifecycle?: LifecycleState;
 }
+/** A current document's metadata and scope, without its body. */
+export interface CurrentDocument extends Metadata { scope: Scope; }
 /** Who a document belongs to for storage: a person (any person-scoped document) or an
  * organization's own documents. A document's owner never changes. */
 export type DocumentOwner = { readonly kind: 'person'; readonly id: string } | { readonly kind: 'org'; readonly id: string };
@@ -61,6 +63,10 @@ export interface DocumentStore {
     partition?(owner: DocumentOwner): DocumentStore;
     /** Per-owner stores: the owner of a document id (active or retired), or null when unknown. */
     locate?(documentId: string): Promise<DocumentOwner | null>;
+    /** Per-owner stores: current documents of `types` in `orgId` across people, metadata only. */
+    listCurrent?(orgId: string, types: readonly string[]): Promise<CurrentDocument[]>;
+    /** Per-owner stores: the held cleanup count across owners. */
+    heldCount?(): Promise<number>;
     readPath?: {
         read<T>(fn: (state: DocumentState) => Promise<T>): Promise<T>;
         audit(entry: { operation: 'list' | 'issueDelivery' | 'deliver'; principalRef: string; at: number }): Promise<void>;

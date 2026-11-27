@@ -5,6 +5,7 @@ import pg from 'pg';
 import {runMigrations} from '@studenthub/db';
 import {PostgresDocumentPartitions,PartitionedR2DocumentStore,R2DocumentStore,emptyPackedSnapshot} from '../../../dist/packages/private-documents/src/r2-storage.js';
 import {CandidateDocuments} from '../../../dist/packages/private-documents/src/candidate-lifecycle.js';
+import {listCivilIdPhotos} from '../../../dist/packages/private-documents/src/civil-id-reads.js';
 import {InMemoryAuthzStore} from '../../../dist/packages/contracts/src/index.js';
 import {createIdempotencyKey} from '../../../dist/packages/idempotency-contract/src/index.js';
 import {png} from './candidate-fixtures.mjs';
@@ -188,11 +189,47 @@ test('PART-04 slot history survives removal, and the store keeps one authoritati
  await assert.rejects(pool.query('DELETE FROM candidate_document_slots WHERE person_id=$1',[alice]));
  await assert.rejects(pool.query('DELETE FROM candidate_document_ids WHERE owner_id=$1',[alice]));
  assert.deepEqual((await pool.query("SELECT owner_kind, owner_id FROM candidate_document_ids WHERE document_id=$1",[done.body.metadata.id])).rows,[{owner_kind:'person',owner_id:alice}]);
- // The singleton is the frozen rollback record: an older build cannot write beside this one.
- await assert.rejects(pool.query('UPDATE candidate_document_snapshot SET snapshot = snapshot'));
- await assert.rejects(pool.query('DELETE FROM candidate_document_snapshot'));
+ // The old table is fenced from older builds (gone under its name) and its frozen copy refuses writes.
+ await assert.rejects(pool.query('SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true'),/does not exist/);
+ await assert.rejects(pool.query('UPDATE candidate_document_snapshot_0661_rollback SET snapshot = snapshot'),/frozen/);
+ await assert.rejects(pool.query('DELETE FROM candidate_document_snapshot_0661_rollback'),/frozen/);
+ // A write has been accepted, so rollback to the old table is no longer allowed.
+ assert.equal((await pool.query('SELECT candidate_document_store_rollback_allowed() AS ok')).rows[0].ok,false);
  // A whole-store write is refused; only a person's or organization's own store writes.
  await assert.rejects(f.store.transaction(async()=>{}),{message:'unavailable'});
  assert.deepEqual(await f.store.locate(done.body.metadata.id),{kind:'person',id:alice});
  assert.equal(await f.store.locate(randomUUID()),null);
+});
+
+test('PART-05 volume: a cross-person listing reads bounded metadata, never unrelated history, journals or bodies',unavailable,async()=>{
+ const org=`org-vol-${randomBytes(4).toString('hex')}`,people=Array.from({length:120},()=>person()),civil=new Set(people.slice(0,3));
+ const doc=(p,type)=>({id:randomUUID(),version:randomUUID(),type,mime:'image/png',size:1000,scope:{orgId:org,personId:p},acl:'private',data:`r2:immutable/${randomUUID()}/${'a'.repeat(64)}`});
+ let stored=0;
+ for(const p of people){
+  const documents=[doc(p,'personal-photo'),...(civil.has(p)?[doc(p,'civil-id-front')]:[])];
+  const retired=Array.from({length:30},()=>doc(p,'personal-photo'));
+  const journal=Array.from({length:60},()=>({id:randomUUID(),operation:'finalize',principalRef:digest(p),at:1800000000000}));
+  const packed={state:{format:1,documents,retired,lifecycle:{format:1,uploads:[],receipts:[],cleanup:retired.map(d=>({id:`${d.id}:${d.version}`,documentId:d.id,version:d.version,retiredAt:1,status:'held'})),audit:journal}},
+   blobs:Object.fromEntries([...documents,...retired].map(d=>[d.data.slice(3),{key:d.data.slice(3),digest:'a'.repeat(64),size:1000}]))};
+  const text=JSON.stringify(packed);stored+=text.length;
+  await pool.query("INSERT INTO candidate_document_partitions (owner_kind, owner_id, snapshot) VALUES ('person',$1,$2::jsonb)",[p,text]);
+  await pool.query("INSERT INTO candidate_document_slots (person_id, org_id, type, state) SELECT $1, $2, t, 'active' FROM unnest($3::text[]) t",[p,org,documents.map(d=>d.type)]);
+ }
+ let returned=0,objectReads=0;
+ const reader=snapshots.reader,query=reader.query.bind(reader);
+ reader.query=async(...args)=>{const r=await query(...args);returned+=JSON.stringify(r.rows).length;for(const row of r.rows)assert.ok(!/retired|receipts|audit|cleanup|uploads|"data"|blobs/.test(JSON.stringify(row)),'no history, journal or body reference leaves the database');return r;};
+ try{
+  const store=new PartitionedR2DocumentStore(snapshots,{read:async()=>{objectReads++;throw new Error('no body is read');},writeImmutable:async()=>{throw new Error('no write');}});
+  const listed=await listCivilIdPhotos(store,org);
+  assert.deepEqual(listed.map(x=>x.principalId).sort(),[...civil].sort());
+  assert.ok(listed.every(x=>x.side==='front'&&x.size===1000));
+  assert.ok(stored>2_000_000,`fixture is large (${stored} bytes stored)`);
+  assert.ok(returned<2_000,`listing returned ${returned} bytes for 3 documents`);
+  returned=0;
+  assert.ok(Number.isSafeInteger(await store.heldCount()));
+  assert.ok(returned<200,'the held count returns one number');
+  assert.equal(objectReads,0);
+  await assert.rejects(store.transaction(async()=>{}),{message:'unavailable'});
+  assert.equal(store.readPath,undefined,'no whole-store read exists');
+ }finally{reader.query=query;}
 });

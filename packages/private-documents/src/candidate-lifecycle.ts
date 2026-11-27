@@ -49,6 +49,8 @@ export class CandidateDocuments {
     if (!/^[\w-]{1,128}$/.test(options.orgId)) throw new TypeError('invalid candidate-document configuration');
     this.primitive = new PrivateDocuments({ ...options, ownDocumentOrgId: options.orgId });
   }
+  /** Whether reads use the unlocked read path: a per-owner store always has one per owner. */
+  private readable(): boolean { return this.options.store.partition !== undefined || this.options.store.readPath !== undefined; }
   /** The store holding `principalId`'s own documents and journal (the whole store when not per-owner). */
   private store(principalId: string): DocumentStore { return storeFor(this.options.store, { kind: 'person', id: principalId }); }
   private now(): number {
@@ -223,7 +225,7 @@ export class CandidateDocuments {
     return result;
   }
   async issueDelivery(credential: unknown, id: unknown): Promise<{url:string;expiresAt:number}> {
-    if (!this.options.store.readPath) {
+    if (!this.readable()) {
       const principalId = await this.principal(credential);
       return this.store(principalId).transaction(async s => {
         if (await this.principal(credential) !== principalId) return deny();
@@ -239,7 +241,7 @@ export class CandidateDocuments {
     });
   }
   async deliver(credential: unknown, link: string): Promise<{bytes:Buffer;headers:Record<string,string>}> {
-    if (!this.options.store.readPath) {
+    if (!this.readable()) {
       const principalId = await this.principal(credential);
       return this.store(principalId).transaction(async s => {
         if (await this.principal(credential) !== principalId) return deny();
@@ -261,7 +263,7 @@ export class CandidateDocuments {
     });
   }
   async list(credential: unknown): Promise<Metadata[]> {
-    if (!this.options.store.readPath) {
+    if (!this.readable()) {
       const principalId = await this.principal(credential);
       return this.store(principalId).transaction(async s => {
         if (await this.principal(credential) !== principalId) return deny();
@@ -289,7 +291,8 @@ export class CandidateDocuments {
    * Queue entries are durable and unique; a hold is never interpreted as permission. */
   async cleanup(): Promise<{held:number;deleted:0}> {
     const store = this.options.store, count = async (s: DocumentState) => ({held:(s.lifecycle?.cleanup.filter(c => c.status === 'held').length ?? 0) + (s.lifecycle?.uploads.filter(t => t.data !== undefined).length ?? 0),deleted:0 as const});
-    // A per-owner store is counted across every owner, without a lock and without reading bodies.
-    return store.partition && store.readPath ? store.readPath.read(count) : store.transaction(count);
+    // A per-owner store is counted across every owner by one bounded query: no lock, journal or body leaves the database.
+    if (store.heldCount) { try { return {held:await store.heldCount(),deleted:0}; } catch { throw new LifecycleError(503,'unavailable'); } }
+    return store.transaction(count);
   }
 }

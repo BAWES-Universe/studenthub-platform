@@ -3,7 +3,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import pg from 'pg';
 import { LifecycleError } from './candidate-lifecycle.js';
-import { DocumentError, documentReadHydrator, ownerOfScope, sameOwner, validateReferencedState, validateState, type DocumentOwner, type DocumentState, type DocumentStore } from './index.js';
+import { DocumentError, documentReadHydrator, ownerOfScope, sameOwner, validateReferencedState, validateState, type CurrentDocument, type DocumentOwner, type DocumentState, type DocumentStore } from './index.js';
 import type { UploadTicket } from './lifecycle-state.js';
 
 const digest = (bytes:Buffer):string => createHash('sha256').update(bytes).digest('hex');
@@ -114,18 +114,31 @@ export class PostgresDocumentPartitions {
     try {const rows=await this.reader.query('SELECT snapshot FROM candidate_document_partitions WHERE owner_kind = $1 AND owner_id = $2',[owner.kind,owner.id]);
       if(rows.rowCount===0)return emptyPackedSnapshot();if(rows.rowCount!==1)throw new Error();return rows.rows[0].snapshot as PackedSnapshot;}catch{throw new Error('unavailable');}
   }
-  /** Every owner's metadata, merged in owner order, for listings across people. No body is read. */
-  async readAll():Promise<PackedSnapshot>{
+  /** Current documents of `types` in `orgId` across people, for listings such as the civil ID
+   * review queue. Only people whose slot history says such a slot is active are read, and only
+   * each document's metadata leaves the database: no retired version, journal or body. */
+  async listCurrent(orgId:string,types:readonly string[]):Promise<CurrentDocument[]>{
+    if(!ownerId.test(orgId)||!types.length||types.some(t=>typeof t!=='string'))throw new Error('unavailable');
+    let rows;
+    try {rows=(await this.reader.query(`SELECT jsonb_build_object('id', d.doc->'id', 'version', d.doc->'version', 'type', d.doc->'type', 'mime', d.doc->'mime', 'size', d.doc->'size', 'scope', d.doc->'scope') AS doc
+      FROM candidate_document_partitions p CROSS JOIN LATERAL jsonb_array_elements(p.snapshot->'state'->'documents') WITH ORDINALITY AS d(doc, ord)
+      WHERE p.owner_kind = 'person' AND p.owner_id IN (SELECT person_id FROM candidate_document_slots WHERE org_id = $1 AND type = ANY($2::text[]) AND state = 'active')
+        AND d.doc->'scope'->>'orgId' = $1 AND d.doc->>'type' = ANY($2::text[])
+      ORDER BY p.owner_id COLLATE "C", d.ord`,[orgId,[...types]])).rows;}catch{throw new Error('unavailable');}
+    return rows.map(({doc})=>{
+      if(!/^[0-9a-f-]{36}$/.test(doc.id)||!/^[0-9a-f-]{36}$/.test(doc.version)||!types.includes(doc.type)||typeof doc.mime!=='string'||!Number.isSafeInteger(doc.size)
+        ||doc.scope?.orgId!==orgId||typeof doc.scope?.personId!=='string')throw new Error('unavailable');
+      return doc as CurrentDocument;
+    });
+  }
+  /** The held cleanup count across owners (retired versions held plus staged upload bodies); one number leaves the database. */
+  async heldCount():Promise<number>{
     try {
-      const rows=await this.reader.query('SELECT snapshot FROM candidate_document_partitions ORDER BY owner_kind, owner_id COLLATE "C"');
-      const all:PackedSnapshot=emptyPackedSnapshot();
-      for(const {snapshot} of rows.rows as {snapshot:PackedSnapshot}[]){
-        all.state.documents.push(...snapshot.state.documents);all.state.retired.push(...snapshot.state.retired);
-        const l=snapshot.state.lifecycle;
-        if(l){const m=all.state.lifecycle??={format:1,uploads:[],receipts:[],cleanup:[],audit:[]};m.uploads.push(...l.uploads);m.receipts.push(...l.receipts);m.cleanup.push(...l.cleanup);m.audit.push(...l.audit);}
-        for(const [key,ref] of Object.entries(snapshot.blobs)){if(all.blobs[key]&&JSON.stringify(all.blobs[key])!==JSON.stringify(ref))throw new Error();all.blobs[key]=ref;}
-      }
-      return all;
+      const rows=await this.reader.query(`SELECT COALESCE(sum(
+        (SELECT count(*) FROM jsonb_array_elements(COALESCE(p.snapshot->'state'->'lifecycle'->'cleanup', '[]'::jsonb)) c WHERE c->>'status' = 'held')
+        + (SELECT count(*) FROM jsonb_array_elements(COALESCE(p.snapshot->'state'->'lifecycle'->'uploads', '[]'::jsonb)) u WHERE u ? 'data')), 0)::int AS held
+        FROM candidate_document_partitions p`);
+      return rows.rows[0].held as number;
     } catch {throw new Error('unavailable');}
   }
   /** The owner of a document id, or null. */
@@ -149,7 +162,11 @@ export class PostgresDocumentPartitions {
     try {
       await c.query('BEGIN');
       await c.query("SET LOCAL lock_timeout = '5s'");
-      const authority=await c.query('SELECT store FROM candidate_document_store_authority WHERE singleton = true');
+      // Every writer holds the authority row, so the rollback script (FOR UPDATE) never races a
+      // write. Until the first owner write it is held exclusively; that write records itself.
+      const seen=await c.query('SELECT first_write_at FROM candidate_document_store_authority WHERE singleton = true');
+      if(seen.rowCount!==1)throw new Error();
+      const authority=await c.query(`SELECT store, first_write_at FROM candidate_document_store_authority WHERE singleton = true ${seen.rows[0].first_write_at===null?'FOR UPDATE':'FOR SHARE'}`);
       if(authority.rowCount!==1||authority.rows[0].store!=='partitioned')throw new Error();
       await c.query('INSERT INTO candidate_document_partitions (owner_kind, owner_id, snapshot) VALUES ($1, $2, $3::jsonb) ON CONFLICT DO NOTHING',[owner.kind,owner.id,JSON.stringify(emptyPackedSnapshot())]);
       const rows=await c.query('SELECT snapshot FROM candidate_document_partitions WHERE owner_kind = $1 AND owner_id = $2 FOR UPDATE',[owner.kind,owner.id]);
@@ -161,6 +178,7 @@ export class PostgresDocumentPartitions {
         ownedBy(owner,value.state);
         await c.query('UPDATE candidate_document_partitions SET snapshot = $3::jsonb WHERE owner_kind = $1 AND owner_id = $2',[owner.kind,owner.id,after]);
         await this.index(c,owner,value.state);
+        if(authority.rows[0].first_write_at===null)await c.query('UPDATE candidate_document_store_authority SET first_write_at = now() WHERE singleton = true AND first_write_at IS NULL');
       }
       await c.query('COMMIT');return result;
     } catch (error) {
@@ -187,16 +205,14 @@ export class PostgresDocumentPartitions {
   async close():Promise<void>{await Promise.all([this.pool.end(),this.journal.end(),this.reader.end()]);}
 }
 /** The production document store: one R2DocumentStore per owner over PostgresDocumentPartitions.
- * Writes go only through partition(owner); a whole-store transaction is refused. Listings across
- * people read every owner's metadata and hydrate only the document they then deliver. */
+ * Reads and writes go through partition(owner); a whole-store read or transaction is refused.
+ * Cross-owner needs have their own bounded queries (listCurrent, heldCount). */
 export class PartitionedR2DocumentStore implements DocumentStore {
-  readonly readPath:DocumentStore['readPath'];
-  constructor(readonly partitions:PostgresDocumentPartitions,readonly objects:PrivateObjectPort){
-    const refuse=async():Promise<never>=>{throw new Error('unavailable');};
-    this.readPath=new R2DocumentStore({transaction:refuse,reserve:refuse,read:()=>partitions.readAll(),auditRead:entry=>partitions.auditRead(entry)},objects,{readCap:Number.POSITIVE_INFINITY}).readPath;
-  }
+  constructor(readonly partitions:PostgresDocumentPartitions,readonly objects:PrivateObjectPort){}
   partition(owner:DocumentOwner):DocumentStore{return new R2DocumentStore(this.partitions.port(owner),this.objects);}
   locate(documentId:string):Promise<DocumentOwner|null>{return this.partitions.locate(documentId);}
+  listCurrent(orgId:string,types:readonly string[]):Promise<CurrentDocument[]>{return this.partitions.listCurrent(orgId,types);}
+  heldCount():Promise<number>{return this.partitions.heldCount();}
   async transaction<T>():Promise<T>{throw new Error('unavailable');}
 }
 /** Hydrate only inside the private transaction, reuse all primitive validators,
@@ -204,9 +220,7 @@ export class PartitionedR2DocumentStore implements DocumentStore {
  * metadata, receipts and audit, never document bodies. */
 export class R2DocumentStore implements DocumentStore {
   readonly readPath?:DocumentStore['readPath'];
-  /** `readCap` bounds the stored sizes one read may reference (default 192 MiB); the merged
-   * listing across owners references every owner's documents but hydrates only one. */
-  constructor(readonly snapshots:SnapshotPort,readonly objects:PrivateObjectPort,private readonly limits:{readCap?:number}={}){
+  constructor(readonly snapshots:SnapshotPort,readonly objects:PrivateObjectPort){
     if(snapshots.read&&snapshots.auditRead)this.readPath={
       read:async fn=>{
         const packed=await snapshots.read!();
@@ -217,7 +231,7 @@ export class R2DocumentStore implements DocumentStore {
           if(typeof row.data!=='string'||!row.data.startsWith('r2:'))throw new Error('unavailable');
           const key=row.data.slice(3);checkKey(key);const ref=packed.blobs[key];
           if(!ref||ref.key!==key||!Number.isSafeInteger(ref.size)||ref.size<1||ref.size>100*1024*1024||ref.size!==row.size||!/^[0-9a-f]{64}$/.test(ref.digest))throw new Error('unavailable');
-          total+=ref.size;if(total>(this.limits.readCap??192*1024*1024))throw new Error('unavailable');
+          total+=ref.size;if(total>192*1024*1024)throw new Error('unavailable');
           if('version'in row&&s.documents.includes(row))refs.set(row.id,{row,key,digest:ref.digest,size:ref.size});
         }
         validateReferencedState(s);
