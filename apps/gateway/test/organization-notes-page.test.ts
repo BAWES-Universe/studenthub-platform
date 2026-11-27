@@ -10,6 +10,7 @@ import {
 } from "@studenthub/organizations";
 import type { SafeWriteStore } from "@studenthub/safe-write-contract";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
+import { errorPage } from "../src/shell/error-pages.js";
 import { createContextNavigation } from "../src/context-navigation.js";
 import { createOrganizationNotes, type OrganizationNotes, type OrganizationNotesStore } from "../src/organization-notes.js";
 import { renderError, type BrowserLoginApplication } from "../src/web-ui.js";
@@ -17,7 +18,8 @@ import { renderError, type BrowserLoginApplication } from "../src/web-ui.js";
 const ORIGIN = "https://studenthub.example.invalid";
 const SECRET = "o06-notes-page-test-secret-is-at-least-thirty-two-bytes";
 const CONFLICT = "This note was already saved or its preview expired. Open the notes again and retry.";
-const FALLBACK = '{"ok":false,"error":"not_found"}';
+/** The gateway's unknown-path answer for a browser (U-07). */
+const FALLBACK = errorPage("not-found").html;
 const SESSIONS = {
   owner: "e".repeat(43), recruiter: "r".repeat(43), staff: "s".repeat(43), admin: "m".repeat(43), outsider: "b".repeat(43),
 } as const;

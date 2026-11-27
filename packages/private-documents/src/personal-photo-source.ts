@@ -1,5 +1,5 @@
-import { FileDocumentStore, documentReadHydrator, type DocumentState, type DocumentStore } from './index.js';
-import { PostgresDocumentSnapshot, R2DocumentStore, R2Objects } from './r2-storage.js';
+import { FileDocumentStore, documentReadHydrator, storeFor, type DocumentState, type DocumentStore } from './index.js';
+import { PartitionedR2DocumentStore, PostgresDocumentPartitions, R2Objects } from './r2-storage.js';
 
 /**
  * The person's own profile photo, read on the server to print on their ID card. It is never
@@ -38,7 +38,7 @@ const readState = <T>(store: DocumentStore, fn: (state: DocumentState) => Promis
 /** The current personal photo of `personId` in `orgId`'s namespace, or null; no audit. */
 export async function readPersonalPhoto(store: DocumentStore, orgId: string, personId: string): Promise<PersonalPhoto | null> {
   if (!PERSON.test(personId)) return null;
-  return readState(store, async state => {
+  return readState(storeFor(store, { kind: 'person', id: personId }), async state => {
     const rows = state.documents.filter(d => d.scope.orgId === orgId && d.scope.personId === personId && d.type === 'personal-photo');
     const d = rows.length === 1 ? rows[0]! : undefined;
     if (!d || !MIMES.has(d.mime) || d.size > PERSONAL_PHOTO_MAX_BYTES) return null;
@@ -83,8 +83,8 @@ export async function openPersonalPhotoSourceFromEnv(audit: PersonalPhotoAuditPo
   if (env.DOCUMENT_STORAGE === 'synthetic-file' && env.DOCUMENT_ORG_ID && env.DOCUMENT_ROOT) store = await FileDocumentStore.open(env.DOCUMENT_ROOT);
   else if (env.DOCUMENT_STORAGE === 'r2' && env.DOCUMENT_ORG_ID && env.DATABASE_URL && env.DOCUMENT_R2_ACCOUNT_ID && env.DOCUMENT_R2_BUCKET && env.DOCUMENT_R2_ACCESS_KEY_ID && env.DOCUMENT_R2_SECRET_ACCESS_KEY) {
     const objects = new R2Objects({ accountId: env.DOCUMENT_R2_ACCOUNT_ID, bucket: env.DOCUMENT_R2_BUCKET, accessKeyId: env.DOCUMENT_R2_ACCESS_KEY_ID, secretAccessKey: env.DOCUMENT_R2_SECRET_ACCESS_KEY });
-    const snapshots = new PostgresDocumentSnapshot(env.DATABASE_URL);
-    store = new R2DocumentStore(snapshots, objects); close.push(async () => { objects.close(); }, () => snapshots.close());
+    const snapshots = new PostgresDocumentPartitions(env.DATABASE_URL);
+    store = new PartitionedR2DocumentStore(snapshots, objects); close.push(async () => { objects.close(); }, () => snapshots.close());
   } else throw new Error('invalid document configuration');
   return { source: personalPhotoSource({ store, orgId: env.DOCUMENT_ORG_ID, audit }), ...(publicAudit ? { publicSource: publicPersonalPhotoSource({ store, orgId: env.DOCUMENT_ORG_ID, audit: publicAudit }) } : {}), close: async () => { await Promise.all(close.map(x => x())); } };
 }

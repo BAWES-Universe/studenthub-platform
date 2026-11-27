@@ -2,7 +2,7 @@ import type { DirectUploadPort } from './r2-storage.js';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createIdempotency, type JsonValue, type StoredResponse } from '../../idempotency-contract/src/index.js';
 import { resolvePrincipalId } from '../../contracts/src/index.js';
-import { PrivateDocuments, type DocumentState, type PrivateDocumentOptions, type Metadata } from './index.js';
+import { PrivateDocuments, storeFor, type DocumentState, type DocumentStore, type PrivateDocumentOptions, type Metadata } from './index.js';
 import { CANDIDATE_DOCUMENT_TYPES, emptyLifecycleState, type CandidateDocumentType, type UploadTicket } from './lifecycle-state.js';
 import { validateCandidateContent } from './candidate-content.js';
 
@@ -49,6 +49,10 @@ export class CandidateDocuments {
     if (!/^[\w-]{1,128}$/.test(options.orgId)) throw new TypeError('invalid candidate-document configuration');
     this.primitive = new PrivateDocuments({ ...options, ownDocumentOrgId: options.orgId });
   }
+  /** Whether reads use the unlocked read path: a per-owner store always has one per owner. */
+  private readable(): boolean { return this.options.store.partition !== undefined || this.options.store.readPath !== undefined; }
+  /** The store holding `principalId`'s own documents and journal (the whole store when not per-owner). */
+  private store(principalId: string): DocumentStore { return storeFor(this.options.store, { kind: 'person', id: principalId }); }
   private now(): number {
     const now = (this.options.now ?? Date.now)();
     if (!Number.isSafeInteger(now) || now < 0) throw new LifecycleError(503, 'unavailable');
@@ -97,7 +101,7 @@ export class CandidateDocuments {
       let transactionState: DocumentState | undefined;
       const result = await createIdempotency({ clock: { now: () => new Date(this.now()) }, store: {
         cleanupExpired: async () => 0,
-        executeAtomic: (input, execute) => this.options.store.transaction(async s => {
+        executeAtomic: (input, execute) => this.store(principalId).transaction(async s => {
           s.lifecycle ??= emptyLifecycleState();
           // Transaction-clock check must precede receipt lookup, including retries.
           if (this.now() >= input.expiresAt.getTime()) return { kind: 'expired' };
@@ -215,15 +219,15 @@ export class CandidateDocuments {
     s.lifecycle.audit.push({id:randomUUID(),operation,principalRef:hash(principalId),at:this.now()});
   }
   private async read<T>(credential:unknown,operation:'list'|'issueDelivery'|'deliver',fn:(s:DocumentState,principalId:string)=>Promise<T>):Promise<T>{
-    const principalId=await this.principal(credential),readPath=this.options.store.readPath!;
+    const principalId=await this.principal(credential),readPath=this.store(principalId).readPath!;
     const result=await readPath.read(async s=>{if(await this.principal(credential)!==principalId)return deny();return fn(s,principalId);});
     try{await readPath.audit({operation,principalRef:hash(principalId),at:this.now()});}catch{throw new LifecycleError(503,'unavailable');}
     return result;
   }
   async issueDelivery(credential: unknown, id: unknown): Promise<{url:string;expiresAt:number}> {
-    if (!this.options.store.readPath) {
+    if (!this.readable()) {
       const principalId = await this.principal(credential);
-      return this.options.store.transaction(async s => {
+      return this.store(principalId).transaction(async s => {
         if (await this.principal(credential) !== principalId) return deny();
         this.own(s, principalId, id);
         const result = await this.bound(s).issueDelivery(credential, id);
@@ -237,9 +241,9 @@ export class CandidateDocuments {
     });
   }
   async deliver(credential: unknown, link: string): Promise<{bytes:Buffer;headers:Record<string,string>}> {
-    if (!this.options.store.readPath) {
+    if (!this.readable()) {
       const principalId = await this.principal(credential);
-      return this.options.store.transaction(async s => {
+      return this.store(principalId).transaction(async s => {
         if (await this.principal(credential) !== principalId) return deny();
         const result = await this.bound(s).deliver(credential, link);
         const payload = new URL(link).searchParams.get('t')!.split('.')[0]!;
@@ -259,9 +263,9 @@ export class CandidateDocuments {
     });
   }
   async list(credential: unknown): Promise<Metadata[]> {
-    if (!this.options.store.readPath) {
+    if (!this.readable()) {
       const principalId = await this.principal(credential);
-      return this.options.store.transaction(async s => {
+      return this.store(principalId).transaction(async s => {
         if (await this.principal(credential) !== principalId) return deny();
         const result: Metadata[] = [];
         for (const type of CANDIDATE_DOCUMENT_TYPES) {
@@ -286,6 +290,9 @@ export class CandidateDocuments {
    * Empty tickets are not bytes; expiry never releases a body.
    * Queue entries are durable and unique; a hold is never interpreted as permission. */
   async cleanup(): Promise<{held:number;deleted:0}> {
-    return this.options.store.transaction(async s => ({held:(s.lifecycle?.cleanup.filter(c => c.status === 'held').length ?? 0) + (s.lifecycle?.uploads.filter(t => t.data !== undefined).length ?? 0),deleted:0}));
+    const store = this.options.store, count = async (s: DocumentState) => ({held:(s.lifecycle?.cleanup.filter(c => c.status === 'held').length ?? 0) + (s.lifecycle?.uploads.filter(t => t.data !== undefined).length ?? 0),deleted:0 as const});
+    // A per-owner store is counted across every owner by one bounded query: no lock, journal or body leaves the database.
+    if (store.heldCount) { try { return {held:await store.heldCount(),deleted:0}; } catch { throw new LifecycleError(503,'unavailable'); } }
+    return store.transaction(count);
   }
 }

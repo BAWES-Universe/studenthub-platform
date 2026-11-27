@@ -1,3 +1,4 @@
+import { errorPage, handleErrorPage, writeNotFound } from "./shell/error-pages.js";
 import { createRuntimeCatalogueFromEnv } from './catalogue-runtime.js';
 import { PROFILE_RECORDS_CSS, type ProfileRecordsRuntime } from './profile-records-http.js';
 import { createRuntimeProfileRecordsFromEnv } from './profile-records-runtime.js';
@@ -193,6 +194,7 @@ export function createGatewayServer(
       writeHtml(response, 200, renderLanding(login));
       return;
     }
+    if (request.url && handleErrorPage(request, response, requestPath(request.url))) return;
     if (request.method === "GET" && request.url && requestPath(request.url) === "/signed-out") {
       writeHtml(response, 200, renderSignedOut(login));
       return;
@@ -542,11 +544,12 @@ export function createGatewayServer(
       return;
     }
 
-    response.writeHead(404, { "content-type": "application/json" });
-    response.end(JSON.stringify({ ok: false, error: "not_found" }));
+    // The wildcard: a browser gets the shared not-found page, an API caller the same JSON as before.
+    writeNotFound(request, response);
     } catch {
       fault = 'unhandled_failure';
       if (!response.headersSent && !response.destroyed) {
+        if (html) { const page = errorPage("server"); writeHtml(response, page.status, page.html); return; }
         response.writeHead(503, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ ok: false, error: 'service_unavailable' }));
       } else response.destroy();

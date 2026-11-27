@@ -79,21 +79,28 @@ export function legacyBucketReader(config: LegacyBucketConfig, client?: GetObjec
     requestChecksumCalculation: "WHEN_REQUIRED", responseChecksumValidation: "WHEN_REQUIRED",
   });
 
-  return {
-    async read(key: string, maxBytes: number): Promise<LegacyObjectRead> {
-      if (!isLegacyDocumentKey(key) || !Number.isSafeInteger(maxBytes) || maxBytes < 1) throw failed();
-      // One deadline for the request and for draining its body. The timer is a live handle, so a
-      // stalled read always ends, and it is cleared when the read settles.
-      const deadline = new AbortController();
-      const timer = setTimeout(() => deadline.abort(), timeoutMs);
-      try { return await readWithin(key, maxBytes, deadline.signal); } finally { clearTimeout(timer); }
-    },
+  return { read: rangedRead(sender, config.bucket, timeoutMs, isLegacyDocumentKey) };
+}
+
+/**
+ * The bounded, ranged GetObject read both buckets use (legacy's, read-only, and the staging bucket):
+ * refuses a key `accept` rejects before any request, and applies one deadline to the whole read.
+ */
+export function rangedRead(sender: GetObjectSender, bucket: string, timeoutMs: number, accept: (key: string) => boolean):
+  (key: string, maxBytes: number, signal?: AbortSignal) => Promise<LegacyObjectRead> {
+  return async (key, maxBytes, signal) => {
+    if (!accept(key) || !Number.isSafeInteger(maxBytes) || maxBytes < 1) throw failed();
+    // One deadline for the request and for draining its body. The timer is a live handle, so a
+    // stalled read always ends, and it is cleared when the read settles. A caller's signal aborts it too.
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), timeoutMs);
+    try { return await readWithin(key, maxBytes, signal ? AbortSignal.any([deadline.signal, signal]) : deadline.signal); } finally { clearTimeout(timer); }
   };
 
   async function readWithin(key: string, maxBytes: number, signal: AbortSignal): Promise<LegacyObjectRead> {
     let result: Awaited<ReturnType<GetObjectSender["send"]>>;
     try {
-      result = await sender.send(new GetObjectCommand({ Bucket: config.bucket, Key: key, Range: `bytes=0-${maxBytes}` }), { abortSignal: signal });
+      result = await sender.send(new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=0-${maxBytes}` }), { abortSignal: signal });
     } catch (error) {
       // Only an absent object is missing: an absent bucket or any other answer is a failure.
       if (nameOf(error) === "NoSuchKey") return { kind: "missing" };

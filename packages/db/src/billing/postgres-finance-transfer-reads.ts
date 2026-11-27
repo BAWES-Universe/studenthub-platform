@@ -26,6 +26,23 @@ export interface FinanceTransferDetail extends CompanyTransferEntry {
   readonly candidateTotal: string; readonly paidTotal: string; readonly paidCount: number; readonly lines: readonly FinanceTransferLine[];
 }
 
+/**
+ * The companies listed by `candidates` (a query of one text column) that the reader may see as central finance,
+ * or null when the reader does not pass the central gate. Each company is decided with its own ancestor chain,
+ * nearest first; the depth guard keeps a malformed parent loop finite. Shared by every Finance page.
+ */
+export async function centralFinanceCompanies(client: pg.PoolClient, gate: BankResultFileGate, decision: FinanceTransferDecision,
+  principalId: string, candidates: string): Promise<string[] | null> {
+  if (!await gate(client, principalId)) return null;
+  const grants = (await client.query<{ org_id: string; role: string; scope: string }>(
+    "SELECT org_id, role, scope FROM grants WHERE principal_id = $1 ORDER BY org_id, role, scope", [principalId])).rows;
+  const chains = (await client.query<{ company: string; ancestors: string[] }>(`WITH RECURSIVE chain(company, id, parent_org_id, depth) AS (
+      SELECT o.id, o.id, o.parent_org_id, 0 FROM organizations o WHERE o.id IN (${candidates})
+      UNION ALL SELECT c.company, o.id, o.parent_org_id, c.depth + 1 FROM organizations o JOIN chain c ON o.id = c.parent_org_id WHERE c.depth < 64)
+    SELECT company, COALESCE(array_agg(id ORDER BY depth) FILTER (WHERE depth > 0), ARRAY[]::text[]) AS ancestors FROM chain GROUP BY company ORDER BY company`)).rows;
+  return chains.filter((c) => decision(grants, c.company, c.ancestors)).map((c) => c.company);
+}
+
 const TRANSFER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SNAPSHOT = "BEGIN ISOLATION LEVEL REPEATABLE READ";
 
@@ -78,16 +95,8 @@ export class PostgresFinanceTransferReads {
   }
 
   /** The companies with transfers that the reader may see, or null when the reader is not central finance. */
-  async #companies(client: pg.PoolClient, principalId: string): Promise<string[] | null> {
-    if (!await this.#gate(client, principalId)) return null;
-    const grants = (await client.query<{ org_id: string; role: string; scope: string }>(
-      "SELECT org_id, role, scope FROM grants WHERE principal_id = $1 ORDER BY org_id, role, scope", [principalId])).rows;
-    // Each company with transfers, with its ancestors nearest first; the depth guard keeps a malformed parent loop finite.
-    const chains = (await client.query<{ company: string; ancestors: string[] }>(`WITH RECURSIVE chain(company, id, parent_org_id, depth) AS (
-        SELECT o.id, o.id, o.parent_org_id, 0 FROM organizations o WHERE o.id IN (SELECT DISTINCT company_id FROM pay_transfers WHERE NOT deleted)
-        UNION ALL SELECT c.company, o.id, o.parent_org_id, c.depth + 1 FROM organizations o JOIN chain c ON o.id = c.parent_org_id WHERE c.depth < 64)
-      SELECT company, COALESCE(array_agg(id ORDER BY depth) FILTER (WHERE depth > 0), ARRAY[]::text[]) AS ancestors FROM chain GROUP BY company ORDER BY company`)).rows;
-    return chains.filter((c) => this.#decision(grants, c.company, c.ancestors)).map((c) => c.company);
+  #companies(client: pg.PoolClient, principalId: string): Promise<string[] | null> {
+    return centralFinanceCompanies(client, this.#gate, this.#decision, principalId, "SELECT DISTINCT company_id FROM pay_transfers WHERE NOT deleted");
   }
 
   async #snapshot<T>(work: (client: pg.PoolClient) => Promise<T>): Promise<T> {

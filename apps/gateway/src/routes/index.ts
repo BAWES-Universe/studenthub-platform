@@ -55,6 +55,8 @@ const idCardsRoute: GatewayRoute = { name: "id-cards", handle: (ctx) => handleId
 const areaRoute: GatewayRoute = { name: "area", handle: (ctx) => handleArea(ctx.request, ctx.response, ctx.login?.area) };
 
 import { workRoute } from "./work.js";
+import { handlePlatformOperations } from "../platform/operations-page.js";
+const platformOperationsRoute: GatewayRoute = { name: "platform-operations", handle: (ctx) => handlePlatformOperations(ctx) };
 
 export const ROUTES: readonly GatewayRoute[] = [
   abuseGateRoute,
@@ -112,6 +114,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   listExportsRoute,
   idCardsRoute,
   invoicesRoute,
+  platformOperationsRoute,
 ];
 
 export { runRoutes } from "./context.js";

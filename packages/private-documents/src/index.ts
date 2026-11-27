@@ -28,6 +28,32 @@ export interface DocumentState {
     retired: StoredDocument[];
     lifecycle?: LifecycleState;
 }
+/** A current document's metadata and scope, without its body. */
+export interface CurrentDocument extends Metadata { scope: Scope; }
+/** Where a page of current documents resumes: after this person's document id. */
+export interface CurrentCursor { readonly personId: string; readonly id: string; }
+export interface CurrentPage { readonly after?: CurrentCursor; readonly limit: number; }
+/** Who a document belongs to for storage: a person (any person-scoped document) or an
+ * organization's own documents. A document's owner never changes. */
+export type DocumentOwner = { readonly kind: 'person'; readonly id: string } | { readonly kind: 'org'; readonly id: string };
+export const ownerOfScope = (scope: Scope): DocumentOwner => scope.personId === undefined ? { kind: 'org', id: scope.orgId } : { kind: 'person', id: scope.personId };
+export const sameOwner = (a: DocumentOwner, b: DocumentOwner): boolean => a.kind === b.kind && a.id === b.id;
+/** The store for `owner` when the store is per-owner, otherwise the store itself. */
+export const storeFor = (store: DocumentStore, owner: DocumentOwner): DocumentStore => store.partition ? store.partition(owner) : store;
+/** The store holding document `id` when the store is per-owner (null when no owner holds it), otherwise the store itself. */
+export async function storeHolding(store: DocumentStore, id: unknown): Promise<DocumentStore | null> {
+    if (!store.locate || !store.partition) return store;
+    if (typeof id !== 'string' || !uuid.test(id)) return null;
+    const owner = await store.locate(id);
+    return owner ? store.partition(owner) : null;
+}
+/** Reads `personId`'s documents without a lock: from that person's own store when the store is
+ * per-owner (an id no document can carry reads as empty), otherwise from the whole store. */
+export function readPerson<T>(store: DocumentStore, personId: unknown, fn: (state: DocumentState) => Promise<T>): Promise<T> {
+    if (store.partition && (typeof personId !== 'string' || !/^[\w-]{1,128}$/.test(personId))) return fn({ format: 1, documents: [], retired: [] });
+    const held = storeFor(store, { kind: 'person', id: personId as string });
+    return held.readPath ? held.readPath.read(fn) : held.transaction(fn);
+}
 /** Internal read-only adapter hook. It is non-enumerable and never persisted. */
 export const documentReadHydrator = Symbol('documentReadHydrator');
 type ReadableDocumentState = DocumentState & { [documentReadHydrator]?: (id: string) => Promise<void> };
@@ -35,6 +61,15 @@ type ReadableDocumentState = DocumentState & { [documentReadHydrator]?: (id: str
  * This is a trusted server-only port, never a client adapter or metadata endpoint. */
 export interface DocumentStore {
     transaction<T>(fn: (state: DocumentState) => Promise<T>): Promise<T>;
+    /** Per-owner stores: the store holding only `owner`'s documents and journal. A store without
+     * this method holds everyone in one state (the synthetic file store). */
+    partition?(owner: DocumentOwner): DocumentStore;
+    /** Per-owner stores: the owner of a document id (active or retired), or null when unknown. */
+    locate?(documentId: string): Promise<DocumentOwner | null>;
+    /** Per-owner stores: one keyset page of current documents of `types` in `orgId` across people, metadata only. */
+    listCurrent?(orgId: string, types: readonly string[], page: CurrentPage): Promise<{ documents: CurrentDocument[]; next: CurrentCursor | null }>;
+    /** Per-owner stores: the held cleanup count across owners. */
+    heldCount?(): Promise<number>;
     readPath?: {
         read<T>(fn: (state: DocumentState) => Promise<T>): Promise<T>;
         audit(entry: { operation: 'list' | 'issueDelivery' | 'deliver'; principalRef: string; at: number }): Promise<void>;
@@ -245,7 +280,25 @@ export class PrivateDocuments {
     private now(): number { const n = this.clock(); if (!Number.isSafeInteger(n) || n < 0)
         fail('unavailable'); return n; }
     private mac(value: string): string { return createHmac('sha256', this.key).update(value).digest('base64url'); }
-    private async run<T>(operation: string, credential: unknown, fn: (identity: RequestIdentity, state: DocumentState) => Promise<T>): Promise<T> {
+    /** The store a request touches: per-owner stores are chosen by the scope written, the
+     * document named, or the document a delivery link names (its signature is checked later). */
+    private async route(route: { scope: unknown } | { id: unknown } | { link: unknown } | undefined): Promise<DocumentStore> {
+        const store = this.options.store;
+        if (!store.partition || !store.locate) return store;
+        if (route === undefined) return fail('unavailable');
+        if ('scope' in route) return storeFor(store, ownerOfScope(scopeOf(route.scope)));
+        let id: unknown = 'id' in route ? route.id : undefined;
+        if ('link' in route) {
+            try {
+                const token = typeof route.link === 'string' && route.link.length <= 4096 ? new URL(route.link).searchParams.get('t') : null;
+                const claim: unknown = token ? JSON.parse(Buffer.from(token.split('.')[0]!, 'base64url').toString('utf8')) : undefined;
+                id = record(claim) ? claim.id : undefined;
+            }
+            catch { id = undefined; }
+        }
+        return await storeHolding(store, id) ?? fail('denied');
+    }
+    private async run<T>(operation: string, credential: unknown, fn: (identity: RequestIdentity, state: DocumentState) => Promise<T>, route?: { scope: unknown } | { id: unknown } | { link: unknown }): Promise<T> {
         try {
             if (typeof credential !== 'string' || credential.length === 0 || credential.length > 8192)
                 fail('denied');
@@ -254,7 +307,8 @@ export class PrivateDocuments {
                 return fail('denied');
             const principalId = this.options.ownDocumentOrgId === undefined ? undefined : await resolvePrincipalId(identity, this.options.authz);
             if (principalId === null) return fail('denied');
-            const result = await this.options.store.transaction(async (state) => {
+            const store = await this.route(route);
+            const result = await store.transaction(async (state) => {
                 if (!(documentReadHydrator in state)) validateState(state);
                 if (this.options.ownDocumentOrgId !== undefined) {
                     const currentIdentity = await this.options.authenticate(credential as string);
@@ -309,9 +363,9 @@ export class PrivateDocuments {
             const d = { ...data, id: randomUUID(), version: randomUUID() };
             state.documents.push(d);
             return metadata(d);
-        });
+        }, { scope: record(input) ? input.scope : undefined });
     }
-    metadata(credential: unknown, id: unknown): Promise<Metadata> { return this.run('metadata', credential, async (i, s) => metadata(await this.find(i, s, id))); }
+    metadata(credential: unknown, id: unknown): Promise<Metadata> { return this.run('metadata', credential, async (i, s) => metadata(await this.find(i, s, id)), { id }); }
     copy(credential: unknown, id: unknown, target: unknown, options: unknown = {}): Promise<Metadata> {
         return this.run('copy', credential, async (i, s) => {
             if (!record(options) || !exact(options, ['acl']))
@@ -322,10 +376,13 @@ export class PrivateDocuments {
             if (orgType(source.type) !== (scope.personId === undefined))
                 fail('invalid');
             await this.authorize(i, scope);
+            // A per-owner store copies only within the owner it holds.
+            if (this.options.store.partition && !sameOwner(ownerOfScope(scope), ownerOfScope(source.scope)))
+                fail('denied');
             const d = { ...source, scope, id: randomUUID(), version: randomUUID(), acl: 'private' as const };
             s.documents.push(d);
             return metadata(d);
-        });
+        }, { id });
     }
     replace(credential: unknown, id: unknown, input: unknown): Promise<Metadata> {
         return this.run('replace', credential, async (i, s) => {
@@ -337,10 +394,10 @@ export class PrivateDocuments {
             s.retired.push(previous);
             s.documents[s.documents.indexOf(previous)] = d;
             return metadata(d);
-        });
+        }, { id });
     }
     remove(credential: unknown, id: unknown): Promise<void> {
-        return this.run('remove', credential, async (i, s) => { const d = await this.find(i, s, id); s.retired.push(d); s.documents.splice(s.documents.indexOf(d), 1); });
+        return this.run('remove', credential, async (i, s) => { const d = await this.find(i, s, id); s.retired.push(d); s.documents.splice(s.documents.indexOf(d), 1); }, { id });
     }
     issueDelivery(credential: unknown, id: unknown, ttlSeconds: unknown = 60): Promise<{
         url: string;
@@ -355,7 +412,7 @@ export class PrivateDocuments {
             const expiresAt = now + ttlSeconds * 1000;
             const payload = Buffer.from(JSON.stringify({ v: 1, id: d.id, version: d.version, subject: this.mac('subject:' + principal), iat: now, exp: expiresAt })).toString('base64url');
             return { url: `${this.origin}${this.deliveryPath}?t=${payload}.${this.mac('delivery:' + payload)}`, expiresAt };
-        });
+        }, { id });
     }
     /** Opt-in HTTP adapter; this package does not mount or enable a live route.
      * Bearer value is opaque input to authenticate(), never an identity claim. */
@@ -426,6 +483,6 @@ export class PrivateDocuments {
             if (claim.version !== d.version || claim.subject !== this.mac('subject:' + principal))
                 return fail('denied');
             return { bytes: Buffer.from(d.data, 'base64'), headers: { 'Content-Type': d.mime, 'Content-Length': String(d.size), 'Content-Disposition': 'attachment', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' } };
-        });
+        }, { link });
     }
 }
