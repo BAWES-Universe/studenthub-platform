@@ -1211,9 +1211,9 @@ test("doccopy is refused before any object read without a qualifying accepted do
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("doccopy that stops at a bound or finds changed bytes publishes incomplete and exits 3", async () => {
+test("doccopy that finds changed bytes publishes incomplete and exits 3, and a byte bound below one document still takes it", async () => {
   const photo = png();
-  const { dir, invocation } = await acceptedDoccheck(photo);
+  const { dir, legacy, invocation } = await acceptedDoccheck(photo);
   const out = path.join(dir, "out");
   try {
     const changed = harness({ dir: provenancedDir(), rows: docSources(), bucket: { read: async (k) => (k === "photos/Secret-photo.png" ? { kind: "found", bytes: png(9) } : { kind: "missing" }) },
@@ -1222,10 +1222,11 @@ test("doccopy that stops at a bound or finds changed bytes publishes incomplete 
     const r = JSON.parse(readFileSync(path.join(out, `${changed.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
     assert.deepEqual([r.status, r.copy!.rules["document.changed"], r.copy!.matchesAccepted, r.copy!.complete], ["incomplete", 1, false, true]);
     cleanup(changed);
-    const bounded = harness({ dir: provenancedDir(), rows: docSources(), env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out, M4_DOCCOPY_MAX_BYTES: "1" } });
-    assert.equal(await main(["doccopy"], bounded.deps), 3);
+    const bounded = harness({ dir: provenancedDir(), rows: docSources(), bucket: legacy, staging: memoryStaging().objects,
+      env: { ...copyEnv, M4_ACCEPTED_DOCCHECK: invocation, M4_OUTPUT_DIR: out, M4_DOCCOPY_MAX_BYTES: "1" } });
+    assert.equal(await main(["doccopy"], bounded.deps), 0, bounded.err.join(" "));
     const b = JSON.parse(readFileSync(path.join(out, `${bounded.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
-    assert.deepEqual([b.status, b.copy!.handled, b.copy!.complete], ["incomplete", 0, false]);
+    assert.deepEqual([b.status, b.copy!.handled, b.copy!.complete], ["ok", 1, true]);
     cleanup(bounded);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
