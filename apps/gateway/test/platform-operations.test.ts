@@ -57,7 +57,7 @@ test("OPS_PAGE an operator admin sees every job's last run and whether it is lat
   assert.match(html, /role="status">3 things need attention\./, "OPS_PAGE one late job, overdue email and failed attempts");
   assert.match(html, /Checked 27 Nov 2026, 12:00 Kuwait time\./);
   assert.match(html, /<th scope="row">Worker heartbeat<\/th><td>27 Nov 2026, 11:59 Kuwait time<\/td><td>Succeeded<\/td><td>On time<\/td>/);
-  assert.match(html, /<th scope="row">Email delivery<\/th><td>27 Nov 2026, 11:58 Kuwait time<\/td><td>Failed<\/td><td><strong>Late<\/strong><\/td>/, "OPS_PAGE email job's last success is 30 minutes old");
+  assert.match(html, /<th scope="row">Email delivery<\/th><td>27 Nov 2026, 11:58 Kuwait time<\/td><td><strong>Failed<\/strong><\/td><td><strong>Late<\/strong><\/td>/, "OPS_PAGE email job's last success is 30 minutes old");
   assert.match(html, /<dt>Waiting to send<\/dt><dd>7, the oldest queued 27 Nov 2026, 10:30 Kuwait time<\/dd>/);
   assert.match(html, /<dt>Overdue<\/dt><dd><strong>3<\/strong><\/dd>/);
   assert.match(html, /<tr><td>40<\/td><td><strong>2<\/strong><\/td><td>5<\/td><td>1<\/td><\/tr>/);
@@ -77,6 +77,27 @@ test("OPS_PAGE everything running reads as all clear, a never-run job is late", 
   const fresh = await (await none.call("/platform/operations", ADMIN)).text();
   assert.match(fresh, /role="status">3 things need attention\./);
   assert.match(fresh, /<th scope="row">Late job check<\/th><td>Never run<\/td><td>None<\/td><td><strong>Late<\/strong><\/td>/);
+});
+
+test("OPS_FAILED a failed latest run needs attention even when an earlier success keeps the job on schedule, and counts once", async (t) => {
+  const recent = await rig(t, { runs: async (s) => {
+    for (const name of ["heartbeat", "missed_run_check", "email_delivery"] as const) await s.record(ran(name, 1));
+    await s.record(ran("heartbeat", 0.5, "failed"));
+  } });
+  const html = await (await recent.call("/platform/operations", ADMIN)).text();
+  assert.doesNotMatch(html, /Everything is running/, "OPS_FAILED no all-clear over a failed run");
+  assert.match(html, /role="status">1 thing needs attention\./);
+  assert.match(html, /<th scope="row">Worker heartbeat<\/th><td>[^<]+<\/td><td><strong>Failed<\/strong><\/td><td>On time<\/td>/);
+  const body = await (await recent.call("/platform/operations", ADMIN, "application/json")).json();
+  assert.equal(body.needsAttention, 1);
+  assert.deepEqual(body.jobs.map((j: { name: string; late: boolean; lastRun: { outcome: string } }) => [j.name, j.late, j.lastRun.outcome]),
+    [["heartbeat", false, "failed"], ["missed_run_check", false, "succeeded"], ["email_delivery", false, "succeeded"]]);
+  const both = await rig(t, { runs: async (s) => {
+    for (const name of ["heartbeat", "missed_run_check"] as const) await s.record(ran(name, 1));
+    await s.record(ran("email_delivery", 30)); await s.record(ran("email_delivery", 2, "failed"));
+  } });
+  const late = await (await both.call("/platform/operations", ADMIN, "application/json")).json();
+  assert.deepEqual([late.jobs[2].late, late.jobs[2].lastRun.outcome, late.needsAttention], [true, "failed", 1], "OPS_FAILED late and failed counts once");
 });
 
 test("OPS_JSON an API caller gets the same view as JSON", async (t) => {

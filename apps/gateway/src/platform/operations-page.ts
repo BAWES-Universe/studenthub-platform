@@ -27,7 +27,11 @@ export interface OperationsJob {
 }
 export interface PlatformOperationsView {
   readonly checkedAt: string;
-  /** Late jobs, plus one for overdue email and one for failed delivery attempts in the last 24 hours. */
+  /**
+   * Jobs that are late or whose latest run failed (a job that is both counts once), plus one for
+   * overdue email and one for failed delivery attempts in the last 24 hours. A failed latest run
+   * counts even when an earlier success keeps the job on schedule.
+   */
   readonly needsAttention: number;
   readonly jobs: readonly OperationsJob[];
   readonly email: { readonly waiting: number; readonly overdue: number; readonly oldestWaitingSince: string | null;
@@ -61,7 +65,7 @@ export function createPlatformOperations(deps: {
         return { name: job.name, late: isJobMissed(job, successes.get(job.name), at),
           lastRun: run ? { startedAt: run.startedAt.toISOString(), durationMs: run.durationMs, outcome: run.outcome } : null };
       });
-      const needsAttention = jobs.filter(j => j.late).length + (email.overdue > 0 ? 1 : 0) + (email.last24Hours.failed > 0 ? 1 : 0);
+      const needsAttention = jobs.filter(j => j.late || j.lastRun?.outcome === "failed").length + (email.overdue > 0 ? 1 : 0) + (email.last24Hours.failed > 0 ? 1 : 0);
       return { checkedAt: at.toISOString(), needsAttention, jobs,
         email: { waiting: email.waiting, overdue: email.overdue, oldestWaitingSince: email.oldestWaitingSince?.toISOString() ?? null, last24Hours: { ...email.last24Hours } } };
     },
@@ -79,11 +83,11 @@ function render(v: PlatformOperationsView): string {
   const status = v.needsAttention === 0
     ? `<p class="status-ok" role="status">Everything is running.</p>`
     : `<p class="status-warn" role="status">${e(plural(v.needsAttention, "thing needs", "things need"))} attention.</p>`;
-  const jobRows = v.jobs.map(j => `<tr><th scope="row">${e(JOB_LABELS[j.name])}</th><td>${j.lastRun ? e(kuwait(j.lastRun.startedAt)) : "Never run"}</td><td>${j.lastRun ? e(OUTCOME_LABELS[j.lastRun.outcome]) : "None"}</td><td>${j.late ? "<strong>Late</strong>" : "On time"}</td></tr>`).join("");
+  const jobRows = v.jobs.map(j => `<tr><th scope="row">${e(JOB_LABELS[j.name])}</th><td>${j.lastRun ? e(kuwait(j.lastRun.startedAt)) : "Never run"}</td><td>${!j.lastRun ? "None" : j.lastRun.outcome === "failed" ? `<strong>${e(OUTCOME_LABELS.failed)}</strong>` : e(OUTCOME_LABELS[j.lastRun.outcome])}</td><td>${j.late ? "<strong>Late</strong>" : "On time"}</td></tr>`).join("");
   const m = v.email, a = m.last24Hours;
   return `<main id="main" class="profile-main"><h1>Operations</h1>${status}<p class="field-meta">Checked ${e(kuwait(v.checkedAt))}.</p>
     <h2>Scheduled jobs</h2><table><caption>Each job's last run</caption><thead><tr><th scope="col">Job</th><th scope="col">Last run</th><th scope="col">Outcome</th><th scope="col">Schedule</th></tr></thead><tbody>${jobRows}</tbody></table>
-    <p>A job is late when it has not succeeded for one and a half of its intervals. <a class="text-link" href="/admin/jobs">Job details</a></p>
+    <p>A job is late when it has not succeeded for one and a half of its intervals. A job whose latest run failed needs attention even when it is on schedule. <a class="text-link" href="/admin/jobs">Job details</a></p>
     <h2>Email delivery</h2><dl class="profile-fields">
       <div><dt>Waiting to send</dt><dd>${e(String(m.waiting))}${m.oldestWaitingSince ? `, the oldest queued ${e(kuwait(m.oldestWaitingSince))}` : ""}</dd></div>
       <div><dt>Overdue</dt><dd>${m.overdue > 0 ? `<strong>${e(String(m.overdue))}</strong>` : "0"}</dd></div>
