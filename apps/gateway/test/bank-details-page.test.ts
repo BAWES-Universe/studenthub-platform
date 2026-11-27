@@ -13,6 +13,7 @@ import { createBankDetails, handleBankDetailsPage, type BankDetailsService } fro
 // banks and checksum-valid test IBANs.
 const ORIGIN = "https://studenthub.example.invalid";
 const SESSION = "c".repeat(43);
+const OTHER_SESSION = "d".repeat(43);
 const PERSON = "candidate-person";
 const SECRET = "c15-bank-details-page-secret-at-least-32-bytes";
 const BANK = "3333abcd-3333-4333-8333-33333333abcd";
@@ -43,9 +44,12 @@ function rig(options: { candidate?: boolean; stored?: string | null } = {}) {
     },
     readReceipt: async (principalId: string, ref: string) => principalId === PERSON ? receipts.get(ref) ?? null : null,
   };
-  const sessions = { get: async (id: string) => id === SESSION ? { id: SESSION, personId: PERSON } : undefined };
-  const service = createBankDetails({ sessions: sessions as never, store, banks, secret: SECRET, choices: async () => CHOICES });
-  return { service, value: () => value, set: (next: string | null) => { value = next; } };
+  // The same person signed in twice: each session is its own.
+  const sessions = { get: async (id: string) => id === SESSION || id === OTHER_SESSION ? { id, personId: PERSON } : undefined };
+  let at = Date.now();
+  const clock = { now: () => new Date(at) };
+  const service = createBankDetails({ sessions: sessions as never, store, banks, secret: SECRET, clock, choices: async () => CHOICES });
+  return { service, value: () => value, set: (next: string | null) => { value = next; }, advance: (ms: number) => { at += ms; } };
 }
 
 interface Page { readonly handled: boolean; readonly status: number; readonly title: string; readonly html: string; readonly headers: Record<string, string>; readonly raw: string }
@@ -117,10 +121,10 @@ test("C15_BANK_PAGE_FLOW review shows before and after masked, confirm saves thr
   assert.match(review.html, /<h2>After the change<\/h2><dl class="profile-facts"><dt>Bank<\/dt><dd>Second Synthetic Bank<\/dd><dt>IBAN<\/dt><dd><span class="masked">KW81•+0101<\/span><\/dd><dt>Account holder<\/dt><dd>Synthetic Person Two<\/dd>/);
   assert.equal(x.value(), stored(), "a review changes nothing");
   const hidden = hiddenFields(review.html);
-  assert.deepEqual(Object.keys(hidden).sort(), ["bankId", "beneficiaryName", "iban", "token.changeSetDigest", "token.expectedBeforeDigest",
-    "token.expiresAt", "token.issuedAt", "token.mac", "token.principalRef", "token.tokenId"]);
-  // The only full IBAN on the review page is the person's own entry, carried to confirm in a hidden field.
-  assert.equal(review.html.replace(/<input type="hidden"[^>]*>/g, "").includes("1234"), false, "nothing but the masked IBAN is shown");
+  // The page carries only an opaque review reference: the typed values and the token stay on the server.
+  assert.deepEqual(Object.keys(hidden), ["review"]);
+  assert.match(hidden.review!, /^[0-9a-f]{64}$/);
+  for (const raw of [IBAN, "1234", "kw81 cbku", "CBKU", "mac", "Digest", "token"]) assert.equal(review.html.includes(raw), false, `C15_BANK_PAGE_FLOW review body carries no ${raw}`);
 
   const confirm = await call(x.service, "/profile/bank/confirm", hidden);
   assert.equal(confirm.status, 303);
@@ -136,11 +140,11 @@ test("C15_BANK_PAGE_FLOW review shows before and after masked, confirm saves thr
   assert.equal(reread.html.includes(IBAN), false);
   assert.equal(reread.html.includes("were saved"), false, "a plain reread claims no save");
   const replay = await call(x.service, "/profile/bank/confirm", hidden);
-  assert.equal(replay.status, 409, "a used token is refused");
+  assert.equal(replay.status, 409, "a used review is refused");
   assert.ok(replay.html.includes("Your bank details weren’t changed."));
 });
 
-test("C15_BANK_PAGE_INPUT a refused entry keeps the bank and name, never writes the IBAN back, and saves nothing", async () => {
+test("C15_BANK_PAGE_INPUT a refused entry keeps only the picked bank, never writes a typed value back, and saves nothing", async () => {
   const x = rig();
   for (const [form, message] of [
     [{ bankId: BANK, iban: "KW00NOTANIBAN", beneficiaryName: "Synthetic Person" }, "Enter a valid IBAN."],
@@ -154,11 +158,13 @@ test("C15_BANK_PAGE_INPUT a refused entry keeps the bank and name, never writes 
     assert.match(page.html, /aria-invalid="true"/);
     assert.equal(page.html.includes(form.iban), false, "the IBAN is not echoed");
     assert.equal(/name="iban"[^>]*value=/.test(page.html), false);
-    assert.ok(page.html.includes(`value="${form.beneficiaryName}"`), "the name is kept");
+    assert.equal(/name="beneficiaryName"[^>]*value=/.test(page.html), false, "C15_BANK_PAGE_INPUT the name is not echoed");
+    assert.equal(page.html.includes("Synthetic Person"), false);
+    assert.equal(page.html.includes("not-a-bank") || page.html.includes("9999abcd"), false, "an unknown bank id is not echoed");
   }
   const kept = await call(x.service, "/profile/bank/review", { bankId: BANK, iban: "bad", beneficiaryName: "<b>Synthetic</b>" });
-  assert.ok(kept.html.includes('value="&lt;b&gt;Synthetic&lt;/b&gt;"'), "kept name is escaped");
-  assert.ok(kept.html.includes(`<option value="${BANK}" selected>`), "kept bank is selected");
+  assert.equal(kept.html.includes("Synthetic&lt;") || kept.html.includes("&lt;b&gt;"), false, "the typed name never comes back");
+  assert.ok(kept.html.includes(`<option value="${BANK}" selected>`), "a bank picked from the list stays picked");
   assert.equal(x.value(), null);
 });
 
@@ -192,7 +198,7 @@ test("C15_BANK_PAGE_HIDDEN signed out is the signed-out page; someone without a 
   assert.equal(staff.value(), stored(), "nothing changed");
 });
 
-test("C15_BANK_PAGE_BOUNDARY origin, method, form shape and token binding are enforced; only page paths are taken", async () => {
+test("C15_BANK_PAGE_BOUNDARY origin, method, form shape and review binding are enforced; only page paths are taken", async () => {
   const x = rig();
   const form = { bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" };
   assert.equal((await call(x.service, "/profile/bank/review", form, { origin: "https://evil.example.invalid" })).status, 403);
@@ -211,11 +217,12 @@ test("C15_BANK_PAGE_BOUNDARY origin, method, form shape and token binding are en
 
   const review = await call(x.service, "/profile/bank/review", form);
   const hidden = hiddenFields(review.html);
-  const tampered = await call(x.service, "/profile/bank/confirm", { ...hidden, iban: "KW81CBKU0000000000001234569999" });
-  assert.notEqual(tampered.status, 303, "a changed IBAN does not match the reviewed token");
-  assert.equal((await call(x.service, "/profile/bank/confirm", { ...hidden, "token.mac": "x" })).status, 409);
-  const { ["token.tokenId"]: _dropped, ...missing } = hidden;
-  assert.equal((await call(x.service, "/profile/bank/confirm", missing)).status, 400);
+  // Confirm takes the review reference and nothing else: typed values cannot ride along.
+  assert.equal((await call(x.service, "/profile/bank/confirm", { ...hidden, iban: "KW81CBKU0000000000001234569999" })).status, 400);
+  assert.equal((await call(x.service, "/profile/bank/confirm", {})).status, 400);
+  assert.equal((await call(x.service, "/profile/bank/confirm", { review: "a".repeat(64) })).status, 409, "an unknown review");
+  assert.equal((await call(x.service, "/profile/bank/confirm", { review: "x" })).status, 409);
+  assert.equal((await call(x.service, "/profile/bank/confirm", hidden, { cookie: null })).status, 401);
   assert.equal((await call(x.service, "/profile/bank/confirm", hidden, { origin: "https://evil.example.invalid" })).status, 403);
   assert.equal(x.value(), null, "nothing saved by any refused confirm");
   assert.equal((await call(x.service, "/profile/bank/confirm", hidden)).status, 303);
@@ -239,7 +246,7 @@ test("C15_BANK_PAGE_QUIET a failing dependency answers 503 and nothing is logged
     const noChoices = { ...x.service, bankChoices: async () => { throw new Error("catalogue down"); } } as BankDetailsService;
     assert.equal((await call(noChoices, "/profile/bank", undefined)).status, 503);
     // A 503 at confirm can follow a committed write (the receipt step failed): the page never says nothing changed.
-    const receiptFailed = { ...x.service, confirm: async () => ({ status: 503 as const, body: { error: "receipt_failed" } }) } as BankDetailsService;
+    const receiptFailed = { ...x.service, confirmReview: async () => ({ status: 503 as const, body: { error: "receipt_failed" } }) } as BankDetailsService;
     const again = await call(x.service, "/profile/bank/review", { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person" });
     const unsure = await call(receiptFailed, "/profile/bank/confirm", hiddenFields(again.html));
     assert.equal(unsure.status, 503);
@@ -321,4 +328,50 @@ test("C15_BANK_PAGE_FORMS empty and partial forms name every missing part, inval
   const other = rig({ stored: stored() });
   assert.equal((await call(other.service, done.headers.location!, undefined)).html.includes("were saved"), false, "another store's receipt is not this one's");
   assert.equal((await call(x.service, done.headers.location!, undefined, { cookie: null })).status, 401);
+});
+
+test("C15_BANK_PAGE_REVIEW_REF a review is bound to its session, expires with its token, is used once, and a changed record needs a fresh review", async () => {
+  const form = { bankId: OTHER_BANK, iban: IBAN, beneficiaryName: "Synthetic Person Two" };
+  const saved = bankDetailsValue(form);
+
+  // Another session of the same person cannot use it; the owning session still can.
+  const x = rig({ stored: stored() });
+  const review = hiddenFields((await call(x.service, "/profile/bank/review", form)).html);
+  const other = await call(x.service, "/profile/bank/confirm", review, { cookie: `__Host-studenthub_session=${OTHER_SESSION}` });
+  assert.equal(other.status, 409, "C15_BANK_PAGE_REVIEW_REF other session");
+  assert.equal(x.value(), stored());
+  assert.equal((await call(x.service, "/profile/bank/confirm", review)).status, 303, "same session");
+  assert.equal(x.value(), saved);
+
+  // A newer review in the same session replaces the older one.
+  const y = rig({ stored: stored() });
+  const first = hiddenFields((await call(y.service, "/profile/bank/review", form)).html);
+  const second = hiddenFields((await call(y.service, "/profile/bank/review", form)).html);
+  assert.notEqual(first.review, second.review);
+  assert.equal((await call(y.service, "/profile/bank/confirm", first)).status, 409, "the replaced review");
+  assert.equal((await call(y.service, "/profile/bank/confirm", second)).status, 303);
+
+  // Expiry: past the token's lifetime the review is refused and nothing is written.
+  const z = rig({ stored: stored() });
+  const late = hiddenFields((await call(z.service, "/profile/bank/review", form)).html);
+  z.advance(24 * 60 * 60 * 1000);
+  const expired = await call(z.service, "/profile/bank/confirm", late);
+  assert.equal(expired.status, 409, "C15_BANK_PAGE_REVIEW_REF expiry");
+  assert.ok(expired.html.includes("This review has expired"));
+  assert.equal(z.value(), stored());
+
+  // The record changed after the review: refused, nothing written; a fresh reread and review then saves.
+  const w = rig({ stored: stored() });
+  const stale = hiddenFields((await call(w.service, "/profile/bank/review", form)).html);
+  const elsewhere = bankDetailsValue({ bankId: BANK, iban: IBAN, beneficiaryName: "Changed Elsewhere" });
+  w.set(elsewhere);
+  const changed = await call(w.service, "/profile/bank/confirm", stale);
+  assert.equal(changed.status, 409, "C15_BANK_PAGE_REVIEW_REF changed record");
+  assert.equal(w.value(), elsewhere);
+  assert.equal((await call(w.service, "/profile/bank/confirm", stale)).status, 409, "a refused review is not reusable");
+  const reread = await call(w.service, "/profile/bank", undefined);
+  assert.ok(reread.html.includes("Changed Elsewhere"), "the reread shows what is saved now");
+  const fresh = hiddenFields((await call(w.service, "/profile/bank/review", form)).html);
+  assert.equal((await call(w.service, "/profile/bank/confirm", fresh)).status, 303);
+  assert.equal(w.value(), saved);
 });
