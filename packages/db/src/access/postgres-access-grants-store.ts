@@ -74,6 +74,9 @@ const PRINCIPAL_LOCK_KEY = 5959; // the key PostgresAuthzStore takes per princip
 const LOOKUP_LIMIT = 25;
 const HISTORY_LIMIT = 50;
 
+/** Postgres text can't hold NUL, so a search that contains one matches nothing. */
+const searchable = (value: string): boolean => !value.includes("\u0000");
+
 function likePrefix(value: string): string {
   return `${value.toLowerCase().replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
 }
@@ -254,6 +257,7 @@ export class PostgresAccessGrantsStore {
   }
 
   async findPeople(query: { readonly kind: "email" | "name"; readonly value: string }): Promise<readonly { principalId: string; displayName: string | null; email: string | null }[]> {
+    if (!searchable(query.value)) return [];
     const { rows } = query.kind === "email"
       ? await this.#pool.query<{ id: string; display_name: string | null; email: string | null }>(
         "SELECT id, display_name, email FROM principals WHERE lower(email) = lower($1) ORDER BY id LIMIT $2",
@@ -308,18 +312,21 @@ export class PostgresAccessGrantsStore {
   }
 
   async history(principalId: string): Promise<readonly {
-    orgId: string; orgName: string; role: string; scope: Scope; action: "grant" | "revoke";
+    orgId: string; orgName: string; role: string; scope: Scope | "store"; action: "grant" | "revoke";
     actor: { principalId: string; displayName: string | null }; reason: string; occurredAt: string;
+    storeName?: string;
   }[]> {
     const { rows } = await this.#pool.query<{
-      org_id: string; org_name: string | null; role: string; scope: Scope; action: "grant" | "revoke";
+      org_id: string; org_name: string | null; role: string; scope: Scope | "store"; action: "grant" | "revoke";
       actor_principal_id: string; actor_name: string | null; reason: string; occurred_at: Date;
+      store_id: string | null; store_name: string | null;
     }>(
       `SELECT e.org_id, o.name AS org_name, e.role, e.scope, e.action, e.actor_principal_id,
-              a.display_name AS actor_name, e.reason, e.occurred_at
+              a.display_name AS actor_name, e.reason, e.occurred_at, e.store_id, st.name AS store_name
        FROM access_grant_events e
        LEFT JOIN organizations o ON o.id = e.org_id
        LEFT JOIN principals a ON a.id = e.actor_principal_id
+       LEFT JOIN organization_stores st ON st.id = e.store_id
        WHERE e.target_principal_id = $1
        ORDER BY e.occurred_at DESC, e.id DESC LIMIT $2`,
       [principalId, HISTORY_LIMIT]);
@@ -327,10 +334,12 @@ export class PostgresAccessGrantsStore {
       orgId: row.org_id, orgName: row.org_name ?? row.org_id, role: row.role, scope: row.scope, action: row.action,
       actor: { principalId: row.actor_principal_id, displayName: row.actor_name },
       reason: row.reason, occurredAt: iso(row.occurred_at)!,
+      ...(row.store_id === null ? {} : { storeName: row.store_name ?? row.store_id }),
     }));
   }
 
   async findOrganizations(query: string): Promise<readonly { orgId: string; name: string; ancestors: readonly string[] }[]> {
+    if (!searchable(query)) return [];
     const { rows } = await this.#pool.query<{ id: string; name: string }>(
       `SELECT o.id, o.name FROM organizations o
        WHERE lower(o.name) LIKE $1 ESCAPE '\\'
@@ -495,6 +504,7 @@ export class PostgresAccessGrantsStore {
 
   /** Active stores of live companies whose name starts with the query, with their company. */
   async findStores(query: string): Promise<readonly { storeId: string; name: string; orgId: string; orgName: string }[]> {
+    if (!searchable(query)) return [];
     const { rows } = await this.#pool.query<{ id: string; name: string; org_id: string; org_name: string }>(
       `SELECT s.id, s.name, s.org_id, o.name AS org_name
        FROM organization_stores s JOIN organizations o ON o.id = s.org_id

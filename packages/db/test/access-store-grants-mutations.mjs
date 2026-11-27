@@ -24,6 +24,10 @@ const mutations = [
     "WHERE s.status = 'active' AND lower(s.name) LIKE", "WHERE lower(s.name) LIKE"],
   ["list access at a removed store", "G02_STORE_LIST",
     "AND a.revoked_at IS NULL AND s.status = 'active'", "AND a.revoked_at IS NULL"],
+  ["let a NUL reach the search", "G02_STORE_LIST",
+    'const searchable = (value) => !value.includes("\\u0000");', "const searchable = (value) => true;"],
+  ["leave the store out of the history", "G02_STORE_ATOMIC",
+    "...(row.store_id === null ? {} : { storeName: row.store_name ?? row.store_id }),", ""],
 ];
 const original = await readFile(store, "utf8");
 const run = (pattern) => spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-concurrency=1",
