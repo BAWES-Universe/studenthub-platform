@@ -183,14 +183,25 @@ async function proveAndClaim({ io, paths, config, id, claim, credentials, fetchI
   // A head other than the reviewed one counts only as a plain merge of main
   // into it that keeps the reviewed blobs; anything else needs a new review.
   // A read that failed while proving it (an error, a timeout, any answer that
-  // is not a success) proves nothing either way: unreadable, tried again later.
+  // is not a success, a body that cannot be read) proves nothing either way: unreadable, tried again later.
   if (head !== claim.reviewed_head) {
     const failedReads = [];
     const watched = async (method, url, ...rest) => {
       let response;
       try { response = await gh(method, url, ...rest); } catch (error) { failedReads.push(error?.message ?? "error"); throw error; }
       if (!response?.ok) failedReads.push(`HTTP ${response?.status ?? "unknown"}`);
-      return response;
+      // A body that cannot be read (a dropped connection, a cut-off answer)
+      // is a failed read too, whatever the status said: its read rejects, or,
+      // through boundedFetch, which keeps such a body as null, it reads as
+      // nothing. Every answer read here is a JSON object when it is whole.
+      if (typeof response?.json !== "function") return response;
+      const json = response.json.bind(response);
+      return Object.assign(Object.create(response), { json: async () => {
+        let body;
+        try { body = await json(); } catch (error) { failedReads.push(`HTTP ${response.status} with a body that cannot be read (${error?.message ?? "error"})`); throw error; }
+        if (response.ok && (body === null || typeof body !== "object")) failedReads.push(`HTTP ${response.status} with a body that cannot be read`);
+        return body;
+      } });
     };
     const why = await updatedHeadHolds(watched, { repo, passed: claim.reviewed_head, head });
     if (why && failedReads.length) recoverSkip("RECOVER_UNREADABLE", `#${claim.pr} at ${head} could not be read to prove it holds the change reviewed at ${claim.reviewed_head} (${failedReads[0]})`);

@@ -7721,6 +7721,8 @@ const recoverClaim = (fields = {}) => ({ card: "SHU-301", revision: REV, claimed
   land: "CI_TIMEOUT", repo: REPO, pr: 77, reviewed_head: PASSED, reverted: true, ...fields });
 const recoverFile = (head = PASSED) => `${LAND_PATHS.stateDir}/card-recover-${head}-SHU-301.json`;
 const recoverRecord = (host, head = PASSED) => host.files.has(recoverFile(head)) ? JSON.parse(host.files.get(recoverFile(head)).text) : null;
+// A success whose body cannot be read: the connection dropped mid-body.
+const unreadableBody = () => ({ status: 200, ok: true, headers: { get: () => null }, json: async () => { throw new SyntaxError("Unexpected end of JSON input"); } });
 function recoverHost(options = {}) {
   const host = landingHost({ existingPr: true, prHead: options.carried ?? PASSED, mainSeq: [REV, "5".repeat(40)], mainAt: 1,
     onTick: () => { throw new Error("a landing recovery never arms"); }, ...options });
@@ -7768,9 +7770,12 @@ function recoverHost(options = {}) {
       }
       if (options.carried && options.carriedFails && route === `/compare/${PASSED}...${options.carried}`) {
         if (options.carriedFails === "network") throw new TypeError("fetch failed", { cause: { code: "ETIMEDOUT" } });
+        if (options.carriedFails === "body") return unreadableBody();
         return b2Respond(options.carriedFails, { message: "Service Unavailable" });
       }
-      if (options.carried && options.commitFails && route === `/commits/${options.carried}`) return b2Respond(options.commitFails, { message: "Service Unavailable" });
+      if (options.carried && options.commitFails && route === `/commits/${options.carried}`) {
+        return options.commitFails === "body" ? unreadableBody() : b2Respond(options.commitFails, { message: "Service Unavailable" });
+      }
       const carried = carriedRead(route);
       if (carried) return carried;
       return b2Respond(404, { message: "Not Found" });
@@ -8140,6 +8145,8 @@ test("Landing recovery: a read that fails while proving the pull requests or the
     ["the carried head's lineage answers 503", { carried: CARRIED, carriedFails: 503 }],
     ["the carried head's lineage times out", { carried: CARRIED, carriedFails: "network" }],
     ["the carried head's commit answers 503", { carried: CARRIED, commitFails: 503 }],
+    ["the carried head's lineage answers 200 with a body that cannot be read", { carried: CARRIED, carriedFails: "body" }],
+    ["the carried head's commit answers 200 with a body that cannot be read", { carried: CARRIED, commitFails: "body" }],
   ]) {
     const host = recoverHost({ workerMax: 2, apart: true, ...options });
     const claim = claimText(host);
