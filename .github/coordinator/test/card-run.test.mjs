@@ -5910,11 +5910,19 @@ test("Self-repair B2: R2 each stop before the round record is a named skip that 
   }
   // A claim the repair does not read as repairable (another card's, a legacy
   // claim without its pull request) is never repaired at all.
-  for (const claim of [{ pr: null }, { reviewed_head: null }, { repo: "someone/fork" }, { ok: false }, { land: "CI_TIMEOUT" }]) {
+  for (const claim of [{ pr: null }, { reviewed_head: null }, { repo: "someone/fork" }, { ok: false }]) {
     const host = b2Host({ on: true, claim });
     assert.equal((await autoRun({ io: host.io, paths: LAND_PATHS })).skipped, "QUEUE_STOPPED", JSON.stringify(claim));
     assert.equal(b2EvidenceReads(host).length, 0);
   }
+  // A run that stopped on a wait that ran out is never repaired: it is a
+  // landing recovery's (card-recover.mjs), which reads no check run evidence.
+  const timedOut = b2Host({ on: true, claim: { land: "CI_TIMEOUT" } });
+  const recovered = await autoRun({ io: timedOut.io, paths: LAND_PATHS });
+  assert.match(String(recovered.skipped ?? recovered.outcome), /^(RECOVER_|LANDING_RECOVERY)/, JSON.stringify(recovered));
+  assert.equal(b2EvidenceReads(timedOut).length, 0);
+  assert.equal(timedOut.files.has(b2RoundFile()), false, "no repair round");
+  assert.equal(timedOut.ticks, 0);
   // The pause wins when it appears while the evidence is read.
   const paused = b2Host({ on: true });
   const fetch = paused.io.fetch;
@@ -7699,4 +7707,319 @@ test("M15 W8: the committed config runs two card workers, and a queued card that
   for (const [id, needs] of Object.entries(queue.after)) {
     for (const need of needs) assert.ok(queue.ids.includes(need) && queue.ids.indexOf(need) < queue.ids.indexOf(id), `${id} waits on ${need}, which is queued earlier`);
   }
+});
+
+// Landing recovery (card-recover.mjs): a passed run stopped at landing on
+// CI_TIMEOUT or LAND_ERROR lands its own pull request once on a later start.
+// options: land (the stopped landing), claim (claim fields), prHead (#77's
+// head now; PASSED unless given), carried (#77 was moved by hand to this head:
+// a merge of RECOVER_MAIN_AT into PASSED), carriedBlobs (that head's own blob
+// for the passed file), on (landing_repair), card (Linear card fields),
+// pulls (extra open pull requests), plus any landingHost option.
+const RECOVER_MAIN_AT = "ab".repeat(20);
+const recoverClaim = (fields = {}) => ({ card: "SHU-301", revision: REV, claimed_at: "2026-10-09T15:30:07.000Z", activation_id: EPISODE, outcome: "PASS", ok: true,
+  land: "CI_TIMEOUT", repo: REPO, pr: 77, reviewed_head: PASSED, reverted: true, ...fields });
+const recoverFile = (head = PASSED) => `${LAND_PATHS.stateDir}/card-recover-${head}-SHU-301.json`;
+const recoverRecord = (host, head = PASSED) => host.files.has(recoverFile(head)) ? JSON.parse(host.files.get(recoverFile(head)).text) : null;
+function recoverHost(options = {}) {
+  const host = landingHost({ existingPr: true, prHead: options.carried ?? PASSED, mainSeq: [REV, "5".repeat(40)], mainAt: 1,
+    onTick: () => { throw new Error("a landing recovery never arms"); }, ...options });
+  const { landing_repair: _committed, ...base } = queueConfig();
+  // One worker unless given: the queue stops behind the stopped card, so a
+  // start can only recover it or say why not. A recovery lands as a landing
+  // with more than one worker does either way.
+  const config = { ...base, landing_repair: options.on ?? true, ...(options.workers ? { workers: { max: options.workers } } : {}) };
+  host.files.set(B2_CONFIG_FILE, { text: JSON.stringify(config), mode: 0o644, uid: 0, gid: 0 });
+  host.card = { state: { id: "ip", name: "In Progress", type: "started" }, assignee: { id: ACTOR }, delegate: null, ...(options.card ?? {}) };
+  host.files.set(autoClaim(LAND_PATHS, REV, "SHU-301"), { text: `${JSON.stringify(recoverClaim({ land: options.land ?? "CI_TIMEOUT", ...(options.claim ?? {}) }))}\n`, mode: 0o600, uid: 0, gid: 0 });
+  if (options.carried) host.land.holds.set(options.carried, 0);
+  const reads = [];
+  host.recoverReads = reads;
+  const pullNow = () => ({ number: 77, state: host.land.merged ? "closed" : "open", merged: host.land.merged, title: "[SHU-301] Make the thing",
+    head: { ref: "coordinator/SHU-301", sha: host.land.pr.head, repo: { full_name: REPO } }, base: { ref: "main", sha: REV, repo: { full_name: REPO } } });
+  const delegate = host.io.fetch;
+  // What updatedHeadHolds reads of a carried head, with either token: a merge
+  // of RECOVER_MAIN_AT (on main) into PASSED that keeps (or not) its own blob.
+  const carriedRead = (route) => {
+    if (!options.carried) return null;
+    const read = (status, base, files = []) => b2Respond(200, { status, base_commit: { sha: base }, merge_base_commit: { sha: base }, files });
+    const own = (sha) => [{ filename: "src/thing.ts", status: "modified", sha }];
+    const carried = options.carried;
+    if (route === `/compare/${PASSED}...${carried}`) return read("ahead", PASSED, [{ filename: "docs/sibling.md", status: "modified", sha: "de".repeat(20) }]);
+    if (route === `/commits/${carried}`) return b2Respond(200, { sha: carried, parents: [{ sha: PASSED }, { sha: RECOVER_MAIN_AT }], commit: { tree: { sha: TREE } } });
+    if (route === `/compare/${RECOVER_MAIN_AT}...main`) return read("ahead", RECOVER_MAIN_AT);
+    if (route === `/compare/${RECOVER_MAIN_AT}...${carried}`) return read("ahead", RECOVER_MAIN_AT, own(options.carriedBlobs ?? "d".repeat(40)));
+    if (route === `/compare/${RECOVER_MAIN_AT}...${PASSED}`) return read("diverged", RECOVER_MAIN_AT, own("d".repeat(40)));
+    return null;
+  };
+  host.io.fetch = async (url, request = {}) => {
+    if (request.headers?.Authorization === "Bearer land-secret-value" && String(url).startsWith(B2_API)) {
+      const answer = carriedRead(String(url).slice(B2_API.length));
+      if (answer) return answer;
+    }
+    if (request.headers?.Authorization === "Bearer gh-secret-value" && String(url).startsWith(B2_API)) {
+      const route = String(url).slice(B2_API.length);
+      reads.push(`${request.method ?? "GET"} ${route}`);
+      assert.equal(request.method ?? "GET", "GET", "a recovery only reads GitHub with the coordinator's token");
+      if (route === "/pulls/77") return b2Respond(200, pullNow());
+      if (route === "/pulls?state=open&per_page=100&page=1") return b2Respond(200, [...(host.land.merged ? [] : [pullNow()]), ...(options.pulls ?? [])]);
+      const carried = carriedRead(route);
+      if (carried) return carried;
+      return b2Respond(404, { message: "Not Found" });
+    }
+    return delegate(url, request);
+  };
+  return host;
+}
+
+// The reads only a recovery's proof makes (the queue's own hand-landing check reads #77 too).
+const recoverOnlyReads = (host) => host.recoverReads.filter((read) => read === "GET /pulls?state=open&per_page=100&page=1").length;
+const recoverStart = (host) => autoRun({ io: host.io, paths: LAND_PATHS });
+const claimText = (host) => host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text;
+// Nothing about the stopped run changed and nothing was written for it.
+const recoverUntouched = (host, label, claim) => {
+  assert.equal(claimText(host), claim, `${label}: the stopped claim stays as it was`);
+  assert.equal(host.land.merges, 0, `${label}: nothing merged`);
+  assert.deepEqual(host.land.log.filter((entry) => !entry.startsWith("github list")), [], `${label}: nothing written to GitHub or Linear`);
+  assert.equal(host.card.assignee?.id ?? null, host.cardOwner ?? ACTOR, `${label}: the card's owner is untouched`);
+  noArming(host);
+};
+
+test("Landing recovery: a passed run stopped on CI_TIMEOUT lands its own pull request once, at the head main updated it to, under the landing lock", async () => {
+  const host = recoverHost();
+  const claim = claimText(host);
+  const result = await recoverStart(host);
+  assert.equal(result.outcome, "LANDING_RECOVERY", JSON.stringify(result));
+  assert.equal(result.ok, true);
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(result.land.reviewed_head, PASSED);
+  assert.equal(result.land.updated_head, host.land.mergedHead, "merged at the head the update made, and only there");
+  assert.notEqual(host.land.mergedHead, PASSED);
+  assert.equal(host.land.merges, 1);
+  assert.equal(host.land.landLockAtMerge, true, "the merge step runs under the host-wide landing lock");
+  assert.ok(host.land.checkedHeads.has(host.land.mergedHead), "the required checks were read at the merged head");
+  assert.deepEqual(result.recover, { pr: 77, reviewed_head: PASSED, head: PASSED, recover_of: EPISODE, stopped_land: "CI_TIMEOUT" });
+  // The record: one per passed head, finished, naming what it landed.
+  const record = recoverRecord(host);
+  assert.equal(record.state, "finished");
+  assert.equal(record.activation_id, "shu-301-recover-111111111111");
+  assert.equal(record.recover_of, EPISODE);
+  assert.equal(record.pass_attempt_id, "00000000-0000-4000-8000-000000000302");
+  assert.equal(record.land, "MERGED");
+  assert.equal(record.landed_head, host.land.mergedHead);
+  assert.equal(record.merge_commit, MERGE_SHA);
+  // A new exact merge attempt for the new head; the stopped run is untouched.
+  const attempts = host.land.comments.map((c) => /coordinator-merge-attempt/.test(c.body) && /"approved_head_sha": "([0-9a-f]{40})"/.exec(c.body)?.[1]).filter(Boolean);
+  assert.ok(attempts.length >= 1 && attempts.every((sha) => sha === host.land.mergedHead), JSON.stringify(attempts));
+  assert.equal(claimText(host), claim, "the stopped claim is kept as it was");
+  assert.equal(host.card.assignee.id, ACTOR, "the card's owner is untouched");
+  assert.ok(!host.land.log.includes("linear state move"), "a recovery never moves the card");
+  assert.equal(host.ticks, 0);
+  noArming(host);
+  assert.equal(host.files.has(LAND_PATHS.lock), false, "the run lock is released");
+  assert.ok(host.recoverReads.every((read) => read.startsWith("GET ")), "the coordinator's token only read");
+  assert.match(host.reports[0], /Landing recovery of pull request #77/);
+  assert.match(host.reports[0], /Nothing was armed/);
+  // The merge counts as the card landing, so the queue moves on and never lands it twice.
+  const landed = await cardLanded(host.io, LAND_PATHS, "SHU-301", { repo: REPO });
+  assert.equal(landed.landed, true, JSON.stringify(landed));
+  const again = await recoverStart(host);
+  assert.notEqual(again.outcome, "LANDING_RECOVERY", JSON.stringify(again));
+  assert.equal(host.land.merges, 1, "a second start lands nothing");
+});
+
+test("Landing recovery: a passed run stopped on LAND_ERROR lands the same way; a stop of any other kind is never recovered", async () => {
+  const host = recoverHost({ land: "LAND_ERROR" });
+  const result = await recoverStart(host);
+  assert.equal(result.outcome, "LANDING_RECOVERY", JSON.stringify(result));
+  assert.equal(result.land.outcome, "MERGED");
+  assert.equal(result.recover.stopped_land, "LAND_ERROR");
+  assert.equal(recoverRecord(host).stopped_land, "LAND_ERROR");
+  // Unit: only a passed run of the pilot repository stopped on those two.
+  const { recoverCandidate } = await import("../service/card-recover.mjs");
+  const ok = recoverClaim();
+  assert.equal(recoverCandidate(ok, { id: "SHU-301", repo: REPO }), true);
+  for (const [label, claim, id, repo] of [
+    ["another card's claim", ok, "SHU-305", REPO],
+    ["another repository", ok, "SHU-301", "someone/fork"],
+    ["a BLOCK", recoverClaim({ outcome: "BLOCK" }), "SHU-301", REPO],
+    ["a red pull request (a landing repair's)", recoverClaim({ land: "PR_OPENED_CI_RED" }), "SHU-301", REPO],
+    ["a held landing", recoverClaim({ land: "LAND_PAUSED" }), "SHU-301", REPO],
+    ["a merged card", recoverClaim({ land: "MERGED" }), "SHU-301", REPO],
+    ["no pull request", recoverClaim({ pr: null }), "SHU-301", REPO],
+    ["no reviewed head", recoverClaim({ reviewed_head: null }), "SHU-301", REPO],
+    ["no episode", recoverClaim({ activation_id: "x" }), "SHU-301", REPO],
+  ]) assert.equal(recoverCandidate(claim, { id, repo }), false, label);
+});
+
+test("Landing recovery: with landing_repair off, a stopped card stays stopped and nothing is read, so the unchanged plan still sees it", async () => {
+  for (const on of [false, undefined]) {
+    const host = recoverHost({ on });
+    if (on === undefined) {
+      const { landing_repair: _drop, ...rest } = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
+      host.files.set(B2_CONFIG_FILE, { text: JSON.stringify(rest), mode: 0o644, uid: 0, gid: 0 });
+    }
+    const claim = claimText(host);
+    const result = await recoverStart(host);
+    assert.equal(result.skipped, "QUEUE_STOPPED", JSON.stringify(result));
+    assert.match(result.reason, /^SHU-301 ran at .* and did not land \(PASS, landing CI_TIMEOUT\)/);
+    assert.equal(recoverOnlyReads(host), 0, "nothing was read for a recovery");
+    assert.equal(host.files.has(recoverFile()), false);
+    recoverUntouched(host, String(on), claim);
+  }
+});
+
+test("Landing recovery: a head anyone moved counts only as a plain merge of main that keeps the reviewed blobs; otherwise it needs a new review and is never reset", async () => {
+  const CARRIED = "87".repeat(20);
+  // A hand carry that holds the reviewed blobs exactly is landed from there.
+  const carried = recoverHost({ carried: CARRIED });
+  const result = await recoverStart(carried);
+  assert.equal(result.outcome, "LANDING_RECOVERY", JSON.stringify(result));
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(result.recover.head, CARRIED);
+  assert.equal(recoverRecord(carried).head, CARRIED);
+  assert.ok(carried.recoverReads.includes(`GET /commits/${CARRIED}`), "the carry was proven before the record");
+  // One whose own blobs differ is a skip that writes nothing and leaves #77 where it is.
+  const wrong = recoverHost({ carried: CARRIED, carriedBlobs: "f".repeat(40) });
+  const claim = claimText(wrong);
+  const refused = await recoverStart(wrong);
+  assert.equal(refused.skipped, "RECOVER_HEAD_UNPROVEN", JSON.stringify(refused));
+  assert.match(refused.reason, /needs a new review and is never reset/);
+  assert.equal(wrong.land.pr.head, CARRIED, "the pull request is never reset");
+  assert.equal(wrong.files.has(recoverFile()), false, "no record: a later start may try again once it is reviewed");
+  assert.equal(wrong.reports.length, 0);
+  recoverUntouched(wrong, "wrong blobs", claim);
+});
+
+test("Landing recovery: a newer verdict, another owner, a delegate, another claiming pull request, a closed pull request or the pause each stop it before its record", async () => {
+  const blockAfter = (host) => host.b2Comment(receiptCommentBody(b2Receipt({ worker: "claude-verifier", target: PASSED, attempt: "00000000-0000-4000-8000-000000000499",
+    episode: "shu-301-run-20261010T000000Z", verdict: "BLOCKED", at: "2026-10-10T08:00:00.000Z" })));
+  const passAfter = (host) => host.b2Comment(receiptCommentBody(b2Receipt({ worker: "claude-verifier", target: PASSED, attempt: "00000000-0000-4000-8000-000000000498",
+    episode: "shu-301-run-20261010T000000Z", verdict: "PASS", at: "2026-10-10T08:00:00.000Z" })));
+  const other = { number: 78, state: "open", title: "[SHU-301] Another take", head: { ref: "someone/shu-301", sha: "7".repeat(40), repo: { full_name: REPO } },
+    base: { ref: "main", sha: REV, repo: { full_name: REPO } } };
+  const cases = [
+    ["a newer BLOCK", {}, blockAfter, "RECOVER_NOT_ELIGIBLE"],
+    ["a newer PASS of another episode", {}, passAfter, "RECOVER_NOT_ELIGIBLE"],
+    ["a newer owner", { card: { assignee: { id: "someone-else" } } }, null, "RECOVER_NOT_ELIGIBLE"],
+    ["a delegate", { card: { delegate: { id: "agent" } } }, null, "RECOVER_NOT_ELIGIBLE"],
+    ["a card moved on", { card: { state: { id: "rv", name: "In Review", type: "started" } } }, null, "RECOVER_NOT_ELIGIBLE"],
+    ["another open pull request claims the card", { pulls: [other] }, null, "RECOVER_NOT_ELIGIBLE"],
+    ["the claim names another pull request", { claim: { pr: 79 } }, null, "RECOVER_UNREADABLE"],
+  ];
+  for (const [label, options, before, skipped] of cases) {
+    const host = recoverHost(options);
+    host.cardOwner = host.card.assignee?.id ?? null;
+    host.b2Comment = (body) => { host.land.linearClock += 1000; host.land.comments.push({ body, createdAt: new Date(host.land.linearClock).toISOString(), user: { id: ACTOR, displayName: "Coordinator" } }); };
+    before?.(host);
+    const claim = claimText(host);
+    const result = await recoverStart(host);
+    assert.equal(result.skipped, skipped, `${label}: ${JSON.stringify(result)}`);
+    assert.equal(host.files.has(recoverFile()), false, `${label}: no record`);
+    assert.equal(host.reports.length, 0, `${label}: a skip posts nothing`);
+    assert.equal(host.files.has(LAND_PATHS.lock), false, `${label}: the lock is released`);
+    recoverUntouched(host, label, claim);
+  }
+  // A closed pull request is not the claim's own any more.
+  const closed = recoverHost();
+  closed.land.merged = true;
+  assert.equal((await recoverStart(closed)).skipped, "RECOVER_NOT_ELIGIBLE");
+  assert.equal(closed.files.has(recoverFile()), false);
+  // The pause wins when it appears while GitHub and Linear are read.
+  const paused = recoverHost();
+  const fetch = paused.io.fetch;
+  paused.io.fetch = async (url, request) => {
+    if (String(url).includes("/pulls?state=open")) paused.files.set(LAND_PATHS.pause, { text: "", mode: 0o644, uid: 0, gid: 0 });
+    return fetch(url, request);
+  };
+  const result = await recoverStart(paused);
+  assert.equal(result.skipped, "PAUSED", JSON.stringify(result));
+  assert.equal(paused.files.has(recoverFile()), false);
+  noArming(paused);
+});
+
+test("Landing recovery: one bounded attempt per passed head: a duplicate wake, a finished record or one never finished is never run again", async () => {
+  // A finished recovery that did not land: the card stays stopped, and the stop says why.
+  const finished = recoverHost({ checks: ["red"] });
+  finished.land.mainAt = 0;
+  const first = await recoverStart(finished);
+  assert.equal(first.outcome, "LANDING_RECOVERY", JSON.stringify(first));
+  assert.notEqual(first.land.outcome, "MERGED");
+  assert.equal(recoverRecord(finished).state, "finished");
+  const reads = recoverOnlyReads(finished);
+  const again = await recoverStart(finished);
+  assert.equal(again.skipped, "QUEUE_STOPPED", JSON.stringify(again));
+  assert.match(again.reason, /its one landing recovery finished \(/);
+  assert.equal(recoverOnlyReads(finished), reads, "nothing is read for a second attempt");
+  assert.equal(finished.land.merges, 0);
+  // A record left claimed by a start that died is never run again either.
+  const died = recoverHost();
+  died.files.set(recoverFile(), { text: `${JSON.stringify({ card: "SHU-301", state: "claimed", worker: 1, pid: 999999 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  const stopped = await recoverStart(died);
+  assert.equal(stopped.skipped, "QUEUE_STOPPED", JSON.stringify(stopped));
+  assert.match(stopped.reason, /its one landing recovery never finished \(state claimed\) and is never run again/);
+  assert.equal(recoverOnlyReads(died), 0);
+  // Two wakes racing: the second's exclusive write loses, and nothing is landed twice.
+  const { claimRecovery } = await import("../service/card-recover.mjs");
+  const raced = recoverHost();
+  const config = JSON.parse(raced.files.get(B2_CONFIG_FILE).text);
+  const credentials = { GITHUB_TOKEN: "gh-secret-value", LINEAR_API_TOKEN: "lin-secret-value" };
+  const gh = { get: async () => { throw new Error("not read"); } };
+  const args = { io: raced.io, paths: LAND_PATHS, config, id: "SHU-301", claim: recoverClaim(), credentials, fetchImpl: raced.io.fetch, gh };
+  const won = await claimRecovery(args);
+  assert.equal(won.round.record.state, "claimed");
+  await assert.rejects(claimRecovery(args), { code: "RECOVER_CLAIMED" });
+  // The same race, lost only at the exclusive write.
+  const late = recoverHost();
+  const lateArgs = { ...args, io: late.io, fetchImpl: late.io.fetch };
+  const write = late.fs.writeFileSync;
+  late.fs.writeFileSync = (file, text, options = {}) => {
+    if (file === recoverFile() && options.flag === "wx") write(file, "{\"state\":\"claimed\"}\n", options);
+    return write(file, text, options);
+  };
+  await assert.rejects(claimRecovery(lateArgs), { code: "RECOVER_CLAIMED" });
+});
+
+test("Landing recovery: a merge attempt already recorded for the PASS at the head being landed is never resumed", async () => {
+  // Main has not moved: the landing would merge the reviewed head itself.
+  const first = recoverHost({ mainAt: 0 });
+  assert.equal((await recoverStart(first)).land.outcome, "MERGED");
+  const prepared = first.land.comments.find((c) => /coordinator-merge-attempt/.test(c.body) && /"state": "PREPARED"/.test(c.body));
+  assert.ok(prepared, "the first landing prepared an attempt");
+  // The stopped landing had prepared that same attempt before its error.
+  const host = recoverHost({ mainAt: 0, land: "LAND_ERROR" });
+  host.land.comments.push(structuredClone(prepared));
+  const result = await recoverStart(host);
+  assert.equal(result.outcome, "LANDING_RECOVERY", JSON.stringify(result));
+  assert.equal(result.land.outcome, "LAND_ERROR");
+  assert.match(result.land.reason, /a landing recovery never resumes one/);
+  assert.equal(host.land.merges, 0, "nothing merged");
+  assert.equal(recoverRecord(host).state, "finished");
+  assert.equal(recoverRecord(host).land, "LAND_ERROR");
+  assert.equal(result.needs_owner, true);
+});
+
+test("Landing recovery: with two workers a fresh card still dispatches beside a stopped card, whether its recovery is running, finished or not needed", async () => {
+  const two = (ids = QUEUE) => apart({ ...queueConfig(ids), landing_repair: true, workers: { max: 2 } });
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2);
+  const host = fakeHost({ config: two(), branchHead: "" });
+  claimFor(host, REV, "SHU-301", { ...recoverClaim(), worker: 1 });
+  // No record yet: the stopped card's recovery comes first.
+  const first = await nextCard(host.io, w2, two(), REV);
+  assert.equal(first.id, "SHU-301");
+  assert.equal(first.recover.reviewed_head, PASSED);
+  // Worker 1 is recovering it: worker 2 passes it over and runs the fresh card.
+  const record = `${PATHS.stateDir}/card-recover-${PASSED}-SHU-301.json`;
+  host.files.set(record, { text: `${JSON.stringify({ card: "SHU-301", state: "armed", worker: 1, pid: 1 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  host.files.set(PATHS.lock, { text: "1\n", mode: 0o600, uid: 0, gid: 0 });
+  assert.deepEqual(await nextCard(host.io, w2, two(), REV), { id: "SHU-305" }, "a fresh card still dispatches");
+  // Finished without landing: it stops only itself, and the fresh card runs.
+  host.files.delete(PATHS.lock);
+  host.files.set(record, { text: `${JSON.stringify({ card: "SHU-301", state: "finished", land: "LAND_CHECKS_RED" })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  assert.deepEqual(await nextCard(host.io, w2, two(), REV), { id: "SHU-305" });
+  // With one worker, a finished recovery still stops the queue, and says so.
+  const one = await nextCard(host.io, PATHS, { ...queueConfig(), landing_repair: true }, REV);
+  assert.equal(one.skipped, "QUEUE_STOPPED");
+  assert.match(one.reason, /its one landing recovery finished \(LAND_CHECKS_RED\)/);
 });

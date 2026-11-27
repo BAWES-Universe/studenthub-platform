@@ -4713,6 +4713,14 @@
     "M15: two card workers run two cards at once through main auto and auto --worker 2, each on its own units, and neither reverts the other",
     "M15 W9: a claim is published whole, so another worker never reads it empty",
     "M15 W8: the committed config runs two card workers, and a queued card that shares another's files waits for it",
+    "Landing recovery: a passed run stopped on CI_TIMEOUT lands its own pull request once, at the head main updated it to, under the landing lock",
+    "Landing recovery: a passed run stopped on LAND_ERROR lands the same way; a stop of any other kind is never recovered",
+    "Landing recovery: with landing_repair off, a stopped card stays stopped and nothing is read, so the unchanged plan still sees it",
+    "Landing recovery: a head anyone moved counts only as a plain merge of main that keeps the reviewed blobs; otherwise it needs a new review and is never reset",
+    "Landing recovery: a newer verdict, another owner, a delegate, another claiming pull request, a closed pull request or the pause each stop it before its record",
+    "Landing recovery: one bounded attempt per passed head: a duplicate wake, a finished record or one never finished is never run again",
+    "Landing recovery: a merge attempt already recorded for the PASS at the head being landed is never resumed",
+    "Landing recovery: with two workers a fresh card still dispatches beside a stopped card, whether its recovery is running, finished or not needed",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -34382,6 +34390,38 @@
     },
     {
       "name": "M15 W8: the committed config runs two card workers, and a queued card that shares another's files waits for it",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a passed run stopped on CI_TIMEOUT lands its own pull request once, at the head main updated it to, under the landing lock",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a passed run stopped on LAND_ERROR lands the same way; a stop of any other kind is never recovered",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: with landing_repair off, a stopped card stays stopped and nothing is read, so the unchanged plan still sees it",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a head anyone moved counts only as a plain merge of main that keeps the reviewed blobs; otherwise it needs a new review and is never reset",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a newer verdict, another owner, a delegate, another claiming pull request, a closed pull request or the pause each stop it before its record",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: one bounded attempt per passed head: a duplicate wake, a finished record or one never finished is never run again",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: a merge attempt already recorded for the PASS at the head being landed is never resumed",
+      "capabilities": []
+    },
+    {
+      "name": "Landing recovery: with two workers a fresh card still dispatches beside a stopped card, whether its recovery is running, finished or not needed",
       "capabilities": []
     },
     {

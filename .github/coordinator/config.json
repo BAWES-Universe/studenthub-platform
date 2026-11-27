@@ -57,7 +57,8 @@
       "SHU-748",
       "SHU-749",
       "SHU-754",
-      "SHU-755"
+      "SHU-755",
+      "SHU-771"
     ]
   },
   "adapter_pause_map": {},
@@ -10395,6 +10396,19 @@
         "apps/gateway/src/reference-data-page.ts",
         "apps/gateway/test/reference-data-entry.test.ts",
         "apps/gateway/test/reference-data-entry-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-771",
+      "authorization_ref": "SHU-771",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "documentation, risk R1: the pay contracts package README at packages/pay-contracts/README.md, describing each source module, where the gateway composes it and how it is built and tested; writes only that file. It waits on nothing and shares no path with SHU-748, SHU-749, SHU-754 or SHU-755.",
+      "initial_build_paths": [
+        "packages/pay-contracts/README.md"
+      ],
+      "revision_paths": [
+        "packages/pay-contracts/README.md"
       ]
     }
   ],
