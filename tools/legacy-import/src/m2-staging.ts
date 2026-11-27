@@ -35,6 +35,15 @@ const STAGING_PREFIX = /^legacy-import\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89
 export const STAGING_BUCKET = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 const ACCOUNT = /^[a-f0-9]{32}$/;
 
+/** The account-qualified staging identity '<account>/<bucket>', or null when either part is malformed. */
+export function stagingIdentity(accountId: string, bucket: string): string | null {
+  return ACCOUNT.test(accountId) && STAGING_BUCKET.test(bucket) ? `${accountId}/${bucket}` : null;
+}
+
+/** An opaque fingerprint of the staging identity, for receipts. */
+export const stagingFingerprint = (identity: string): string =>
+  createHash("sha256").update(`m2-staging-identity-v1\n${identity}`).digest("hex");
+
 export interface StagingBucketConfig {
   readonly accountId: string;
   readonly bucket: string;
@@ -121,7 +130,8 @@ export function postgresDocumentStaging(db: Pick<pg.Pool, "query">): DocumentSta
   };
 }
 
-const KEY_WHERE = `accepted_doccheck = $1 AND target_id = $2 AND bucket = $3 AND generation = $4 AND build = $5 AND copy_order = $6`;
+// The core's key field `bucket` carries the account-qualified staging identity '<account>/<bucket>'.
+const KEY_WHERE = `accepted_doccheck = $1 AND target_id = $2 AND staging = $3 AND generation = $4 AND build = $5 AND copy_order = $6`;
 const keyParams = (k: CheckpointKey) => [k.acceptedDoccheck, k.targetId, k.bucket, k.generation, k.build, k.order];
 
 /** The copy's checkpoint table through a pool (or a pinned client). */
@@ -136,7 +146,7 @@ export function postgresCopyCheckpoints(db: Pick<pg.Pool, "query">): CopyCheckpo
       const params = [...keyParams(checkpoint.key), JSON.stringify(checkpoint)];
       const { rowCount } = expected === null
         ? await db.query(`INSERT INTO legacy_document_copy_checkpoints
-            (accepted_doccheck, target_id, bucket, generation, build, copy_order, revision, checkpoint)
+            (accepted_doccheck, target_id, staging, generation, build, copy_order, revision, checkpoint)
             VALUES ($1, $2, $3, $4, $5, $6, 1, $7::jsonb) ON CONFLICT DO NOTHING`, params)
         : await db.query(`UPDATE legacy_document_copy_checkpoints SET revision = revision + 1, checkpoint = $7::jsonb, updated_at = clock_timestamp()
             WHERE ${KEY_WHERE} AND revision = $8`, [...params, expected]);

@@ -27,6 +27,7 @@ const CONTACT_VALUES = ["+96550001234", "96550001234", "50001234", "secret.handl
 const REFRESH = { ok: true, startedAt: "2026-11-23T01:00:00.000Z", finishedAt: "2026-11-23T01:05:00.000Z", totalRows: 42 };
 const MIRROR_ID = "3e11fa47-71ca-11e1-9e33-c80aa9429562";
 const STAGING_BUCKET_NAME = "sh-staging-legacy-docs";
+const STAGING_ACCOUNT = "0123456789abcdef".repeat(2), OTHER_ACCOUNT = "fedcba9876543210".repeat(2);
 const GENERATION_ID = "6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b";
 
 function sources(): M4Sources {
@@ -73,15 +74,17 @@ interface FakeDb {
   links: LinkReport | Error;
   /** Whether migration 0660 is applied, the bucket on the marker row, and the staged rows. */
   documentsReady: boolean;
-  documentBucket: string | null;
+  documentBucket: { account: string; bucket: string } | null;
   stagedDocuments: Map<string, StagedDocument>;
   /** The copy's checkpoint table, by key. */
   checkpoints: Map<string, { revision: number; checkpoint: unknown }>;
+  /** How many times the copy loaded a checkpoint. */
+  checkpointLoads: number;
 }
 const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARGET }, operators: new Set([OPERATOR]), schemaReady: true, writer: null, sessionLost: false, civilKeyCheck: CIVIL_KEY,
   promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64), linkReportReady: true,
   links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplePrincipals": [], "link.contactTaken": [], "link.emailMismatch": [] } },
-  documentsReady: true, documentBucket: STAGING_BUCKET_NAME, stagedDocuments: new Map(), checkpoints: new Map() });
+  documentsReady: true, documentBucket: { account: STAGING_ACCOUNT, bucket: STAGING_BUCKET_NAME }, stagedDocuments: new Map(), checkpoints: new Map(), checkpointLoads: 0 });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -205,7 +208,7 @@ function harness(opts: HarnessOptions = {}): Harness {
     copyCheckpoints: () => {
       assert.equal(db.writer, me, "the checkpoint is written only by the lock holder");
       return {
-        load: async (key) => db.checkpoints.get(JSON.stringify(key)) ?? null,
+        load: async (key) => { db.checkpointLoads++; return db.checkpoints.get(JSON.stringify(key)) ?? null; },
         save: async (checkpoint, expected) => {
           if (db.sessionLost || db.writer !== me) throw new Error("m4.writerLost");
           const k = JSON.stringify(checkpoint.key), now = db.checkpoints.get(k);
@@ -963,15 +966,17 @@ const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 /** A staging bucket in memory: create-only puts, never a delete. */
 function memoryStaging(bucket = new Map<string, Buffer>()) {
   const puts: string[] = [];
+  let reads = 0, lists = 0;
   const objects: StagingObjects = {
-    async read(key, max) { const o = bucket.get(key); return !o ? { kind: "missing" } : o.length > max ? { kind: "tooLarge" } : { kind: "found", bytes: Buffer.from(o) }; },
+    async read(key, max) { reads++; const o = bucket.get(key); return !o ? { kind: "missing" } : o.length > max ? { kind: "tooLarge" } : { kind: "found", bytes: Buffer.from(o) }; },
     async put(key, bytes) { puts.push(key); if (bucket.has(key)) return "exists"; bucket.set(key, Buffer.from(bytes)); return "written"; },
     async list(prefix, page) {
+      lists++;
       const keys = [...bucket.keys()].filter((k) => k.startsWith(prefix) && (page.after === undefined || k > page.after)).sort();
       return keys.length > page.limit ? { keys: keys.slice(0, page.limit), next: keys[page.limit - 1]! } : { keys };
     },
   };
-  return { objects, bucket, puts };
+  return { objects, bucket, puts, reads: () => reads, lists: () => lists };
 }
 
 /** M-4's fixture with document columns: the imported candidate 31 and the archived 32. */
@@ -1128,7 +1133,7 @@ test("doccheck turns a failed object read into a counted issue, and a failed leg
 });
 
 // doccopy (M-2 copy step). Synthetic objects; an accepted doccheck is produced by a real doccheck run.
-const copyEnv = { M4_STAGING_DOCUMENT_BUCKET: STAGING_BUCKET_NAME, M4_LEGACY_BUCKET: "sh-legacy-bucket", M4_LIVE_DOCUMENT_BUCKET: "sh-live-docs" };
+const copyEnv = { M4_STAGING_DOCUMENT_ACCOUNT_ID: STAGING_ACCOUNT, M4_STAGING_DOCUMENT_BUCKET: STAGING_BUCKET_NAME, M4_LEGACY_BUCKET: "sh-legacy-bucket", M4_LIVE_DOCUMENT_BUCKET: "sh-live-docs" };
 async function acceptedDoccheck(photo: Buffer) {
   const dir = provenancedDir();
   const legacy: LegacyObjectReader = { read: async (key) => (key === "photos/Secret-photo.png" ? { kind: "found", bytes: photo } : { kind: "missing" }) };
@@ -1165,6 +1170,9 @@ test("doccopy stages exactly the accepted documents under the verified generatio
     const everything = [readFileSync(path.join(h.file("out"), `${h.invocation}.doccopy.report.json`), "utf8"), JSON.stringify(r), h.out.join("\n"), h.err.join("\n")].join("\n");
     assert.ok(!everything.includes("Secret"), "no legacy key or name leaves the run");
     assert.ok(!JSON.stringify(r).includes('"31"'), "no legacy id in the receipt");
+    assert.match(r.staging ?? "", /^[a-f0-9]{64}$/, "the receipt binds an opaque staging identity");
+    assert.ok(![STAGING_ACCOUNT, STAGING_BUCKET_NAME].some((v) => everything.includes(v)), "no account or bucket leaves the run");
+    assert.equal((saved!.checkpoint as { key: { bucket: string } }).key.bucket, `${STAGING_ACCOUNT}/${STAGING_BUCKET_NAME}`, "the checkpoint key carries the account and bucket");
   } finally { /* h shares the accepted doccheck's directory, removed below */ }
   // A retry with the same accepted doccheck resumes from the checkpoint and writes nothing.
   const again = harness({ dir: provenancedDir(), db, rows: docSources(), bucket: { read: async () => { throw new Error("no legacy read on retry"); } }, staging: staging.objects,
@@ -1196,7 +1204,9 @@ test("doccopy is refused before any object read without a qualifying accepted do
       assert.equal(await main(["doccopy"], h.deps), 2, code);
       const r = JSON.parse(readFileSync(path.join(out, `${h.invocation}.doccopy.receipt.json`), "utf8")) as M4Receipt;
       assert.deepEqual([r.status, r.code, r.copy], ["refused", code, undefined], code);
-      assert.deepEqual([legacyReads, staging.puts.length, db.stagedDocuments.size], [0, 0, 0], `${code}: no object read or write`);
+      const seeded = JSON.stringify([...db.checkpoints]);
+      assert.deepEqual([legacyReads, staging.puts.length, staging.reads(), staging.lists(), db.stagedDocuments.size, db.checkpointLoads], [0, 0, 0, 0, 0, 0], `${code}: no object read or write, no checkpoint load`);
+      assert.equal(JSON.stringify([...db.checkpoints]), seeded, `${code}: no checkpoint credit`);
       assert.equal(h.state.locked, false);
     } finally { cleanup(h); }
   };
@@ -1217,8 +1227,15 @@ test("doccopy is refused before any object read without a qualifying accepted do
     await run("documentBucket", { env: { M4_STAGING_DOCUMENT_BUCKET: "sh-live-docs" } });
     await run("documentBucket", { env: { M4_STAGING_DOCUMENT_BUCKET: "sh-legacy-bucket" } });
     await run("documentBucket", { env: { M4_LIVE_DOCUMENT_BUCKET: undefined } });
-    await run("documentBucket", { db: { ...fakeDb(), documentBucket: "sh-other-bucket" } });
+    await run("documentBucket", { db: { ...fakeDb(), documentBucket: { account: STAGING_ACCOUNT, bucket: "sh-other-bucket" } } });
     await run("documentBucket", { db: { ...fakeDb(), documentBucket: null } });
+    // The same bucket name in another account is another bucket: refused under the target gate, with a
+    // checkpoint already present for the provisioned identity left untouched.
+    const seededDb = () => ({ ...fakeDb(), checkpoints: new Map([["seed", { revision: 4, checkpoint: { seeded: true } }]]) });
+    await run("documentBucket", { db: { ...seededDb(), documentBucket: { account: OTHER_ACCOUNT, bucket: STAGING_BUCKET_NAME } } });
+    await run("documentBucket", { db: seededDb(), env: { M4_STAGING_DOCUMENT_ACCOUNT_ID: OTHER_ACCOUNT } });
+    await run("documentBucket", { env: { M4_STAGING_DOCUMENT_ACCOUNT_ID: undefined } });
+    await run("documentBucket", { env: { M4_STAGING_DOCUMENT_ACCOUNT_ID: "not-an-account" } });
     await run("stagingConfig", { staging: () => { throw new Error("m2.staging.config"); } });
     await run("target", { db: { ...fakeDb(), marker: { environment: "staging", targetId: randomUUID() } } });
     await run("schema", { db: { ...fakeDb(), documentsReady: false } });

@@ -102,7 +102,7 @@ import { CIVIL_KEY_CHECK, civilKeyOpens, linkReportCounts, readLinkReport, type 
 import { CivilIdVault, PROFILE_PARITY_REVISION } from "@studenthub/profile";
 import { ORGANIZATION_PARITY_REVISION } from "@studenthub/organizations";
 import { copyCounts, copyLegacyDocuments, M2_DOCUMENT_COPY_REVISION, M2CopyError, selectApproved, type CopyCheckpointStore, type CopyRule, type DocumentStagingStore, type StagingObjects } from "./m2-copy.js";
-import { postgresCopyCheckpoints, postgresDocumentStaging, STAGING_BUCKET, stagingBucket } from "./m2-staging.js";
+import { postgresCopyCheckpoints, postgresDocumentStaging, stagingBucket, stagingFingerprint, stagingIdentity } from "./m2-staging.js";
 import { DEFAULT_REPORT_PATH as REFRESH_REPORT_PATH, GENERATION, lockPathFrom, MIRROR_GENERATION_TABLE, parseDatabaseUrl } from "./refresh.js";
 import { refreshIdentity } from "./twin/cli.js";
 import type { RefreshIdentity } from "./twin/report.js";
@@ -220,6 +220,8 @@ export interface M4Receipt {
   readonly documents?: DocCheckCounts;
   /** For `doccopy`: the accepted doccheck it consumed. */
   readonly acceptedDoccheck?: string;
+  /** For `doccopy`: an opaque fingerprint of the staging account and bucket it wrote to. */
+  readonly staging?: string;
   /** For `doccopy`: counts per outcome, the staged set's digest and whether every approved document was handled. */
   readonly copy?: DocCopyCounts;
 }
@@ -417,8 +419,8 @@ export interface WriteTarget {
   linkReport(): Promise<LinkReport>;
   /** Whether the document staging schema is migrated (M4_DOCCOPY_REQUIRED_MIGRATION applied, its table present). */
   documentsReady(): Promise<boolean>;
-  /** The staging document bucket recorded on the staging marker row, or null when none is recorded. */
-  documentBucket(): Promise<string | null>;
+  /** The staging document account and bucket recorded on the staging marker row, or null when none is recorded. */
+  documentBucket(): Promise<{ readonly account: string; readonly bucket: string } | null>;
   /** The staging table bound to the lock-holding session; only after claimWriter. */
   documentStaging(): DocumentStagingStore;
   /** The copy's checkpoint table on the same session; only after claimWriter. */
@@ -620,8 +622,10 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
     },
     documentBucket: async () => {
       try {
-        const { rows } = await pool.query<{ bucket: string | null }>("SELECT document_bucket AS bucket FROM legacy_import_target WHERE environment = 'staging'");
-        return rows.length === 1 ? rows[0]!.bucket : null;
+        const { rows } = await pool.query<{ account: string | null; bucket: string | null }>(
+          "SELECT document_account AS account, document_bucket AS bucket FROM legacy_import_target WHERE environment = 'staging'");
+        const r = rows.length === 1 ? rows[0]! : null;
+        return r?.account && r.bucket ? { account: r.account, bucket: r.bucket } : null;
       } catch { return null; }
     },
     documentStaging: () => {
@@ -1112,8 +1116,10 @@ function envBound(value: string | undefined, fallback: number): number | null {
  * - the accepted doccheck (`M4_ACCEPTED_DOCCHECK`): its ok receipt and private report, both for that
  *   invocation, with this run's verified build, a verified generation (never diagnostic), and the
  *   same set in the receipt, the report and recomputed from the report's documents (`acceptedDoccheck`);
- * - the staging database by its marker (`target`), the 0660 schema (`schema`), and a staging bucket
- *   that is the one recorded on the marker and differs from legacy's and the live document bucket
+ * - the staging database by its marker (`target`), the 0660 schema (`schema`), and a staging
+ *   identity (`M4_STAGING_DOCUMENT_ACCOUNT_ID` and `M4_STAGING_DOCUMENT_BUCKET` together) that is the
+ *   account and bucket both recorded on the marker, compared under the target gate before any object
+ *   I/O, with a bucket that differs from legacy's and the live document bucket
  *   (`M4_LIVE_DOCUMENT_BUCKET`, required) (`documentBucket`), then the one-writer lock (`writerBusy`);
  * - under the refresh lock, a refresh whose generation is the accepted one, bound to the mirror read
  *   (`generationMismatch`, `lockMismatch`, `mirrorMismatch`), the whole candidate table at the
@@ -1125,10 +1131,13 @@ function envBound(value: string | undefined, fallback: number): number | null {
  * M4_DOCCOPY_MAX_MS (15 min), M4_DOCCOPY_OP_TIMEOUT_MS (60 s per storage call), M4_DOCCOPY_SETTLE_MS
  * (30 s for an aborted call to settle) and M4_DOCCOPY_MAX_LIST_PAGES (100 pages of 1000 keys).
  * It resumes only from its own checkpoint in the target (`legacy_document_copy_checkpoints`), keyed
- * by the accepted doccheck, target, bucket, generation, build and order. A storage call that does
+ * by the accepted doccheck, target, staging account and bucket, generation, build and order. The
+ * receipt carries only an opaque fingerprint of that identity (`staging`), never the account or bucket. A storage call that does
  * not settle publishes `failed` (`m2.copy.unsettled`) and ends the process without releasing locks.
  * Exit 0 when the checkpoint is complete, the staged set equals the accepted set and the orphan scan was
- * not truncated; 3 otherwise (continue with this invocation); 2 refused; 1 failed.
+ * not truncated; 3 otherwise (resume with a fresh M4_INVOCATION and the same M4_ACCEPTED_DOCCHECK,
+ * target, staging account and bucket, and build, never the invocation that already claimed the run);
+ * 2 refused; 1 failed.
  */
 async function docCopy(deps: CliDeps, revision: string,
   publish: (status: M4Receipt["status"], code?: string) => void, reportPath: string,
@@ -1181,11 +1190,14 @@ async function docCopy(deps: CliDeps, revision: string,
   bind(base);
 
 
-  // The staging side: its bucket, distinct from legacy's and the live one, and the staging database.
+  // The staging side: its account and bucket, distinct from legacy's and the live one, and the
+  // staging database. The account and bucket together are the staging identity.
   const bucketName = env.M4_STAGING_DOCUMENT_BUCKET ?? "";
+  const accountId = env.M4_STAGING_DOCUMENT_ACCOUNT_ID ?? "";
+  const identity = stagingIdentity(accountId, bucketName);
   // The operator names the live document bucket too, so the run can prove it is not writing there.
   const live = env.M4_LIVE_DOCUMENT_BUCKET ?? "";
-  if (!STAGING_BUCKET.test(bucketName) || !live || bucketName === live || bucketName === env.M4_LEGACY_BUCKET) return refuse("documentBucket");
+  if (!identity || !live || bucketName === live || bucketName === env.M4_LEGACY_BUCKET) return refuse("documentBucket");
   let objects: StagingObjects, legacy: LegacyObjectReader;
   try { objects = (deps.staging ?? envStaging)(env); } catch { return refuse("stagingConfig"); }
   try { legacy = (deps.bucket ?? envBucket)(env); } catch { return refuse("bucketConfig"); }
@@ -1194,7 +1206,11 @@ async function docCopy(deps: CliDeps, revision: string,
   const marker = await target.marker();
   if (marker?.environment !== "staging" || marker.targetId !== targetId) return refuse("target");
   if (!await target.documentsReady()) return refuse("schema");
-  if (await target.documentBucket() !== bucketName) return refuse("documentBucket");
+  // Under the target gate, before any object I/O: the recorded account and bucket, both.
+  const recorded = await target.documentBucket();
+  if (!recorded || recorded.account !== accountId || recorded.bucket !== bucketName) return refuse("documentBucket");
+  const bound = { ...base, staging: stagingFingerprint(identity) };
+  bind(bound);
   if (!await target.claimWriter()) return refuse("writerBusy");
 
   const lock = await deps.lock(lockPathFrom(env));
@@ -1207,7 +1223,7 @@ async function docCopy(deps: CliDeps, revision: string,
   const provenance = refreshProvenance(last);
   if (!provenance || provenance.generation !== generation) return refuse("generationMismatch");
   const today = kuwaitDay(deps.now().toISOString());
-  bind({ ...base, refresh, today });
+  bind({ ...bound, refresh, today });
   const reader = deps.reader(env);
   const bad = await mirrorBinding(env, reader, provenance);
   if (bad) return "refuse" in bad ? refuse(bad.refuse) : fail(bad.fail);
@@ -1224,7 +1240,7 @@ async function docCopy(deps: CliDeps, revision: string,
   let result;
   try {
     result = await copyLegacyDocuments(selection, { legacy, objects, store: target.documentStaging(), checkpoints: target.copyCheckpoints() },
-      { generation, build: artifact, target: { id: targetId, bucket: bucketName }, invocations: { doccheck: accepted, copy: env.M4_INVOCATION! } },
+      { generation, build: artifact, target: { id: targetId, bucket: identity }, invocations: { doccheck: accepted, copy: env.M4_INVOCATION! } },
       { maxDocuments: limits.maxDocuments!, maxApprovedBytes: limits.maxApprovedBytes!, maxObjectBytes: limits.maxObjectBytes!, maxMs: limits.maxMs!,
         opTimeoutMs: limits.opTimeoutMs!, settleMs: limits.settleMs!, maxListPages: limits.maxListPages!, listPageSize: 1000, now: () => Date.now() });
   } catch (error) {
@@ -1238,10 +1254,10 @@ async function docCopy(deps: CliDeps, revision: string,
   const counts: DocCopyCounts = { approved: selection.length, handled: result.outcomes.length, approvedBytes: result.approvedBytes, rules,
     checkpoint: result.checkpoint, staged, matchesAccepted: staged === acceptedSet, complete: result.complete,
     orphans: result.orphans.count, orphansTruncated: result.orphans.truncated };
-  writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "doccopy", at: deps.now().toISOString(), ...base, refresh, today,
+  writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "doccopy", at: deps.now().toISOString(), ...bound, refresh, today,
     revisions: { copy: M2_DOCUMENT_COPY_REVISION }, accepted: acceptedSet, staged, complete: result.complete, checkpoint: result.checkpoint,
     outcomes: result.outcomes, orphans: result.orphans });
-  bind({ ...base, refresh, today }, counts);
+  bind({ ...bound, refresh, today }, counts);
   const done = result.complete && counts.matchesAccepted && !result.orphans.truncated;
   publish(done ? "ok" : "incomplete");
   deps.log(`copy approved=${counts.approved} handled=${counts.handled} from=${result.checkpoint.from} credit=${result.checkpoint.credit} approvedBytes=${counts.approvedBytes} orphans=${counts.orphans} ${Object.entries(rules).map(([k, n]) => `${k}=${n}`).join(" ")}`);

@@ -5,8 +5,13 @@
 -- generation's rows are never rewritten, and another generation's rows never stand in for them.
 -- The object key is derived from the row (content-addressed), so a row cannot point elsewhere.
 -- No legacy key, file name or byte is stored.
+-- The staging bucket is recorded on the staging marker with the object-storage account it lives
+-- in: a bucket name alone is not an identity (the same name can exist in another account). Both
+-- are set together, once, at provisioning.
 ALTER TABLE legacy_import_target
-  ADD COLUMN document_bucket text CHECK (document_bucket IS NULL OR document_bucket ~ '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$');
+  ADD COLUMN document_account text CHECK (document_account IS NULL OR document_account ~ '^[a-f0-9]{32}$'),
+  ADD COLUMN document_bucket text CHECK (document_bucket IS NULL OR document_bucket ~ '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'),
+  ADD CONSTRAINT legacy_import_target_document_identity CHECK ((document_account IS NULL) = (document_bucket IS NULL));
 
 CREATE TABLE legacy_candidate_documents (
   legacy_candidate_id text NOT NULL CHECK (legacy_candidate_id ~ '^[1-9][0-9]{0,17}$'),
@@ -32,12 +37,13 @@ CREATE TABLE legacy_candidate_documents (
 CREATE TABLE legacy_document_copy_checkpoints (
   accepted_doccheck uuid NOT NULL,
   target_id uuid NOT NULL,
-  bucket text NOT NULL CHECK (bucket ~ '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'),
+  -- The staging identity: '<account>/<bucket>', as on the marker.
+  staging text NOT NULL CHECK (staging ~ '^[a-f0-9]{32}/[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'),
   generation uuid NOT NULL,
   build char(64) NOT NULL CHECK (build ~ '^[0-9a-f]{64}$'),
   copy_order char(64) NOT NULL CHECK (copy_order ~ '^[0-9a-f]{64}$'),
   revision integer NOT NULL CHECK (revision >= 1),
   checkpoint jsonb NOT NULL CHECK (jsonb_typeof(checkpoint) = 'object'),
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (accepted_doccheck, target_id, bucket, generation, build, copy_order)
+  PRIMARY KEY (accepted_doccheck, target_id, staging, generation, build, copy_order)
 );
