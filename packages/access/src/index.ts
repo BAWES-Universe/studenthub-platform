@@ -7,6 +7,7 @@ export * from "./invitation-mail.js";
 export * from "./invitation-service.js";
 export * from "./company-contacts.js";
 export * from "./store-access.js";
+export * from "./store-grant.js";
 export * from "./account-pause.js";
 export * from "./abuse.js";
 export * from "./staff-view.js";

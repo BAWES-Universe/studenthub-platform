@@ -31,6 +31,8 @@ import {
   reportPathFrom,
   runRefresh,
   type DatabaseUrl,
+  GENERATION,
+  MIRROR_GENERATION_TABLE,
   type MysqlPort,
   type RefreshConfig,
   type RefreshReport,
@@ -250,6 +252,13 @@ export function createMysqlClient(lockFd?: number, signal?: AbortSignal): MysqlP
       assertSafe(stale);
       // One session: foreign keys between mirror tables must not stop a stale table going.
       if (stale.length > 0) await query(target, `SET SESSION foreign_key_checks = 0; DROP TABLE ${stale.map((t) => `\`${t}\``).join(", ")}`);
+    },
+    async setGeneration(target, generation) {
+      if (generation !== null && !GENERATION.test(generation)) throw new Error("mysql.generation");
+      const table = `\`${MIRROR_GENERATION_TABLE}\``;
+      // One session, one transaction: the marker is never seen holding two rows.
+      await query(target, `CREATE TABLE IF NOT EXISTS ${table} (generation CHAR(36) NOT NULL) ENGINE=InnoDB; `
+        + `START TRANSACTION; DELETE FROM ${table}; ${generation ? `INSERT INTO ${table} VALUES ('${generation}'); ` : ""}COMMIT`);
     },
     async counts(db, tables) {
       assertSafe(tables);

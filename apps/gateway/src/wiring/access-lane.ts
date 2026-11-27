@@ -1,5 +1,5 @@
 import { PostgresAccessAbuseStore, PostgresAccessContactsStore, PostgresAccessGrantsStore, PostgresAccessInvitationsStore, PostgresAccessPausesStore, PostgresAccessRegistrationsStore, PostgresAccessSessionsStore, PostgresAccessStaffViewsStore, PostgresAccessStoreManagersStore } from "@studenthub/db/access";
-import { blockListOf, createAccessGrantService, createAccountPauseService, parseTrustedProxies, createCompanyContactsService, createCompanyRegistrationService, createCompanyTeamService } from "../../../../packages/access/src/index.js";
+import { blockListOf, createAccessGrantService, createStoreGrantService, createAccountPauseService, parseTrustedProxies, createCompanyContactsService, createCompanyRegistrationService, createCompanyTeamService } from "../../../../packages/access/src/index.js";
 import type { AccessPorts } from "../access/admin-access.js";
 import type { CompanyTeamPorts } from "../access/company-team.js";
 import type { CompanyContactsPorts } from "../access/company-contacts.js";
@@ -38,6 +38,8 @@ export function wireAccessLane(settings: WiringSettings, access: ReturnType<type
   const contacts = createCompanyContactsService({ store: contactStore });
   const storeManagers = new PostgresAccessStoreManagersStore({ connectionString: settings.databaseUrl });
   const writes = settings.safeWriteKey ? createAccessGrantService({ store, secret: settings.safeWriteKey }) : undefined;
+  // G-02: store manager access on the Access pages, under the same signing key.
+  const storeWrites = settings.safeWriteKey ? createStoreGrantService({ store, secret: settings.safeWriteKey }) : undefined;
   const pauses = new PostgresAccessPausesStore({ connectionString: settings.databaseUrl });
   const views = new PostgresAccessStaffViewsStore({ connectionString: settings.databaseUrl });
   const registrations = new PostgresAccessRegistrationsStore({ connectionString: settings.databaseUrl });
@@ -47,7 +49,7 @@ export function wireAccessLane(settings: WiringSettings, access: ReturnType<type
   const pauseWrites = settings.safeWriteKey ? createAccountPauseService({ store: pauses }) : undefined;
   return {
     services: { application: {
-      access: { sessions: access.loginStore.sessions, reads: store, ...(writes ? { writes } : {}), pauses: { reads: pauses, ...(pauseWrites ? { writes: pauseWrites } : {}) }, views, account: accountSessions },
+      access: { sessions: access.loginStore.sessions, reads: store, ...(writes ? { writes } : {}), pauses: { reads: pauses, ...(pauseWrites ? { writes: pauseWrites } : {}) }, views, account: accountSessions, stores: { reads: store, ...(storeWrites ? { writes: storeWrites } : {}) } },
       team: { sessions: access.loginStore.sessions, team: createCompanyTeamService({ store: invitations }), contacts },
       contacts: { sessions: access.loginStore.sessions, contacts },
       storeManager: { sessions: access.loginStore.sessions, stores: storeManagers },

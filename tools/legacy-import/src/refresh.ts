@@ -26,6 +26,7 @@
  * `node dist/tools/legacy-import/src/refresh-cli.js` with the environment below.
  */
 
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 export const MIRROR_DATABASE = "legacy_mirror";
@@ -264,11 +265,11 @@ export interface RefreshReport {
   readonly tables: Readonly<Record<string, number>>;
   readonly totalRows: number;
   /**
-   * For an ok run: the mirror server (`@@server_uuid`) and schema this run copied into, so a reader
-   * can prove it reads that server and schema. This does not identify the generation: a later run
-   * into the same schema has the same values, so a reader must still treat its result as diagnostic.
+   * For an ok run: the mirror server (`@@server_uuid`) and schema this run copied into, and the
+   * generation it wrote into the mirror's marker table, so a reader can prove it reads this copy:
+   * every run clears the marker before it changes the mirror and writes a fresh one only when ok.
    */
-  readonly mirror?: { readonly serverId: string; readonly schema: string };
+  readonly mirror?: { readonly serverId: string; readonly schema: string; readonly generation: string };
   /** For an ok run: the lock file the run held (resolved path), so readers can prove they share it. */
   readonly lock?: string;
 }
@@ -289,16 +290,30 @@ export interface MysqlPort {
   /** Drops every table not in `keep` (compared under the server's case rule), with foreign key checks off. */
   dropTablesNotIn(target: DatabaseUrl, keep: readonly string[]): Promise<void>;
   counts(db: DatabaseUrl, tables: readonly string[]): Promise<Record<string, number>>;
+  /**
+   * Replaces the mirror's generation marker (`MIRROR_GENERATION_TABLE`, at most one row) with
+   * `generation`, or leaves it empty for null. Creates the table when missing.
+   */
+  setGeneration(target: DatabaseUrl, generation: string | null): Promise<void>;
 }
+
+/**
+ * The mirror's own generation marker: one row naming the refresh run that produced the current
+ * copy, so readers can bind a refresh report to the data they read. Never a legacy table name.
+ */
+export const MIRROR_GENERATION_TABLE = "studenthub_refresh_generation";
+export const GENERATION = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export async function runRefresh(
   config: RefreshConfig,
   mysql: MysqlPort,
   clock: () => Date = () => new Date(),
+  newGeneration: () => string = randomUUID,
 ): Promise<RefreshReport> {
   const started = clock();
   let nonTransactional: string[] = [];
   let mirrorId: string | undefined;
+  let generation: string | undefined;
   const finish = (ok: boolean, code: string, excluded: string[] = [], tables: Record<string, number> = {}): RefreshReport => {
     const finished = clock();
     return {
@@ -311,7 +326,7 @@ export async function runRefresh(
       nonTransactional,
       tables,
       totalRows: Object.values(tables).reduce((sum, n) => sum + n, 0),
-      ...(ok && mirrorId ? { mirror: { serverId: mirrorId, schema: config.target.database } } : {}),
+      ...(ok && mirrorId && generation ? { mirror: { serverId: mirrorId, schema: config.target.database, generation } } : {}),
     };
   };
 
@@ -332,6 +347,7 @@ export async function runRefresh(
     const excluded = all.filter(isExcluded);
     const copied = all.filter((table) => !isExcluded(table));
     if (copied.length === 0) return finish(false, "source.empty", excluded);
+    if (all.some((table) => table.toLowerCase() === MIRROR_GENERATION_TABLE)) return finish(false, "source.markerCollision", excluded);
     const engines = await mysql.engines(config.source);
     nonTransactional = copied.filter((table) => (engines[table] ?? "").toUpperCase() !== "INNODB");
 
@@ -341,19 +357,29 @@ export async function runRefresh(
       if (folded.size !== copied.length) return finish(false, "source.caseCollision", excluded);
     }
 
+    // Clear the generation before the mirror changes: a run that stops part way leaves no
+    // generation any reader could match, whatever report is on disk.
+    step = "marker";
+    await mysql.setGeneration(config.target, null);
+    const keep = [...copied, MIRROR_GENERATION_TABLE];
     // Prune first: a table excluded since the last run (a token table, say) leaves the
     // mirror before anything else happens, even if the copy then fails.
     step = "prune";
-    await mysql.dropTablesNotIn(config.target, copied);
+    await mysql.dropTablesNotIn(config.target, keep);
     step = "copy";
     await mysql.copy(config.source, config.target, copied);
     step = "prune";
-    await mysql.dropTablesNotIn(config.target, copied);
+    await mysql.dropTablesNotIn(config.target, keep);
 
     step = "counts";
     const counts = await mysql.counts(config.target, copied);
     const missing = copied.filter((table) => typeof counts[table] !== "number");
     if (missing.length > 0) return finish(false, "target.countMissing", excluded, counts);
+    step = "marker";
+    const fresh = newGeneration();
+    if (!GENERATION.test(fresh)) return finish(false, "failed.marker", excluded, counts);
+    await mysql.setGeneration(config.target, fresh);
+    generation = fresh;
     return finish(true, "ok", excluded, counts);
   } catch (error) {
     if (error instanceof RefreshRefused) return finish(false, error.code);
