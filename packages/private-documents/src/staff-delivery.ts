@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { documentReadHydrator, type DocumentState } from './index.js';
+import { documentReadHydrator, readPerson, type DocumentState } from './index.js';
 import { CANDIDATE_DOCUMENT_TYPES, type CandidateDocumentType } from './lifecycle-state.js';
 import { CandidateDocuments, LifecycleError } from './candidate-lifecycle.js';
 
@@ -71,9 +71,9 @@ export class StaffDocuments {
     return rows[0]!;
   }
 
-  private async read<T>(fn: (state: DocumentState) => Promise<T>): Promise<T> {
-    const store = this.options.documents.options.store;
-    return store.readPath ? store.readPath.read(fn) : store.transaction(fn);
+  /** Reads only `subject`'s documents when the store is per-owner. */
+  private async read<T>(subject: unknown, fn: (state: DocumentState) => Promise<T>): Promise<T> {
+    return readPerson(this.options.documents.options.store, subject, fn);
   }
 
   private mac(payload: string, label = 'staff-delivery-v1'): string {
@@ -93,7 +93,7 @@ export class StaffDocuments {
 
   async documents(credential: unknown, subjectPrincipalId: string): Promise<Array<{type:CandidateDocumentType;mime:string;size:number;version:string}>> {
     await this.viewer(credential);
-    return this.read(async state => state.documents
+    return this.read(subjectPrincipalId, async state => state.documents
       .filter(row => row.scope.orgId === this.options.documents.options.orgId
         && row.scope.personId === subjectPrincipalId && candidateTypes.has(row.type))
       .map(row => ({ type: row.type as CandidateDocumentType, mime: row.mime, size: row.size, version: row.version })));
@@ -103,7 +103,7 @@ export class StaffDocuments {
     const viewer = await this.viewer(credential);
     if (!candidateTypes.has(type) || (purpose !== 'civil_id_review' && purpose !== 'person_page')) return deny();
     this.allowed(viewer, subjectPrincipalId, type, purpose);
-    return this.read(async state => {
+    return this.read(subjectPrincipalId, async state => {
       const row = this.current(state, subjectPrincipalId, type);
       const issuedAt = this.now(), expiresAt = issuedAt + 60_000;
       // STAFFDOC_MUTANT_AUDIT: fail closed before exposing a capability.
@@ -141,7 +141,7 @@ export class StaffDocuments {
       || claim.expiresAt !== claim.issuedAt + 60_000 || now < claim.issuedAt || now >= claim.expiresAt) return deny();
     const type = claim.type as CandidateDocumentType, purpose = claim.purpose as StaffDocumentPurpose;
     this.allowed(viewer, claim.subject, type, purpose);
-    return this.read(async state => {
+    return this.read(claim.subject, async state => {
       const row = this.current(state, claim.subject as string, type);
       if (row.version !== claim.version) return deny(); // STAFFDOC_MUTANT_VERSION
       try { await this.options.audit.recordView({ viewerPrincipalId: viewer, subjectPrincipalId: claim.subject as string, kind: this.auditKind(purpose, 'deliver'), documentType: type, documentVersion: row.version }); }

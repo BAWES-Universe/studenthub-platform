@@ -3,7 +3,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import pg from 'pg';
 import { LifecycleError } from './candidate-lifecycle.js';
-import { DocumentError, documentReadHydrator, validateReferencedState, validateState, type DocumentState, type DocumentStore } from './index.js';
+import { DocumentError, documentReadHydrator, ownerOfScope, sameOwner, validateReferencedState, validateState, type CurrentCursor, type CurrentDocument, type CurrentPage, type DocumentOwner, type DocumentState, type DocumentStore } from './index.js';
 import type { UploadTicket } from './lifecycle-state.js';
 
 const digest = (bytes:Buffer):string => createHash('sha256').update(bytes).digest('hex');
@@ -81,16 +81,82 @@ export interface SnapshotPort {
   read?():Promise<PackedSnapshot>;
   auditRead?(entry:{operation:'list'|'issueDelivery'|'deliver';principalRef:string;at:number}):Promise<void>;
 }
-/** Production metadata port, isolated from profile tables. One locked metadata
- * row provides the same transaction semantics as the existing reference store.
- * A separate small pool prevents reservation deadlocks with snapshot readers. */
-export class PostgresDocumentSnapshot implements SnapshotPort {
+const ownerId=/^[A-Za-z0-9_-]{1,128}$/;
+function checkOwner(owner:DocumentOwner):void{if((owner.kind!=='person'&&owner.kind!=='org')||!ownerId.test(owner.id))throw new Error('unavailable');}
+const sha=(value:string):string=>createHash('sha256').update(value).digest('hex');
+/** Every row of a per-owner state must belong to that owner: its documents and retired
+ * versions by scope, its uploads, receipts and audit by principal, its cleanup by document. */
+function ownedBy(owner:DocumentOwner,state:DocumentState):void{
+  const rows=[...state.documents,...state.retired],ids=new Set(rows.map(d=>d.id));
+  if(rows.some(d=>!sameOwner(ownerOfScope(d.scope),owner)))throw new Error('unavailable');
+  const l=state.lifecycle;if(!l)return;
+  const ref=owner.kind==='person'?sha(owner.id):null;
+  if(l.uploads.some(t=>owner.kind!=='person'||t.principalId!==owner.id)||l.receipts.some(r=>r.principalRef!==ref)
+    ||l.audit.some(a=>a.principalRef!==ref)||l.cleanup.some(c=>!ids.has(c.documentId)))throw new Error('unavailable');
+}
+/** Production metadata port: one row per owner (migration 0661), so a write locks and reads only
+ * that owner's documents. The owner row is created empty on first use and is the lock every
+ * upload, replace, remove and promotion of that owner's slots shares. The same transaction keeps
+ * the document-id index and the durable slot history. A separate small pool commits object
+ * reservations (they survive a metadata rollback); another serves unlocked reads and read audit. */
+export class PostgresDocumentPartitions {
   private readonly pool:pg.Pool;
   private readonly journal:pg.Pool;
   private readonly reader:pg.Pool;
   constructor(connectionString:string){this.pool=new pg.Pool({connectionString,max:2});this.journal=new pg.Pool({connectionString,max:1});this.reader=new pg.Pool({connectionString,max:2});}
-  async read():Promise<PackedSnapshot>{
-    try {const rows=await this.reader.query('SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true');if(rows.rowCount!==1)throw new Error();return rows.rows[0].snapshot as PackedSnapshot;}catch{throw new Error('unavailable');}
+  /** The snapshot port of one owner. */
+  port(owner:DocumentOwner):SnapshotPort{
+    checkOwner(owner);
+    return {transaction:fn=>this.transaction(owner,fn),reserve:key=>this.reserve(key),read:()=>this.read(owner),auditRead:entry=>this.auditRead(entry)};
+  }
+  async read(owner:DocumentOwner):Promise<PackedSnapshot>{
+    checkOwner(owner);
+    try {const rows=await this.reader.query('SELECT snapshot FROM candidate_document_partitions WHERE owner_kind = $1 AND owner_id = $2',[owner.kind,owner.id]);
+      if(rows.rowCount===0)return emptyPackedSnapshot();if(rows.rowCount!==1)throw new Error();return rows.rows[0].snapshot as PackedSnapshot;}catch{throw new Error('unavailable');}
+  }
+  /** One page of the current documents of `types` in `orgId` across people, in (person, document
+   * id) order after `page.after`, at most `page.limit` (1 to 1000) rows; `next` is the cursor of the
+   * last row when more remain, otherwise null. Only people whose slot history has such an active
+   * slot are read, and only each document's metadata leaves the database: no retired version,
+   * journal or body. Callers walk every page; nothing is dropped between pages. */
+  async listCurrent(orgId:string,types:readonly string[],page:CurrentPage):Promise<{documents:CurrentDocument[];next:CurrentCursor|null}>{
+    if(!ownerId.test(orgId)||!types.length||types.some(t=>typeof t!=='string')||!Number.isSafeInteger(page.limit)||page.limit<1||page.limit>1000
+      ||(page.after!==undefined&&(!ownerId.test(page.after.personId)||!/^[0-9a-f-]{36}$/.test(page.after.id))))throw new Error('unavailable');
+    let rows;
+    try {rows=(await this.reader.query(`SELECT jsonb_build_object('id', d.doc->'id', 'version', d.doc->'version', 'type', d.doc->'type', 'mime', d.doc->'mime', 'size', d.doc->'size', 'scope', d.doc->'scope') AS doc
+      FROM candidate_document_partitions p CROSS JOIN LATERAL jsonb_array_elements(p.snapshot->'state'->'documents') AS d(doc)
+      WHERE p.owner_kind = 'person'
+        AND p.owner_id IN (SELECT person_id FROM candidate_document_slots WHERE org_id = $1 AND type = ANY($2::text[]) AND state = 'active'
+          AND ($3::text IS NULL OR person_id COLLATE "C" >= $3::text COLLATE "C"))
+        AND d.doc->'scope'->>'orgId' = $1 AND d.doc->>'type' = ANY($2::text[])
+        AND ($3::text IS NULL OR (p.owner_id COLLATE "C", d.doc->>'id' COLLATE "C") > ($3::text COLLATE "C", $4::text COLLATE "C"))
+      ORDER BY p.owner_id COLLATE "C", d.doc->>'id' COLLATE "C"
+      LIMIT $5`,[orgId,[...types],page.after?.personId??null,page.after?.id??null,page.limit+1])).rows;}catch{throw new Error('unavailable');}
+    const documents=rows.slice(0,page.limit).map(({doc})=>{
+      if(!/^[0-9a-f-]{36}$/.test(doc.id)||!/^[0-9a-f-]{36}$/.test(doc.version)||!types.includes(doc.type)||typeof doc.mime!=='string'||!Number.isSafeInteger(doc.size)
+        ||doc.scope?.orgId!==orgId||typeof doc.scope?.personId!=='string'||!ownerId.test(doc.scope.personId))throw new Error('unavailable');
+      return doc as CurrentDocument;
+    });
+    const last=documents[documents.length-1];
+    return {documents,next:rows.length>page.limit&&last?{personId:last.scope.personId!,id:last.id}:null};
+  }
+  /** The held cleanup count across owners (retired versions held plus staged upload bodies); one number leaves the database. */
+  async heldCount():Promise<number>{
+    try {
+      const rows=await this.reader.query(`SELECT COALESCE(sum(
+        (SELECT count(*) FROM jsonb_array_elements(COALESCE(p.snapshot->'state'->'lifecycle'->'cleanup', '[]'::jsonb)) c WHERE c->>'status' = 'held')
+        + (SELECT count(*) FROM jsonb_array_elements(COALESCE(p.snapshot->'state'->'lifecycle'->'uploads', '[]'::jsonb)) u WHERE u ? 'data')), 0)::int AS held
+        FROM candidate_document_partitions p`);
+      return rows.rows[0].held as number;
+    } catch {throw new Error('unavailable');}
+  }
+  /** The owner of a document id, or null. */
+  async locate(documentId:string):Promise<DocumentOwner|null>{
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(documentId))return null;
+    let rows;
+    try {rows=await this.reader.query('SELECT owner_kind, owner_id FROM candidate_document_ids WHERE document_id = $1',[documentId]);}catch{throw new Error('unavailable');}
+    if(rows.rowCount===0)return null;
+    const owner={kind:rows.rows[0].owner_kind,id:rows.rows[0].owner_id} as DocumentOwner;checkOwner(owner);return owner;
   }
   async auditRead(entry:{operation:'list'|'issueDelivery'|'deliver';principalRef:string;at:number}):Promise<void>{
     try {await this.reader.query('INSERT INTO candidate_document_read_audit (id, operation, principal_ref, occurred_at) VALUES (gen_random_uuid(), $1, $2, to_timestamp($3 / 1000.0))',[entry.operation,entry.principalRef,entry.at]);}catch{throw new Error('unavailable');}
@@ -99,17 +165,30 @@ export class PostgresDocumentSnapshot implements SnapshotPort {
     checkKey(key);
     await this.journal.query('INSERT INTO candidate_document_object_reservations (object_key) VALUES ($1) ON CONFLICT DO NOTHING',[key]);
   }
-  async transaction<T>(fn:(snapshot:PackedSnapshot)=>Promise<T>):Promise<T>{
+  async transaction<T>(owner:DocumentOwner,fn:(snapshot:PackedSnapshot)=>Promise<T>):Promise<T>{
+    checkOwner(owner);
     const c=await this.pool.connect();let destroy=false;
     try {
       await c.query('BEGIN');
       await c.query("SET LOCAL lock_timeout = '5s'");
-      const rows=await c.query('SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true FOR UPDATE');
+      // Every writer holds the authority row, so the rollback script (FOR UPDATE) never races a
+      // write. Until the first owner write it is held exclusively; that write records itself.
+      const seen=await c.query('SELECT first_write_at FROM candidate_document_store_authority WHERE singleton = true');
+      if(seen.rowCount!==1)throw new Error();
+      const authority=await c.query(`SELECT store, first_write_at FROM candidate_document_store_authority WHERE singleton = true ${seen.rows[0].first_write_at===null?'FOR UPDATE':'FOR SHARE'}`);
+      if(authority.rowCount!==1||authority.rows[0].store!=='partitioned')throw new Error();
+      await c.query('INSERT INTO candidate_document_partitions (owner_kind, owner_id, snapshot) VALUES ($1, $2, $3::jsonb) ON CONFLICT DO NOTHING',[owner.kind,owner.id,JSON.stringify(emptyPackedSnapshot())]);
+      const rows=await c.query('SELECT snapshot FROM candidate_document_partitions WHERE owner_kind = $1 AND owner_id = $2 FOR UPDATE',[owner.kind,owner.id]);
       if(rows.rowCount!==1)throw new Error();
       const value=rows.rows[0].snapshot as PackedSnapshot;
       const before=JSON.stringify(value),result=await fn(value),after=JSON.stringify(value);
       if(Buffer.byteLength(after)>16*1024*1024)throw new Error();
-      if(before!==after)await c.query('UPDATE candidate_document_snapshot SET snapshot = $1::jsonb WHERE singleton = true',[after]);
+      if(before!==after){
+        ownedBy(owner,value.state);
+        await c.query('UPDATE candidate_document_partitions SET snapshot = $3::jsonb WHERE owner_kind = $1 AND owner_id = $2',[owner.kind,owner.id,after]);
+        await this.index(c,owner,value.state);
+        if(authority.rows[0].first_write_at===null)await c.query('UPDATE candidate_document_store_authority SET first_write_at = now() WHERE singleton = true AND first_write_at IS NULL');
+      }
       await c.query('COMMIT');return result;
     } catch (error) {
       try {await c.query('ROLLBACK');}catch{destroy=true;}
@@ -117,7 +196,33 @@ export class PostgresDocumentSnapshot implements SnapshotPort {
       throw new Error('unavailable');
     } finally {c.release(destroy);}
   }
+  /** Document ids stay with their owner forever; slot history records every slot that ever held a document. */
+  private async index(c:pg.PoolClient,owner:DocumentOwner,state:DocumentState):Promise<void>{
+    const rows=[...state.documents,...state.retired],ids=[...new Set(rows.map(d=>d.id))];
+    await c.query('INSERT INTO candidate_document_ids (document_id, owner_kind, owner_id) SELECT unnest($3::uuid[]), $1, $2 ON CONFLICT (document_id) DO NOTHING',[owner.kind,owner.id,ids]);
+    const foreign=await c.query('SELECT count(*)::int AS n FROM candidate_document_ids WHERE document_id = ANY($3::uuid[]) AND (owner_kind <> $1 OR owner_id <> $2)',[owner.kind,owner.id,ids]);
+    if(foreign.rows[0].n!==0)throw new Error();
+    if(owner.kind!=='person')return;
+    const slots=new Map<string,{org:string;type:string;state:'active'|'cleared'}>();
+    for(const d of state.retired)slots.set(JSON.stringify([d.scope.orgId,d.type]),{org:d.scope.orgId,type:d.type,state:'cleared'});
+    for(const d of state.documents)slots.set(JSON.stringify([d.scope.orgId,d.type]),{org:d.scope.orgId,type:d.type,state:'active'});
+    const list=[...slots.values()];
+    await c.query(`INSERT INTO candidate_document_slots (person_id, org_id, type, state) SELECT $1, o, t, s FROM unnest($2::text[], $3::text[], $4::text[]) AS x(o, t, s)
+      ON CONFLICT (person_id, org_id, type) DO UPDATE SET state = EXCLUDED.state, updated_at = now() WHERE candidate_document_slots.state <> EXCLUDED.state`,
+      [owner.id,list.map(x=>x.org),list.map(x=>x.type),list.map(x=>x.state)]);
+  }
   async close():Promise<void>{await Promise.all([this.pool.end(),this.journal.end(),this.reader.end()]);}
+}
+/** The production document store: one R2DocumentStore per owner over PostgresDocumentPartitions.
+ * Reads and writes go through partition(owner); a whole-store read or transaction is refused.
+ * Cross-owner needs have their own bounded queries (listCurrent, heldCount). */
+export class PartitionedR2DocumentStore implements DocumentStore {
+  constructor(readonly partitions:PostgresDocumentPartitions,readonly objects:PrivateObjectPort){}
+  partition(owner:DocumentOwner):DocumentStore{return new R2DocumentStore(this.partitions.port(owner),this.objects);}
+  locate(documentId:string):Promise<DocumentOwner|null>{return this.partitions.locate(documentId);}
+  listCurrent(orgId:string,types:readonly string[],page:CurrentPage):Promise<{documents:CurrentDocument[];next:CurrentCursor|null}>{return this.partitions.listCurrent(orgId,types,page);}
+  heldCount():Promise<number>{return this.partitions.heldCount();}
+  async transaction<T>():Promise<T>{throw new Error('unavailable');}
 }
 /** Hydrate only inside the private transaction, reuse all primitive validators,
  * then store bytes exclusively in immutable R2 objects. SQL holds references,
