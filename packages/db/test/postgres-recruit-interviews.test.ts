@@ -211,6 +211,26 @@ test("REC6_ORGANIZATION a company's interviews page: staff and the company read 
   assert.equal((await change("resume")).kind, "resumed");
 });
 
+test("REC6_STAFF_LIST operator staff read every company's interviews with the outcome and rating, a page at a time; nobody else does", async () => {
+  const s = await setup(), t = await setup();
+  await pipeline.move(s.recruiter, s.cardId, "contacted"); await pipeline.move(t.recruiter, t.cardId, "contacted");
+  const far = new Date(Date.now() + 400 * 86_400_000).toISOString(), farther = new Date(Date.now() + 401 * 86_400_000).toISOString();
+  const mine = ((await interviews.schedule(s.owner, s.requestId, { ...fields(s.cardId), scheduledAt: far })) as { interviewId: string }).interviewId;
+  const theirs = ((await interviews.schedule(t.owner, t.requestId, { ...fields(t.cardId), scheduledAt: farther, mode: "phone" })) as { interviewId: string }).interviewId;
+  await interviews.evaluate(s.recruiter, mine, { outcome: "not_passed", rating: 2, sharedNote: "Late", internalNote: "Twice late" });
+  const list = (await interviews.forStaff(s.staff, 1, 200))!;
+  const ours = list.interviews.filter((r) => r.id === mine || r.id === theirs);
+  assert.deepEqual(ours.map((r) => [r.id, r.org_id, r.org_name, r.store_name, r.position_title, r.person_name, r.mode, r.status, r.outcome, r.rating]),
+    [[theirs, t.orgId, "Sultan Co", "Avenues", "Cashier", "Noor", "phone", "scheduled", null, null], [mine, s.orgId, "Sultan Co", "Avenues", "Cashier", "Noor", "in_person", "completed", "not_passed", 2]], "both companies, latest first");
+  assert.equal(Object.keys(ours[0]!).some((k) => /note|location/.test(k)), false, "never a note or a location");
+  for (const who of [s.owner, s.recruiter, s.stranger, s.noor]) assert.equal(await interviews.forStaff(who), null, "only operator staff");
+  assert.equal(await interviews.forStaff(s.staff, 0), null);
+  // Earlier runs leave interviews in the shared database: page by one around this run's rows.
+  const at = list.interviews.findIndex((r) => r.id === theirs) + 1, next = list.interviews.findIndex((r) => r.id === mine) + 1;
+  const one = (await interviews.forStaff(s.staff, at, 1))!, two = (await interviews.forStaff(s.staff, next, 1))!;
+  assert.deepEqual([one.interviews.map((r) => r.id), one.more, two.interviews.map((r) => r.id), two.more], [[theirs], true, [mine], true], "a page at a time, latest first");
+});
+
 test("REC6_ORGANIZATION_PAUSED_PAGES paused people are hidden before paging: no short or empty company page, no Earlier link past them", async () => {
   const s = await setup();
   const sara = await person([], "Sara");

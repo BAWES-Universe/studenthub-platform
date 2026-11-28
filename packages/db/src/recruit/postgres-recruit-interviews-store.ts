@@ -63,6 +63,9 @@ export interface RecruitOrganizationInterviewRecord {
 export interface RecruitOrganizationInterviews {
   readonly org_name: string; readonly interviews: readonly RecruitOrganizationInterviewRecord[]; readonly page: number; readonly more: boolean;
 }
+/** One interview on the staff interviews page (A-11): a company's row plus the company and the latest rating; never a note or a location. */
+export interface RecruitStaffInterviewRecord extends RecruitOrganizationInterviewRecord { readonly org_id: string; readonly org_name: string; readonly rating: number | null }
+export interface RecruitStaffInterviews { readonly interviews: readonly RecruitStaffInterviewRecord[]; readonly page: number; readonly more: boolean }
 
 export type RecruitScheduleResult = { kind: "scheduled"; interviewId: string } | { kind: "not_found" } | { kind: "stage_refused"; stage: string };
 export type RecruitInterviewCloseResult = { kind: "cancelled" } | { kind: "not_found" } | { kind: "refused"; status: Status };
@@ -294,6 +297,46 @@ export class PostgresRecruitInterviewsStore {
           rows.length = Math.min(rows.length, limit);
           result = { org_name: org.name, interviews: rows, page, more };
         }
+      }
+      await c.query("COMMIT");
+    } catch (error) {
+      try { await c.query("ROLLBACK"); } catch { broken = true; }
+      throw error;
+    } finally {
+      c.release(broken);
+    }
+    return result;
+  }
+
+  /**
+   * Every interview on every company's requests (matrix A-11), latest scheduled first, `size` a page, for operator
+   * staff only; null for anyone else and for a bad page. Each row carries the latest outcome and rating; notes stay
+   * on the request's interviews page. Paused people are left out before paging unless the caller is internal.
+   */
+  async forStaff(principalId: string, page = 1, size = 100): Promise<RecruitStaffInterviews | null> {
+    if (!Number.isSafeInteger(page) || page < 1) return null;
+    const limit = Math.min(Math.max(1, Math.trunc(size)), 200);
+    const c = await this.#pool.connect();
+    let broken = false;
+    let result: RecruitStaffInterviews | null = null;
+    try {
+      await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const grants = (await c.query<Grant>("SELECT org_id, role, scope FROM grants WHERE principal_id = $1::text", [principalId])).rows;
+      if (this.options.staffDecision(grants)) {
+        const internal = this.options.internalDecision(grants);
+        const rows = (await c.query<RecruitStaffInterviewRecord>(
+          `SELECT i.id, r.id AS request_id, r.position_title, r.org_id, o.name AS org_name, s.name AS store_name, COALESCE(pp.display_name, p.display_name, f.name) AS person_name,
+             i.scheduled_at, i.duration_minutes, i.mode, i.status, e.outcome, e.rating
+           FROM recruit_interviews i JOIN recruit_pipeline_cards c ON c.id = i.card_id JOIN recruit_requests r ON r.id = c.request_id
+           JOIN organizations o ON o.id = r.org_id JOIN organization_stores s ON s.id = r.store_id
+           LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id
+           LEFT JOIN LATERAL (SELECT outcome, rating FROM recruit_interview_evaluations WHERE interview_id = i.id ORDER BY version DESC LIMIT 1) e ON true
+           WHERE ($3::boolean OR c.person_principal_id IS NULL
+             OR NOT EXISTS (SELECT 1 FROM account_pauses ap WHERE ap.principal_id = c.person_principal_id AND ap.resumed_at IS NULL))
+           ORDER BY i.scheduled_at DESC, i.id LIMIT $1 OFFSET $2`, [limit + 1, (page - 1) * limit, internal])).rows;
+        const more = rows.length > limit;
+        rows.length = Math.min(rows.length, limit);
+        result = { interviews: rows, page, more };
       }
       await c.query("COMMIT");
     } catch (error) {

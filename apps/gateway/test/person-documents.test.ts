@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import test, { type TestContext } from "node:test";
 import { InMemoryAuthzStore, createPrincipal } from "@studenthub/contracts";
 import type { PeopleDirectoryRow, PeopleDirectoryStore } from "@studenthub/profile";
@@ -41,6 +41,11 @@ type Rig = Awaited<ReturnType<typeof setup>>;
 const open = (x: Rig, type: string, init: { session?: string; headers?: Record<string, string>; body?: string } = {}) =>
   fetch(`${x.server.url}${path}/${type}/open`, { method: "POST", redirect: "manual", body: init.body ?? "",
     headers: { accept: "text/html", cookie: x.server.cookie(init.session), origin: REAL_PROFILE_ORIGIN, "sec-fetch-site": "same-origin", "content-type": "application/x-www-form-urlencoded", ...init.headers } });
+/** A delivery link signed with the test key, as StaffDocuments.issue would sign it. */
+const signedLink = (claim: Record<string, unknown>) => {
+  const payload = Buffer.from(JSON.stringify(claim)).toString("base64url");
+  return `/workspace/civil-ids/delivery?t=${payload}.${createHmac("sha256", Buffer.from(REAL_PROFILE_CIVIL_KEY, "base64")).update("staff-delivery-v1\u0000" + payload).digest("base64url")}`;
+};
 const unknownPath = async (x: Rig) => (await x.server.get("/no-such-page")).text();
 
 test("DOCS_PAGE staff see each document's type, state, format and size, with no contents", async (t) => {
@@ -99,9 +104,14 @@ test("DOCS_OPEN a photo or CV opens through the existing signed delivery, audite
   assert.equal(await gone.text(), missing, "DOCS_OPEN a missing photo is the unknown path");
   assert.equal(x.views.length, 2, "DOCS_OPEN refusals issue nothing");
 
-  // A person page link for a Civil ID photo, if one were ever issued, is still review-only at delivery.
-  const civil = await x.server.login.civilIdReview!.staffDocuments!.issue(REAL_PROFILE_SESSION, REAL_PROFILE_OTHER_PERSON, "civil-id-front", "person_page");
-  assert.equal((await x.server.get(civil.url)).status, 404, "DOCS_OPEN Civil ID person page link is not delivered outside review");
+  // The document service itself refuses a person page link for a Civil ID photo, and a forged one is not delivered.
+  await assert.rejects(x.server.login.civilIdReview!.staffDocuments!.issue(REAL_PROFILE_SESSION, REAL_PROFILE_OTHER_PERSON, "civil-id-front", "person_page"),
+    (error: { code?: string }) => error.code === "denied", "DOCS_OPEN Civil ID person page link is refused at issue");
+  const forged = signedLink({ viewer: REAL_PROFILE_PERSON, subject: REAL_PROFILE_OTHER_PERSON, type: "civil-id-front", version: x.state.documents.find((d) => d.type === "civil-id-front")!.version,
+    purpose: "person_page", issuedAt: Date.parse("2026-11-12T09:00:00Z"), expiresAt: Date.parse("2026-11-12T09:00:00Z") + 60_000 });
+  const refused = await x.server.get(forged);
+  assert.equal(refused.status, 404, "DOCS_OPEN a signed Civil ID person page link is not delivered");
+  assert.equal(x.views.length, 2, "DOCS_OPEN the refused delivery records nothing");
 });
 
 test("DOCS_ACCESS everyone but operator staff and admin gets the unknown-path 404", async (t) => {
@@ -141,6 +151,9 @@ test("DOCS_GUARDS open is same-origin with an empty body; failures are unavailab
   const extra = await open(x, "resume", { body: "x=1" });
   assert.equal(extra.status, 404, "DOCS_GUARDS a body is refused");
   assert.equal(await extra.text(), await unknownPath(x), "DOCS_GUARDS a body is the unknown path");
+  const large = await open(x, "resume", { body: "x=" + "y".repeat(65_536) });
+  assert.equal(large.status, 404, "DOCS_GUARDS a large body is refused, and the refusal reaches the client");
+  assert.equal(await large.text(), await unknownPath(x), "DOCS_GUARDS a large body is the unknown path");
   assert.equal((await open(x, "resume", { body: "" })).status, 303, "DOCS_GUARDS the empty form opens");
   const query = await fetch(`${x.server.url}${path}/resume/open?x=1`, { method: "POST", redirect: "manual", headers: { cookie: x.server.cookie(), origin: REAL_PROFILE_ORIGIN } });
   assert.equal(query.status, 404, "DOCS_GUARDS a query is refused");

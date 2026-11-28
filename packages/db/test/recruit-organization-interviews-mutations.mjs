@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-// A company's interviews (O-10), store read: who reads, which company, and that paused people are hidden before
+// A company's interviews (O-10) and the staff interviews list (A-11), store reads: who reads, which company, and that paused people are hidden before
 // paging must each be load-bearing. Each mutant rewrites the built file, the named test must fail by assertion,
 // and the file is restored before the next.
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required for the organization interviews mutations");
@@ -14,7 +14,9 @@ const mutations = [
   ["hide paused people from internal callers too", "REC6_ORGANIZATION_PAUSED_PAGES", "[orgId, limit + 1, (page - 1) * limit, internal]", "[orgId, limit + 1, (page - 1) * limit, false]"],
   ["let anyone read a company", "REC6_ORGANIZATION", "if (this.options.staffDecision(grants) || company) {", "if (true) {"],
   ["read every company's interviews", "REC6_ORGANIZATION", "WHERE r.org_id = $1::text", "WHERE $1::text IS NOT NULL"],
-  ["hide that an older page exists", "REC6_ORGANIZATION", "const more = rows.length > limit;", "const more = false;"],
+  ["hide that an older page exists", "REC6_ORGANIZATION", "result = { org_name: org.name, interviews: rows, page, more };", "result = { org_name: org.name, interviews: rows, page, more: false };"],
+  ["let anyone read the staff list", "REC6_STAFF_LIST", "if (this.options.staffDecision(grants)) {", "if (true) {"],
+  ["drop the rating from the staff list", "REC6_STAFF_LIST", "SELECT outcome, rating FROM recruit_interview_evaluations", "SELECT outcome, NULL::int AS rating FROM recruit_interview_evaluations"],
 ];
 const original = await readFile(store, "utf8");
 const restore = () => writeFile(store, original);
