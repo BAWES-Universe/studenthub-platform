@@ -1,6 +1,6 @@
 import pg from "pg";
 import { databaseUrl } from "./connection.js";
-type PeopleCivilState="none"|"waiting"|"rejected"|"expired"|"checked"|"recorded";type Work="not_looking"|"active"|"open_to_offers";type PeopleDirectoryQuery={q?:string;status?:Work|"unset";nationality?:string;civil?:PeopleCivilState;details?:"complete"|"missing";page:number};type PeopleDirectoryRow={principalId:string;name:string|null;universeName:string|null;arabicName:string|null;workStatus:Work|null;nationality:{id:string;name:string}|null;detailsMissing:number;civilState:PeopleCivilState;imported:boolean;employeeId:string|null;phoneLast4:string|null};interface PeopleDirectoryStore{page(query:PeopleDirectoryQuery,today:string):Promise<{rows:PeopleDirectoryRow[];total:number}>}
+type PeopleCivilState="none"|"waiting"|"rejected"|"expired"|"checked"|"recorded";type Work="not_looking"|"active"|"open_to_offers";type PeopleDirectoryQuery={q?:string;status?:Work|"unset";nationality?:string;civil?:PeopleCivilState;details?:"complete"|"missing";page:number};type PeopleDirectoryRow={principalId:string;name:string|null;universeName:string|null;arabicName:string|null;workStatus:Work|null;nationality:{id:string;name:string}|null;detailsMissing:number;civilState:PeopleCivilState;imported:boolean;employeeId:string|null;phoneLast4:string|null};interface PeopleDirectoryStore{page(query:PeopleDirectoryQuery,today:string):Promise<{rows:PeopleDirectoryRow[];total:number}>;person(principalId:string,today:string):Promise<PeopleDirectoryRow|null>}
 
 const PEOPLE_PAGE_SIZE=25;
 const localClassify=(raw:string)=>{const q=raw.trim().normalize("NFC"),ascii=q.replace(/[\u0660-\u0669\u06f0-\u06f9]/g,c=>String(c.charCodeAt(0)-(c<="\u0669"?0x0660:0x06f0))),employee=/^[cC]([0-9]+)$/.exec(q),compact=ascii.replace(/[ ()-]/g,"");let phone:string|null=null;if(q.length<=32&&/^[+0-9 ()-]+$/.test(ascii)&&ascii.trim()===ascii){const international=compact.startsWith("+")||compact.startsWith("00"),digits=compact.startsWith("+")?compact.slice(1):compact.startsWith("00")?compact.slice(2):compact;const normalized=digits.length===8&&!international?`+965${digits}`:international||digits.startsWith("965")?`+${digits}`:compact;if(/^\+[0-9]{8,15}$/.test(normalized))phone=normalized}return {employeeId:employee?employee[1]!.replace(/^0+(?=\d)/,""):null,phone,phoneSuffix:!phone&&/^[0-9\u0660-\u0669\u06f0-\u06f9]{4,8}$/.test(q)?ascii:null,handle:/^@?[A-Za-z][A-Za-z0-9._-]{2,29}$/.test(q)?q.replace(/^@/,"").toLowerCase():null,nameTokens:[...q.toLowerCase().matchAll(/[\p{L}\p{M}\p{N}]+/gu)].map(m=>m[0]!)}}
@@ -13,7 +13,13 @@ export class PostgresPeopleDirectoryStore implements PeopleDirectoryStore {
  readonly #pool:pg.Pool;readonly #owns:boolean;
  constructor(options:{pool?:pg.Pool;connectionString?:string}){this.#owns=!options.pool;this.#pool=options.pool??new pg.Pool({connectionString:options.connectionString??databaseUrl()})}
  async close(){if(this.#owns)await this.#pool.end()}
- async page(query:PeopleDirectoryQuery,today:string):Promise<{rows:PeopleDirectoryRow[];total:number}>{
+ /** One person's directory facts, read by the same statement as the list, or null when there is no such principal. */
+ async person(principalId:string,today:string):Promise<PeopleDirectoryRow|null>{
+  if(typeof principalId!=="string"||principalId.length===0||principalId.length>256)return null;
+  return (await this.#read({page:1},today,principalId)).rows[0]??null;
+ }
+ async page(query:PeopleDirectoryQuery,today:string):Promise<{rows:PeopleDirectoryRow[];total:number}>{return this.#read(query,today,null)}
+ async #read(query:PeopleDirectoryQuery,today:string,principalId:string|null):Promise<{rows:PeopleDirectoryRow[];total:number}>{
   if(!Number.isInteger(query.page)||query.page<1)throw Error("page must be a whole number of 1 or more");
   if(query.nationality!==undefined&&!UUID.test(query.nationality))throw Error("nationality must be a uuid");
   const q=(query.q??"").trim();if([...q].length>200)throw Error("q must be at most 200 characters");
@@ -35,13 +41,13 @@ export class PostgresPeopleDirectoryStore implements PeopleDirectoryStore {
  FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id LEFT JOIN legacy_account_links l ON l.principal_id=p.id
  LEFT JOIN catalogue_items ci ON ci.id=pp.nationality_id AND ci.catalogue_type='country' LEFT JOIN person_civil_ids cid ON cid.principal_id=p.id
  LEFT JOIN person_locations pl ON pl.principal_id=p.id LEFT JOIN LATERAL (SELECT d.decision FROM civil_id_review_decisions d WHERE d.subject_principal_id=p.id AND d.civil_revision=cid.revision ORDER BY d.decided_at DESC,d.id DESC LIMIT 1) decision ON true
- WHERE ($1::text IS NULL OR ($1::text='unset' AND pp.job_search_status IS NULL) OR pp.job_search_status=$1::text) AND ($2::uuid IS NULL OR pp.nationality_id=$2::uuid)
+ WHERE ($14::text IS NULL OR p.id=$14::text) AND ($1::text IS NULL OR ($1::text='unset' AND pp.job_search_status IS NULL) OR pp.job_search_status=$1::text) AND ($2::uuid IS NULL OR pp.nationality_id=$2::uuid)
  AND ($3::text IS NULL OR (CASE WHEN cid.released_at IS NOT NULL OR (cid.number_hash IS NULL AND cid.expiry_date IS NULL) THEN 'none' WHEN cid.needs_review THEN 'waiting' WHEN decision.decision='rejected' THEN 'rejected' WHEN cid.expiry_date<$8::date THEN 'expired' WHEN decision.decision='confirmed' THEN 'checked' ELSE 'recorded' END)=$3::text)
  AND ($4::text='' OR l.legacy_candidate_id=$5::text OR pp.phone=$6::text OR (length($7::text)>=4 AND reverse(pp.phone) LIKE reverse($7::text)||'%') OR pp.profile_handle=$9::text OR CASE WHEN $10::text<>'' THEN (to_tsvector('simple',coalesce(pp.display_name,'')||' '||coalesce(pp.arabic_name,'')) @@ to_tsquery('simple',$10::text) OR to_tsvector('simple',coalesce(p.display_name,'')) @@ to_tsquery('simple',$10::text)) ELSE false END)
  ), filtered AS (SELECT * FROM people WHERE ($11::text IS NULL OR ($11::text='complete' AND details_missing=0) OR ($11::text='missing' AND details_missing>0))),
  paged AS (SELECT * FROM filtered ORDER BY lower(name) COLLATE "C",principal_id LIMIT $12::integer OFFSET $13::integer), totals AS (SELECT count(*)::bigint total FROM filtered)
  SELECT paged.*,totals.total FROM totals LEFT JOIN paged ON true ORDER BY lower(paged.name) COLLATE "C",paged.principal_id`,[
-   query.status??null,query.nationality??null,query.civil??null,q,search.employeeId,search.phone,search.phoneSuffix,today,search.handle,tokens,query.details??null,PEOPLE_PAGE_SIZE,(query.page-1)*PEOPLE_PAGE_SIZE]);
+   query.status??null,query.nationality??null,query.civil??null,q,search.employeeId,search.phone,search.phoneSuffix,today,search.handle,tokens,query.details??null,PEOPLE_PAGE_SIZE,(query.page-1)*PEOPLE_PAGE_SIZE,principalId]);
   const total=Number(result.rows[0]?.total??0),rows=result.rows.filter(r=>r.principal_id!==null).map(r=>({principalId:r.principal_id!,name:r.name,universeName:r.universe_name,arabicName:r.arabic_name,workStatus:r.work_status,nationality:r.nationality_id?{id:r.nationality_id,name:r.nationality_name!}:null,detailsMissing:r.details_missing!,civilState:r.civil_state!,imported:r.imported!,employeeId:r.legacy_candidate_id?`C${r.legacy_candidate_id.padStart(5,"0")}`:null,phoneLast4:r.phone_last4}));
   return {rows,total};
  }
