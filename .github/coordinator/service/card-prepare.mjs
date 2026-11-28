@@ -577,9 +577,10 @@ function landingLines(land) {
     Number.isInteger(land.pr) ? `pull request #${land.pr}${land.opened ? " (opened by this run)" : ""}` : null,
     /^[0-9a-f]{40}$/.test(land.merge_commit ?? "") ? `merge commit ${land.merge_commit}` : null,
   ].filter(Boolean);
-  // "Landed:" only for a merge; any other outcome names its pull request,
-  // which stays open and unmerged.
-  if (where.length) lines.push(land.outcome === "MERGED" ? `Landed: ${where.join("; ")}.` : `Not landed: ${where.join("; ")} stays open and unmerged.`);
+  // "Landed:" only for a merge. Any other outcome names its pull request
+  // without claiming its state: an error after the merge call can leave it
+  // merged, and only a MERGED outcome is a confirmed merge.
+  if (where.length) lines.push(land.outcome === "MERGED" ? `Landed: ${where.join("; ")}.` : `Merge not confirmed: ${where.join("; ")}; this landing did not confirm a merge.`);
   if (land.reason) lines.push(`Landing reason: ${plainReason(land.reason)}`);
   for (const thread of land.threads?.settled ?? []) {
     lines.push(`Settled review thread: ${plainReason(`${thread.bot} ${thread.severity} ${thread.url}`)}`);
