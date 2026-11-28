@@ -99,7 +99,7 @@ export async function handleOrganizationOverviewPage(ctx: GatewayRouteContext): 
   const rows = ORGANIZATION_FIELDS_BY_AUDIENCE[view.audience].map((name) =>
     `<div><dt>${escapeHtml(ORGANIZATION_FIELD_CONTRACT[name].label)}</dt><dd>${fieldText(name, fields[name])}</dd></div>`).join("");
   const base = `/organization/${encodeURIComponent(orgId)}`;
-  const actions = `${role === "org-owner" ? `<a href="${base}/edit">Edit company details</a>` : ""}<a href="${base}/stores">Stores</a><a href="${base}/candidates">Candidates</a>`;
+  const actions = `${role === "org-owner" ? `<a href="${base}/edit">Edit company details</a>` : ""}<a href="${base}/stores">Stores</a><a href="${base}/candidates">Candidates</a><a href="${base}/interviews">Interviews</a>`;
   const children = result.body.subOrganizations?.kind === "found" && result.body.subOrganizations.subOrganizations.length
     ? `<section aria-labelledby="sub-organizations"><h2 id="sub-organizations">Sub-organizations</h2><ul>${result.body.subOrganizations.subOrganizations.map((child) => `<li><a href="/organization/${encodeURIComponent(child.orgId)}">${escapeHtml(child.registryName)}</a></li>`).join("")}</ul></section>` : "";
   const body = `<main id="main" class="profile-main"><h1>${escapeHtml(heading)}</h1><nav aria-label="Company actions">${actions}</nav><dl class="profile-fields">${rows}</dl>${children}</main>`;

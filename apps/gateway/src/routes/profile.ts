@@ -4,7 +4,8 @@ import { handleLanguagePreference, handleLanguagePreferencePage } from "../langu
 import { handleBankDetails, handleBankDetailsPage } from "../bank-details.js";
 import { handleProfileRecords } from "../profile-records-http.js";
 import type { GatewayRoute } from "./context.js";
-import { renderPeopleDirectory, renderPersonDetail, wantsHtml } from "../web-ui.js";
+import { renderPeopleDirectory, renderPersonDetail, renderPersonDocuments, wantsHtml } from "../web-ui.js";
+import { openPersonDocument, personDocuments } from "../person-documents.js";
 import { handleCivilIdReview } from "../civil-id-review-http.js";
 import { writeNotFound } from "../shell/error-pages.js";
 
@@ -65,3 +66,33 @@ export const personDetailRoute:GatewayRoute={name:"person-detail",handle:async c
   if(result.status===404){writeNotFound(ctx.request,ctx.response);return true}
   if(wantsHtml(ctx.request.headers.accept)){ctx.writeHtml(ctx.response,result.status,renderPersonDetail(result,ctx.login!),{},true);return true}
   ctx.response.writeHead(result.status,{"content-type":"application/json","cache-control":"no-store",vary:"Accept"});ctx.response.end(JSON.stringify(result.body));return true}};
+const PERSON_DOCUMENTS=/^\/workspace\/people\/([^/]+)\/documents$/,PERSON_DOCUMENT_OPEN=/^\/workspace\/people\/([^/]+)\/documents\/([^/]+)\/open$/;
+const decoded=(segment:string)=>{try{return decodeURIComponent(segment)}catch{return undefined}};
+/** Reads a form body of at most 1 KiB; the open form has no fields, so anything else is refused. */
+async function emptyBody(request:import("node:http").IncomingMessage):Promise<boolean>{let size=0;for await(const chunk of request){size+=(chunk as Buffer).length;if(size>1024)return false}return size===0}
+/**
+ * A-03. GET /workspace/people/<person>/documents lists one person's documents (type, state, format, size; no contents).
+ * POST /workspace/people/<person>/documents/<type>/open issues a short signed link to the existing staff delivery.
+ * Operator staff and admin only; everyone else, a bad id or no such person gets the unknown-path 404.
+ */
+export const personDocumentsRoute:GatewayRoute={name:"person-documents",handle:async ctx=>{
+  const method=ctx.request.method,url=new URL(ctx.request.url??"/","http://gateway.invalid");
+  const list=method==="GET"||method==="HEAD"?PERSON_DOCUMENTS.exec(url.pathname):null,open=method==="POST"?PERSON_DOCUMENT_OPEN.exec(url.pathname):null;
+  if(!list&&!open)return false;
+  const session=sessionCookie(ctx.request.headers.cookie),staffDocuments=ctx.login?.civilIdReview?.staffDocuments;
+  if(list){
+    const principalId=decoded(list[1]!);
+    const result=principalId!==undefined&&url.search===""?await personDocuments(ctx.login?.people,staffDocuments,session,principalId):{status:404 as const,body:{error:"not_found"}};
+    if(result.status===404){writeNotFound(ctx.request,ctx.response);return true}
+    if(wantsHtml(ctx.request.headers.accept)){ctx.writeHtml(ctx.response,result.status,renderPersonDocuments(result,ctx.login!),{},true);return true}
+    ctx.response.writeHead(result.status,{"content-type":"application/json","cache-control":"no-store",vary:"Accept"});ctx.response.end(JSON.stringify(result.body));return true;
+  }
+  // Same origin, checked before the session or the body is read.
+  const origin=ctx.login?.web?.origin;
+  if(!origin||ctx.request.headers.origin!==origin||ctx.request.headers["sec-fetch-site"]==="cross-site"){ctx.request.resume();ctx.writeHtml(ctx.response,403,ctx.pageDocument("Documents","<main><h1>Documents</h1><p>This document must be opened from StudentHub itself.</p></main>"));return true}
+  const principalId=decoded(open![1]!),type=decoded(open![2]!);
+  if(principalId===undefined||type===undefined||url.search!==""||!await emptyBody(ctx.request)){ctx.request.resume();writeNotFound(ctx.request,ctx.response);return true}
+  const result=await openPersonDocument(ctx.login?.people,staffDocuments,session,principalId,type);
+  if(result.status===303){ctx.response.writeHead(303,{location:result.location,"cache-control":"no-store","referrer-policy":"no-referrer"});ctx.response.end();return true}
+  if(result.status===404){writeNotFound(ctx.request,ctx.response);return true}
+  ctx.writeHtml(ctx.response,result.status,ctx.renderError(result.status,ctx.login),{},true);return true}};
