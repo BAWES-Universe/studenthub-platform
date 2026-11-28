@@ -1116,29 +1116,41 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     // before the wait for green.
     let lockUntil = null;
     let checks;
-    for (let round = 1; ; round += 1) {
-      if (parallel) {
-        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead, limits });
+    // `round` counts the landing's rounds, and only a new round carries main:
+    // the pass before it starts one after checking the round bound and the
+    // one wait's deadline. A stale behind read re-waits at the same head and
+    // carries nothing, so no carry ever goes uncounted.
+    let round = 1;
+    let carry = parallel;
+    const moving = () => result("LAND_BASE_MOVING", { ...landed(), reason: `main moved under pull request #${pr.number} in each of ${round} rounds; nothing was handed off or merged` });
+    const timedOut = (why) => result("CI_TIMEOUT", { ...landed(), reason: `not green within ${Math.round(limits.waitMs / 60000)} minutes: ${why}` });
+    for (;;) {
+      if (carry) {
+        // The carry's own wait for its new head is cut to what is left of
+        // the one wait.
+        const left = Math.max(0, waitUntil - io.now().getTime());
+        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead,
+          limits: { ...limits, updateWaitMs: Math.min(limits.updateWaitMs, left) } });
         target.head = landHead;
+        carry = false;
       }
       const wait = { ...limits, waitMs: Math.max(0, waitUntil - io.now().getTime()) };
       checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined, true);
       if (checks.outcome === "BEHIND") {
         // GitHub's mergeable_state can lag: a head that already holds main's
-        // tip needs no carry. That read is paced, takes no round, and the
-        // landing ends at the one wait's bound as before.
+        // tip needs no carry. That read is paced, takes no round, carries
+        // nothing, and the landing ends at the one wait's bound as before.
         if ((await mainAt(gh, repo, landHead)).fresh) {
-          if (io.now().getTime() >= waitUntil) {
-            return result("CI_TIMEOUT", { ...landed(), reason: `not green within ${Math.round(limits.waitMs / 60000)} minutes: ${checks.reason}` });
-          }
+          if (io.now().getTime() >= waitUntil) return timedOut(checks.reason);
           io.sleep(limits.pollMs);
-          round -= 1;
           continue;
         }
-        if (round >= limits.baseRounds) {
-          return result("LAND_BASE_MOVING", { ...landed(), reason: `main moved under pull request #${pr.number} in each of ${round} rounds; nothing was handed off or merged` });
-        }
+        // No carry starts after the one wait has ended.
+        if (io.now().getTime() >= waitUntil) return timedOut(checks.reason);
+        if (round >= limits.baseRounds) return moving();
+        round += 1;
         parallel = true;
+        carry = true;
         continue;
       }
       if (checks.outcome !== "GREEN" || !parallel) break;
@@ -1147,9 +1159,10 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       if ((await mainAt(gh, repo, landHead)).fresh) break;
       release();
       release = null;
-      if (round >= limits.baseRounds) {
-        return result("LAND_BASE_MOVING", { ...landed(), reason: `main moved under pull request #${pr.number} in each of ${round} rounds; nothing was handed off or merged` });
-      }
+      if (round >= limits.baseRounds) return moving();
+      if (io.now().getTime() >= waitUntil) return timedOut("main moved under the pull request after its checks were green");
+      round += 1;
+      carry = true;
     }
     if (checks.outcome !== "GREEN") return result(checks.outcome, { ...landed(), reason: checks.reason });
     audit.blocking = [];
