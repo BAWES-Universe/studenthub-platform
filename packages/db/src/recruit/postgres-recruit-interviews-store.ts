@@ -55,6 +55,15 @@ export interface RecruitRequestInterviews {
 }
 export interface RecruitPersonInterviewRecord { readonly id: string; readonly org_name: string; readonly store_name: string; readonly position_title: string; readonly scheduled_at: string; readonly duration_minutes: number; readonly mode: Mode; readonly location: string | null; readonly status: Status; readonly outcome: Outcome | null }
 
+/** One interview on a company's interviews page (O-10): when, where, who and the result; never a rating or a note. */
+export interface RecruitOrganizationInterviewRecord {
+  readonly id: string; readonly request_id: string; readonly position_title: string; readonly store_name: string; readonly person_name: string | null;
+  readonly scheduled_at: string; readonly duration_minutes: number; readonly mode: Mode; readonly status: Status; readonly outcome: Outcome | null;
+}
+export interface RecruitOrganizationInterviews {
+  readonly org_name: string; readonly interviews: readonly RecruitOrganizationInterviewRecord[]; readonly page: number; readonly more: boolean;
+}
+
 export type RecruitScheduleResult = { kind: "scheduled"; interviewId: string } | { kind: "not_found" } | { kind: "stage_refused"; stage: string };
 export type RecruitInterviewCloseResult = { kind: "cancelled" } | { kind: "not_found" } | { kind: "refused"; status: Status };
 export type RecruitEvaluateResult = { kind: "evaluated"; version: number } | { kind: "not_found" } | { kind: "refused"; status: Status } | { kind: "internal_note_refused" } | { kind: "stale"; version: number };
@@ -239,6 +248,61 @@ export class PostgresRecruitInterviewsStore {
       cards: cards.rows.filter((card) => this.options.stageAllowed(card.stage)),
       canWrite: access.write, seesInternal: access.internal,
     }, people };
+  }
+
+  /**
+   * Every interview on the requests of one company (matrix O-10), latest scheduled first, `size` a page. Read by
+   * operator staff and by the company's own readers (the same company decision as a request's interviews, on a live
+   * company); a pipeline recruiter reads their requests' pages instead. Null for anyone else and for an unknown
+   * company. Paused people's interviews are left out for callers who are not internal, as on a request's page; the
+   * pause predicate runs inside the snapshot query, before LIMIT/OFFSET and `more`, so hidden rows never shorten a
+   * page or leave an Earlier link to an empty one.
+   */
+  async forOrganization(principalId: string, orgId: string, page = 1, size = 100): Promise<RecruitOrganizationInterviews | null> {
+    if (!Number.isSafeInteger(page) || page < 1) return null;
+    const limit = Math.min(Math.max(1, Math.trunc(size)), 200);
+    const c = await this.#pool.connect();
+    let broken = false;
+    let result: RecruitOrganizationInterviews | null = null;
+    try {
+      await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const org = (await c.query<{ name: string }>("SELECT name FROM organizations WHERE id = $1::text", [orgId])).rows[0];
+      if (org) {
+        const grants = (await c.query<Grant>("SELECT org_id, role, scope FROM grants WHERE principal_id = $1::text", [principalId])).rows;
+        let company = false;
+        if (await organizationLive(c, orgId, false)) {
+          const ancestors = (await c.query<{ id: string }>(
+            "WITH RECURSIVE chain AS (SELECT id, parent_org_id FROM organizations WHERE id = $1::text UNION ALL SELECT o.id, o.parent_org_id FROM organizations o JOIN chain c ON c.parent_org_id = o.id) SELECT id FROM chain WHERE id <> $1::text",
+            [orgId])).rows.map((r) => r.id);
+          company = this.options.companyDecision(grants, orgId, ancestors);
+        }
+        if (this.options.staffDecision(grants) || company) {
+          // Internal callers see paused people; for everyone else the open pause hides the row before paging.
+          const internal = this.options.internalDecision(grants);
+          const rows = (await c.query<RecruitOrganizationInterviewRecord>(
+            `SELECT i.id, r.id AS request_id, r.position_title, s.name AS store_name, COALESCE(pp.display_name, p.display_name, f.name) AS person_name,
+               i.scheduled_at, i.duration_minutes, i.mode, i.status,
+               (SELECT outcome FROM recruit_interview_evaluations WHERE interview_id = i.id ORDER BY version DESC LIMIT 1) AS outcome
+             FROM recruit_interviews i JOIN recruit_pipeline_cards c ON c.id = i.card_id JOIN recruit_requests r ON r.id = c.request_id
+             JOIN organization_stores s ON s.id = r.store_id
+             LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id
+             WHERE r.org_id = $1::text
+               AND ($4::boolean OR c.person_principal_id IS NULL
+                 OR NOT EXISTS (SELECT 1 FROM account_pauses ap WHERE ap.principal_id = c.person_principal_id AND ap.resumed_at IS NULL))
+             ORDER BY i.scheduled_at DESC, i.id LIMIT $2 OFFSET $3`, [orgId, limit + 1, (page - 1) * limit, internal])).rows;
+          const more = rows.length > limit;
+          rows.length = Math.min(rows.length, limit);
+          result = { org_name: org.name, interviews: rows, page, more };
+        }
+      }
+      await c.query("COMMIT");
+    } catch (error) {
+      try { await c.query("ROLLBACK"); } catch { broken = true; }
+      throw error;
+    } finally {
+      c.release(broken);
+    }
+    return result;
   }
 
   /** The person's own interviews: when, where and the outcome; never a rating or a note. */
