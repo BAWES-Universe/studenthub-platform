@@ -87,6 +87,10 @@ interface FakeDb {
   docLinks: Map<string, string>;
   docLedger: Map<string, DocumentPromotionOutcome>;
   docOutcomes: Map<string, DocumentPromotionOutcome | Error>;
+  /** Whether the M-5 staff migrations are applied; the principals a staff address can match; what the work store holds per table. */
+  staffWorkReady: boolean;
+  staffPeople: { id: string; email: string; verified: boolean; operator: boolean }[];
+  staffImported: Map<string, Set<string>>;
   /** The promotion destination recorded on the staging marker row (0662). */
   promotionDestination: { account: string; bucket: string; org: string } | null;
   /** What the promotion was handed: principal, kind, sha256 of the bytes. */
@@ -96,7 +100,7 @@ const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARG
   promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64), linkReportReady: true,
   links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplePrincipals": [], "link.contactTaken": [], "link.emailMismatch": [] } },
   documentsReady: true, documentBucket: { account: STAGING_ACCOUNT, bucket: STAGING_BUCKET_NAME }, stagedDocuments: new Map(), checkpoints: new Map(), checkpointLoads: 0,
-  docPromotionReady: true, promotionDestination: LIVE_DESTINATION, docLinks: new Map(), docLedger: new Map(), docOutcomes: new Map(), docPromoted: [] });
+  docPromotionReady: true, promotionDestination: LIVE_DESTINATION, staffWorkReady: true, staffPeople: [], staffImported: new Map(), docLinks: new Map(), docLedger: new Map(), docOutcomes: new Map(), docPromoted: [] });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -133,7 +137,7 @@ interface Harness {
   readonly err: string[];
   readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined; halted: number[] };
   readonly file: (name: string) => string;
-  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote") => M4Receipt;
+  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote" | "staffwork") => M4Receipt;
 }
 
 function harness(opts: HarnessOptions = {}): Harness {
@@ -249,6 +253,35 @@ function harness(opts: HarnessOptions = {}): Harness {
         Buffer.compare(Buffer.from(a.principalId), Buffer.from(b.principalId)) || Buffer.compare(Buffer.from(a.kind), Buffer.from(b.kind));
       return pairs.sort(cmp).filter((x) => !after || cmp(x, after) > 0).slice(0, limit);
     },
+    staffWorkReady: async () => db.staffWorkReady,
+    staffMatcher: () => async (candidates, org) => {
+      calls.push(`staffmatch:${org}`);
+      return candidates.flatMap((c) => db.staffPeople.filter((p) => p.email === c.email)
+        .map((p) => ({ staffId: c.staffId, principalId: p.id, verified: p.verified, operatorStaff: p.operator })));
+    },
+    workImport: () => {
+      assert.equal(db.writer, me, "the work store is used only by the lock holder");
+      const write = (table: string) => async (rows: readonly { legacyRef: string }[]) => {
+        if (db.sessionLost || db.writer !== me) throw new Error("m4.writerLost");
+        calls.push(`staffwork.${table}:${rows.length}`);
+        const set = db.staffImported.get(table) ?? new Set<string>(); db.staffImported.set(table, set);
+        let inserted = 0, unchanged = 0;
+        for (const r of rows) { if (set.has(r.legacyRef)) unchanged++; else { set.add(r.legacyRef); inserted++; } }
+        return { inserted, unchanged, updated: 0, conflicts: [], refused: [] };
+      };
+      return {
+        importStandupQuestions: write("work_standup_questions"), importStaffSessions: write("work_staff_sessions"),
+        importStandupAnswers: write("work_standup_answers"), importStaffHours: write("work_staff_hours_per_day"),
+        reconcileStaffImport: async (table, refs, reported = [], held = []) => {
+          const here = db.staffImported.get(table) ?? new Set<string>();
+          const missing = refs.filter((r) => !here.has(r) && !reported.includes(r)), skipped = refs.filter((r) => !here.has(r) && reported.includes(r));
+          const h = refs.filter((r) => here.has(r) && held.includes(r)), extra = [...here].filter((r) => !refs.includes(r));
+          const covered = refs.filter((r) => here.has(r)).length;
+          return { table, legacy: refs.length, imported: here.size, missing, skipped, extra, covered, held: h, verified: covered - h.length,
+            clean: !missing.length && !skipped.length && !extra.length && !h.length };
+        },
+      };
+    },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
     close: async () => {
@@ -323,7 +356,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       err.push(line);
     },
   };
-  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
+  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote" | "staffwork") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
   return { dir, invocation, deps, calls, out, err, state, file, receipt };
 }
 
@@ -1548,4 +1581,76 @@ test("docpromote walks principals in the database's byte order and counts an id 
     assert.equal(promoteReceipt(a, again).docPromotion!.rules.ineligible, 3);
     cleanup(again);
   } finally { rmSync(a.dir, { recursive: true, force: true }); }
+});
+
+// staffwork (M-5 staff time). Synthetic staff rows; the work store and matcher are fakes over the FakeDb.
+const staffSources = (over: Record<string, Record<string, unknown>[]> = {}) => ({
+  staff: [{ staff_id: 1, staff_email: `staff1-${SECRET}@example.invalid`, deleted: 0, hours_per_day: 8 }, { staff_id: 2, staff_email: "staff2@example.invalid", deleted: 0, hours_per_day: 7 }],
+  staff_work_session: [
+    { work_session_uuid: "s-1", staff_id: 1, total_minutes: 60, created_at: "2026-11-01 09:00:00", updated_at: "2026-11-01 10:00:00" },
+    { work_session_uuid: "s-2", staff_id: 2, total_minutes: 30, created_at: "2026-11-01 09:00:00", updated_at: "2026-11-01 09:30:00" },
+  ],
+  daily_standup_question: [{ question_uuid: "q-1", question: `${SECRET} question`, created_at: "2026-10-01 09:00:00", updated_at: "2026-10-01 09:00:00" }],
+  daily_standup_answer: [{ answer_uuid: "a-1", staff_id: 1, question_uuid: "q-1", question: `${SECRET} question`, answer: `${SECRET} answer`, created_at: "2026-11-01 09:30:00" }],
+  ...over,
+}) as unknown as M4Sources;
+const staffDb = () => ({ ...fakeDb(), staffPeople: [{ id: "principal-staff-1", email: `staff1-${SECRET}@example.invalid`, verified: true, operator: true }] });
+const staffEnv = { M4_CONTACT_DIGEST_KEY: undefined, M4_CIVIL_ID_ENCRYPTION_KEY: undefined, M4_IMPORT_ACTOR: undefined };
+
+test("staffwork imports the staff a verified address and operator grant resolve, reports the rest, and publishes counts only", async () => {
+  const db = staffDb();
+  const h = harness({ dir: provenancedDir(), db, rows: staffSources(), env: staffEnv });
+  try {
+    assert.equal(await main(["staffwork"], h.deps), 0, h.err.join(" "));
+    const r = h.receipt("staffwork");
+    assert.deepEqual([r.status, r.target, r.operator, r.mirror], ["ok", TARGET, OPERATOR, { generation: GENERATION_ID }]);
+    assert.deepEqual(r.staffWork!.staff, { rows: 2, resolved: 1, unresolved: { unresolved: 1 } });
+    const sessions = r.staffWork!.tables.work_staff_sessions;
+    assert.deepEqual([sessions.legacy, sessions.inserted, sessions.skipped, sessions.missing, sessions.issues], [2, 1, 1, 0, { no_staff: 1 }]);
+    assert.deepEqual([r.staffWork!.clean, r.staffWork!.complete], [false, true], "a reported staff member is explained, not clean");
+    assert.ok(h.calls.indexOf("staffwork.work_standup_questions:1") < h.calls.indexOf("staffwork.work_standup_answers:1"), "questions before answers");
+    assert.ok(h.calls.includes(`staffmatch:${OPERATOR}`));
+    assert.equal(db.writer, null, "the writer lock is released");
+    assert.equal(h.state.locked, false, "the refresh lock is released");
+    const report = JSON.parse(readFileSync(path.join(h.file("out"), `${h.invocation}.staffwork.report.json`), "utf8"));
+    assert.deepEqual(report.staff.unresolved, { unresolved: ["2"] });
+    assert.deepEqual(report.tables.work_staff_sessions.skipped, ["s-2"]);
+    const everything = [JSON.stringify(r), JSON.stringify(report), h.out.join("\n"), h.err.join("\n")].join("\n");
+    assert.ok(!everything.includes(SECRET) && !everything.includes("@example") && !everything.includes("principal-staff-1"), "no address, text or principal leaves the run");
+    assert.ok(!JSON.stringify(r).includes("s-2"), "the receipt holds no legacy ref");
+    cleanup(h);
+    // A re-run writes nothing new.
+    const again = harness({ dir: provenancedDir(), db, rows: staffSources(), env: staffEnv });
+    assert.equal(await main(["staffwork"], again.deps), 0, again.err.join(" "));
+    assert.deepEqual([again.receipt("staffwork").staffWork!.tables.work_staff_sessions.inserted, again.receipt("staffwork").staffWork!.tables.work_staff_sessions.unchanged], [0, 1]);
+    cleanup(again);
+  } finally { cleanup(h); }
+});
+
+test("staffwork is refused before any mirror read or write without its build, operator, target, schema, writer lock, refresh provenance or a whole read", async () => {
+  const run = async (code: string, opts: HarnessOptions = {}, exit = 2) => {
+    const db = opts.db ?? staffDb();
+    const h = harness({ dir: opts.dir ?? provenancedDir(), rows: staffSources(), ...opts, db, env: { ...staffEnv, ...opts.env } });
+    try {
+      assert.equal(await main(["staffwork"], h.deps), exit, code);
+      const r = h.receipt("staffwork");
+      assert.deepEqual([r.status, r.code, r.staffWork], [exit === 2 ? "refused" : "failed", code, undefined], code);
+      assert.equal(db.staffImported.size, 0, `${code}: nothing written`);
+      if (code !== "writerBusy") assert.equal(db.writer, null, `${code}: the writer lock is released`);
+      return h.state.reads;
+    } finally { cleanup(h); }
+  };
+  assert.equal(await run("provenance", { provenance: { clean: false } }), 0);
+  assert.equal(await run("destination", { env: { M4_OPERATOR_ORG_ID: undefined } }), 0);
+  assert.equal(await run("destination", { env: { M4_DATABASE_URL: undefined } }), 0);
+  assert.equal(await run("target", { db: { ...staffDb(), marker: { environment: "staging", targetId: randomUUID() } } }), 0);
+  assert.equal(await run("operator", { db: { ...staffDb(), operators: new Set() } }), 0);
+  assert.equal(await run("schema", { db: { ...staffDb(), staffWorkReady: false } }), 0);
+  assert.equal(await run("writerBusy", { db: { ...staffDb(), writer: {} } }), 0);
+  assert.equal(await run("locked", { lockHeld: false }), 0);
+  const plain = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
+  writeFileSync(path.join(plain, "refresh.json"), JSON.stringify(REFRESH));
+  assert.equal(await run("refreshProvenance", { dir: plain }), 0, "a refresh without provenance is not enough");
+  assert.equal(await run("generationMismatch", { markers: ["0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d"] }), 1);
+  assert.ok(await run("inputIncomplete", { countDrift: 1 }) > 1);
 });
