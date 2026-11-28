@@ -2081,6 +2081,13 @@ const CASES = [
     pattern: "Re-carry: a carry whose checks of the new head outlast the one wait",
   },
   {
+    name: "M353 read and settle a stale behind pull request after the one wait has ended",
+    file: "service/card-land.mjs",
+    from: "      if (checks && wait.waitMs <= 0) return timedOut(checks.reason);",
+    to: "      // SHU86-M353",
+    pattern: "Re-carry: a stale behind read paced past the one wait's end",
+  },
+  {
     name: "M344 report an unmerged landing as landed",
     file: "service/card-prepare.mjs",
     from: "land.outcome === \"MERGED\" ? `Landed:",

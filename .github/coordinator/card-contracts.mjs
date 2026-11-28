@@ -8556,6 +8556,10 @@ const RECUT_748_PRIOR = Object.freeze({ "SHU-755": " SHU-755 is SHU-740's contra
 // keeps its positive coverage. Nothing in the router or permissions changes.
 const NOTEDET_RECEIPTS_ANCHOR = "apps/gateway/test/organization-notes-page.test.ts passes unchanged; (5) NOTEDET_UNAVAILABLE";
 const NOTEDET_RECEIPTS_REPAIR = "a browser GET /organization/<orgId>/notes/receipts (Accept: text/html) is an unserved path the note path never claims (receipts is not a decimal note id), and its status, content type and body equal those of an ordinary browser GET of an unserved path such as /organization/<orgId>/notes-unknown-path, the shared HTML not-found page; the same /organization/<orgId>/notes/receipts request with an explicit Accept: application/json answers the shared JSON 404 fallback, asserted as application/json; the receipt API GET /organization/notes/<orgId>/receipts/<ref> keeps its positive coverage and answers exactly as at the bound head; no router, route order or permission change is made to make any of these pass; " + "apps/gateway/test/organization-notes-page.test.ts passes unchanged; (5) NOTEDET_UNAVAILABLE";
+const NOTEDET_MALFORMED_RULE = "a single path segment other than preview and confirm that is not a decimal note id";
+const NOTEDET_MALFORMED_RULE_RECEIPTS = "a single path segment other than preview, confirm and receipts that is not a decimal note id";
+const NOTEDET_OUTCOME_SEGMENT = "(exactly one more path segment, other than preview and confirm)";
+const NOTEDET_OUTCOME_SEGMENT_RECEIPTS = "(exactly one more path segment, other than preview, confirm and receipts, which stays the shared fallback's)";
 const RECUT_748_CONTRACTS = Object.fromEntries(Object.entries(RECUT_748).map(([from, to]) => {
   const base = RECUT_748_SOURCES[from][from];
   const prior = RECUT_748_PRIOR[from] ?? "";
@@ -8564,7 +8568,11 @@ const RECUT_748_CONTRACTS = Object.fromEntries(Object.entries(RECUT_748).map(([f
   let acceptance0 = recut(strip(base.acceptance));
   let brief = recut(strip(base.brief));
   if (from === "SHU-748") {
-    const repaired = replaceOnce(acceptance0, NOTEDET_RECEIPTS_ANCHOR, NOTEDET_RECEIPTS_REPAIR, `${to} receipts repair`);
+    // receipts is the one unserved segment NOTEDET_PASSTHROUGH names, so the
+    // malformed-id rule leaves it to the shared fallback (HTML and JSON alike).
+    const excepted = replaceOnce(acceptance0, NOTEDET_MALFORMED_RULE, NOTEDET_MALFORMED_RULE_RECEIPTS, `${to} malformed-id receipts exception`);
+    const repaired = replaceOnce(excepted, NOTEDET_RECEIPTS_ANCHOR, NOTEDET_RECEIPTS_REPAIR, `${to} receipts repair`);
+    brief = replaceOnce(brief, NOTEDET_OUTCOME_SEGMENT, NOTEDET_OUTCOME_SEGMENT_RECEIPTS, `${to} outcome receipts exception`);
     brief = replaceOnce(brief, acceptance0, repaired, `${to} repaired acceptance`);
     acceptance0 = repaired;
   }

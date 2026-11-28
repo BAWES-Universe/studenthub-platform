@@ -6942,6 +6942,22 @@ test("Re-carry: a carry whose checks of the new head outlast the one wait ends C
   noLandingWrites(host);
 });
 
+test("Re-carry: a stale behind read paced past the one wait's end reads and settles nothing more and ends CI_TIMEOUT", async () => {
+  // Behind (stale) for three reads inside a wait of 2.5 polls; the pacing
+  // sleep then passes the wait's end. A fourth read would find the pull
+  // request clean with a settleable bot thread.
+  const options = { mainSeq: [REV], mergeableState: "behind", settle: {}, botThreads: [[["coderabbitai", CR_MINOR]]],
+    onChecks: (h, reads) => { if (reads >= 4) options.mergeableState = "clean"; } };
+  const host = landingHost(options);
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs: 2.5 * LAND_LIMITS.pollMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /mergeable_state behind/);
+  assert.equal(host.land.checkReads, 3, "no read after the wait's end");
+  assert.deepEqual(settleWrites(host), [], "nothing is settled after the wait's end");
+  assert.equal(host.land.updates, 0);
+  noLandingWrites(host);
+});
+
 test("Re-carry: a carry that changes the pull request's own blobs, or conflicts, stops as before with nothing merged", async () => {
   const changed = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, deltaChanged: true });
   const stopped = await oneWorkerLand(changed);

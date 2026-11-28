@@ -1155,6 +1155,9 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
         carry = false;
       }
       const wait = { ...limits, waitMs: Math.max(0, waitUntil - io.now().getTime()) };
+      // A wait with nothing left reads nothing and settles nothing: a stale
+      // behind read paced past the one wait's end stops here.
+      if (checks && wait.waitMs <= 0) return timedOut(checks.reason);
       checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined, true);
       if (checks.outcome === "BEHIND") {
         // GitHub's mergeable_state can lag: a head that already holds main's

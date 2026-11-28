@@ -1235,7 +1235,10 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
     assert.equal(strip(contracts[to].acceptance, to), strip(contracts[from].acceptance, from), `SHU-224: ${to}'s acceptance is ${from}'s with the id changed`);
   }
   const notedet = contracts["SHU-784"].acceptance;
-  assert.ok(notedet.startsWith(contracts["SHU-748"].acceptance.replace(/\bSHU-748\b/g, "SHU-784").split("apps/gateway/test/organization-notes-page.test.ts passes unchanged; (5)")[0]), "SHU-224: SHU-784 keeps SHU-748's acceptance up to its repair");
+  const receiptsRule = ["a single path segment other than preview and confirm that is not a decimal note id", "a single path segment other than preview, confirm and receipts that is not a decimal note id"];
+  assert.ok(notedet.startsWith(contracts["SHU-748"].acceptance.replace(/\bSHU-748\b/g, "SHU-784").replace(...receiptsRule).split("apps/gateway/test/organization-notes-page.test.ts passes unchanged; (5)")[0]), "SHU-224: SHU-784 keeps SHU-748's acceptance up to its repair, with receipts left to the shared fallback");
+  assert.ok(notedet.includes(receiptsRule[1]) && !notedet.includes(receiptsRule[0]), "SHU-224: SHU-784's malformed-id rule leaves receipts to the shared fallback");
+  assert.match(contracts["SHU-784"].brief, /\(exactly one more path segment, other than preview, confirm and receipts, which stays the shared fallback's\)/, "SHU-224: SHU-784's outcome leaves receipts to the shared fallback");
   assert.match(notedet, /\(4\) NOTEDET_PASSTHROUGH: .*a browser GET \/organization\/<orgId>\/notes\/receipts \(Accept: text\/html\) .*equal those of an ordinary browser GET of an unserved path/, "SHU-224: SHU-784 compares the browser receipts path with an ordinary browser 404");
   assert.match(notedet, /with an explicit Accept: application\/json answers the shared JSON 404 fallback, asserted as application\/json/, "SHU-224: SHU-784 asserts the JSON fallback under an explicit JSON Accept");
   assert.match(notedet, /the receipt API GET \/organization\/notes\/<orgId>\/receipts\/<ref> keeps its positive coverage/, "SHU-224: SHU-784 keeps the receipt API's positive coverage");
