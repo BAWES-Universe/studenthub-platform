@@ -86,6 +86,11 @@ export interface StaffImportReconciliation {
   readonly clean: boolean;
 }
 
+/** The candidate history tables the importer writes (placements, sessions, decisions). */
+export type CandidateImportTable = "work_assignments" | "work_sessions" | "work_decisions";
+/** The same reconciliation as the staff tables, for a candidate history table. */
+export type CandidateImportReconciliation = Omit<StaffImportReconciliation, "table"> & { readonly table: CandidateImportTable };
+
 /** sha256 of canonical JSON (keys sorted at every level). */
 export function workImportDigest(value: unknown): string {
   const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical)
@@ -110,6 +115,7 @@ class Tally {
 }
 
 const STAFF_IMPORT_TABLES: readonly StaffImportTable[] = ["work_staff_sessions", "work_standup_questions", "work_standup_answers", "work_staff_hours_per_day"];
+const CANDIDATE_IMPORT_TABLES: readonly CandidateImportTable[] = ["work_assignments", "work_sessions", "work_decisions"];
 
 export class PostgresWorkImportStore {
   readonly #db: PoolOwner;
@@ -336,6 +342,17 @@ export class PostgresWorkImportStore {
    */
   async reconcileStaffImport(table: StaffImportTable, legacyRefs: readonly string[], reportedRefs: readonly string[] = [], heldRefs: readonly string[] = []): Promise<StaffImportReconciliation> {
     if (!STAFF_IMPORT_TABLES.includes(table)) throw new TypeError("unknown staff import table");
+    return Object.freeze({ ...(await this.#reconcile(table, legacyRefs, reportedRefs, heldRefs)), table });
+  }
+
+  /** `reconcileStaffImport`'s rule for the candidate history tables (placements, sessions, decisions). */
+  async reconcileCandidateImport(table: CandidateImportTable, legacyRefs: readonly string[], reportedRefs: readonly string[] = [], heldRefs: readonly string[] = []): Promise<CandidateImportReconciliation> {
+    if (!CANDIDATE_IMPORT_TABLES.includes(table)) throw new TypeError("unknown candidate import table");
+    return Object.freeze({ ...(await this.#reconcile(table, legacyRefs, reportedRefs, heldRefs)), table });
+  }
+
+  /** Only ever called with a table name from the two fixed lists above. */
+  async #reconcile(table: string, legacyRefs: readonly string[], reportedRefs: readonly string[], heldRefs: readonly string[]): Promise<Omit<StaffImportReconciliation, "table">> {
     const { rows } = await this.#db.pool.query<{ legacy_ref: string; unknown: boolean }>(
       `SELECT legacy_ref, legacy_digest IS NULL AS unknown FROM ${table} WHERE legacy_ref IS NOT NULL ORDER BY legacy_ref`);
     const here = new Set(rows.map((r) => r.legacy_ref));
@@ -347,7 +364,7 @@ export class PostgresWorkImportStore {
     const missing = absent.filter((r) => !reported.has(r)), skipped = absent.filter((r) => reported.has(r));
     const extra = [...here].filter((r) => !there.has(r)).sort();
     return Object.freeze({
-      table, legacy: there.size, imported: here.size,
+      legacy: there.size, imported: here.size,
       missing: Object.freeze(missing), skipped: Object.freeze(skipped), extra: Object.freeze(extra),
       covered: covered.length, held: Object.freeze(held), verified: covered.length - held.length,
       clean: held.length === 0 && absent.length === 0 && extra.length === 0,
