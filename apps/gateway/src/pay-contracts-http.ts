@@ -5,6 +5,7 @@ import { buildPayContractCreateWrite, PAY_CONTRACT_CREATE_FIELD, PAY_CONTRACT_CR
   payContractPrincipalRef, payContractCompanyRecordRef, type PayContractCreateCheck, buildPayContractChangeWrite,
   PAY_CONTRACT_CHANGE_POLICY, payContractRecordRef, type PayContractChangeCheck, payContractListView,
   type PayContract, type PayContractView } from "@studenthub/pay-contracts";
+import { pageDocument, wantsHtml, writeHtml } from "./web-ui.js";
 
 export interface PayContractsCreateStore {
   forCompany(principalId: string, orgId: string): SafeWriteStore;
@@ -52,16 +53,46 @@ export function createPayContracts(ports:{sessions:Pick<SessionStore,"get">;stor
 const PREVIEW="/pay-contracts/create/preview", CONFIRM="/pay-contracts/create/confirm", RECEIPT=/^\/pay-contracts\/create\/([^/]+)\/receipts\/([0-9a-f]{64})$/;
 const CHANGE_PREVIEW="/pay-contracts/change/preview",CHANGE_CONFIRM="/pay-contracts/change/confirm",CHANGE_RECEIPT=/^\/pay-contracts\/change\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/receipts\/([0-9a-f]{64})$/;
 const COMPANY_LIST=/^\/pay-contracts\/company\/([^/]+)$/,MINE="/pay-contracts/mine";
+const COMPANY_PAGE=/^\/organization\/([^/]+)\/contracts$/;
 const BODY_LIMIT=8192;
+const escapeHtml=(value:string)=>value.replace(/[&<>"']/g,(character)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[character]!);
+function companyContractsPage(orgId:string,body:unknown):string {
+  const contracts=object(body)&&Array.isArray(body.contracts)?body.contracts:[];
+  const rows=contracts.map((raw)=>{
+    const contract=object(raw)?raw:{},terms=object(contract.terms)?contract.terms:{};
+    const payModel=terms.payModel==="hourly"?"Hourly":terms.payModel==="fixed_price"?"Fixed price":terms.payModel==="monthly_salary"?"Monthly salary":"";
+    const amount=terms.payModel==="hourly"?`${String(terms.companyHourlyRate??"")} per hour`:terms.payModel==="fixed_price"?`${String(terms.companyTotal??"")} (${String(terms.completionPercentage??"")}% complete)`:terms.payModel==="monthly_salary"?`${String(terms.companyTotal??"")} (salary day ${String(terms.salaryDay??"")})`:"";
+    const status=contract.status==="active"?"Active":contract.status==="inactive"?"Inactive":"";
+    return `<tr><td>${escapeHtml(String(contract.startDate??""))}</td><td>${escapeHtml(contract.endDate===undefined?"Open-ended":String(contract.endDate))}</td><td>${escapeHtml(status)}</td><td>${escapeHtml(payModel)}</td><td>${escapeHtml(amount)}</td></tr>`;
+  }).join("");
+  const list=rows?`<table><thead><tr><th>Start date</th><th>End date</th><th>Status</th><th>Pay model</th><th>Company pays</th></tr></thead><tbody>${rows}</tbody></table>`:"<p>No contracts yet.</p>";
+  return pageDocument("Contracts",`<main><nav aria-label="Breadcrumb"><a href="/organization/${escapeHtml(orgId)}">Organization</a></nav><h1>Contracts</h1>${list}</main>`);
+}
+function companyPageError(req:IncomingMessage,res:ServerResponse,status:400|401|404|503,message:string):true {
+  if(wantsHtml(req.headers.accept)){writeHtml(res,status,pageDocument("Contracts",`<main><h1>Contracts</h1><p>${escapeHtml(message)}</p></main>`),{"cache-control":"no-store"});return true;}
+  res.writeHead(status,{"content-type":"application/json","cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});res.end(JSON.stringify({error:status===400?"invalid_request":status===401?"unauthorized":status===404?"not_found":"safe_write_unavailable"}));return true;
+}
 function cookie(header:string|undefined):string|undefined { for(const item of header?.split(";")??[]){const [key,...parts]=item.trim().split("=");const value=parts.join("=");if(key==="__Host-studenthub_session"&&/^[A-Za-z0-9_-]{43}$/.test(value))return value;}return undefined; }
 async function json(req:IncomingMessage):Promise<{ok:true;value:unknown}|{ok:false}>{if(Number(req.headers["content-length"])>BODY_LIMIT){req.resume();return {ok:false};}const chunks:Buffer[]=[];let n=0;for await(const c of req.iterator({destroyOnReturn:false})){const bytes=Buffer.from(c);n+=bytes.length;if(n>BODY_LIMIT){req.resume();return {ok:false};}chunks.push(bytes);}try{return {ok:true,value:JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown};}catch{return {ok:false};}}
 export async function handlePayContracts(req:IncomingMessage,res:ServerResponse,service:PayContractsCreate|undefined,origin:string|undefined):Promise<boolean>{
-  const path=new URL(req.url??"/","http://invalid").pathname, match=RECEIPT.exec(path),changeMatch=CHANGE_RECEIPT.exec(path),companyMatch=COMPANY_LIST.exec(path);if(path!==PREVIEW&&path!==CONFIRM&&path!==CHANGE_PREVIEW&&path!==CHANGE_CONFIRM&&path!==MINE&&!match&&!changeMatch&&!companyMatch)return false;
+  const url=new URL(req.url??"/","http://invalid"),path=url.pathname, match=RECEIPT.exec(path),changeMatch=CHANGE_RECEIPT.exec(path),companyMatch=COMPANY_LIST.exec(path),pageMatch=COMPANY_PAGE.exec(path);if(pageMatch&&req.method!=="GET"&&req.method!=="HEAD")return false;if(path!==PREVIEW&&path!==CONFIRM&&path!==CHANGE_PREVIEW&&path!==CHANGE_CONFIRM&&path!==MINE&&!match&&!changeMatch&&!companyMatch&&!pageMatch)return false;
   const send=(r:Result)=>{res.writeHead(r.status,{"content-type":"application/json","cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});res.end(JSON.stringify(r.body));};
-  try {if(!service||!origin){send({status:503,body:{error:"safe_write_unavailable"}});return true;}const session=cookie(req.headers.cookie);
+  try {if(pageMatch){
+      if(url.search)return companyPageError(req,res,400,"The request is not valid.");
+      if(!service||!origin)return companyPageError(req,res,503,"Contracts are unavailable right now.");
+      let orgId:string;try{orgId=decodeURIComponent(pageMatch[1]!);}catch{return companyPageError(req,res,404,"The page could not be found.");}
+      if(!/^[A-Za-z0-9._:-]{1,256}$/.test(orgId))return companyPageError(req,res,404,"The page could not be found.");
+      const result=await service.listCompany(cookie(req.headers.cookie),orgId);
+      if(result.status===503)return companyPageError(req,res,503,"Contracts are unavailable right now.");
+      if(!wantsHtml(req.headers.accept)){send(result);return true;}
+      if(result.status===401)return companyPageError(req,res,401,"Sign in to see contracts.");
+      if(result.status!==200)return companyPageError(req,res,result.status===400?400:404,result.status===400?"The request is not valid.":"The page could not be found.");
+      writeHtml(res,200,companyContractsPage(orgId,result.body),{"cache-control":"no-store"});return true;
+    }
+    if(!service||!origin){send({status:503,body:{error:"safe_write_unavailable"}});return true;}const session=cookie(req.headers.cookie);
     if(companyMatch||path===MINE){if(req.method!=="GET"){send({status:404,body:{error:"not_found"}});return true;}if(path===MINE){send(await service.listMine(session));return true;}let orgId:string;try{orgId=decodeURIComponent(companyMatch![1]!);}catch{send({status:404,body:{error:"not_found"}});return true;}send(await service.listCompany(session,orgId));return true;}
     if(match||changeMatch){if(req.method!=="GET"){send({status:404,body:{error:"not_found"}});return true;}if(changeMatch){send(await service.changeReceipt(session,changeMatch[1]!,changeMatch[2]!));return true;}let orgId:string;try{orgId=decodeURIComponent(match![1]!);}catch{send({status:400,body:{error:"invalid_request"}});return true;}send(await service.receipt(session,orgId,match![2]!));return true;}
     if(req.method!=="POST"){send({status:404,body:{error:"not_found"}});return true;}if(req.headers.origin!==origin||req.headers["sec-fetch-site"]==="cross-site"){req.resume();send({status:403,body:{error:"origin_rejected"}});return true;}
     if(req.headers["content-type"]!=="application/json"){req.resume();send({status:400,body:{error:"invalid_request"}});return true;}const body=await json(req);if(!body.ok){send({status:400,body:{error:"invalid_request"}});return true;}send(path===PREVIEW?await service.preview(session,body.value):path===CONFIRM?await service.confirm(session,body.value):path===CHANGE_PREVIEW?await service.changePreview(session,body.value):await service.changeConfirm(session,body.value));
-  } catch {if(!res.headersSent)send({status:503,body:{error:"safe_write_unavailable"}});else res.destroy();}return true;
+  } catch {if(!res.headersSent){if(pageMatch)companyPageError(req,res,503,"Contracts are unavailable right now.");else send({status:503,body:{error:"safe_write_unavailable"}});}else res.destroy();}return true;
 }
