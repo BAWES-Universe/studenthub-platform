@@ -31,6 +31,10 @@ const NONE="none";
 const evidenceDigest=(front:string|null,back:string|null)=>createHash("sha256").update(`front:${front??NONE}\nback:${back??NONE}`).digest("hex");
 const evidence=async(s:CivilIdReviewHttpService,credential:string,subject:string)=>{const docs=await s.staffDocuments!.documents(credential,subject),front=docs.find(x=>x.type==="civil-id-front")?.version??null,back=docs.find(x=>x.type==="civil-id-back")?.version??null;return{front,back,digest:evidenceDigest(front,back)}};
 
+// A person page link (A-03) opens a photo or CV of anyone, not only people waiting for review; the signature,
+// viewer, grant, expiry and version are still checked by StaffDocuments.deliver. Civil ID photos stay review-only.
+const personPageLink=(claim:object)=>"purpose" in claim&&claim.purpose==="person_page"&&"type" in claim&&(claim.type==="personal-photo"||claim.type==="resume");
+
 export async function handleCivilIdReview(req:IncomingMessage,res:ServerResponse,service:CivilIdReviewHttpService|undefined,origin:string|undefined,authorize:(session:string)=>Promise<string|undefined>,document:(title:string,body:string)=>string):Promise<boolean>{
   const url=new URL(req.url??"/","http://gateway.invalid"),path=url.pathname;
   if(path!=="/workspace/civil-ids"&&!path.startsWith("/workspace/civil-ids/"))return false;
@@ -45,7 +49,7 @@ export async function handleCivilIdReview(req:IncomingMessage,res:ServerResponse
     const body=rows.length?`<table><thead><tr><th>Name</th><th>Country</th><th>Number</th><th>Expiry</th><th>Waiting</th><th>Photo reading</th></tr></thead><tbody>${rows.map(r=>`<tr><th><a href="/workspace/civil-ids/${encodeURIComponent(r.principalId)}">${esc(r.name??"Unnamed")}</a></th><td>${esc(r.country??"Not recorded")}</td><td>${esc(r.number??"Not recorded")}</td><td>${esc(r.expiry??"Not recorded")}</td><td>${esc(r.waited)}</td><td>${esc(r.reading??"No result")}</td></tr>`).join("")}</tbody></table>`:"<p>No civil IDs are waiting on this page.</p>";finish(res,200,document("Civil IDs",`<main><h1>Civil IDs</h1>${body}</main>`));return true
   }
   if(path==="/workspace/civil-ids/delivery"&&req.method==="GET"){
-    try{const token=url.searchParams.get("t"),payload=token?.split(".")[0],claim=payload?JSON.parse(Buffer.from(payload,"base64url").toString("utf8")) as unknown:null;if(!claim||typeof claim!=="object"||!("subject" in claim)||typeof claim.subject!=="string"||!(await service.store.readForDecision(claim.subject))?.needsReview)throw new Error("refused");const out=await service.staffDocuments.deliver(session,req.url!);res.writeHead(200,out.headers);res.end(out.bytes)}catch{finish(res,404,notFound)}return true
+    try{const token=url.searchParams.get("t"),payload=token?.split(".")[0],claim=payload?JSON.parse(Buffer.from(payload,"base64url").toString("utf8")) as unknown:null;if(!claim||typeof claim!=="object"||!("subject" in claim)||typeof claim.subject!=="string"||!(personPageLink(claim)||(await service.store.readForDecision(claim.subject))?.needsReview))throw new Error("refused");const out=await service.staffDocuments.deliver(session,req.url!);res.writeHead(200,out.headers);res.end(out.bytes)}catch{finish(res,404,notFound)}return true
   }
   const match=path.match(/^\/workspace\/civil-ids\/([^/]+)(?:\/decision(?:\/confirm)?)?$/);if(!match||!PERSON.test(decodeURIComponent(match[1]!))){finish(res,404,notFound);return true}const subject=decodeURIComponent(match[1]!);if(subject===principal){finish(res,403,plain("Civil ID","You cannot review your own Civil ID."));return true}
   const row=await service.store.readForDecision(subject);if(!row?.needsReview){finish(res,404,notFound);return true}

@@ -39,6 +39,7 @@ import type { ProfileCompletenessResult } from "@studenthub/profile";
 import type { ProfileCompletenessDependencies } from "./profile-completeness.js";
 import { maskPhone, type PeopleDirectoryRow } from "@studenthub/profile";
 import type { PeopleDirectoryPage, PeopleDirectoryResult, PersonDetailResult } from "./people-directory.js";
+import type { PersonDocumentsResult } from "./person-documents.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
@@ -259,8 +260,29 @@ export function renderPersonDetail(result:PersonDetailResult,login:BrowserLoginA
     messages?`<a class="text-link" href="${e(`${base}/emails`)}">Email log</a>`:"",
     login.access?`<a class="text-link" href="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}`)}">Access</a>`:"",
     login.staffView?`<a class="text-link" href="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}/view`)}">View their profile</a>`:"",
+    login.civilIdReview?.staffDocuments?`<a class="text-link" href="${e(`${base}/documents`)}">Documents</a>`:"",
   ].filter(Boolean).join("");
-  return workspaceDocument(name,`<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out">Sign out</button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${e(String(new URLSearchParams({org_id:active.orgId,role:active.role})))}">Workspaces</a>${companiesLink(active,login,false,true)}${accessLink(active,login)}</nav></aside><main id="main" class="profile-main"><div class="profile-heading"><h1>${e(name)}</h1>${person.imported?'<span class="badge">Imported</span>':""}</div><dl class="profile-fields person-facts">${facts}</dl>${actions?`<nav class="person-actions" aria-label="Actions for this person">${actions}</nav>`:""}<a class="text-link" href="/workspace/people">Back to People</a></main></div>`);
+  return personShell(name,active,login,`<div class="profile-heading"><h1>${e(name)}</h1>${person.imported?'<span class="badge">Imported</span>':""}</div><dl class="profile-fields person-facts">${facts}</dl>${actions?`<nav class="person-actions" aria-label="Actions for this person">${actions}</nav>`:""}<a class="text-link" href="/workspace/people">Back to People</a>`);
+}
+
+/** The operator person pages' frame: sign out, the workspace navigation, then the page. */
+function personShell(title:string,active:WorkspaceContext,login:BrowserLoginApplication,main:string):string{
+  const e=escapeHtml;
+  return workspaceDocument(title,`<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out">Sign out</button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${e(String(new URLSearchParams({org_id:active.orgId,role:active.role})))}">Workspaces</a>${companiesLink(active,login,false,true)}${accessLink(active,login)}</nav></aside><main id="main" class="profile-main">${main}</main></div>`);
+}
+
+const PERSON_DOCUMENT_NAMES:Readonly<Record<string,string>>={"personal-photo":"Personal photo",resume:"CV","civil-id-front":"Civil ID front","civil-id-back":"Civil ID back"};
+const DOCUMENT_FORMATS:Readonly<Record<string,string>>={"application/pdf":"PDF","image/png":"PNG image","image/jpeg":"JPEG image"};
+const documentSize=(bytes:number)=>bytes<1024?`${bytes} bytes`:bytes<1048576?`${Math.round(bytes/1024)} KB`:`${(bytes/1048576).toFixed(1)} MB`;
+
+/** A-03: one person's documents, read only. Opening a photo or CV posts for a short signed link; Civil ID photos open only from the Civil ID review. */
+export function renderPersonDocuments(result:PersonDocumentsResult,login:BrowserLoginApplication):string{
+  if(result.status!==200)return renderError(result.status,login);
+  const e=escapeHtml,{person,documents}=result.body,active:WorkspaceContext={...result.body.active,organizationName:"StudentHub"};
+  const base=personHref(person.principalId);
+  const rows=documents.map(doc=>`<tr><th scope="row">${e(PERSON_DOCUMENT_NAMES[doc.type]??doc.type)}</th><td>${doc.state==="on_file"?"On file":"Missing"}</td><td>${doc.state==="on_file"?e(DOCUMENT_FORMATS[doc.mime!]??"Other"):"—"}</td><td>${doc.state==="on_file"?e(documentSize(doc.size!)):"—"}</td><td>${doc.state==="on_file"&&doc.openable?`<form method="post" action="${e(`${base}/documents/${doc.type}/open`)}"><button class="text-link" type="submit">Open</button></form>`:""}</td></tr>`).join("");
+  const civil=person.civilState==="waiting"&&login.civilIdReview?`<a class="text-link" href="${e(`/workspace/civil-ids/${encodeURIComponent(person.principalId)}`)}">Review the Civil ID</a>`:"";
+  return personShell(`Documents: ${person.name}`,active,login,`<div class="profile-heading"><h1>Documents for ${e(person.name)}</h1></div><dl class="profile-fields person-facts"><div><dt>Civil ID</dt><dd>${e(CIVIL_STATE_NAMES[person.civilState]??person.civilState)}</dd></div></dl><table class="person-documents"><thead><tr><th scope="col">Document</th><th scope="col">State</th><th scope="col">Format</th><th scope="col">Size</th><th scope="col">Open</th></tr></thead><tbody>${rows}</tbody></table><p>Upload dates are not recorded. Civil ID photos open only from the Civil ID review.</p>${civil}<a class="text-link" href="${e(base)}">Back to ${e(person.name)}</a>`);
 }
 
 function myCompaniesLink(active: WorkspaceContext | BrowserLoginApplication | null, login?: BrowserLoginApplication, current = false): string {
