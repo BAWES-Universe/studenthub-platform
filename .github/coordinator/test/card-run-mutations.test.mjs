@@ -2060,6 +2060,13 @@ const CASES = [
     pattern: "Re-carry: a carry whose reads before the update outlast the one wait",
   },
   {
+    name: "M350 report a carry's wait that ends with the one wait as LAND_ERROR",
+    file: "service/card-land.mjs",
+    from: "  const capped = deadline !== undefined && deadline <= ownUntil;",
+    to: "  const capped = deadline !== undefined && deadline < ownUntil; // SHU86-M350",
+    pattern: "Re-carry: a carry whose wait for the new head ends exactly with the one wait",
+  },
+  {
     name: "M344 report an unmerged landing as landed",
     file: "service/card-prepare.mjs",
     from: "land.outcome === \"MERGED\" ? `Landed:",

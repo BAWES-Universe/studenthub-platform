@@ -824,14 +824,17 @@ async function updateFromMain(io, gh, { repo, number, branch, passed, current, l
   }
   if (sent && sent.status !== 202) stop("LAND_ERROR", `pull request #${number} was not updated from main (HTTP ${sent.status}${sent.message ? `: ${sent.message}` : ""})`);
   const ownUntil = io.now().getTime() + limits.updateWaitMs;
-  const until = deadline !== undefined ? Math.min(ownUntil, deadline) : ownUntil;
+  // The one wait caps this wait whenever it ends no later, equal included:
+  // then the landing's wait is what ran out.
+  const capped = deadline !== undefined && deadline <= ownUntil;
+  const until = capped ? deadline : ownUntil;
   let pull;
   for (;;) {
     const response = await gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`);
     pull = await response.json();
     if (response.ok && pull?.head?.sha && pull.head.sha !== current) break;
     if (io.now().getTime() >= until) {
-      stop(until < ownUntil ? "CI_TIMEOUT" : "LAND_ERROR", `pull request #${number} did not move from ${current} within ${Math.round((until - (ownUntil - limits.updateWaitMs)) / 1000)} s of its update from main`);
+      stop(capped ? "CI_TIMEOUT" : "LAND_ERROR", `pull request #${number} did not move from ${current} within ${Math.round((until - (ownUntil - limits.updateWaitMs)) / 1000)} s of its update from main`);
     }
     io.sleep(limits.updatePollMs);
   }

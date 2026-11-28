@@ -1900,7 +1900,8 @@ function cardLineage() {
 // blob), badParents (an update's parents come in the other order), behindWhenStale
 // (the pull request reads mergeable_state "behind" while its head does not
 // hold main's tip, as strict branch protection reads it). GitHub's
-// update-branch merges main into the head as a new head.
+// update-branch merges main into the head as a new head; onUpdate(land, host)
+// is called as it is sent, and stallUpdate answers it without moving the head.
 function landingHost(options = {}) {
   const external = options.external ?? (options.settle !== undefined ? { required: ["coderabbitai", "sentry"] } : undefined);
   const config = options.settle !== undefined || external !== undefined || options.review !== undefined || options.parallel
@@ -2049,6 +2050,8 @@ function landingHost(options = {}) {
       land.log.push("github update from main");
       assert.deepEqual(JSON.parse(request.body), { expected_head_sha: land.pr.head }, "the update is conditional on the head");
       if (options.conflict) return respond(422, { message: "merge conflict between base and head" });
+      options.onUpdate?.(land, host);
+      if (options.stallUpdate) { land.updates += 1; return respond(202, { message: "Updating pull request branch." }); }
       land.updates += 1;
       const updated = String(land.updates + 3).repeat(40);
       land.parents.set(updated, options.badParents ? [tips[land.mainAt], land.pr.head] : [land.pr.head, tips[land.mainAt]]);
@@ -6881,6 +6884,23 @@ test("Re-carry: a carry whose reads before the update outlast the one wait sends
   assert.match(result.reason, /wait ended before main was carried/);
   assert.equal(host.land.updates, 0, "no update is sent after the wait");
   assert.ok(!host.land.log.includes("github update from main"));
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+});
+
+test("Re-carry: a carry whose wait for the new head ends exactly with the one wait ends CI_TIMEOUT, not LAND_ERROR", async () => {
+  // The update is sent exactly updateWaitMs before the one wait ends, and the
+  // head never moves: both waits end together, and the landing's wait is the
+  // one that ran out.
+  const waitMs = 10 * LAND_LIMITS.pollMs;
+  let started = null;
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, stallUpdate: true,
+    onChecks: (h, reads) => { if (reads === 1) started = h.clock; },
+    onUpdate: (land, h) => { h.clock = started + waitMs - LAND_LIMITS.updateWaitMs; } });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /did not move from .* within 120 s of its update from main/);
+  assert.equal(host.land.updates, 1);
   assert.equal(host.land.merges, 0);
   noLandingWrites(host);
 });

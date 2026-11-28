@@ -4707,6 +4707,7 @@
     "Re-carry: a stale behind read never lets a carry go uncounted; main that moves after it is still bounded by baseRounds",
     "Re-carry: a behind read that comes after the one wait has ended starts no carry and ends CI_TIMEOUT",
     "Re-carry: a carry whose reads before the update outlast the one wait sends no update and ends CI_TIMEOUT",
+    "Re-carry: a carry whose wait for the new head ends exactly with the one wait ends CI_TIMEOUT, not LAND_ERROR",
     "Re-carry: a carry that changes the pull request's own blobs, or conflicts, stops as before with nothing merged",
     "Report: \"Landed:\" is written only for a merge; any other landing outcome names its pull request without claiming its state",
     "M15 W4: the landing lock, the updates and their reads keep the run inside TimeoutStartSec",
@@ -34397,6 +34398,10 @@
     },
     {
       "name": "Re-carry: a carry whose reads before the update outlast the one wait sends no update and ends CI_TIMEOUT",
+      "capabilities": []
+    },
+    {
+      "name": "Re-carry: a carry whose wait for the new head ends exactly with the one wait ends CI_TIMEOUT, not LAND_ERROR",
       "capabilities": []
     },
     {
