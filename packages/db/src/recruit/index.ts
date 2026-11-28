@@ -6,7 +6,7 @@ export { PostgresRecruitChecklistStore } from "./postgres-recruit-checklist-stor
 export { PostgresRecruitInvitationsStore } from "./postgres-recruit-invitations-store.js";
 export type { RecruitInvitationAnswerResult, RecruitInvitationRecord, RecruitInvitationsStoreOptions, RecruitInviteResult, RecruitRequestInvitationRecord } from "./postgres-recruit-invitations-store.js";
 export { PostgresRecruitInterviewsStore } from "./postgres-recruit-interviews-store.js";
-export type { RecruitEvaluateResult, RecruitEvaluationInput, RecruitInterviewCardOption, RecruitInterviewCloseResult, RecruitInterviewInput, RecruitInterviewRecord, RecruitInterviewsStoreOptions, RecruitPersonInterviewRecord, RecruitRequestInterviews, RecruitScheduleResult } from "./postgres-recruit-interviews-store.js";
+export type { RecruitEvaluateResult, RecruitEvaluationInput, RecruitInterviewCardOption, RecruitInterviewCloseResult, RecruitInterviewInput, RecruitInterviewRecord, RecruitInterviewsStoreOptions, RecruitOrganizationInterviewRecord, RecruitOrganizationInterviews, RecruitPersonInterviewRecord, RecruitRequestInterviews, RecruitScheduleResult } from "./postgres-recruit-interviews-store.js";
 export { PostgresRecruitFulltimersStore } from "./postgres-recruit-fulltimers-store.js";
 export type { RecruitFulltimerCardRecord, RecruitFulltimerInput, RecruitFulltimerRecord, RecruitFulltimerWriteResult, RecruitFulltimersStoreOptions } from "./postgres-recruit-fulltimers-store.js";
 export { PostgresRecruitJobsStore } from "./postgres-recruit-jobs-store.js";

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { INTERVIEW_MODES, interviewView, isRecruitId, parseEvaluation, parseInterview, personInterviewView, type EvaluationFields, type InterviewFields, type InterviewMode, type InterviewOutcome, type InterviewRow, type InterviewStatus, type InterviewView, type PersonInterviewRow } from "../../../../packages/recruit/src/index.js";
+import { INTERVIEW_MODES, interviewView, isRecruitId, kuwaitWallClock, parseEvaluation, parseInterview, personInterviewView, type EvaluationFields, type InterviewFields, type InterviewMode, type InterviewOutcome, type InterviewRow, type InterviewStatus, type InterviewView, type PersonInterviewRow } from "../../../../packages/recruit/src/index.js";
 import { BAD, NOT_FOUND, UNAUTHORIZED, decodeSegment, errorPage, html, readBody, redirect, sameOrigin, sendJson, sessionCookie, type RecruitPageWriter, type RecruitResult } from "./http-common.js";
 
 // Recruit R6: interviews and evaluations.
@@ -19,7 +19,18 @@ export interface RecruitInterviewsStore {
     interviews: readonly InterviewRow[]; cards: readonly { id: string; person_name: string | null; stage: string }[]; canWrite: boolean; seesInternal: boolean;
   } | null>;
   mine(personId: string): Promise<readonly PersonInterviewRow[]>;
+  /** A company's interviews (O-10), a page at a time; null when the caller may not read the company. */
+  forOrganization?(principalId: string, orgId: string, page: number): Promise<{
+    org_name: string; page: number; more: boolean;
+    interviews: readonly { id: string; request_id: string; position_title: string; store_name: string; person_name: string | null; scheduled_at: string | Date; duration_minutes: number; mode: InterviewMode; status: InterviewStatus; outcome: InterviewOutcome | null }[];
+  } | null>;
 }
+/** One row of a company's interviews page: never a rating, a note or a location. */
+export interface OrganizationInterviewView {
+  readonly interviewId: string; readonly requestId: string; readonly positionTitle: string; readonly store: string; readonly personName: string | null;
+  readonly kuwaitTime: string; readonly durationMinutes: number; readonly mode: InterviewMode; readonly status: InterviewStatus; readonly outcome: InterviewOutcome | null;
+}
+export interface OrganizationInterviewsBody { readonly company: string; readonly page: number; readonly more: boolean; readonly interviews: readonly OrganizationInterviewView[] }
 export interface RequestInterviewsBody {
   readonly requestId: string; readonly positionTitle: string; readonly company: string; readonly store: string;
   readonly interviews: readonly InterviewView[]; readonly cards: readonly { cardId: string; personName: string | null; stage: string }[]; readonly canWrite: boolean; readonly seesInternal: boolean;
@@ -32,6 +43,7 @@ export interface RecruitInterviews {
   evaluate(session: string | undefined, interviewId: string, body: unknown): Promise<RecruitResult<{ interviewId: string; version: number }>>;
   mine(session: string | undefined): Promise<RecruitResult<{ interviews: readonly PersonInterviewView[] }>>;
   one(session: string | undefined, interviewId: string): Promise<RecruitResult<{ interview: PersonInterviewView }>>;
+  organization?(session: string | undefined, orgId: string, page: number): Promise<RecruitResult<OrganizationInterviewsBody>>;
 }
 
 const FORM_ONLY = ["requestId"];
@@ -98,6 +110,16 @@ export function createRecruitInterviews(p: { sessions: Pick<SessionStore, "get">
       const row = (await p.store.mine(id)).find((candidate) => candidate.id === interviewId.toLowerCase());
       return row ? { status: 200, body: { interview: personInterviewView(row) } } : NOT_FOUND;
     },
+    ...(p.store.forOrganization ? { async organization(s: string | undefined, orgId: string, page: number): Promise<RecruitResult<OrganizationInterviewsBody>> {
+      const id = await principal(s);
+      if (!id) return UNAUTHORIZED;
+      const r = await p.store.forOrganization!(id, orgId, page);
+      if (!r) return NOT_FOUND;
+      return { status: 200, body: { company: r.org_name, page: r.page, more: r.more, interviews: r.interviews.map((row) => ({
+        interviewId: row.id, requestId: row.request_id, positionTitle: row.position_title, store: row.store_name, personName: row.person_name,
+        kuwaitTime: kuwaitWallClock(row.scheduled_at), durationMinutes: row.duration_minutes, mode: row.mode, status: row.status, outcome: row.outcome,
+      })) } };
+    } } : {}),
   };
 }
 
@@ -127,6 +149,14 @@ ${b.seesInternal ? `<p><label for="i-${html(v.interviewId)}">Internal note (staf
 <p><label for="location">Place or link (optional)</label> <input id="location" name="location" maxlength="500"></p>
 <button class="button primary" type="submit">Schedule</button></form>` : b.canWrite ? "<p>People appear here once they are contacted, interviewing or offered.</p>" : "";
   return `<main id="main" class="profile-main"><h1>Interviews<span class="accent">.</span></h1><p>${html(b.positionTitle)} · ${html(b.company)} · ${html(b.store)}</p>${b.interviews.length ? `<ol class="plain">${b.interviews.map(item).join("")}</ol>` : "<p>No interviews yet.</p>"}${schedule}<p><a class="text-link" href="/recruit/requests/${html(b.requestId)}">Back to the request</a></p></main>`;
+}
+
+/** The table body of a company's interviews page (O-10). */
+export function renderOrganizationInterviews(list: readonly OrganizationInterviewView[]): string {
+  if (!list.length) return "";
+  const row = (v: OrganizationInterviewView) => `<tr><th scope="row">${html(v.personName ?? "Unnamed person")}</th><td><a class="text-link" href="/recruit/requests/${html(encodeURIComponent(v.requestId))}/interviews">${html(v.positionTitle)}</a></td>`
+    + `<td>${html(v.store)}</td><td>${html(`${v.kuwaitTime} (Kuwait)`)} · ${v.durationMinutes} min · ${MODE[v.mode]}</td><td>${STATUS[v.status]}</td><td>${v.outcome ? OUTCOME[v.outcome] : ""}</td></tr>`;
+  return `<table><thead><tr><th>Person</th><th>Position</th><th>Store</th><th>When</th><th>Status</th><th>Outcome</th></tr></thead><tbody>${list.map(row).join("")}</tbody></table>`;
 }
 
 export function renderMyInterviews(list: readonly PersonInterviewView[]): string {
