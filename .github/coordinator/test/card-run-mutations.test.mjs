@@ -2067,6 +2067,20 @@ const CASES = [
     pattern: "Re-carry: a carry whose wait for the new head ends exactly with the one wait",
   },
   {
+    name: "M351 take a carried head read only after the one wait has ended",
+    file: "service/card-land.mjs",
+    from: "      if (capped && io.now().getTime() >= until) {",
+    to: "      if (false) { // SHU86-M351",
+    pattern: "Re-carry: a carry whose new head is read only after the one wait has ended",
+  },
+  {
+    name: "M352 wait for green on a carried head after the one wait has ended",
+    file: "service/card-land.mjs",
+    from: "        if (io.now().getTime() >= waitUntil) return timedOut(\"the pull request moved to main's tip only after the one wait had ended\");",
+    to: "        // SHU86-M352",
+    pattern: "Re-carry: a carry whose checks of the new head outlast the one wait",
+  },
+  {
     name: "M344 report an unmerged landing as landed",
     file: "service/card-prepare.mjs",
     from: "land.outcome === \"MERGED\" ? `Landed:",

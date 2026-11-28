@@ -832,11 +832,18 @@ async function updateFromMain(io, gh, { repo, number, branch, passed, current, l
   for (;;) {
     const response = await gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`);
     pull = await response.json();
-    if (response.ok && pull?.head?.sha && pull.head.sha !== current) break;
+    if (response.ok && pull?.head?.sha && pull.head.sha !== current) {
+      // A head read only after the one wait has ended is not taken: nothing
+      // more runs for this landing.
+      if (capped && io.now().getTime() >= until) {
+        stop("CI_TIMEOUT", `pull request #${number} moved from ${current} only after the landing's wait had ended; nothing more was done`);
+      }
+      break;
+    }
     if (io.now().getTime() >= until) {
       stop(capped ? "CI_TIMEOUT" : "LAND_ERROR", `pull request #${number} did not move from ${current} within ${Math.round((until - (ownUntil - limits.updateWaitMs)) / 1000)} s of its update from main`);
     }
-    io.sleep(limits.updatePollMs);
+    io.sleep(Math.min(limits.updatePollMs, Math.max(0, until - io.now().getTime())));
   }
   const head = pull.head.sha;
   if (!SHA_RE.test(head) || !headMatches(pull, { repo, branch, head })) stop("LAND_HEAD_MISMATCH", `pull request #${number} moved to ${head} in a way its update from main cannot`);
@@ -1141,6 +1148,9 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
         // The carry sends no update once the one wait has ended, and its own
         // wait for the new head ends with it.
         landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead, limits, deadline: waitUntil });
+        // Checking the new head took the rest of the one wait: no wait for
+        // green, and no settle step that could write, runs after it.
+        if (io.now().getTime() >= waitUntil) return timedOut("the pull request moved to main's tip only after the one wait had ended");
         target.head = landHead;
         carry = false;
       }

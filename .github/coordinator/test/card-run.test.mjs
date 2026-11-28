@@ -1901,7 +1901,8 @@ function cardLineage() {
 // (the pull request reads mergeable_state "behind" while its head does not
 // hold main's tip, as strict branch protection reads it). GitHub's
 // update-branch merges main into the head as a new head; onUpdate(land, host)
-// is called as it is sent, and stallUpdate answers it without moving the head.
+// is called as it is sent, and stallUpdate answers it without moving the head;
+// onCommitRead(land, host) is called on each read of a carried head's commit.
 function landingHost(options = {}) {
   const external = options.external ?? (options.settle !== undefined ? { required: ["coderabbitai", "sentry"] } : undefined);
   const config = options.settle !== undefined || external !== undefined || options.review !== undefined || options.parallel
@@ -2083,6 +2084,7 @@ function landingHost(options = {}) {
       }
       if (route === "/branches/main") return respond(200, { protected: true, commit: { sha: tips[land.mainAt] } });
       const parents = land.parents.get(route.slice("/commits/".length));
+      if (parents) options.onCommitRead?.(land, host);
       if (parents) return respond(200, { sha: route.slice("/commits/".length), parents: parents.map((sha) => ({ sha })), commit: { tree: { sha: TREE } } });
       if (land.parents.has(land.pr.head) && route === `/commits/${land.pr.head}/status?per_page=100`) return respond(200, { state: "success", statuses: [] });
       if (land.parents.has(land.pr.head) && route === `/commits/${land.pr.head}/check-runs?filter=latest&per_page=100`) {
@@ -6902,6 +6904,41 @@ test("Re-carry: a carry whose wait for the new head ends exactly with the one wa
   assert.match(result.reason, /did not move from .* within 120 s of its update from main/);
   assert.equal(host.land.updates, 1);
   assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+});
+
+test("Re-carry: a carry whose new head is read only after the one wait has ended ends CI_TIMEOUT and goes no further", async () => {
+  // The update is sent one update poll before the wait ends, so the wait caps
+  // the update's own; the read that returns the new head starts before the
+  // wait ends and comes back after it.
+  const waitMs = 10 * LAND_LIMITS.pollMs;
+  let started = null;
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true,
+    onChecks: (h, reads) => { if (reads === 1) started = h.clock; },
+    onUpdate: (land, h) => { h.clock = started + waitMs - LAND_LIMITS.updatePollMs; },
+    onPullRead: (land, h) => { if (land.updates === 1) h.clock = Math.max(h.clock, started + waitMs); } });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /moved from [0-9a-f]{40} only after the landing's wait had ended; nothing more was done/);
+  assert.equal(host.land.updates, 1);
+  assert.equal(host.land.merges, 0);
+  assert.ok(![...host.land.checkedHeads].some((sha) => sha !== PASSED), "no checks are read at the new head");
+  noLandingWrites(host);
+});
+
+test("Re-carry: a carry whose checks of the new head outlast the one wait ends CI_TIMEOUT before any wait for green", async () => {
+  // The new head is read inside the wait; reading its commit takes the rest.
+  const waitMs = 10 * LAND_LIMITS.pollMs;
+  let started = null;
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true,
+    onChecks: (h, reads) => { if (reads === 1) started = h.clock; },
+    onCommitRead: (land, h) => { if (land.updates === 1) h.clock = Math.max(h.clock, started + waitMs); } });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /the pull request moved to main's tip only after the one wait had ended/);
+  assert.equal(host.land.updates, 1);
+  assert.equal(host.land.merges, 0);
+  assert.ok(![...host.land.checkedHeads].some((sha) => sha !== PASSED), "no checks are read at the new head");
   noLandingWrites(host);
 });
 
