@@ -406,3 +406,13 @@ test("the operator entry starts Node with a cleared environment, so startup sett
     assert.equal(JSON.stringify(seen.processArgv).includes("synthetic"), false, "a setting was passed as an argument");
   } finally { remove(c); }
 });
+
+test("the wrapper keeps every setting the importer reads, so no mode loses one on the way in", () => {
+  const keep = new Set((/^keep="([^"]*)"$/m.exec(readFileSync(WRAPPER, "utf8"))?.[1] ?? "").split(" ").filter(Boolean));
+  const read = new Set<string>();
+  for (const file of ["tools/legacy-import/src/m4-cli.ts", "tools/legacy-import/m4-launch.mjs"]) {
+    for (const m of readFileSync(path.join(REPO, file), "utf8").matchAll(/\b(?:env|e)\.((?:M4|LEGACY_REFRESH)_[A-Z0-9_]+)/g)) read.add(m[1]!);
+  }
+  assert.ok(read.has("M4_ACCEPTED_DOCCOPY") && read.has("M4_INVOCATION"), "the scan finds the importer's settings");
+  assert.deepEqual([...read].filter((name) => !keep.has(name)).sort(), []);
+});
