@@ -1563,8 +1563,8 @@ const CASES = [
   {
     name: "M224 land a head behind main without updating it",
     file: "service/card-land.mjs",
-    from: "        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead,",
-    to: "        void ({ repo, number: pr.number, branch, passed: head, current: landHead, // SHU86-M224",
+    from: "        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead, limits, deadline: waitUntil });",
+    to: "        // SHU86-M224",
     pattern: "M15 W4: with two workers a landing behind main",
   },
   {
@@ -2051,6 +2051,41 @@ const CASES = [
     from: "`Merge not confirmed: ${where.join(\"; \")}; this landing did not confirm a merge.`",
     to: "`Merge not confirmed: ${where.join(\"; \")} stays open and unmerged.`",
     pattern: "Report: \"Landed:\" is written only for a merge",
+  },
+  {
+    name: "M349 send a carry's update after the one wait has ended",
+    file: "service/card-land.mjs",
+    from: "  if (deadline !== undefined && io.now().getTime() >= deadline) {",
+    to: "  if (false) { // SHU86-M349",
+    pattern: "Re-carry: a carry whose reads before the update outlast the one wait",
+  },
+  {
+    name: "M350 report a carry's wait that ends with the one wait as LAND_ERROR",
+    file: "service/card-land.mjs",
+    from: "  const capped = deadline !== undefined && deadline <= ownUntil;",
+    to: "  const capped = deadline !== undefined && deadline < ownUntil; // SHU86-M350",
+    pattern: "Re-carry: a carry whose wait for the new head ends exactly with the one wait",
+  },
+  {
+    name: "M351 take a carried head read only after the one wait has ended",
+    file: "service/card-land.mjs",
+    from: "      if (capped && io.now().getTime() >= until) {",
+    to: "      if (false) { // SHU86-M351",
+    pattern: "Re-carry: a carry whose new head is read only after the one wait has ended",
+  },
+  {
+    name: "M352 wait for green on a carried head after the one wait has ended",
+    file: "service/card-land.mjs",
+    from: "        if (io.now().getTime() >= waitUntil) return timedOut(\"the pull request moved to main's tip only after the one wait had ended\");",
+    to: "        // SHU86-M352",
+    pattern: "Re-carry: a carry whose checks of the new head outlast the one wait",
+  },
+  {
+    name: "M353 read and settle a stale behind pull request after the one wait has ended",
+    file: "service/card-land.mjs",
+    from: "      if (checks && wait.waitMs <= 0) return timedOut(checks.reason);",
+    to: "      // SHU86-M353",
+    pattern: "Re-carry: a stale behind read paced past the one wait's end",
   },
   {
     name: "M344 report an unmerged landing as landed",
