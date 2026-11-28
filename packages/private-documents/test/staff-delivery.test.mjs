@@ -81,6 +81,7 @@ test('STAFFDOC_AUDIT writes first and fails closed',async()=>{
  const before=f.events.length;await f.service.documents(f.credentials.staff,'subject');assert.equal(f.events.length,before,'documents records nothing');
  await assert.rejects(f.service.issue(f.credentials.staff,'staff','civil-id-front','civil_id_review'),e=>e?.code==='denied','self review denied');
  await assert.rejects(f.service.issue(f.credentials.staff,'subject','resume','civil_id_review'),e=>e?.code==='denied','civil purpose slot denied');
+ await assert.rejects(f.service.issue(f.credentials.staff,'subject','civil-id-front','person_page'),e=>e?.code==='denied','civil photo person page denied');
  const person=await f.service.issue(f.credentials.staff,'subject','resume','person_page');await f.service.deliver(f.credentials.staff,person.url);assert.deepEqual(f.events.slice(-2).map(e=>e.kind),['person_document_issue','person_document_deliver'],'person audit kinds');
  let calls=0;const rejected=await rig({audit:async()=>{calls++;throw new Error('audit down');}});
  await assert.rejects(rejected.service.issue(rejected.credentials.staff,'subject','civil-id-front','civil_id_review'),e=>e?.code==='unavailable','failed issue audit returns no link');

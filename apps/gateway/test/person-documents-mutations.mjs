@@ -16,6 +16,7 @@ try {
   const service = "dist/apps/gateway/src/person-documents.js";
   const route = "dist/apps/gateway/src/routes/profile.js";
   const delivery = "dist/apps/gateway/src/civil-id-review-http.js";
+  const documents = "dist/packages/private-documents/src/staff-delivery.js";
   const ui = "dist/apps/gateway/src/web-ui.js";
   const mutants = [
     ["open a Civil ID photo from the person page", service, 'new Set(["personal-photo", "resume"])', 'new Set(["personal-photo", "resume", "civil-id-front"])', "DOCS_PAGE"],
@@ -24,9 +25,9 @@ try {
     ["report a missing document as unavailable", service, "error.status === 403 ?", "false ?", "DOCS_OPEN"],
     ["accept a query on the list", route, 'principalId !== undefined && url.search === "" ?', "principalId !== undefined ?", "DOCS_ACCESS"],
     ["accept another origin", route, 'ctx.request.headers.origin !== origin ||', "", "DOCS_GUARDS"],
-    ["accept a body on open", route, "return size === 0;", "return true;", "DOCS_GUARDS"],
+    ["accept a body on open", route, "done(size === 0)", "done(true)", "DOCS_GUARDS"],
     ["keep person page links review-only", delivery, "!(personPageLink(claim) ||", "!(false ||", "DOCS_OPEN"],
-    ["deliver Civil ID photos on a person page link", delivery, '(claim.type === "personal-photo" || claim.type === "resume")', "true", "DOCS_OPEN"],
+    ["deliver Civil ID photos on a person page link", documents, "if (civilTypes.has(type) !== (purpose === 'civil_id_review'))", "if (purpose === 'civil_id_review' && !civilTypes.has(type))", "DOCS_OPEN"],
     ["leave the documents unlinked from the person page", ui, "login.civilIdReview?.staffDocuments ?", "false ?", "DOCS_PAGE"],
   ];
   for (const pattern of new Set(mutants.map((mutant) => mutant[4]))) assert.equal(run(pattern).status, 0, `baseline ${pattern}`);
