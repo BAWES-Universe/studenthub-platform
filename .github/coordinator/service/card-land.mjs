@@ -823,7 +823,7 @@ async function updateFromMain(io, gh, { repo, number, branch, passed, current, l
     const response = await gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`);
     pull = await response.json();
     if (response.ok && pull?.head?.sha && pull.head.sha !== current) break;
-    if (io.now().getTime() >= until) stop("LAND_ERROR", `pull request #${number} did not move from ${current} within ${Math.round(limits.updateWaitMs / 1000)} s of its update from main`);
+    if (io.now().getTime() >= until) stop(limits.updateTimeout ?? "LAND_ERROR", `pull request #${number} did not move from ${current} within ${Math.round(limits.updateWaitMs / 1000)} s of its update from main`);
     io.sleep(limits.updatePollMs);
   }
   const head = pull.head.sha;
@@ -1130,7 +1130,9 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
         // the one wait.
         const left = Math.max(0, waitUntil - io.now().getTime());
         landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead,
-          limits: { ...limits, updateWaitMs: Math.min(limits.updateWaitMs, left) } });
+          limits: { ...limits, updateWaitMs: Math.min(limits.updateWaitMs, left),
+            // A carry cut short by the one wait's end is that wait running out.
+            ...(left < limits.updateWaitMs ? { updateTimeout: "CI_TIMEOUT" } : {}) } });
         target.head = landHead;
         carry = false;
       }

@@ -1563,8 +1563,8 @@ const CASES = [
   {
     name: "M224 land a head behind main without updating it",
     file: "service/card-land.mjs",
-    from: "        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead,\n          limits: { ...limits, updateWaitMs: Math.min(limits.updateWaitMs, left) } });",
-    to: "        // SHU86-M224",
+    from: "        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead,",
+    to: "        void ({ repo, number: pr.number, branch, passed: head, current: landHead, // SHU86-M224",
     pattern: "M15 W4: with two workers a landing behind main",
   },
   {
