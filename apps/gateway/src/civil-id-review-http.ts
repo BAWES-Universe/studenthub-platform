@@ -31,9 +31,10 @@ const NONE="none";
 const evidenceDigest=(front:string|null,back:string|null)=>createHash("sha256").update(`front:${front??NONE}\nback:${back??NONE}`).digest("hex");
 const evidence=async(s:CivilIdReviewHttpService,credential:string,subject:string)=>{const docs=await s.staffDocuments!.documents(credential,subject),front=docs.find(x=>x.type==="civil-id-front")?.version??null,back=docs.find(x=>x.type==="civil-id-back")?.version??null;return{front,back,digest:evidenceDigest(front,back)}};
 
-// A person page link (A-03) opens a photo or CV of anyone, not only people waiting for review; the signature,
-// viewer, grant, expiry and version are still checked by StaffDocuments.deliver. Civil ID photos stay review-only.
-const personPageLink=(claim:object)=>"purpose" in claim&&claim.purpose==="person_page"&&"type" in claim&&(claim.type==="personal-photo"||claim.type==="resume");
+// A person page link (A-03) opens a photo or CV of anyone, not only people waiting for review. StaffDocuments.deliver
+// still checks the signature, viewer, grant, expiry and version, and pairs the purpose with the type: Civil ID
+// photos only ever go out for review.
+const personPageLink=(claim:object)=>"purpose" in claim&&claim.purpose==="person_page";
 
 export async function handleCivilIdReview(req:IncomingMessage,res:ServerResponse,service:CivilIdReviewHttpService|undefined,origin:string|undefined,authorize:(session:string)=>Promise<string|undefined>,document:(title:string,body:string)=>string):Promise<boolean>{
   const url=new URL(req.url??"/","http://gateway.invalid"),path=url.pathname;
