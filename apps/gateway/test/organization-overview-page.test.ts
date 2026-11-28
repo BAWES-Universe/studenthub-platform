@@ -87,12 +87,15 @@ test("OVW_LINKS actions and sub-organizations follow the active role", async (t)
   const f = await fixture(t); const owner = await (await f.get("/organization/org-a")).text();
   assert.match(owner, /href="\/organization\/org-a\/edit">Edit company details</, "OVW_LINKS owner sees Edit");
   assert.match(owner, /href="\/organization\/org-a\/stores">Stores</); assert.match(owner, /href="\/organization\/org-a1">/);
+  assert.match(owner, /href="\/organization\/org-a\/candidates">Candidates</, "OVW_LINKS owner sees Candidates");
   const staff = await (await f.get("/organization/org-a?role=staff")).text();
   assert.doesNotMatch(staff, />Edit company details</, "OVW_LINKS staff has no Edit"); assert.match(staff, />Stores</);
   for (const role of ["recruiter", "admin"]) {
     const body = await (await f.get(`/organization/org-a?role=${role}`)).text();
     assert.doesNotMatch(body, />Edit company details</); assert.match(body, />Stores</);
+    assert.match(body, /href="\/organization\/org-a\/candidates">Candidates</, `OVW_LINKS ${role} sees Candidates`);
   }
+  assert.match(staff, /href="\/organization\/org-a\/candidates">Candidates</, "OVW_LINKS staff sees Candidates");
 });
 
 test("OVW_ESCAPE company names are escaped", async (t) => {
