@@ -61,7 +61,9 @@ export class StaffDocuments {
   }
 
   private allowed(viewer: string, subject: string, type: CandidateDocumentType, purpose: StaffDocumentPurpose): void {
-    if (purpose === 'civil_id_review' && (viewer === subject || !civilTypes.has(type))) return deny();
+    // STAFFDOC_MUTANT_PAIR: Civil ID photos only for review, and review only for Civil ID photos.
+    if (civilTypes.has(type) !== (purpose === 'civil_id_review')) return deny();
+    if (purpose === 'civil_id_review' && viewer === subject) return deny();
   }
 
   private current(state: DocumentState, subject: string, type: CandidateDocumentType) {

@@ -68,8 +68,15 @@ export const personDetailRoute:GatewayRoute={name:"person-detail",handle:async c
   ctx.response.writeHead(result.status,{"content-type":"application/json","cache-control":"no-store",vary:"Accept"});ctx.response.end(JSON.stringify(result.body));return true}};
 const PERSON_DOCUMENTS=/^\/workspace\/people\/([^/]+)\/documents$/,PERSON_DOCUMENT_OPEN=/^\/workspace\/people\/([^/]+)\/documents\/([^/]+)\/open$/;
 const decoded=(segment:string)=>{try{return decodeURIComponent(segment)}catch{return undefined}};
-/** Reads a form body of at most 1 KiB; the open form has no fields, so anything else is refused. */
-async function emptyBody(request:import("node:http").IncomingMessage):Promise<boolean>{let size=0;for await(const chunk of request){size+=(chunk as Buffer).length;if(size>1024)return false}return size===0}
+/**
+ * True when the request has no body; the open form has no fields. Stops counting past 1 KiB but never
+ * destroys the request, so the refusal still reaches the client; the caller lets the rest drain.
+ */
+function emptyBody(request:import("node:http").IncomingMessage):Promise<boolean>{
+  return new Promise(resolve=>{let size=0;
+    const done=(empty:boolean)=>{request.off("data",data).off("end",end).off("error",failed);resolve(empty)};
+    const data=(chunk:Buffer)=>{size+=chunk.length;if(size>1024)done(false)},end=()=>done(size===0),failed=()=>done(false);
+    request.on("data",data).on("end",end).on("error",failed)})}
 /**
  * A-03. GET /workspace/people/<person>/documents lists one person's documents (type, state, format, size; no contents).
  * POST /workspace/people/<person>/documents/<type>/open issues a short signed link to the existing staff delivery.
@@ -91,7 +98,7 @@ export const personDocumentsRoute:GatewayRoute={name:"person-documents",handle:a
   const origin=ctx.login?.web?.origin;
   if(!origin||ctx.request.headers.origin!==origin||ctx.request.headers["sec-fetch-site"]==="cross-site"){ctx.request.resume();ctx.writeHtml(ctx.response,403,ctx.pageDocument("Documents","<main><h1>Documents</h1><p>This document must be opened from StudentHub itself.</p></main>"));return true}
   const principalId=decoded(open![1]!),type=decoded(open![2]!);
-  if(principalId===undefined||type===undefined||url.search!==""||!await emptyBody(ctx.request)){ctx.request.resume();writeNotFound(ctx.request,ctx.response);return true}
+  if(principalId===undefined||type===undefined||url.search!==""||!await emptyBody(ctx.request)){ctx.request.resume();ctx.response.setHeader("connection","close");writeNotFound(ctx.request,ctx.response);return true}
   const result=await openPersonDocument(ctx.login?.people,staffDocuments,session,principalId,type);
   if(result.status===303){ctx.response.writeHead(303,{location:result.location,"cache-control":"no-store","referrer-policy":"no-referrer"});ctx.response.end();return true}
   if(result.status===404){writeNotFound(ctx.request,ctx.response);return true}
