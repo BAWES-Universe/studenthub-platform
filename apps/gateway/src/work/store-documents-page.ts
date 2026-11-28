@@ -73,7 +73,8 @@ export async function handleStoreDocumentsPage(ctx: GatewayRouteContext): Promis
   const url = new URL(ctx.request.url ?? "/", "http://gateway.invalid");
   const method = ctx.request.method;
   if (url.pathname === STORE_DELIVERY_PATH) {
-    if (method !== "GET" && method !== "HEAD") return false;
+    // GET only, like the employer delivery route: a HEAD would record a delivery without sending bytes.
+    if (method !== "GET") return false;
     const session = sessionCookie(ctx.request.headers.cookie);
     if (!session) { ctx.writeHtml(ctx.response, 401, ctx.renderError(401, ctx.login)); return true; }
     const service = delivery(ctx);
@@ -81,7 +82,7 @@ export async function handleStoreDocumentsPage(ctx: GatewayRouteContext): Promis
     try {
       const out = await service.deliver(session, ctx.request.url!);
       ctx.response.writeHead(200, out.headers);
-      ctx.response.end(method === "HEAD" ? undefined : out.bytes);
+      ctx.response.end(out.bytes);
     } catch (error) { return refused(error) ? notFound(ctx) : unavailable(ctx); }
     return true;
   }

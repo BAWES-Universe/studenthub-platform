@@ -59,7 +59,7 @@ async function fixture(t: TestContext, option: { audit?: boolean; auditFails?: b
   t.after(() => { server.closeAllConnections(); server.close(); });
   const address = server.address(); assert.ok(address && typeof address !== "string");
   const base = `http://127.0.0.1:${address.port}`;
-  const get = (path: string, who?: Who) => fetch(base + path, { redirect: "manual", headers: { accept: "text/html", ...(who ? { cookie: `__Host-studenthub_session=${sessions[who]}` } : {}) } });
+  const get = (path: string, who?: Who, method = "GET") => fetch(base + path, { method, redirect: "manual", headers: { accept: "text/html", ...(who ? { cookie: `__Host-studenthub_session=${sessions[who]}` } : {}) } });
   const open = (path: string, who: Who, init: { headers?: Record<string, string>; body?: string } = {}) => fetch(`${base}${path}`, { method: "POST", redirect: "manual", body: init.body ?? "",
     headers: { accept: "text/html", cookie: `__Host-studenthub_session=${sessions[who]}`, origin: ORIGIN, "sec-fetch-site": "same-origin", "content-type": "application/x-www-form-urlencoded", ...init.headers } });
   return { get, open, views, calls, managed, state, assignments, unknownPath: async () => (await get("/no-such-page", "manager")).text() };
@@ -96,6 +96,8 @@ test("STOREDOC_OPEN a photo or CV opens through a short signed link, audited on 
   assert.match(location, /^\/workspace\/stores\/documents\/delivery\?t=[\w-]+\.[\w-]+$/, "STOREDOC_OPEN the store delivery link");
   const resumeVersion = f.state.documents.find((d) => d.scope.personId === "amal" && d.type === "resume")!.version;
   assert.deepEqual(f.views, [{ viewerPrincipalId: "manager", subjectPrincipalId: "amal", storeId: S.a, operation: "issue", documentType: "resume", documentVersion: resumeVersion }], "STOREDOC_OPEN issue audited with the store");
+  assert.notEqual((await f.get(location, "manager", "HEAD")).status, 200, "STOREDOC_OPEN HEAD is not a delivery");
+  assert.deepEqual(f.views.map((v) => v.operation), ["issue"], "STOREDOC_OPEN HEAD records no delivery");
   const delivered = await f.get(location, "manager");
   assert.equal(delivered.status, 200, "STOREDOC_OPEN delivered");
   assert.deepEqual(Buffer.from(await delivered.arrayBuffer()), resume, "STOREDOC_OPEN the bytes");
