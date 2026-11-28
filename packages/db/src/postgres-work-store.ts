@@ -224,7 +224,7 @@ export class PostgresWorkPlacementStore {
     return rows[0] ? requestFromRow(rows[0]) : undefined;
   }
 
-  /** Newest first. `orgIds` covers each organization, and its sub-companies only with `includeSubtree`. */
+  /** Newest first, at most 500 (the work package's ASSIGNMENT_LIST_LIMIT). `orgIds` covers each organization, and its sub-companies only with `includeSubtree`. */
   async listAssignments(filter: { personId?: string; orgIds?: readonly string[]; includeSubtree?: boolean; storeId?: string }): Promise<readonly WorkAssignmentRecord[]> {
     const { rows } = await this.#db.pool.query<AssignmentRow>(`WITH RECURSIVE tree(id) AS (
        SELECT id FROM organizations WHERE $2::text[] IS NOT NULL AND id = ANY($2::text[])
