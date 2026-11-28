@@ -796,10 +796,22 @@ const sameFiles = (a, b) => a.size === b.size && [...a].every(([name, blob]) => 
 // The passed head's own files are the review's; a head is taken only when it
 // merges main into `current` and keeps exactly those blobs. Returns the head
 // to land.
-async function updateFromMain(io, gh, { repo, number, branch, passed, current, limits }) {
+// `deadline`, when given, is the one wait's absolute end: no update is sent
+// once it has passed, and the wait for the new head ends with it; either way
+// the landing stops CI_TIMEOUT.
+async function updateFromMain(io, gh, { repo, number, branch, passed, current, limits, deadline }) {
+  // Every await below can run past the one wait: once it has ended, nothing
+  // more is read or sent for this landing.
+  const late = () => deadline !== undefined && io.now().getTime() >= deadline;
+  const before = () => {
+    if (late()) stop("CI_TIMEOUT", `the landing's wait ended before main was carried into pull request #${number}; nothing was updated`);
+  };
+  before();
   const at = await mainAt(gh, repo, current);
   if (at.fresh) return current;
+  before();
   const own = await ownFiles(gh, repo, at.main, passed);
+  before();
   // What main changed since the pull request's base, read the other way; a
   // list too long to read is left to the check after the update.
   const { files: theirs } = await compare(gh, repo, current, "main");
@@ -807,6 +819,7 @@ async function updateFromMain(io, gh, { repo, number, branch, passed, current, l
   if (touched) {
     stop("LAND_DELTA_CHANGED", `main changed ${touched.filename}, which pull request #${number} changes too; nothing was updated, and its head needs a review with main's change`);
   }
+  before();
   // Sent once, conditional on the head: a lost answer is read back below.
   let sent = null;
   try {
@@ -817,27 +830,54 @@ async function updateFromMain(io, gh, { repo, number, branch, passed, current, l
     stop("LAND_CONFLICT", `main does not merge cleanly into pull request #${number}: ${sent.message}; the landing never resolves a conflict`);
   }
   if (sent && sent.status !== 202) stop("LAND_ERROR", `pull request #${number} was not updated from main (HTTP ${sent.status}${sent.message ? `: ${sent.message}` : ""})`);
-  const until = io.now().getTime() + limits.updateWaitMs;
+  if (late()) {
+    stop("CI_TIMEOUT", `the landing's wait ended while pull request #${number} was being updated from main; nothing more was read`);
+  }
+  const ownUntil = io.now().getTime() + limits.updateWaitMs;
+  // The one wait caps this wait whenever it ends no later, equal included:
+  // then the landing's wait is what ran out.
+  const capped = deadline !== undefined && deadline <= ownUntil;
+  const until = capped ? deadline : ownUntil;
   let pull;
+  const outlasted = () => stop(capped ? "CI_TIMEOUT" : "LAND_ERROR", `pull request #${number} did not move from ${current} within ${Math.round((until - (ownUntil - limits.updateWaitMs)) / 1000)} s of its update from main`);
   for (;;) {
+    // No read starts once the wait is over, the first included.
+    if (io.now().getTime() >= until) outlasted();
     const response = await gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`);
     pull = await response.json();
-    if (response.ok && pull?.head?.sha && pull.head.sha !== current) break;
-    if (io.now().getTime() >= until) stop(limits.updateTimeout ?? "LAND_ERROR", `pull request #${number} did not move from ${current} within ${Math.round(limits.updateWaitMs / 1000)} s of its update from main`);
-    io.sleep(limits.updatePollMs);
+    if (response.ok && pull?.head?.sha && pull.head.sha !== current) {
+      // A head read only after the one wait has ended is not taken: nothing
+      // more runs for this landing.
+      if (capped && io.now().getTime() >= until) {
+        stop("CI_TIMEOUT", `pull request #${number} moved from ${current} only after the landing's wait had ended; nothing more was done`);
+      }
+      break;
+    }
+    if (io.now().getTime() >= until) outlasted();
+    io.sleep(Math.min(limits.updatePollMs, Math.max(0, until - io.now().getTime())));
   }
   const head = pull.head.sha;
   if (!SHA_RE.test(head) || !headMatches(pull, { repo, branch, head })) stop("LAND_HEAD_MISMATCH", `pull request #${number} moved to ${head} in a way its update from main cannot`);
+  const checkedLate = () => {
+    if (late()) stop("CI_TIMEOUT", `pull request #${number} moved to ${head}, but the landing's wait ended while that update was being checked; nothing more was done`);
+  };
+  checkedLate();
   const commitResponse = await gh("GET", `https://api.github.com/repos/${repo}/commits/${head}`);
   const commit = await commitResponse.json();
+  checkedLate();
   const parents = Array.isArray(commit?.parents) ? commit.parents.map((parent) => parent?.sha) : [];
   if (!commitResponse.ok || parents.length !== 2 || parents[0] !== current || !SHA_RE.test(parents[1] ?? "")) {
     stop("LAND_HEAD_MISMATCH", `${head} is not a merge of main into ${current}`);
   }
   // The other parent is main's, and the new head holds main.
   const merged = await compare(gh, repo, parents[1], "main");
+  checkedLate();
   if (!["ahead", "identical"].includes(merged.status) || merged.merge_base_commit.sha !== parents[1]) stop("LAND_HEAD_MISMATCH", `${head} merged ${parents[1]}, which is not on main`);
-  if (!sameFiles(await ownFiles(gh, repo, parents[1], head), await ownFiles(gh, repo, parents[1], passed))) {
+  const headFiles = await ownFiles(gh, repo, parents[1], head);
+  checkedLate();
+  const passedFiles = await ownFiles(gh, repo, parents[1], passed);
+  checkedLate();
+  if (!sameFiles(headFiles, passedFiles)) {
     stop("LAND_DELTA_CHANGED", `the update of pull request #${number} from main changed its own files from the blobs the review passed at ${passed}; ${head} needs a review with main's change`);
   }
   return head;
@@ -1126,17 +1166,19 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     const timedOut = (why) => result("CI_TIMEOUT", { ...landed(), reason: `not green within ${Math.round(limits.waitMs / 60000)} minutes: ${why}` });
     for (;;) {
       if (carry) {
-        // The carry's own wait for its new head is cut to what is left of
-        // the one wait.
-        const left = Math.max(0, waitUntil - io.now().getTime());
-        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead,
-          limits: { ...limits, updateWaitMs: Math.min(limits.updateWaitMs, left),
-            // A carry cut short by the one wait's end is that wait running out.
-            ...(left < limits.updateWaitMs ? { updateTimeout: "CI_TIMEOUT" } : {}) } });
+        // The carry sends no update once the one wait has ended, and its own
+        // wait for the new head ends with it.
+        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead, limits, deadline: waitUntil });
+        // Checking the new head took the rest of the one wait: no wait for
+        // green, and no settle step that could write, runs after it.
+        if (io.now().getTime() >= waitUntil) return timedOut("the pull request moved to main's tip only after the one wait had ended");
         target.head = landHead;
         carry = false;
       }
       const wait = { ...limits, waitMs: Math.max(0, waitUntil - io.now().getTime()) };
+      // A wait with nothing left reads nothing and settles nothing: a stale
+      // behind read paced past the one wait's end stops here.
+      if (checks && wait.waitMs <= 0) return timedOut(checks.reason);
       checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined, true);
       if (checks.outcome === "BEHIND") {
         // GitHub's mergeable_state can lag: a head that already holds main's
