@@ -1,7 +1,7 @@
 import type { GatewayRoute } from "./context.js";
 import { catalogueRoute, referenceDataPageRoute } from "./catalogue.js";
 import { candidateDocumentsRoute, organizationDocumentsRoute } from "./documents.js";
-import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, languagePreferencePageRoute, languagePreferenceRoute, bankDetailsRoute, profileRecordsRoute, peopleDirectoryRoute, civilIdReviewRoute } from "./profile.js";
+import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, languagePreferencePageRoute, languagePreferenceRoute, bankDetailsRoute, profileRecordsRoute, peopleDirectoryRoute, personDetailRoute, civilIdReviewRoute } from "./profile.js";
 import { organizationProfileRoute, organizationStatusRoute, organizationCommercialTermsRoute, organizationApprovedToHireRoute, organizationNotesRoute, organizationBrandsRoute, organizationStoresRoute, organizationDeletionRoute, organizationCreationRoute, organizationAccountManagerPageRoute, organizationAccountManagerRoute, organizationPagesRoute } from "./organizations.js";
 import { payContractsRoute } from "./pay-contracts.js";
 import { invoicesRoute } from "./billing.js";
@@ -56,7 +56,8 @@ const areaRoute: GatewayRoute = { name: "area", handle: (ctx) => handleArea(ctx.
 
 import { workRoute } from "./work.js";
 import { handlePlatformOperations } from "../platform/operations-page.js";
-const platformOperationsRoute: GatewayRoute = { name: "platform-operations", handle: (ctx) => handlePlatformOperations(ctx) };
+import { handlePlatformIntegrations } from "../platform/integrations-page.js";
+const platformOperationsRoute: GatewayRoute = { name: "platform-operations", handle: async (ctx) => await handlePlatformOperations(ctx) || handlePlatformIntegrations(ctx) };
 
 export const ROUTES: readonly GatewayRoute[] = [
   abuseGateRoute,
@@ -92,6 +93,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   civilIdSuggestionRoute,
   areaRoute,
   peopleDirectoryRoute,
+  personDetailRoute,
   civilIdReviewRoute,
   accessRoute,
   staffViewRoute,

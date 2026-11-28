@@ -3,6 +3,7 @@ import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { createAdminJobs } from "../admin-jobs.js";
 import { createAdminOutbox } from "../admin-outbox.js";
 import { createPlatformOperations } from "../platform/operations-page.js";
+import { createPlatformIntegrations } from "../platform/integrations-page.js";
 import { createExportsHttp } from "../exports-http.js";
 import { createJobRegistry, writeJobAlert } from "../../../../packages/observability/src/jobs.js";
 import { ExportService, type ExportKind } from "../../../../packages/exports/src/exports.js";
@@ -23,6 +24,7 @@ export function wireOps(settings: WiringSettings, access: Access, organizationAr
   readonly adminJobs: ReturnType<typeof createAdminJobs>;
   readonly adminOutbox: ReturnType<typeof createAdminOutbox>;
   readonly platformOperations: ReturnType<typeof createPlatformOperations>;
+  readonly platformIntegrations: ReturnType<typeof createPlatformIntegrations>;
 }> {
   const jobRuns = new PostgresJobRunsStore({connectionString:settings.databaseUrl});
   const emailOutbox=new PostgresEmailOutboxStore({connectionString:settings.databaseUrl});
@@ -35,6 +37,7 @@ export function wireOps(settings: WiringSettings, access: Access, organizationAr
       exports:createExportsHttp(access.loginStore.sessions,exportsService),
       ...({adminJobs:createAdminJobs(access.loginStore.sessions,access.authzStore,jobRuns,createJobRegistry(jobRuns,writeJobAlert))} as { adminJobs: ReturnType<typeof createAdminJobs> }),
       platformOperations:createPlatformOperations({sessions:access.loginStore.sessions,authz:access.authzStore,jobRuns,jobs:createJobRegistry(jobRuns,writeJobAlert),email:emailOutbox}),
+      platformIntegrations:createPlatformIntegrations({sessions:access.loginStore.sessions,authz:access.authzStore}),
       ...({adminOutbox:createAdminOutbox(access.loginStore.sessions,access.authzStore,emailOutbox)} as { adminOutbox: ReturnType<typeof createAdminOutbox> }),
     },
     async close() { await Promise.all([jobRuns.close(), exportsStore.close(), emailOutbox.close(), catalogueLists.close()]); },

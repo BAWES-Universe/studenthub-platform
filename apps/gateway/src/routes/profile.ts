@@ -4,7 +4,7 @@ import { handleLanguagePreference, handleLanguagePreferencePage } from "../langu
 import { handleBankDetails, handleBankDetailsPage } from "../bank-details.js";
 import { handleProfileRecords } from "../profile-records-http.js";
 import type { GatewayRoute } from "./context.js";
-import { renderPeopleDirectory, wantsHtml } from "../web-ui.js";
+import { renderPeopleDirectory, renderPersonDetail, wantsHtml } from "../web-ui.js";
 import { handleCivilIdReview } from "../civil-id-review-http.js";
 import { writeNotFound } from "../shell/error-pages.js";
 
@@ -55,3 +55,13 @@ export const bankDetailsRoute: GatewayRoute = { name: "bank-details", handle: as
 export const profileRecordsRoute: GatewayRoute = { name: "profile-records", handle: (ctx) =>
   handleProfileRecords(ctx.request, ctx.response, ctx.profileRecords,
     (status, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument("Education and experience", body))) };
+const PERSON_PAGE=/^\/workspace\/people\/([^/]+)$/;
+/** GET /workspace/people/<person>: one person for operator staff and admin; everyone else gets the unknown-path 404. */
+export const personDetailRoute:GatewayRoute={name:"person-detail",handle:async ctx=>{
+  const match=ctx.request.method==="GET"||ctx.request.method==="HEAD"?PERSON_PAGE.exec(ctx.request.url?.split("?",1)[0]??""):null;if(!match)return false;
+  let principalId:string|undefined;try{principalId=decodeURIComponent(match[1]!)}catch{principalId=undefined}
+  const query=new URL(ctx.request.url!,"http://gateway.invalid").searchParams;
+  const result=principalId!==undefined&&query.size===0&&ctx.login?.people?.person?await ctx.login.people.person(sessionCookie(ctx.request.headers.cookie),principalId):{status:404 as const,body:{error:"not_found"}};
+  if(result.status===404){writeNotFound(ctx.request,ctx.response);return true}
+  if(wantsHtml(ctx.request.headers.accept)){ctx.writeHtml(ctx.response,result.status,renderPersonDetail(result,ctx.login!),{},true);return true}
+  ctx.response.writeHead(result.status,{"content-type":"application/json","cache-control":"no-store",vary:"Accept"});ctx.response.end(JSON.stringify(result.body));return true}};

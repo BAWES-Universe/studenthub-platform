@@ -907,10 +907,22 @@
     "M-02": {
       "lane": "people",
       "subject": "`/store/:storeId/candidates`, `/store/:storeId/candidates/:id`",
+      "served": [
+        {
+          "route": "/workspace/stores/:storeId/candidates",
+          "test": "apps/gateway/test/store-candidates-page.test.ts",
+          "via": "gateway"
+        },
+        {
+          "route": "/workspace/stores/:storeId/candidates/:personId",
+          "test": "apps/gateway/test/store-candidates-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): store manager sees people through work pages only"
+          "state": "done",
+          "evidence": "PR #782 at 3f870f53192e295ac76867f5e4a85fbc2445e819"
         },
         "verified": {
           "state": "open"
@@ -981,7 +993,7 @@
       "gates": {
         "built": {
           "state": "open",
-          "note": "partly built (audit 2026-11-22): /workspace/people list only; no candidate detail or full-timer view"
+          "note": "partly built: /workspace/people list (audit 2026-11-22) and /workspace/people/:id detail (PR #781 at c3d54fa5bb0bb75981f66ab6c502e35fe06042cc); no full-timer view"
         },
         "verified": {
           "state": "open"
@@ -1440,10 +1452,17 @@
     "A-27": {
       "lane": "platform",
       "subject": "`/platform/integrations`",
+      "served": [
+        {
+          "route": "/platform/integrations",
+          "test": "apps/gateway/test/platform-integrations.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "not started (audit 2026-11-20): platform integrations page"
+          "state": "done",
+          "evidence": "PR #775 at 7c85b7ccdcb34f86642b41e0dfc366853f5a960a"
         },
         "verified": {
           "state": "open"
@@ -3117,7 +3136,8 @@
       "subject": "requirement r1",
       "gates": {
         "built": {
-          "state": "open"
+          "state": "done",
+          "evidence": "mapper PR #722 at 1808d7f2, object check PR #733 at c6b6207b, doccheck PR #742 at 2e44a223, generation marker PR #747 at edf8d594, copy core PR #758 at 12628528, doccopy PR #761 at 2e5c5fc1, per-owner store PR #764 at 1b63ca39, docpromote PR #768 at b705a44d, sweep and handover checks PR #770 at 540da87b, operator wrapper keeps the docpromote settings PR #779 at 2b93b26f"
         },
         "dryRun": {
           "state": "open"

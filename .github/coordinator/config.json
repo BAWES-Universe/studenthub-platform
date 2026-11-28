@@ -54,11 +54,9 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-748",
-      "SHU-749",
-      "SHU-754",
-      "SHU-755",
-      "SHU-771"
+      "SHU-784",
+      "SHU-785",
+      "SHU-786"
     ]
   },
   "adapter_pause_map": {},
@@ -10409,6 +10407,57 @@
       ],
       "revision_paths": [
         "packages/pay-contracts/README.md"
+      ]
+    },
+    {
+      "id": "SHU-784",
+      "authorization_ref": "SHU-784",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-06 note page: the read-only company note page at /organization/:orgId/notes/:noteId over the existing organizationNotes list(); edits only notes-page.ts and its own tests, adds no route. Re-queues SHU-748, whose run passed review but stopped at landing and whose card the box will not run again; SHU-748 never lands. It also repairs the browser /notes/receipts check: an HTML 404 like any unserved path, the JSON fallback under Accept: application/json, and the receipt API unchanged. It waits on nothing and shares no path with SHU-785 or SHU-786.",
+      "initial_build_paths": [
+        "apps/gateway/src/organizations/notes-page.ts",
+        "apps/gateway/test/organization-note-detail.test.ts",
+        "apps/gateway/test/organization-note-detail-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/organizations/notes-page.ts",
+        "apps/gateway/test/organization-note-detail.test.ts",
+        "apps/gateway/test/organization-note-detail-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-785",
+      "authorization_ref": "SHU-785",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix O-12: the read-only company pay contracts page at /organization/:orgId/contracts over the existing payContracts listCompany(), company terms only; edits only pay-contracts-http.ts and its own tests, adds no route. Re-queues SHU-749, whose run passed review but stopped at landing and whose card the box will not run again; SHU-749 never lands. It waits on nothing and shares no path with SHU-784 or SHU-786.",
+      "initial_build_paths": [
+        "apps/gateway/src/pay-contracts-http.ts",
+        "apps/gateway/test/organization-contracts-page.test.ts",
+        "apps/gateway/test/organization-contracts-page-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/pay-contracts-http.ts",
+        "apps/gateway/test/organization-contracts-page.test.ts",
+        "apps/gateway/test/organization-contracts-page-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-786",
+      "authorization_ref": "SHU-786",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), release matrix A-07: the read-only reference data entry page at /reference-data/:catalogue/:id over the existing catalogue resolveHistorical(); edits only reference-data-page.ts and its own tests, adds no route. Re-queues SHU-755, whose run passed review but stopped at landing and whose card the box will not run again; SHU-755 never lands. It waits on nothing and shares no path with SHU-784 or SHU-785.",
+      "initial_build_paths": [
+        "apps/gateway/src/reference-data-page.ts",
+        "apps/gateway/test/reference-data-entry.test.ts",
+        "apps/gateway/test/reference-data-entry-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/reference-data-page.ts",
+        "apps/gateway/test/reference-data-entry.test.ts",
+        "apps/gateway/test/reference-data-entry-mutations.mjs"
       ]
     }
   ],

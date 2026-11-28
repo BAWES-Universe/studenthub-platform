@@ -4704,8 +4704,17 @@
     "Re-carry: a behind read with checks not yet green never carries, and a fresh head is never updated",
     "Re-carry: main that keeps moving during the wait stops the landing after baseRounds, nothing handed off or merged",
     "Re-carry: a stale behind read on a head that already holds main is paced, takes no round, and ends at the wait's bound",
+    "Re-carry: a stale behind read never lets a carry go uncounted; main that moves after it is still bounded by baseRounds",
+    "Re-carry: a behind read that comes after the one wait has ended starts no carry and ends CI_TIMEOUT",
+    "Re-carry: a carry whose reads before the update outlast the one wait sends no update and ends CI_TIMEOUT",
+    "Re-carry: a carry whose wait for the new head ends exactly with the one wait ends CI_TIMEOUT, not LAND_ERROR",
+    "Re-carry: a carry whose new head is read only after the one wait has ended ends CI_TIMEOUT and goes no further",
+    "Re-carry: a carry whose checks of the new head outlast the one wait ends CI_TIMEOUT before any wait for green",
+    "Re-carry: an update whose answer comes back after the one wait has ended reads nothing more and ends CI_TIMEOUT",
+    "Re-carry: a wait for the new head that a poll's pause ends starts no further read and ends CI_TIMEOUT",
+    "Re-carry: a stale behind read paced past the one wait's end reads and settles nothing more and ends CI_TIMEOUT",
     "Re-carry: a carry that changes the pull request's own blobs, or conflicts, stops as before with nothing merged",
-    "Report: \"Landed:\" is written only for a merge; any other landing outcome says its pull request stays open",
+    "Report: \"Landed:\" is written only for a merge; any other landing outcome names its pull request without claiming its state",
     "M15 W4: the landing lock, the updates and their reads keep the run inside TimeoutStartSec",
     "M15 W5: timer-install puts each card worker's timer on the host with its state directories and resident drop-ins; timer-remove takes them all off",
     "M15 W5: auto --worker N runs as card worker N, and a worker the config turns off skips",
@@ -4911,6 +4920,16 @@
     "SHU-86 mutation M342 wait out the landing bound on a pull request behind main with green checks",
     "SHU-86 mutation M343 carry main without bound while main keeps moving",
     "SHU-86 mutation M345 spend a round on a stale behind read of a head that holds main",
+    "SHU-86 mutation M346 let a stale behind read carry main without counting a round",
+    "SHU-86 mutation M347 start a carry after the one wait has ended",
+    "SHU-86 mutation M348 say an unconfirmed landing left its pull request open",
+    "SHU-86 mutation M349 send a carry's update after the one wait has ended",
+    "SHU-86 mutation M350 report a carry's wait that ends with the one wait as LAND_ERROR",
+    "SHU-86 mutation M351 take a carried head read only after the one wait has ended",
+    "SHU-86 mutation M352 read on after a carried head's commit read outlasts the one wait",
+    "SHU-86 mutation M353 read and settle a stale behind pull request after the one wait has ended",
+    "SHU-86 mutation M354 read on after an update answered only after the one wait has ended",
+    "SHU-86 mutation M355 start a read for the new head after its wait has ended",
     "SHU-86 mutation M344 report an unmerged landing as landed",
     "2026-11-14: a card worker's start that finds its lock held by a dead pid reverts the worker, records the run DIED and releases the lock",
     "2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing",
@@ -34381,11 +34400,47 @@
       "capabilities": []
     },
     {
+      "name": "Re-carry: a stale behind read never lets a carry go uncounted; main that moves after it is still bounded by baseRounds",
+      "capabilities": []
+    },
+    {
+      "name": "Re-carry: a behind read that comes after the one wait has ended starts no carry and ends CI_TIMEOUT",
+      "capabilities": []
+    },
+    {
+      "name": "Re-carry: a carry whose reads before the update outlast the one wait sends no update and ends CI_TIMEOUT",
+      "capabilities": []
+    },
+    {
+      "name": "Re-carry: a carry whose wait for the new head ends exactly with the one wait ends CI_TIMEOUT, not LAND_ERROR",
+      "capabilities": []
+    },
+    {
+      "name": "Re-carry: a carry whose new head is read only after the one wait has ended ends CI_TIMEOUT and goes no further",
+      "capabilities": []
+    },
+    {
+      "name": "Re-carry: a carry whose checks of the new head outlast the one wait ends CI_TIMEOUT before any wait for green",
+      "capabilities": []
+    },
+    {
+      "name": "Re-carry: an update whose answer comes back after the one wait has ended reads nothing more and ends CI_TIMEOUT",
+      "capabilities": []
+    },
+    {
+      "name": "Re-carry: a wait for the new head that a poll's pause ends starts no further read and ends CI_TIMEOUT",
+      "capabilities": []
+    },
+    {
+      "name": "Re-carry: a stale behind read paced past the one wait's end reads and settles nothing more and ends CI_TIMEOUT",
+      "capabilities": []
+    },
+    {
       "name": "Re-carry: a carry that changes the pull request's own blobs, or conflicts, stops as before with nothing merged",
       "capabilities": []
     },
     {
-      "name": "Report: \"Landed:\" is written only for a merge; any other landing outcome says its pull request stays open",
+      "name": "Report: \"Landed:\" is written only for a merge; any other landing outcome names its pull request without claiming its state",
       "capabilities": []
     },
     {
@@ -35206,6 +35261,46 @@
     },
     {
       "name": "SHU-86 mutation M345 spend a round on a stale behind read of a head that holds main",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M346 let a stale behind read carry main without counting a round",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M347 start a carry after the one wait has ended",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M348 say an unconfirmed landing left its pull request open",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M349 send a carry's update after the one wait has ended",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M350 report a carry's wait that ends with the one wait as LAND_ERROR",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M351 take a carried head read only after the one wait has ended",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M352 read on after a carried head's commit read outlasts the one wait",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M353 read and settle a stale behind pull request after the one wait has ended",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M354 read on after an update answered only after the one wait has ended",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M355 start a read for the new head after its wait has ended",
       "capabilities": []
     },
     {
