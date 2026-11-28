@@ -987,7 +987,7 @@
       "gates": {
         "built": {
           "state": "open",
-          "note": "partly built (audit 2026-11-20): employer document delivery by signed link; no store page"
+          "note": "partly built (audit 2026-11-20): employer document delivery by signed link; no store page. Store page built: PR #794 at e36273c6dedcb4353901523bb008255453a6f947"
         },
         "verified": {
           "state": "open"
