@@ -973,7 +973,7 @@
       "gates": {
         "built": {
           "state": "open",
-          "note": "partly built (audit 2026-11-22): /workspace/people list only; no candidate detail or full-timer view"
+          "note": "partly built: /workspace/people list (audit 2026-11-22) and /workspace/people/:id detail (PR #781 at c3d54fa5bb0bb75981f66ab6c502e35fe06042cc); no full-timer view"
         },
         "verified": {
           "state": "open"
