@@ -12,6 +12,7 @@ const mutations=[
  ['change MAC label on issue and deliver','STAFFDOC_BIND',"mac(payload, label = 'staff-delivery-v1')","mac(payload, label = 'staff-delivery-v2')",'positive literal label pin'],
  ['drop viewer binding','STAFFDOC_BIND','if (claim.viewer !== viewer)','if (false && claim.viewer !== viewer)','viewer binding'],
  ['drop version binding','STAFFDOC_BIND','if (row.version !== claim.version)','if (false && row.version !== claim.version)','version binding'],
+ ['open Civil ID photos for any purpose','STAFFDOC_AUDIT',"if (civilTypes.has(type) !== (purpose === 'civil_id_review'))","if (purpose === 'civil_id_review' && !civilTypes.has(type))",'civil photo person page denied'],
  ['skip audit write','STAFFDOC_AUDIT',"await this.options.audit.recordView({ viewerPrincipalId: viewer, subjectPrincipalId, kind: this.auditKind(purpose, 'issue'), documentType: type, documentVersion: row.version });",'await Promise.resolve();','civil audit kinds'],
  ['serve after failed audit write','STAFFDOC_AUDIT',"catch {\n                return unavailable();\n            } // STAFFDOC_MUTANT_DELIVER_AUDIT","catch { /* swallowed */ } // STAFFDOC_MUTANT_DELIVER_AUDIT",'failed delivery audit returns no bytes'],
  ['skip read hydrator','STAFFDOC_BYTES','if (hydrate)\n                await hydrate(row.id); // STAFFDOC_MUTANT_HYDRATE','if (false && hydrate)\n                await hydrate(row.id); // STAFFDOC_MUTANT_HYDRATE','stored R2 bytes served'],
