@@ -162,7 +162,9 @@ export function planCandidateWork(sources: M5CandidateSources, links: ReadonlyMa
     if (!m.session) continue;
     const cid = legacyId(m.session.legacyCandidateId), sid = legacyId(m.session.legacyStoreId);
     if (!cid || !links.has(cid)) { issues.work_sessions.push({ legacyRef: ref, code: "no_person" }); continue; }
-    if (!sid || !stores.has(sid)) { issues.work_sessions.push({ legacyRef: ref, code: "no_store" }); continue; }
+    if (!sid) { issues.work_sessions.push({ legacyRef: ref, code: "no_store" }); continue; }
+    // A session at an unmapped store still shapes the placements (it ends the stretch before it),
+    // so mapping that store later never moves another placement; the session itself is reported.
     byPerson.set(cid, [...(byPerson.get(cid) ?? []), m.session]);
   }
 
@@ -187,8 +189,11 @@ export function planCandidateWork(sources: M5CandidateSources, links: ReadonlyMa
       if (tail && tail.legacyStoreId === cur && stores.has(cur)) derived = derivePlacements(cid, days, { legacyStoreId: cur, since: tail.startDate });
       else unplaced.push(`candidate:${cid}`);
     }
+    let placed = false;
     for (const p of derived) {
-      const store = stores.get(p.legacyStoreId)!;
+      const store = stores.get(p.legacyStoreId);
+      if (!store) continue;
+      placed = true;
       const ref = placementRef(cid, p.legacyStoreId, p.startDate);
       refs.work_assignments.push(ref);
       placements.push({ legacyRef: ref, personId, orgId: store.orgId, storeId: store.storeId, startDate: p.startDate, endDate: p.endDate, payContractId: null });
@@ -197,13 +202,14 @@ export function planCandidateWork(sources: M5CandidateSources, links: ReadonlyMa
       const p = derived.find((x) => x.legacyStoreId === s.legacyStoreId && x.startDate <= s.workDate && (x.endDate === null || s.workDate <= x.endDate));
       // Two stores on one day: the earlier stretch keeps the day, and this row is reported.
       if (!p) { issues.work_sessions.push({ legacyRef: s.legacyRef, code: "two_stores_one_day" }); continue; }
+      if (!stores.has(p.legacyStoreId)) { issues.work_sessions.push({ legacyRef: s.legacyRef, code: "no_store" }); continue; }
       sessions.push({
         legacyRef: s.legacyRef, placementLegacyRef: placementRef(cid, p.legacyStoreId, p.startDate), workDate: s.workDate,
         startedAt: s.startedAt.toISOString(), endedAt: s.endedAt.toISOString(), startLocation: s.startLocation, endLocation: s.endLocation,
         status: s.status, flags: [...s.flags], note: s.note,
       });
     }
-    if (derived.length) people.add(cid);
+    if (placed) people.add(cid);
   }
 
   const decisions: WorkImportDecision[] = [];

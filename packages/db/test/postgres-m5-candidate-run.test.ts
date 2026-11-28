@@ -52,7 +52,7 @@ test("CAND_M5_PG_RUN the lookups and the run through the real store: placements,
     const sources = {
       candidate: [{ candidate_id: cand, store_id: legacyStore, deleted: 0 }, { candidate_id: ghost, store_id: legacyStore, deleted: 0 }],
       candidate_working_hour: [hour(`${tag}-1`, cand, legacyStore, "2026-11-01", 1), hour(`${tag}-2`, cand, legacyStore, "2026-11-02", 2),
-        hour(`${tag}-3`, ghost, legacyStore, "2026-11-01", 1), hour(`${tag}-4`, cand, unmapped, "2026-11-03", 1)],
+        hour(`${tag}-3`, ghost, legacyStore, "2026-11-01", 1), hour(`${tag}-4`, cand, unmapped, "2026-10-20", 1)],
       candidate_work_log_feedback: [{ cwlf_uuid: `${tag}-f`, candidate_id: cand, store_id: legacyStore, date: "2026-11-01", candidate_working_hour_uuid: `${tag}-1`,
         status: 1, note: null, reason: null, is_public: 0, rating: 4, created_by: 9, created_at: "2026-11-01 12:00:00" }],
       candidate_working_date: [],

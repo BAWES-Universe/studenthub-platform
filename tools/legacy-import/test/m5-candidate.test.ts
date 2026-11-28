@@ -68,7 +68,7 @@ test("only a linked candidate and a mapped store import; everything else is repo
   const plan = planCandidateWork(src, new Map([["1", "p1"]]), STORES);
   assert.deepEqual(plan.sessions.map((s) => s.legacyRef), ["cwh:h-1"]);
   assert.deepEqual(plan.issues.work_sessions, [
-    { legacyRef: "cwh:h-2", code: "no_person" }, { legacyRef: "cwh:h-3", code: "no_store" }, { legacyRef: "cwh:h-4", code: "open_session" }]);
+    { legacyRef: "cwh:h-2", code: "no_person" }, { legacyRef: "cwh:h-4", code: "open_session" }, { legacyRef: "cwh:h-3", code: "no_store" }]);
   assert.deepEqual(plan.decisions.map((d) => [d.legacyRef, d.personId, d.orgId, d.storeId, d.decidedBy, d.legacyDecidedBy]),
     [["cwlf:f-1", "p1", "co-10", "s-uuid-10", null, "contact:55"]]);
   assert.deepEqual(plan.issues.work_decisions, [
@@ -138,4 +138,21 @@ test("the run writes placements before sessions before decisions, and is complet
   held.clear();
   const partial = await runCandidateWork(fake(), planCandidateWork(sources(), new Map([["1", "p1"]]), STORES));
   assert.deepEqual([partial.clean, partial.complete, partial.tables.work_sessions.skipped, partial.tables.work_sessions.issues], [false, true, 1, { no_person: 1 }]);
+});
+
+test("a session at an unmapped store still ends the stretch before it, so mapping that store later moves no placement", () => {
+  const src = sources({
+    candidate: [{ candidate_id: 1, store_id: 10, deleted: 0 }],
+    candidate_working_hour: [hour("a", 1, 10, "2026-10-01"), hour("x", 1, 30, "2026-10-05"), hour("b", 1, 10, "2026-10-10")],
+    candidate_work_log_feedback: [],
+  });
+  const before = planCandidateWork(src, new Map([["1", "p1"]]), STORES);
+  assert.deepEqual(before.placements.map((p) => [p.legacyRef, p.startDate, p.endDate]), [
+    [placementRef("1", "10", "2026-10-01"), "2026-10-01", "2026-10-04"], [placementRef("1", "10", "2026-10-10"), "2026-10-10", null]]);
+  assert.deepEqual(before.issues.work_sessions, [{ legacyRef: "cwh:x", code: "no_store" }]);
+  const mapped = new Map([...STORES, ["30", { storeId: "s-uuid-30", orgId: "co-30" }]]);
+  const after = planCandidateWork(src, new Map([["1", "p1"]]), mapped);
+  const keep = (plan: typeof before) => plan.placements.filter((p) => p.storeId === "s-uuid-10").map((p) => [p.legacyRef, p.startDate, p.endDate]);
+  assert.deepEqual(keep(after), keep(before), "the mapped store's placements are unchanged");
+  assert.deepEqual(after.issues.work_sessions, []);
 });
