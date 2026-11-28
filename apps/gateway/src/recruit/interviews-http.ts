@@ -9,6 +9,7 @@ import { BAD, NOT_FOUND, UNAUTHORIZED, decodeSegment, errorPage, html, readBody,
 //   POST /recruit/interviews/<id>/cancel          {requestId?}
 //   POST /recruit/interviews/<id>/evaluate        {outcome, rating, sharedNote, internalNote, requestId?}
 //   GET  /recruit/my-interviews                   the person's own interviews (time, place, outcome only)
+//   GET  /recruit/staff/interviews[?page=N]       every company's interviews, operator staff only (A-11)
 
 export interface RecruitInterviewsStore {
   schedule(principalId: string, requestId: string, input: InterviewFields): Promise<{ kind: "scheduled"; interviewId: string } | { kind: "not_found" } | { kind: "stage_refused"; stage: string }>;
@@ -24,7 +25,15 @@ export interface RecruitInterviewsStore {
     org_name: string; page: number; more: boolean;
     interviews: readonly { id: string; request_id: string; position_title: string; store_name: string; person_name: string | null; scheduled_at: string | Date; duration_minutes: number; mode: InterviewMode; status: InterviewStatus; outcome: InterviewOutcome | null }[];
   } | null>;
+  /** Every company's interviews (A-11), operator staff only; null for anyone else. */
+  forStaff?(principalId: string, page: number): Promise<{
+    page: number; more: boolean;
+    interviews: readonly { id: string; request_id: string; position_title: string; org_id: string; org_name: string; store_name: string; person_name: string | null; scheduled_at: string | Date; duration_minutes: number; mode: InterviewMode; status: InterviewStatus; outcome: InterviewOutcome | null; rating: number | null }[];
+  } | null>;
 }
+/** One row of the staff interviews page: a company row plus the company and the latest rating. */
+export interface StaffInterviewView extends OrganizationInterviewView { readonly orgId: string; readonly company: string; readonly rating: number | null }
+export interface StaffInterviewsBody { readonly page: number; readonly more: boolean; readonly interviews: readonly StaffInterviewView[] }
 /** One row of a company's interviews page: never a rating, a note or a location. */
 export interface OrganizationInterviewView {
   readonly interviewId: string; readonly requestId: string; readonly positionTitle: string; readonly store: string; readonly personName: string | null;
@@ -44,6 +53,7 @@ export interface RecruitInterviews {
   mine(session: string | undefined): Promise<RecruitResult<{ interviews: readonly PersonInterviewView[] }>>;
   one(session: string | undefined, interviewId: string): Promise<RecruitResult<{ interview: PersonInterviewView }>>;
   organization?(session: string | undefined, orgId: string, page: number): Promise<RecruitResult<OrganizationInterviewsBody>>;
+  staff?(session: string | undefined, page: number): Promise<RecruitResult<StaffInterviewsBody>>;
 }
 
 const FORM_ONLY = ["requestId"];
@@ -120,6 +130,16 @@ export function createRecruitInterviews(p: { sessions: Pick<SessionStore, "get">
         kuwaitTime: kuwaitWallClock(row.scheduled_at), durationMinutes: row.duration_minutes, mode: row.mode, status: row.status, outcome: row.outcome,
       })) } };
     } } : {}),
+    ...(p.store.forStaff ? { async staff(s: string | undefined, page: number): Promise<RecruitResult<StaffInterviewsBody>> {
+      const id = await principal(s);
+      if (!id) return UNAUTHORIZED;
+      const r = await p.store.forStaff!(id, page);
+      if (!r) return NOT_FOUND;
+      return { status: 200, body: { page: r.page, more: r.more, interviews: r.interviews.map((row) => ({
+        interviewId: row.id, requestId: row.request_id, positionTitle: row.position_title, orgId: row.org_id, company: row.org_name, store: row.store_name, personName: row.person_name,
+        kuwaitTime: kuwaitWallClock(row.scheduled_at), durationMinutes: row.duration_minutes, mode: row.mode, status: row.status, outcome: row.outcome, rating: row.rating,
+      })) } };
+    } } : {}),
   };
 }
 
@@ -159,6 +179,17 @@ export function renderOrganizationInterviews(list: readonly OrganizationIntervie
   return `<table><thead><tr><th>Person</th><th>Position</th><th>Store</th><th>When</th><th>Status</th><th>Outcome</th></tr></thead><tbody>${list.map(row).join("")}</tbody></table>`;
 }
 
+/** The staff interviews page (A-11): every company's interviews with the outcome and rating; notes stay on the request page. */
+export function renderStaffInterviews(b: StaffInterviewsBody): string {
+  const row = (v: StaffInterviewView) => `<tr><th scope="row">${html(v.personName ?? "Unnamed person")}</th><td><a class="text-link" href="/organization/${html(encodeURIComponent(v.orgId))}">${html(v.company)}</a></td>`
+    + `<td><a class="text-link" href="/recruit/requests/${html(encodeURIComponent(v.requestId))}/interviews">${html(v.positionTitle)}</a></td><td>${html(v.store)}</td>`
+    + `<td>${html(`${v.kuwaitTime} (Kuwait)`)} · ${v.durationMinutes} min · ${MODE[v.mode]}</td><td>${STATUS[v.status]}</td><td>${v.outcome ? `${OUTCOME[v.outcome]}${v.rating ? ` · ${v.rating}/5` : ""}` : ""}</td></tr>`;
+  const table = b.interviews.length ? `<table><thead><tr><th>Person</th><th>Company</th><th>Position</th><th>Store</th><th>When</th><th>Status</th><th>Evaluation</th></tr></thead><tbody>${b.interviews.map(row).join("")}</tbody></table>`
+    : b.page === 1 ? "<p>No interviews have been scheduled yet.</p>" : "<p>No more interviews.</p>";
+  const pager = [b.page > 1 ? `<a href="${STAFF}${b.page === 2 ? "" : `?page=${b.page - 1}`}">Later interviews</a>` : "", b.more ? `<a href="${STAFF}?page=${b.page + 1}">Earlier interviews</a>` : ""].filter(Boolean).join(" ");
+  return `<main id="main" class="profile-main"><h1>Interviews<span class="accent">.</span></h1><p>Every company's interviews, latest first. Open a position for its notes and to record an evaluation.</p>${table}${pager ? `<nav aria-label="Pages">${pager}</nav>` : ""}</main>`;
+}
+
 export function renderMyInterviews(list: readonly PersonInterviewView[]): string {
   const item = (v: PersonInterviewView) => `<li><h2><a class="text-link" href="/recruit/interviews/${html(encodeURIComponent(v.interviewId))}">${html(v.positionTitle)}</a></h2><p>${html(v.company)} · ${html(v.store)} · <span class="badge">${STATUS[v.status]}</span></p><p>${[`${v.kuwaitTime} (Kuwait)`, `${v.durationMinutes} min`, MODE[v.mode], v.location].filter((x): x is string => Boolean(x)).map(html).join(" · ")}</p>${v.outcome ? `<p>${OUTCOME[v.outcome]}</p>` : ""}</li>`;
   return `<main id="main" class="profile-main"><h1>Interviews<span class="accent">.</span></h1>${list.length ? `<ol class="plain">${list.map(item).join("")}</ol>` : "<p>You have no interviews yet.</p>"}</main>`;
@@ -169,10 +200,12 @@ function renderInterviewDetail(v: PersonInterviewView): string {
   return `<main id="main" class="profile-main"><h1>${html(v.positionTitle)}</h1><p>${html(v.company)} · ${html(v.store)} · <span class="badge">${STATUS[v.status]}</span></p><p>${facts}</p>${v.outcome ? `<p>${OUTCOME[v.outcome]}</p>` : ""}<p><a class="text-link" href="/recruit/my-interviews">Back to my interviews</a></p></main>`;
 }
 
-const REQUEST = /^\/recruit\/requests\/([^/]+)\/interviews$/, ACTION = /^\/recruit\/interviews\/([^/]+)\/(cancel|evaluate)$/, DETAIL = /^\/recruit\/interviews\/([^/]+)$/, MINE = "/recruit/my-interviews";
+const REQUEST = /^\/recruit\/requests\/([^/]+)\/interviews$/, ACTION = /^\/recruit\/interviews\/([^/]+)\/(cancel|evaluate)$/, DETAIL = /^\/recruit\/interviews\/([^/]+)$/, MINE = "/recruit/my-interviews", STAFF = "/recruit/staff/interviews";
+const PAGE_NUMBER = /^[1-9][0-9]{0,5}$/;
 
 export async function handleRecruitInterviews(req: IncomingMessage, res: ServerResponse, s: RecruitInterviews | undefined, origin: string | undefined, write: RecruitPageWriter, wantsHtml: boolean): Promise<boolean> {
-  const path = new URL(req.url ?? "/", "http://x").pathname;
+  const url = new URL(req.url ?? "/", "http://x"), path = url.pathname;
+  if (path === STAFF) return handleStaffInterviews(req, res, s, write, wantsHtml, url.searchParams);
   const request = REQUEST.exec(path), action = ACTION.exec(path), detail = DETAIL.exec(path);
   if (detail && req.method !== "GET" && req.method !== "HEAD") return false;
   if (path !== MINE && !request && !action && !detail) return false;
@@ -211,6 +244,22 @@ export async function handleRecruitInterviews(req: IncomingMessage, res: ServerR
     const location = requestId && isRecruitId(requestId) ? `/recruit/requests/${requestId.toLowerCase()}/interviews` : "/recruit/requests";
     if (body.form) { if (r.status === 200) redirect(res, location); else errorPage(write, r.status, back); }
     else sendJson(res, r);
+  } catch {
+    if (!res.headersSent) wantsHtml ? errorPage(write, 503, back) : sendJson(res, { status: 503, body: { error: "recruit_unavailable" } });
+    else res.destroy();
+  }
+  return true;
+}
+
+async function handleStaffInterviews(req: IncomingMessage, res: ServerResponse, s: RecruitInterviews | undefined, write: RecruitPageWriter, wantsHtml: boolean, query: URLSearchParams): Promise<boolean> {
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  const back = { href: "/workspace", label: "Back to your workspace" };
+  const keys = [...query.keys()], raw = query.get("page");
+  if (keys.some((key) => key !== "page") || keys.length > 1 || (raw !== null && !PAGE_NUMBER.test(raw))) { wantsHtml ? errorPage(write, 400, back) : sendJson(res, BAD); return true; }
+  try {
+    if (!s?.staff) { wantsHtml ? errorPage(write, 503, back) : sendJson(res, { status: 503, body: { error: "recruit_unavailable" } }); return true; }
+    const r = await s.staff(sessionCookie(req.headers.cookie), raw === null ? 1 : Number(raw));
+    if (!wantsHtml) sendJson(res, r); else if (r.status === 200) write(200, "Interviews", renderStaffInterviews(r.body)); else errorPage(write, r.status, back);
   } catch {
     if (!res.headersSent) wantsHtml ? errorPage(write, 503, back) : sendJson(res, { status: 503, body: { error: "recruit_unavailable" } });
     else res.destroy();
