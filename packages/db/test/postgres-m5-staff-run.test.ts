@@ -36,16 +36,18 @@ async function person(name: string, opts: { verified?: "oidc" | "legacy_import" 
 test("STAFF_M5_PG the importer's staff match: the address key on both sides, issuer-verified, operator staff or admin only", async () => {
   const target = postgresTarget(URL, "a".repeat(64), "root", null);
   try {
-    const ok = await person("ok");
-    const admin = await person("admin", { role: "admin" });
-    const imported = await person("imported", { verified: "legacy_import" });
-    const unverified = await person("unverified", { verified: false });
-    const candidate = await person("candidate", { role: "candidate" });
+    // An operator organization of this run's own: root allows one admin grant in the whole shared database.
+    const op = (await pool.query("INSERT INTO organizations (id, name) VALUES ($1, 'Operator') RETURNING id", [`m5-op-${randomUUID()}`])).rows[0].id as string;
+    const ok = await person("ok", { org: op });
+    const admin = await person("admin", { role: "admin", org: op });
+    const imported = await person("imported", { verified: "legacy_import", org: op });
+    const unverified = await person("unverified", { verified: false, org: op });
+    const candidate = await person("candidate", { role: "candidate", org: op });
     const elsewhere = await person("elsewhere", { org: (await pool.query("INSERT INTO organizations (id, name) VALUES ($1, 'Other') RETURNING id", [`m5-org-${randomUUID()}`])).rows[0].id });
     // Legacy addresses as legacy held them: other case and outer spaces fold to the same key.
     const rows = [ok, admin, imported, unverified, candidate, elsewhere].map((p, i) => ({ staff_id: i + 1, staff_email: `  ${p.email.toUpperCase()} `, deleted: 0, hours_per_day: 8 }));
     rows.push({ staff_id: 7, staff_email: `nobody-${run}@example.invalid`, deleted: 0, hours_per_day: 8 });
-    const r = await resolveStaff(staffCandidates(rows).candidates, target.staffMatcher(), "root");
+    const r = await resolveStaff(staffCandidates(rows).candidates, target.staffMatcher(), op);
     assert.deepEqual(Object.fromEntries(r.principals), { 1: ok.id, 2: admin.id });
     assert.deepEqual(Object.fromEntries(r.unresolved), { 3: "unresolved", 4: "unresolved", 5: "notOperatorStaff", 6: "notOperatorStaff", 7: "unresolved" });
   } finally { await target.close(); }
