@@ -1570,7 +1570,7 @@ const CASES = [
   {
     name: "M225 take an update whose own files are not the passed blobs",
     file: "service/card-land.mjs",
-    from: "  if (!sameFiles(await ownFiles(gh, repo, parents[1], head), await ownFiles(gh, repo, parents[1], passed))) {",
+    from: "  if (!sameFiles(headFiles, passedFiles)) {",
     to: "  if (false) { // SHU86-M225",
     pattern: "M15 W4: a conflict, or main changing",
   },
