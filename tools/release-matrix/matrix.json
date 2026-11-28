@@ -1011,7 +1011,7 @@
       "gates": {
         "built": {
           "state": "open",
-          "note": "partly built (audit 2026-11-22): /workspace/civil-ids review queue only; no per-candidate documents page"
+          "note": "built in review: /workspace/people/:id/documents lists type, state, format and size; photo and CV open through the staff signed delivery; Civil ID photos open only from the /workspace/civil-ids review; upload dates are not recorded by the document store"
         },
         "verified": {
           "state": "open"
