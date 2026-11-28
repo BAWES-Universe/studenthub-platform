@@ -6837,6 +6837,38 @@ test("Re-carry: a stale behind read on a head that already holds main is paced, 
   assert.ok(host.land.checkReads >= waitMs / LAND_LIMITS.pollMs, `${host.land.checkReads} paced reads`);
 });
 
+test("Re-carry: a stale behind read never lets a carry go uncounted; main that moves after it is still bounded by baseRounds", async () => {
+  // GitHub lags after each carry: the carried head, which holds main, reads
+  // behind once; main then moves before the next look.
+  const tips = [REV, MAIN2, MAIN3, "f".repeat(40), "0".repeat(40), "e".repeat(40), "c".repeat(40)];
+  let readsSinceCarry = 0;
+  let seen = 0;
+  const host = landingHost({ mainSeq: tips, mainAt: 1, mergeableState: "behind",
+    onCompareMain: (land) => {
+      if (land.updates !== seen) { seen = land.updates; readsSinceCarry = 0; }
+      readsSinceCarry += 1;
+      if (land.updates > 0 && readsSinceCarry === 2 && land.mainAt < tips.length - 1) land.mainAt += 1;
+    } });
+  const result = await oneWorkerLand(host);
+  assert.equal(result.outcome, "LAND_BASE_MOVING", JSON.stringify(result));
+  assert.ok(host.land.updates <= LAND_LIMITS.baseRounds - 1, `${host.land.updates} carries`);
+  assert.match(result.reason, new RegExp(`in each of ${LAND_LIMITS.baseRounds} rounds`));
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+});
+
+test("Re-carry: a behind read that comes after the one wait has ended starts no carry and ends CI_TIMEOUT", async () => {
+  // Checks turn green on the first read past the wait's deadline, and the
+  // pull request is behind main then.
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, checks: ["pending", "pending", "pending", "green"] });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs: 2.5 * LAND_LIMITS.pollMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.equal(host.land.updates, 0, "no carry starts after the wait");
+  assert.ok(!host.land.log.includes("github update from main"));
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+});
+
 test("Re-carry: a carry that changes the pull request's own blobs, or conflicts, stops as before with nothing merged", async () => {
   const changed = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, deltaChanged: true });
   const stopped = await oneWorkerLand(changed);
@@ -6849,18 +6881,21 @@ test("Re-carry: a carry that changes the pull request's own blobs, or conflicts,
   noLandingWrites(conflict);
 });
 
-test("Report: \"Landed:\" is written only for a merge; any other landing outcome says its pull request stays open", () => {
+test("Report: \"Landed:\" is written only for a merge; any other landing outcome names its pull request without claiming its state", () => {
   const base = { activation_id: "shu-301-recover-111111111111", card: "SHU-301", kind: "card", outcome: "LANDING_RECOVERY", trigger: "timer", revision: REV,
     recover: { pr: 77, reviewed_head: PASSED, head: PASSED, recover_of: EPISODE, stopped_land: "CI_TIMEOUT" } };
-  for (const outcome of ["PR_OPENED_CI_RED", "CI_TIMEOUT", "LAND_BASE_MOVING", "MERGE_HOLD"]) {
+  // LAND_ERROR can follow a merge call that went through, so no outcome but
+  // MERGED says whether the pull request is open.
+  for (const outcome of ["PR_OPENED_CI_RED", "CI_TIMEOUT", "LAND_BASE_MOVING", "MERGE_HOLD", "LAND_ERROR"]) {
     const report = renderRunReport({ ...base, land: { outcome, pr: 77, reason: "red: application-checks: failure" } });
     assert.doesNotMatch(report, /^Landed:/m, outcome);
     assert.doesNotMatch(report, /landed from|was landed again/, outcome);
-    assert.match(report, /^Not landed: pull request #77 stays open and unmerged\.$/m, outcome);
+    assert.match(report, /^Merge not confirmed: pull request #77; this landing did not confirm a merge\.$/m, outcome);
+    assert.doesNotMatch(report, /stays open|unmerged/, outcome);
   }
   const merged = renderRunReport({ ...base, land: { outcome: "MERGED", pr: 77, merge_commit: MERGE_SHA } });
   assert.match(merged, new RegExp(`^Landed: pull request #77; merge commit ${MERGE_SHA}\\.$`, "m"));
-  assert.doesNotMatch(merged, /^Not landed:/m);
+  assert.doesNotMatch(merged, /^Merge not confirmed:/m);
 });
 
 test("M15 W4: the landing lock, the updates and their reads keep the run inside TimeoutStartSec", () => {
