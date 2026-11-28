@@ -254,15 +254,16 @@ export class PostgresRecruitInterviewsStore {
    * Every interview on the requests of one company (matrix O-10), latest scheduled first, `size` a page. Read by
    * operator staff and by the company's own readers (the same company decision as a request's interviews, on a live
    * company); a pipeline recruiter reads their requests' pages instead. Null for anyone else and for an unknown
-   * company. Paused people's interviews are left out for callers who are not internal, as on a request's page, so
-   * a page can hold fewer than `size`; `more` still says whether an older page exists.
+   * company. Paused people's interviews are left out for callers who are not internal, as on a request's page; the
+   * pause predicate runs inside the snapshot query, before LIMIT/OFFSET and `more`, so hidden rows never shorten a
+   * page or leave an Earlier link to an empty one.
    */
   async forOrganization(principalId: string, orgId: string, page = 1, size = 100): Promise<RecruitOrganizationInterviews | null> {
     if (!Number.isSafeInteger(page) || page < 1) return null;
     const limit = Math.min(Math.max(1, Math.trunc(size)), 200);
     const c = await this.#pool.connect();
     let broken = false;
-    let result: { page: RecruitOrganizationInterviews; people: ReadonlyMap<string, string>; internal: boolean } | null = null;
+    let result: RecruitOrganizationInterviews | null = null;
     try {
       await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
       const org = (await c.query<{ name: string }>("SELECT name FROM organizations WHERE id = $1::text", [orgId])).rows[0];
@@ -276,21 +277,22 @@ export class PostgresRecruitInterviewsStore {
           company = this.options.companyDecision(grants, orgId, ancestors);
         }
         if (this.options.staffDecision(grants) || company) {
-          const rows = (await c.query<RecruitOrganizationInterviewRecord & { person_principal_id: string | null }>(
+          // Internal callers see paused people; for everyone else the open pause hides the row before paging.
+          const internal = this.options.internalDecision(grants);
+          const rows = (await c.query<RecruitOrganizationInterviewRecord>(
             `SELECT i.id, r.id AS request_id, r.position_title, s.name AS store_name, COALESCE(pp.display_name, p.display_name, f.name) AS person_name,
-               i.scheduled_at, i.duration_minutes, i.mode, i.status, c.person_principal_id,
+               i.scheduled_at, i.duration_minutes, i.mode, i.status,
                (SELECT outcome FROM recruit_interview_evaluations WHERE interview_id = i.id ORDER BY version DESC LIMIT 1) AS outcome
              FROM recruit_interviews i JOIN recruit_pipeline_cards c ON c.id = i.card_id JOIN recruit_requests r ON r.id = c.request_id
              JOIN organization_stores s ON s.id = r.store_id
              LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id
-             WHERE r.org_id = $1::text ORDER BY i.scheduled_at DESC, i.id LIMIT $2 OFFSET $3`, [orgId, limit + 1, (page - 1) * limit])).rows;
+             WHERE r.org_id = $1::text
+               AND ($4::boolean OR c.person_principal_id IS NULL
+                 OR NOT EXISTS (SELECT 1 FROM account_pauses ap WHERE ap.principal_id = c.person_principal_id AND ap.resumed_at IS NULL))
+             ORDER BY i.scheduled_at DESC, i.id LIMIT $2 OFFSET $3`, [orgId, limit + 1, (page - 1) * limit, internal])).rows;
           const more = rows.length > limit;
           rows.length = Math.min(rows.length, limit);
-          const internal = this.options.internalDecision(grants);
-          result = {
-            page: { org_name: org.name, interviews: rows.map(({ person_principal_id: _, ...row }) => row), page, more },
-            people: new Map(rows.flatMap((row) => row.person_principal_id ? [[row.id, row.person_principal_id] as const] : [])), internal,
-          };
+          result = { org_name: org.name, interviews: rows, page, more };
         }
       }
       await c.query("COMMIT");
@@ -300,11 +302,7 @@ export class PostgresRecruitInterviewsStore {
     } finally {
       c.release(broken);
     }
-    if (!result) return null;
-    if (result.internal || result.people.size === 0) return result.page;
-    // Asked after the snapshot's client is released, as on a request's page.
-    const paused = await this.options.paused([...new Set(result.people.values())]);
-    return { ...result.page, interviews: result.page.interviews.filter((row) => !paused.has(result!.people.get(row.id) ?? "")) };
+    return result;
   }
 
   /** The person's own interviews: when, where and the outcome; never a rating or a note. */

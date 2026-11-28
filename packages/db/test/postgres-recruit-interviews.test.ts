@@ -210,3 +210,27 @@ test("REC6_ORGANIZATION a company's interviews page: staff and the company read 
   assert.equal((await interviews.forOrganization(s.staff, s.orgId))!.interviews.length, 2, "internal callers still do");
   assert.equal((await change("resume")).kind, "resumed");
 });
+
+test("REC6_ORGANIZATION_PAUSED_PAGES paused people are hidden before paging: no short or empty company page, no Earlier link past them", async () => {
+  const s = await setup();
+  const sara = await person([], "Sara");
+  const saraCard = ((await pipeline.addCard(s.recruiter, s.requestId, sara)) as { cardId: string }).cardId;
+  await pipeline.move(s.recruiter, s.cardId, "contacted"); await pipeline.move(s.recruiter, saraCard, "contacted");
+  const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString();
+  const newest = ((await interviews.schedule(s.owner, s.requestId, { ...fields(s.cardId), scheduledAt: day(5) })) as { interviewId: string }).interviewId;
+  const middle = ((await interviews.schedule(s.owner, s.requestId, { ...fields(saraCard), scheduledAt: day(4) })) as { interviewId: string }).interviewId;
+  const oldest = ((await interviews.schedule(s.owner, s.requestId, { ...fields(s.cardId), scheduledAt: day(3) })) as { interviewId: string }).interviewId;
+  const pauses = new PostgresAccessPausesStore({ pool });
+  const change = (who: string, action: "pause" | "resume") => pauses.apply({ callerId: s.staff, request: { targetPrincipalId: who, action, reason: "test pause" }, decide: () => ({ kind: "apply" }) });
+  assert.equal((await change(s.noor, "pause")).kind, "paused");
+  const first = (await interviews.forOrganization(s.owner, s.orgId, 1, 1))!;
+  assert.deepEqual([first.interviews.map((r) => r.id), first.more], [[middle], false], "the first company page holds the visible row and no Earlier link past paused rows");
+  assert.deepEqual((await interviews.forOrganization(s.owner, s.orgId, 2, 1))!.interviews, [], "nothing visible past it");
+  const staff = (await interviews.forOrganization(s.staff, s.orgId, 1, 2))!;
+  assert.deepEqual([staff.interviews.map((r) => r.id), staff.more], [[newest, middle], true], "internal callers still page through paused people");
+  assert.equal((await change(sara, "pause")).kind, "paused");
+  const none = (await interviews.forOrganization(s.owner, s.orgId, 1, 1))!;
+  assert.deepEqual([none.interviews, none.more], [[], false], "all paused: an empty first page with no Earlier link");
+  assert.deepEqual((await interviews.forOrganization(s.staff, s.orgId, 2, 2))!.interviews.map((r) => r.id), [oldest]);
+  await change(s.noor, "resume"); await change(sara, "resume");
+});
