@@ -12,6 +12,7 @@
  *   tools/legacy-import/m4 promote    (after a write: linked people's staged contacts, see `promote`)
  *   tools/legacy-import/m4 linkreport (M-3: the identity link report for staff, see `linkReport`)
  *   tools/legacy-import/m4 doccheck   (M-2: each imported person's legacy documents, read-only, see `docCheck`)
+ *   tools/legacy-import/m4 staffwork  (M-5: legacy staff time, stand-up and hours per day, see `staffWorkRun`)
  * (a shell entry that clears the environment and starts Node on tools/legacy-import/m4-launch.mjs).
  * This module is not an entry point: run directly, it evaluates its imports but never calls `main`.
  *
@@ -112,6 +113,9 @@ import { legacyBucketReader } from "./m2-bucket.js";
 import { checkLegacyDocuments, documentCheckCounts, documentSetDigest, M2_DOCUMENT_CHECK_REVISION, type CheckedDocument, type DocumentCheckRule, type LegacyObjectReader } from "./m2-document-check.js";
 import { M2_DOCUMENT_MAPPER_REVISION, type DocumentIssueRule } from "./m2-documents.js";
 import { M2InputError, planM2, readM2Sources } from "./m2-run.js";
+import { M5_STAFF_REVISION, M5InputError, planStaffWork, readM5StaffSources, resolveStaff, runStaffWork, staffCandidates, STAFF_MATCH_SQL,
+  type StaffMatcher, type StaffUnresolved, type StaffWorkOutcome } from "./m5-staff.js";
+import { PostgresWorkImportStore } from "@studenthub/db/work";
 import { DocumentPromotionError, LegacyDocumentPromotion, type DocumentPromotionOutcome, type StagedLegacyDocument } from "../../../packages/private-documents/src/legacy-promotion.js";
 import { PostgresDocumentPartitions, R2Objects } from "../../../packages/private-documents/src/r2-storage.js";
 import type { StagedDocument } from "./m2-copy.js";
@@ -183,7 +187,7 @@ export function receipt(report: M4Report): string[] {
 export interface M4Receipt {
   readonly schemaVersion: 2;
   readonly invocation: string;
-  readonly kind: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote";
+  readonly kind: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote" | "staffwork";
   readonly status: "ok" | "started" | "refused_rows" | "incomplete" | "failed" | "refused";
   readonly at: string;
   /** Set once the run got as far as computing them. */
@@ -233,6 +237,16 @@ export interface M4Receipt {
   readonly promotionDestination?: string;
   /** For `docpromote`: counts per outcome only, never a principal or legacy id. */
   readonly docPromotion?: DocPromotionCounts;
+  /** For `staffwork` (M-5): staff resolution counts per reason, and per table counts per code only. */
+  readonly staffWork?: StaffWorkCounts;
+}
+
+/** What `staffwork` publishes: counts only, never a legacy ref, principal, address or time. */
+export interface StaffWorkCounts {
+  readonly staff: { readonly rows: number; readonly resolved: number; readonly unresolved: Readonly<Partial<Record<StaffUnresolved, number>>> };
+  readonly tables: StaffWorkOutcome["tables"];
+  readonly clean: boolean;
+  readonly complete: boolean;
 }
 
 /** Outcomes of one `docpromote` run. Terminal ones are recorded in legacy_document_promotions. */
@@ -463,6 +477,12 @@ export interface WriteTarget {
   pendingDocPromotions(generation: string, limit: number, after?: { readonly principalId: string; readonly kind: string }): Promise<readonly PendingDocPromotion[]>;
   /** Re-checks, on the lock session itself, that it is alive and still holds the lock. */
   stillHeld(): Promise<boolean>;
+  /** Whether the M-5 staff tables (0505, 0506, 0508, 0509) and the address key (0658) are migrated. */
+  staffWorkReady(): Promise<boolean>;
+  /** Matches legacy staff addresses to principals by the one address key; ids and flags come back. */
+  staffMatcher(): StaffMatcher;
+  /** The work lane's import store on the lock-holding session; only after claimWriter. */
+  workImport(): Pick<PostgresWorkImportStore, "importStandupQuestions" | "importStaffSessions" | "importStandupAnswers" | "importStaffHours" | "reconcileStaffImport">;
   /** Whether the lock session was lost or broken at any point. Once true, stays true. */
   lost(): boolean;
   /** Releases the writer lock and the connections. */
@@ -503,6 +523,10 @@ export const LINK_REPORT_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrat
   AND to_regclass('public.legacy_contact_promotions') IS NOT NULL AS ready`;
 /** What `docpromote` needs: the promotion record (0662) on the per-owner document store (0661). */
 export const M4_DOCPROMOTE_REQUIRED_MIGRATION = "0662_legacy_document_promotions";
+/** The migrations `staffwork` needs: the work lane's staff tables and import digests, and the address key. */
+export const M5_STAFF_REQUIRED_MIGRATIONS = ["0505_work_staff_time", "0506_work_standup", "0508_work_staff_import", "0509_work_staff_hours_per_day", "0658_principal_email_ascii_key"] as const;
+export const STAFF_WORK_READY_SQL = `SELECT (SELECT count(*) FROM schema_migrations WHERE version = ANY($1::text[])) = ${M5_STAFF_REQUIRED_MIGRATIONS.length}
+  AND to_regclass('public.work_staff_hours_per_day') IS NOT NULL AND to_regprocedure('principal_email_key(text)') IS NOT NULL AS ready`;
 export const DOC_PROMOTION_READY_SQL = `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '${M4_DOCPROMOTE_REQUIRED_MIGRATION}')
   AND EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0661_candidate_document_partitions')
   AND to_regclass('public.legacy_document_promotions') IS NOT NULL
@@ -716,6 +740,18 @@ export function postgresTarget(url: string, actorRef: string, operatorOrgId: str
       return rows.map((r) => ({ principalId: r.principal_id, legacyId: r.legacy_candidate_id, kind: r.kind }));
     },
     stillHeld: async () => (writer ? writer.fence() : false),
+    staffWorkReady: async () => {
+      try { return (await pool.query<{ ready: boolean }>(STAFF_WORK_READY_SQL, [M5_STAFF_REQUIRED_MIGRATIONS])).rows[0]?.ready === true; } catch { return false; }
+    },
+    staffMatcher: () => async (candidates, operatorOrgId) => {
+      const { rows } = await pool.query<{ staff_id: string; principal_id: string; verified: boolean; operator_staff: boolean }>(
+        STAFF_MATCH_SQL, [JSON.stringify(candidates.map((c) => ({ staff_id: c.staffId, email: c.email }))), operatorOrgId]);
+      return rows.map((r) => ({ staffId: r.staff_id, principalId: r.principal_id, verified: r.verified === true, operatorStaff: r.operator_staff === true }));
+    },
+    workImport: () => {
+      if (!writer) throw new Error("m4.writerNotClaimed");
+      return new PostgresWorkImportStore(writer);
+    },
     lost: () => wasLost || (writer?.lost ?? false),
     close: async () => {
       if (writer) { wasLost ||= writer.lost; writer.close(); writer = undefined; }
@@ -802,7 +838,7 @@ class Refusal extends Error {}
 export async function main(argv: readonly string[], deps: CliDeps): Promise<number> {
   const { env } = deps;
   const mode = argv[0];
-  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote" && mode !== "linkreport" && mode !== "doccheck" && mode !== "doccopy" && mode !== "docpromote") { deps.error("m4: refused.usage"); return 2; }
+  if (mode !== "plan" && mode !== "write" && mode !== "keycheck" && mode !== "promote" && mode !== "linkreport" && mode !== "doccheck" && mode !== "doccopy" && mode !== "docpromote" && mode !== "staffwork") { deps.error("m4: refused.usage"); return 2; }
   const invocation = env.M4_INVOCATION ?? "";
   // Without a fresh, unclaimed name there is nowhere this run's outcome could be published.
   if (!UUID.test(invocation)) { deps.error("m4: refused.invocation"); return 2; }
@@ -819,11 +855,12 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
   let documents: M4Receipt["documents"];
   let copy: M4Receipt["copy"];
   let docPromotion: M4Receipt["docPromotion"];
+  let staffWork: M4Receipt["staffWork"];
   const publish = (status: M4Receipt["status"], code?: string, promotion?: PromotionCounts) => {
     const unconfirmed = status === "failed" && mode !== "promote" ? order.slice(confirmed.length) : undefined;
     writeWhole(receiptPath, { schemaVersion: 2, invocation, kind: mode, status, at: deps.now().toISOString(), ...bound,
       steps: confirmed.map(receiptStep), ...(unconfirmed ? { unconfirmed } : {}), ...(code ? { code } : {}),
-      ...(promotion ? { promotion } : {}), ...(links ? { links } : {}), ...(documents ? { documents } : {}), ...(copy ? { copy } : {}), ...(docPromotion ? { docPromotion } : {}) } satisfies M4Receipt);
+      ...(promotion ? { promotion } : {}), ...(links ? { links } : {}), ...(documents ? { documents } : {}), ...(copy ? { copy } : {}), ...(docPromotion ? { docPromotion } : {}), ...(staffWork ? { staffWork } : {}) } satisfies M4Receipt);
   };
   const refuse = (code: string): never => { throw new Refusal(code); };
 
@@ -844,6 +881,9 @@ export async function main(argv: readonly string[], deps: CliDeps): Promise<numb
     }
     if (mode === "docpromote") {
       return await docPromote(deps, revision, publish, (b, c) => { bound = b; docPromotion = c; }, (t) => { target = t; });
+    }
+    if (mode === "staffwork") {
+      return await staffWorkRun(deps, revision, targetId, publish, reportPath, (b, w) => { bound = b; staffWork = w; }, (l) => { lock = l; }, (t) => { target = t; });
     }
     if (mode === "promote") return await promote(deps, revision, targetId, publish, (b) => { bound = b; }, (t) => { target = t; });
     const operator = env.M4_OPERATOR_ORG_ID ?? "";
@@ -1380,6 +1420,103 @@ const SETTLED = new Set<DocPromotionRule>(["promoted", "personHeld", "alreadyPro
 /** The database's C order (byte order of UTF-8), which JavaScript's UTF-16 comparison does not always match. */
 const cOrder = (a: { principalId: string; kind: string }, b: { principalId: string; kind: string }): number =>
   Buffer.compare(Buffer.from(a.principalId), Buffer.from(b.principalId)) || Buffer.compare(Buffer.from(a.kind), Buffer.from(b.kind));
+
+/**
+ * `staffwork` (M-5 staff time): the legacy internal staff's work sessions, stand-up questions and
+ * answers, and hours per day, through the work lane's mapper and import store (m5-staff.ts).
+ *
+ * Before any mirror read it requires the verified build (`provenance`), the operator organization
+ * (`destination`, `operator`), the staging marker and target (`target`), migrations 0505, 0506,
+ * 0508, 0509 and 0658 (`schema`) and the one-writer lock (`writerBusy`). Under the refresh lock
+ * (`locked`) it requires an ok refresh with provenance (`refreshNotOk`, `refreshProvenance`) and
+ * the mirror it names (`lockMismatch`, `mirrorMismatch`, `generationMismatch`), then reads the four
+ * tables whole (`m5.inputIncomplete` refuses a read that is not the whole, unchanged table).
+ *
+ * Legacy staff resolve to principals by the one rule in m5-staff.ts (verified address key and an
+ * operator staff or admin grant, one to one); everything else is reported. The writes are keyed by
+ * legacy reference with a digest, so a re-run writes nothing new and a changed row is held, never
+ * overwritten; nothing sends a notice. The private report (mode 600, on the staging host only)
+ * holds legacy staff ids by reason and legacy refs per table by code; the receipt holds counts.
+ * Exit 0 when nothing is unexplained (no missing, extra or held row in any table), 3 when something
+ * is, 2 refused, 1 failed.
+ */
+async function staffWorkRun(deps: CliDeps, revision: string, targetId: string,
+  publish: (status: M4Receipt["status"], code?: string) => void, reportPath: string,
+  bind: (bound: Omit<M4Receipt, "schemaVersion" | "invocation" | "kind" | "status" | "at" | "steps">, staffWork?: StaffWorkCounts) => void,
+  trackLock: (lock: SharedLock) => void, trackTarget: (target: WriteTarget) => void): Promise<number> {
+  const { env } = deps;
+  const refuse = (code: string): number => {
+    deps.error(`m4: refused.${code}`);
+    try { publish("refused", code); } catch { return 1; }
+    return 2;
+  };
+  const fail = (code: string): number => {
+    deps.error(`m4: ${code}`);
+    try { publish("failed", code); } catch { /* the exit code still says failed */ }
+    return 1;
+  };
+  const operator = env.M4_OPERATOR_ORG_ID ?? "";
+  if (!UUID.test(targetId) || !ORG_ID.test(operator) || !env.M4_DATABASE_URL) return refuse("destination");
+  const artifact = env.M4_ARTIFACT_DIGEST ?? "";
+  const built = deps.provenance();
+  if (!HEX64.test(artifact) || built.head !== revision || !built.clean || built.artifact !== artifact) return refuse("provenance");
+  const base = { revision, artifact, target: targetId, operator };
+  bind(base);
+  const target = deps.target(env);
+  trackTarget(target);
+  const marker = await target.marker();
+  if (marker?.environment !== "staging" || marker.targetId !== targetId) return refuse("target");
+  if (!await target.hasOperator(operator)) return refuse("operator");
+  if (!await target.staffWorkReady()) return refuse("schema");
+  if (!await target.claimWriter()) return refuse("writerBusy");
+
+  const lock = await deps.lock(lockPathFrom(env));
+  trackLock(lock);
+  if (!lock.held) return refuse("locked");
+  let last: unknown;
+  try { last = JSON.parse(readFileSync(env.LEGACY_REFRESH_REPORT || REFRESH_REPORT_PATH, "utf8")); } catch { last = undefined; }
+  const refresh = refreshIdentity(last);
+  if (!refresh) return refuse("refreshNotOk");
+  const provenance = refreshProvenance(last);
+  if (!provenance) return refuse("refreshProvenance");
+  const reader = deps.reader(env);
+  const bad = await mirrorBinding(env, reader, provenance);
+  if (bad) return "refuse" in bad ? refuse(bad.refuse) : fail(bad.fail);
+  const bound = { ...base, refresh, mirror: { generation: provenance.generation } };
+  bind(bound);
+  let sources;
+  try { sources = await readM5StaffSources(reader); } catch (error) {
+    if (error instanceof M5InputError && error.code === "m5.inputIncomplete") return refuse("inputIncomplete");
+    return fail(error instanceof M5InputError ? error.code : "m5.read");
+  }
+
+  publish("started");
+  const { candidates, badIds } = staffCandidates(sources.staff);
+  let resolution;
+  try { resolution = await resolveStaff(candidates, target.staffMatcher(), operator); } catch { return fail("m5.staff.resolve"); }
+  const plan = planStaffWork(sources, resolution);
+  let outcome: StaffWorkOutcome;
+  try { outcome = await runStaffWork(target.workImport(), plan); } catch { return fail(await target.stillHeld() ? "m5.staff.write" : "m4.writerLost"); }
+  if (!await target.stillHeld()) return fail("m4.writerLost");
+
+  const unresolved: Partial<Record<StaffUnresolved, number>> = badIds ? { badId: badIds } : {};
+  const byReason: Partial<Record<StaffUnresolved, string[]>> = {};
+  for (const [id, why] of [...resolution.unresolved].sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)))) {
+    unresolved[why] = (unresolved[why] ?? 0) + 1;
+    (byReason[why] ??= []).push(id);
+  }
+  const counts: StaffWorkCounts = { staff: { rows: sources.staff.length, resolved: resolution.principals.size, unresolved },
+    tables: outcome.tables, clean: outcome.clean, complete: outcome.complete };
+  writeWhole(reportPath, { schemaVersion: 2, invocation: env.M4_INVOCATION, kind: "staffwork", at: deps.now().toISOString(), ...bound,
+    revisions: { staff: M5_STAFF_REVISION }, staff: { unresolved: byReason }, tables: outcome.refs });
+  bind(bound, counts);
+  publish(outcome.complete ? "ok" : "incomplete");
+  for (const [table, t] of Object.entries(outcome.tables)) {
+    deps.log(`staffwork ${table} legacy=${t.legacy} inserted=${t.inserted} unchanged=${t.unchanged} updated=${t.updated} conflicts=${t.conflicts} skipped=${t.skipped} missing=${t.missing} extra=${t.extra} held=${t.held} clean=${t.clean}`);
+  }
+  deps.log(`m4 staffwork ${outcome.complete ? "ok" : "incomplete"} invocation=${env.M4_INVOCATION} staff=${counts.staff.rows} resolved=${counts.staff.resolved} generation=${provenance.generation} revision=${revision} artifact=${artifact}`);
+  return outcome.complete ? 0 : 3;
+}
 
 /**
  * `docpromote` (M-2): promotes the staged documents of one complete doccopy into linked people's
