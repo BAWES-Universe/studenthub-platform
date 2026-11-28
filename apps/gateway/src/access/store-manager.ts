@@ -40,7 +40,7 @@ export function renderMyStores(stores: readonly ManagedStoreRow[]): string {
 }
 
 export function renderManagedStore(store: ManagedStoreRow): string {
-  return layout(`<div class="profile-heading"><div><div class="eyebrow">STORE MANAGER</div><h1>${e(store.name)}<span class="accent">.</span></h1></div></div>${details(store)}<p><a class="text-link" href="/workspace/my-stores">All my stores</a></p>`, "store");
+  return layout(`<div class="profile-heading"><div><div class="eyebrow">STORE MANAGER</div><h1>${e(store.name)}<span class="accent">.</span></h1></div></div>${details(store)}<p><a class="button primary" href="/workspace/stores/${e(store.storeId)}/candidates">Candidates at this store</a></p><p><a class="text-link" href="/workspace/my-stores">All my stores</a></p>`, "store");
 }
 
 export async function handleStoreManager(req: IncomingMessage, ports: StoreManagerPorts | undefined, write: AccessPageWriter): Promise<boolean> {
