@@ -1894,9 +1894,12 @@ function cardLineage() {
 // M15 W4: parallel (config workers.max 2), mainSeq (main's tips in order;
 // index 0 is REV, the passed head's base), mainAt (the index main is at),
 // onCompareMain(land, host) (called on each read of main against a head),
+// onPullRead(land, host) (called on each read of the pull request),
 // mainFiles (what main changed, as compare lists it), conflict (update-branch
 // answers a conflict), deltaChanged (an update changes the pull request's own
-// blob), badParents (an update's parents come in the other order). GitHub's
+// blob), badParents (an update's parents come in the other order), behindWhenStale
+// (the pull request reads mergeable_state "behind" while its head does not
+// hold main's tip, as strict branch protection reads it). GitHub's
 // update-branch merges main into the head as a new head.
 function landingHost(options = {}) {
   const external = options.external ?? (options.settle !== undefined ? { required: ["coderabbitai", "sentry"] } : undefined);
@@ -1935,7 +1938,8 @@ function landingHost(options = {}) {
   const respond = (status, json) => ({ status, ok: status < 300, headers: { get: () => null }, json: async () => structuredClone(json) });
   const pullDetail = () => ({ number: 77, state: land.merged ? "closed" : "open", merged: land.merged, merged_at: land.merged ? "2026-10-09T18:00:00Z" : null,
     merge_commit_sha: land.merged ? MERGE_SHA : null, draft: false, mergeable: true, labels: [],
-    mergeable_state: options.blockedWhileUnresolved && land.threads.some((thread) => !thread.isResolved) ? "blocked" : options.mergeableState ?? "clean",
+    mergeable_state: options.blockedWhileUnresolved && land.threads.some((thread) => !thread.isResolved) ? "blocked"
+      : options.behindWhenStale && (land.holds.get(land.pr.head) ?? 0) < land.mainAt ? "behind" : options.mergeableState ?? "clean",
     head: { ref: "coordinator/SHU-301", sha: land.pr.head, repo: { full_name: REPO } }, base: { ref: "main", sha: REV, repo: { full_name: REPO } } });
   const delegate = host.io.fetch;
   // M15 W4: each head holds one of main's tips; an update's head also has its
@@ -2066,7 +2070,7 @@ function landingHost(options = {}) {
     assert.ok(!request.method || request.method === "GET", `${request.method} ${route}`);
     if (route === `/pulls?state=open&head=${head}&per_page=100`) { land.log.push("github list"); return respond(200, land.pr && !land.merged ? [pullDetail()] : []); }
     if (route === `/pulls?state=all&head=${head}&per_page=100`) return respond(200, land.pr ? [pullDetail()] : []);
-    if (route === "/pulls/77") return respond(200, pullDetail());
+    if (route === "/pulls/77") { options.onPullRead?.(land, host); return respond(200, pullDetail()); }
     if (options.mainSeq) {
       const compared = /^\/compare\/(main|[0-9a-f]{40})\.\.\.(main|[0-9a-f]{40})$/.exec(route);
       if (compared) {
@@ -6762,6 +6766,101 @@ test("M15 W4: one worker lands as before: no update from main, no landing lock, 
   assert.equal(parallel.land.updated_head, updatedHead(1));
   assert.equal(two.land.landLockAtMerge, true);
   assert.match(two.reports[0], /^Landing: MERGED, /m);
+});
+
+// A landing whose wait reads its pull request behind main, with its checks
+// green, carries main again by the exact-blobs rule instead of waiting out
+// its bound (#750 stopped CI_TIMEOUT on "mergeable_state behind").
+const oneWorkerLand = (host, extra = {}) => parallelLand(host, { parallel: false, ...extra });
+
+test("Re-carry: one worker whose pull request reads behind main with green checks carries main, waits at the new head and merges it under the landing lock", async () => {
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true });
+  const result = await oneWorkerLand(host);
+  assert.equal(result.outcome, "MERGED", JSON.stringify(result));
+  assert.equal(host.land.updates, 1);
+  assert.equal(result.reviewed_head, PASSED);
+  assert.equal(result.updated_head, updatedHead(1));
+  assert.deepEqual(host.land.parents.get(updatedHead(1)), [PASSED, MAIN2], "the carry merges main into the passed head");
+  assert.ok(host.land.checkedHeads.has(updatedHead(1)), "green is read again at the carried head");
+  assert.equal(host.land.mergedHead, updatedHead(1));
+  assert.equal(host.land.landLockAtMerge, true, "a carried landing merges under the landing lock");
+  assert.equal(host.files.has(LAND_LOCK), false);
+  assert.equal(handoffs(host)[0].handoff.target_sha, PASSED, "the PASS and its handoff stay at the passed head");
+  assert.deepEqual(mergeAttempts(host).map((r) => [r.state, r.approved_head_sha]), [["PREPARED", updatedHead(1)], ["COMPLETED", updatedHead(1)]]);
+});
+
+test("Re-carry: a behind read with checks not yet green never carries, and a fresh head is never updated", async () => {
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, checks: ["pending"] });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs: 5 * 60 * 1000 } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.equal(host.land.updates, 0);
+  assert.ok(!host.land.log.includes("github update from main"));
+  noLandingWrites(host);
+  // Red stays red: it is never carried past.
+  const red = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, checks: ["red"] });
+  assert.equal((await oneWorkerLand(red)).outcome, "PR_OPENED_CI_RED");
+  assert.equal(red.land.updates, 0);
+  // A head that holds main is not behind and lands as before, with no carry and no lock.
+  const fresh = landingHost({ mainSeq: [REV], behindWhenStale: true });
+  const kept = await oneWorkerLand(fresh);
+  assert.equal(kept.outcome, "MERGED", JSON.stringify(kept));
+  assert.equal(fresh.land.updates, 0);
+  assert.equal(fresh.land.landLockAtMerge, false);
+});
+
+test("Re-carry: main that keeps moving during the wait stops the landing after baseRounds, nothing handed off or merged", async () => {
+  const tips = [REV, MAIN2, MAIN3, "f".repeat(40), "0".repeat(40), "e".repeat(40)];
+  const host = landingHost({ mainSeq: tips, mainAt: 1, behindWhenStale: true,
+    onPullRead: (land, h) => { if (!h.files.has(LAND_LOCK) && land.mainAt < tips.length - 1 && land.updates > 0) land.mainAt += 1; } });
+  const result = await oneWorkerLand(host);
+  assert.equal(result.outcome, "LAND_BASE_MOVING", JSON.stringify(result));
+  assert.ok(host.land.updates >= 1 && host.land.updates < LAND_LIMITS.baseRounds, `${host.land.updates} carries`);
+  assert.match(result.reason, new RegExp(`in each of ${LAND_LIMITS.baseRounds} rounds`));
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+  assert.equal(host.files.has(LAND_LOCK), false);
+});
+
+test("Re-carry: a stale behind read on a head that already holds main is paced, takes no round, and ends at the wait's bound", async () => {
+  // GitHub's mergeable_state lags: it still reads behind on a fresh head.
+  const host = landingHost({ mainSeq: [REV], mergeableState: "behind" });
+  const waitMs = 10 * 60 * 1000;
+  const before = host.clock;
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /mergeable_state behind/);
+  assert.equal(host.land.updates, 0, "a head that holds main is never carried");
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+  const waited = host.clock - before;
+  assert.ok(waited >= waitMs && waited <= waitMs + 2 * LAND_LIMITS.pollMs, `waited ${waited}`);
+  assert.ok(host.land.checkReads >= waitMs / LAND_LIMITS.pollMs, `${host.land.checkReads} paced reads`);
+});
+
+test("Re-carry: a carry that changes the pull request's own blobs, or conflicts, stops as before with nothing merged", async () => {
+  const changed = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, deltaChanged: true });
+  const stopped = await oneWorkerLand(changed);
+  assert.equal(stopped.outcome, "LAND_DELTA_CHANGED", JSON.stringify(stopped));
+  assert.equal(changed.land.merges, 0);
+  noLandingWrites(changed);
+  const conflict = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, conflict: true });
+  const conflicted = await oneWorkerLand(conflict);
+  assert.equal(conflicted.outcome, "LAND_CONFLICT", JSON.stringify(conflicted));
+  noLandingWrites(conflict);
+});
+
+test("Report: \"Landed:\" is written only for a merge; any other landing outcome says its pull request stays open", () => {
+  const base = { activation_id: "shu-301-recover-111111111111", card: "SHU-301", kind: "card", outcome: "LANDING_RECOVERY", trigger: "timer", revision: REV,
+    recover: { pr: 77, reviewed_head: PASSED, head: PASSED, recover_of: EPISODE, stopped_land: "CI_TIMEOUT" } };
+  for (const outcome of ["PR_OPENED_CI_RED", "CI_TIMEOUT", "LAND_BASE_MOVING", "MERGE_HOLD"]) {
+    const report = renderRunReport({ ...base, land: { outcome, pr: 77, reason: "red: application-checks: failure" } });
+    assert.doesNotMatch(report, /^Landed:/m, outcome);
+    assert.doesNotMatch(report, /landed from|was landed again/, outcome);
+    assert.match(report, /^Not landed: pull request #77 stays open and unmerged\.$/m, outcome);
+  }
+  const merged = renderRunReport({ ...base, land: { outcome: "MERGED", pr: 77, merge_commit: MERGE_SHA } });
+  assert.match(merged, new RegExp(`^Landed: pull request #77; merge commit ${MERGE_SHA}\\.$`, "m"));
+  assert.doesNotMatch(merged, /^Not landed:/m);
 });
 
 test("M15 W4: the landing lock, the updates and their reads keep the run inside TimeoutStartSec", () => {
