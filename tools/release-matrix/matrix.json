@@ -977,6 +977,13 @@
     "M-05": {
       "lane": "people",
       "subject": "`/store/:storeId/candidates/:id/documents`",
+      "served": [
+        {
+          "route": "/workspace/stores/:storeId/candidates/:personId/documents",
+          "test": "apps/gateway/test/store-candidates-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",

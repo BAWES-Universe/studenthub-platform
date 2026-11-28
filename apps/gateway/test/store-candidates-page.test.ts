@@ -18,23 +18,25 @@ const MANAGED: Record<string, { orgId: string; storeId: string }[]> = {
 };
 const CONTRACT = "c0ffee00-0000-4000-8000-000000000001";
 let n = 0;
-const placed = (personId: string, orgId: string, storeId: string, startDate: string, endDate: string | null): Assignment => ({
+const placed = (personId: string, orgId: string, storeId: string, startDate: string, endDate: string | null, recruitRequestId: string | null = null): Assignment => ({
   id: `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`, personId, orgId, storeId, payContractId: CONTRACT, contractResolution: {} as never,
-  startDate, endDate, warnings: [], source: "staff" as never, requestId: null, recruitCardId: null, recruitRequestId: null,
+  startDate, endDate, warnings: [], source: "staff" as never, requestId: null, recruitCardId: null, recruitRequestId,
 } as unknown as Assignment);
+// Recruit requests behind placements: the employer view grants sight through some of them only.
+const R = { live: "aaaaaaaa-0000-4000-8000-000000000001", withdrawn: "aaaaaaaa-0000-4000-8000-000000000002", other: "aaaaaaaa-0000-4000-8000-000000000003", unwired: "aaaaaaaa-0000-4000-8000-000000000004" };
 const ASSIGNMENTS = [
   placed("badr", "org-a", S.a, "2020-01-01", "2020-06-30"),
-  placed("amal", "org-a", S.second, "2019-01-01", "2019-06-30"),
-  placed("amal", "org-a", S.a, "2021-01-01", null),
-  placed("amal", "org-a", S.a, "2020-01-01", "2020-03-31"),
-  placed("zaid", "org-a", S.a, "2999-01-01", null),
+  placed("amal", "org-a", S.second, "2019-01-01", "2019-06-30", R.other),
+  placed("amal", "org-a", S.a, "2021-01-01", null, R.withdrawn),
+  placed("amal", "org-a", S.a, "2020-01-01", "2020-03-31", R.live),
+  placed("zaid", "org-a", S.a, "2999-01-01", null, R.unwired),
   placed("carl", "org-a", S.second, "2022-01-01", null),
   placed("dina", "org-b", S.b, "2022-01-01", null),
 ];
 const NAMES = new Map([["amal", "Amal <Synthetic>"], ["badr", "Badr"], ["carl", "Carl"], ["dina", "Dina"]]);
 const STORES = new Map([[S.a, "A <Store>"], [S.second, "Second"], [S.b, "Outside store"]]);
 
-async function fixture(t: TestContext, option: { configured?: boolean; failing?: boolean; extra?: readonly Assignment[] } = {}) {
+async function fixture(t: TestContext, option: { configured?: boolean; failing?: boolean; extra?: readonly Assignment[]; employer?: "none" | "failing" } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   for (const [personId, id] of Object.entries(sessions)) await rig.sessions.put({ id, personId });
   const calls: string[] = [];
@@ -56,11 +58,26 @@ async function fixture(t: TestContext, option: { configured?: boolean; failing?:
     personNames: async (ids: readonly string[]) => new Map(ids.flatMap((id) => NAMES.has(id) ? [[id, NAMES.get(id)!] as const] : [])),
     storeNames: async (ids: readonly string[]) => new Map(ids.map((id) => [id, STORES.get(id)!] as const)),
   };
-  const login = { ...rig.app, ...(option.configured === false ? {} : { work }), web: { origin: "https://studenthub.example.invalid", returnTo: "https://studenthub.example.invalid/workspace" } } as never;
+  // The recruit area's employer view: sight per request, and its signed links. The page only relays them.
+  const employerCalls: string[] = [];
+  const recruitEmployerView = {
+    withDocuments: () => { throw new Error("no documents store in this fixture"); },
+    deliver: async () => undefined,
+    person: async (session: string | undefined, requestId: string, personId: string) => {
+      employerCalls.push(`${requestId}:${personId}:${session === sessions.manager ? "manager" : "other"}`);
+      if (option.employer === "failing") return { status: 503, body: { error: "recruit_unavailable" } };
+      if (requestId === R.live && personId === "amal") return { status: 200, body: { requestId, person: {}, documents: [
+        { type: "resume", url: "/recruit/documents/delivery?t=abc.def&x=<1>", expiresAt: "2026-01-01T00:00:00.000Z" },
+        { type: "personal-photo", url: "/recruit/documents/delivery?t=photo.sig", expiresAt: "2026-01-01T00:00:00.000Z" }] } };
+      if (requestId === R.unwired) return { status: 200, body: { requestId, person: {}, documents: null } };
+      return { status: 404, body: { error: "not_found" } };
+    },
+  };
+  const login = { ...rig.app, ...(option.configured === false ? {} : { work }), ...(option.employer === "none" ? {} : { recruitEmployerView }), web: { origin: "https://studenthub.example.invalid", returnTo: "https://studenthub.example.invalid/workspace" } } as never;
   const server = createGatewayServer(undefined, undefined, undefined, login); await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)); t.after(() => { server.closeAllConnections(); server.close(); });
   const address = server.address(); assert.ok(address && typeof address !== "string");
   const request = (path: string, who?: keyof typeof sessions, init: RequestInit = {}) => fetch(`http://127.0.0.1:${address.port}${path}`, { ...init, headers: { accept: "text/html", ...(who ? { cookie: `__Host-studenthub_session=${sessions[who]}` } : {}), ...init.headers } });
-  return { request, calls };
+  return { request, calls, employerCalls };
 }
 
 const rowsOf = (html: string) => [...html.matchAll(/<tr><th scope="row">(.*?)<\/tr>/g)].map((m) => m[1]!);
@@ -87,6 +104,7 @@ test("STORECAND_PERSON one person's placements at that store only; a person neve
   assert.match(body, /<h1>Amal &lt;Synthetic&gt;<\/h1><h2>Placements at A &lt;Store&gt;<\/h2>/);
   assert.deepEqual(rowsOf(body), ["From 1 January 2021</th><td>Working now</td>", "1 January 2020 to 31 March 2020</th><td>Ended</td>"]);
   assert.equal(body.includes("2019"), false, "STORECAND_PERSON a placement at another store is not shown");
+  assert.ok(body.includes(`<a class="text-link" href="${LIST}/amal/documents">Documents</a>`), "the person page links their documents");
   assert.equal(f.calls.at(-1), `list:org-a:${S.a}:amal`);
   const missing = await (await f.request(`${LIST}/nobody`, "manager")).text();
   const unknown = await (await f.request("/no/such/page", "manager")).text();
@@ -135,4 +153,51 @@ test("STORECAND_QUIET a failing read or a gateway without work answers 503 with 
 test("STORECAND_LINK the store page links its candidates", () => {
   const html = renderManagedStore({ principalId: "manager", storeId: S.a, name: "A <Store>", orgId: "org-a", orgName: "A", location: null, brand: null, mall: null } as never);
   assert.ok(html.includes(`<a class="button primary" href="/workspace/stores/${S.a}/candidates">Candidates at this store</a>`));
+});
+
+const DOCS = `/workspace/stores/${S.a}/candidates/amal/documents`;
+
+test("STOREDOC_LINKS the store manager gets the recruit area's signed links through the request behind a placement at this store", async (t) => {
+  const f = await fixture(t);
+  const response = await f.request(DOCS, "manager"), body = await response.text();
+  assert.equal(response.status, 200, "STOREDOC_LINKS the page is served"); assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.ok(body.includes('<li><a class="text-link" href="/recruit/documents/delivery?t=abc.def&amp;x=&lt;1&gt;" rel="noreferrer">CV</a></li>'), "STOREDOC_LINKS links are relayed escaped");
+  assert.ok(body.includes('href="/recruit/documents/delivery?t=photo.sig" rel="noreferrer">Photo</a>'));
+  assert.match(body, /expires after 10 minutes/);
+  // Newest placement first: the withdrawn request refuses sight, so the next one at this store is tried; another store's request never is.
+  assert.deepEqual(f.employerCalls, [`${R.withdrawn}:amal:manager`, `${R.live}:amal:manager`], "STOREDOC_LINKS only this store's requests, newest first");
+});
+
+test("STOREDOC_NONE no request, refused sight or unwired links each say so, and nothing is issued", async (t) => {
+  const f = await fixture(t);
+  const badr = await (await f.request(`/workspace/stores/${S.a}/candidates/badr/documents`, "manager")).text();
+  assert.match(badr, /No documents are shared for this person through this store/, "STOREDOC_NONE no request");
+  assert.equal(badr.includes("delivery"), false);
+  assert.equal(f.employerCalls.length, 0, "a placement with no request asks for nothing");
+  const zaid = await (await f.request(`/workspace/stores/${S.a}/candidates/zaid/documents`, "manager")).text();
+  assert.match(zaid, /Documents will appear here once secure document links are available/);
+  const none = await fixture(t, { employer: "none" });
+  assert.match(await (await none.request(DOCS, "manager")).text(), /No documents are shared/);
+});
+
+test("STOREDOC_HIDDEN the documents page has the candidates page's gate and the byte-identical not found", async (t) => {
+  const f = await fixture(t);
+  const unknown = await (await f.request("/no/such/page", "manager")).text();
+  for (const [path, who] of [[DOCS, "otherManager"], [DOCS, "owner"], [DOCS, "staff"], [DOCS, "revoked"], [DOCS, "candidate"],
+    [`/workspace/stores/${S.a}/candidates/carl/documents`, "manager"], [`/workspace/stores/${S.second}/candidates/amal/documents`, "manager"]] as const) {
+    const r = await f.request(path, who);
+    assert.equal(r.status, 404, `STOREDOC_HIDDEN ${who} ${path}`);
+    assert.equal(await r.text(), unknown, `${who} ${path}`);
+  }
+  assert.equal(f.employerCalls.length, 0, "STOREDOC_HIDDEN no link is issued for a refused caller");
+  assert.equal((await f.request(DOCS)).status, 401);
+  assert.equal((await f.request(`${DOCS}/x`, "manager")).status, 404);
+  assert.equal((await f.request(DOCS, "manager", { method: "POST" })).status, 404);
+});
+
+test("STOREDOC_QUIET a failing recruit area answers 503 with no detail", async (t) => {
+  const f = await fixture(t, { employer: "failing" });
+  const r = await f.request(DOCS, "manager"), body = await r.text();
+  assert.equal(r.status, 503, "STOREDOC_QUIET a failing link read is unavailable"); assert.match(body, /Candidates unavailable/);
+  assert.equal(body.includes("recruit_unavailable"), false);
 });
