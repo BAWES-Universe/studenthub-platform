@@ -899,6 +899,18 @@
     "M-02": {
       "lane": "people",
       "subject": "`/store/:storeId/candidates`, `/store/:storeId/candidates/:id`",
+      "served": [
+        {
+          "route": "/workspace/stores/:storeId/candidates",
+          "test": "apps/gateway/test/store-candidates-page.test.ts",
+          "via": "gateway"
+        },
+        {
+          "route": "/workspace/stores/:storeId/candidates/:personId",
+          "test": "apps/gateway/test/store-candidates-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",
