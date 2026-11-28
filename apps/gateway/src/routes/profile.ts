@@ -8,6 +8,7 @@ import { renderPeopleDirectory, renderPersonDetail, renderPersonDocuments, wants
 import { openPersonDocument, personDocuments } from "../person-documents.js";
 import { handleCivilIdReview } from "../civil-id-review-http.js";
 import { writeNotFound } from "../shell/error-pages.js";
+export { personLifecycleRoute } from "../person-lifecycle.js";
 
 const sessionCookie=(value:string|undefined)=>value?.split(";").map(x=>x.trim()).find(x=>x.startsWith("__Host-studenthub_session="))?.slice(26);
 export const peopleDirectoryRoute:GatewayRoute={name:"people-directory",handle:async ctx=>{if(ctx.request.method!=="GET"||ctx.request.url?.split("?",1)[0]!=="/workspace/people")return false;const html=wantsHtml(ctx.request.headers.accept),result=ctx.login?.people?await ctx.login.people.open(sessionCookie(ctx.request.headers.cookie),new URL(ctx.request.url,"http://gateway.invalid").searchParams,html):{status:404 as const,body:{error:"not_found"}};if(result.status===404){writeNotFound(ctx.request,ctx.response);return true}if(html){ctx.writeHtml(ctx.response,result.status,renderPeopleDirectory(result,ctx.login!),{},true);return true}ctx.response.writeHead(result.status,{"content-type":"application/json","cache-control":"no-store",vary:"Accept"});ctx.response.end(JSON.stringify(result.body));return true}};

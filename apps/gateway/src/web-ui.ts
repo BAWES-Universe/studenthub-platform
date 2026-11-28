@@ -261,12 +261,13 @@ export function renderPersonDetail(result:PersonDetailResult,login:BrowserLoginA
     login.access?`<a class="text-link" href="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}`)}">Access</a>`:"",
     login.staffView?`<a class="text-link" href="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}/view`)}">View their profile</a>`:"",
     login.civilIdReview?.staffDocuments?`<a class="text-link" href="${e(`${base}/documents`)}">Documents</a>`:"",
+    (login as {lifecycle?:unknown}).lifecycle!==undefined?`<a class="text-link" href="${e(`${base}/lifecycle`)}">Warnings and tags</a>`:"",
   ].filter(Boolean).join("");
   return personShell(name,active,login,`<div class="profile-heading"><h1>${e(name)}</h1>${person.imported?'<span class="badge">Imported</span>':""}</div><dl class="profile-fields person-facts">${facts}</dl>${actions?`<nav class="person-actions" aria-label="Actions for this person">${actions}</nav>`:""}<a class="text-link" href="/workspace/people">Back to People</a>`);
 }
 
 /** The operator person pages' frame: sign out, the workspace navigation, then the page. */
-function personShell(title:string,active:WorkspaceContext,login:BrowserLoginApplication,main:string):string{
+export function personShell(title:string,active:WorkspaceContext,login:BrowserLoginApplication,main:string):string{
   const e=escapeHtml;
   return workspaceDocument(title,`<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out">Sign out</button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${e(String(new URLSearchParams({org_id:active.orgId,role:active.role})))}">Workspaces</a>${companiesLink(active,login,false,true)}${accessLink(active,login)}</nav></aside><main id="main" class="profile-main">${main}</main></div>`);
 }

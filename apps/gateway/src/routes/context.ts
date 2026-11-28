@@ -45,6 +45,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly civilIdReview?: CivilIdReviewHttpService;
   readonly area?: AreaHttp;
   readonly people?: PeopleDirectoryPage;
+  readonly lifecycle?: import("../person-lifecycle.js").PersonLifecycleHttp;
   readonly organizationProfile?: OrganizationProfile;
   readonly organizationStatus?: OrganizationStatus;
   readonly organizationCommercialTerms?: OrganizationCommercialTerms;

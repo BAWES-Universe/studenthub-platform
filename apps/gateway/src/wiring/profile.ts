@@ -1,7 +1,7 @@
 import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
 import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
-import { readLiveLoginSessionPerson } from "@studenthub/db/access";
+import { PostgresPersonLifecycleStore, readLiveLoginSessionPerson } from "@studenthub/db/access";
 import type { SessionStore } from "@studenthub/login-contract";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
 import { PostgresCatalogueStore } from "@studenthub/db/catalogue";
@@ -104,6 +104,8 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const personLocations = new PostgresPersonLocationStore({ pool:profileReadPool });
   const PeopleDirectoryStore=(PostgresPersonProfileStore as typeof PostgresPersonProfileStore&{PeopleDirectoryStore:new(options:{pool:pg.Pool})=>import("@studenthub/profile").PeopleDirectoryStore}).PeopleDirectoryStore;
   const people=createPeopleDirectory({sessions:access.loginStore.sessions,authz:access.authzStore,store:new PeopleDirectoryStore({pool:profileReadPool}),choices:()=>profileChoices.readOriginChoices()});
+  // A-02: staff warnings and tags on a person page; the store re-reads the caller's grants in each transaction.
+  const lifecycle={sessions:access.loginStore.sessions,store:new PostgresPersonLifecycleStore({pool:profileReadPool,staffDecision:grants=>hasOperatorStaffGrant(grants.map(g=>({role:g.role,scope:g.scope,orgId:g.org_id})))})};
   const area = createArea({ store: personLocations });
   const profiles = composeOwnProfiles({ principals: access.authzStore, source: profileSource, safeWrites, personProfiles, civilId, area });
   // SHU-182: a candidate's own bank details, behind the same signing key.
@@ -185,6 +187,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       ...(civilIdReview ? { civilIdReview } : {}),
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
       people,
+      lifecycle,
       }, web: { profiles: webProfiles, ...(personProfiles && civilId ? { profileCompleteness: { choices: () => personProfiles.readOriginChoices(), civilId } } : {}) }, browserSessionPool, sessions,
     },
     async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), profileReadPool.end(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close()]); },
