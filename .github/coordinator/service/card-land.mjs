@@ -796,7 +796,10 @@ const sameFiles = (a, b) => a.size === b.size && [...a].every(([name, blob]) => 
 // The passed head's own files are the review's; a head is taken only when it
 // merges main into `current` and keeps exactly those blobs. Returns the head
 // to land.
-async function updateFromMain(io, gh, { repo, number, branch, passed, current, limits }) {
+// `deadline`, when given, is the one wait's absolute end: no update is sent
+// once it has passed, and the wait for the new head ends with it; either way
+// the landing stops CI_TIMEOUT.
+async function updateFromMain(io, gh, { repo, number, branch, passed, current, limits, deadline }) {
   const at = await mainAt(gh, repo, current);
   if (at.fresh) return current;
   const own = await ownFiles(gh, repo, at.main, passed);
@@ -806,6 +809,9 @@ async function updateFromMain(io, gh, { repo, number, branch, passed, current, l
   const touched = theirs.length < COMPARE_FILES ? theirs.find((file) => own.has(file?.filename) || own.has(file?.previous_filename)) : null;
   if (touched) {
     stop("LAND_DELTA_CHANGED", `main changed ${touched.filename}, which pull request #${number} changes too; nothing was updated, and its head needs a review with main's change`);
+  }
+  if (deadline !== undefined && io.now().getTime() >= deadline) {
+    stop("CI_TIMEOUT", `the landing's wait ended before main was carried into pull request #${number}; nothing was updated`);
   }
   // Sent once, conditional on the head: a lost answer is read back below.
   let sent = null;
@@ -817,13 +823,16 @@ async function updateFromMain(io, gh, { repo, number, branch, passed, current, l
     stop("LAND_CONFLICT", `main does not merge cleanly into pull request #${number}: ${sent.message}; the landing never resolves a conflict`);
   }
   if (sent && sent.status !== 202) stop("LAND_ERROR", `pull request #${number} was not updated from main (HTTP ${sent.status}${sent.message ? `: ${sent.message}` : ""})`);
-  const until = io.now().getTime() + limits.updateWaitMs;
+  const ownUntil = io.now().getTime() + limits.updateWaitMs;
+  const until = deadline !== undefined ? Math.min(ownUntil, deadline) : ownUntil;
   let pull;
   for (;;) {
     const response = await gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`);
     pull = await response.json();
     if (response.ok && pull?.head?.sha && pull.head.sha !== current) break;
-    if (io.now().getTime() >= until) stop(limits.updateTimeout ?? "LAND_ERROR", `pull request #${number} did not move from ${current} within ${Math.round(limits.updateWaitMs / 1000)} s of its update from main`);
+    if (io.now().getTime() >= until) {
+      stop(until < ownUntil ? "CI_TIMEOUT" : "LAND_ERROR", `pull request #${number} did not move from ${current} within ${Math.round((until - (ownUntil - limits.updateWaitMs)) / 1000)} s of its update from main`);
+    }
     io.sleep(limits.updatePollMs);
   }
   const head = pull.head.sha;
@@ -1126,13 +1135,9 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     const timedOut = (why) => result("CI_TIMEOUT", { ...landed(), reason: `not green within ${Math.round(limits.waitMs / 60000)} minutes: ${why}` });
     for (;;) {
       if (carry) {
-        // The carry's own wait for its new head is cut to what is left of
-        // the one wait.
-        const left = Math.max(0, waitUntil - io.now().getTime());
-        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead,
-          limits: { ...limits, updateWaitMs: Math.min(limits.updateWaitMs, left),
-            // A carry cut short by the one wait's end is that wait running out.
-            ...(left < limits.updateWaitMs ? { updateTimeout: "CI_TIMEOUT" } : {}) } });
+        // The carry sends no update once the one wait has ended, and its own
+        // wait for the new head ends with it.
+        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead, limits, deadline: waitUntil });
         target.head = landHead;
         carry = false;
       }

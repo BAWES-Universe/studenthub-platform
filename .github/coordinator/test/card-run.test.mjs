@@ -6863,7 +6863,23 @@ test("Re-carry: a behind read that comes after the one wait has ended starts no 
   const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, checks: ["pending", "pending", "pending", "green"] });
   const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs: 2.5 * LAND_LIMITS.pollMs } });
   assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /mergeable_state behind/, "the landing stops before the carry begins");
   assert.equal(host.land.updates, 0, "no carry starts after the wait");
+  assert.ok(!host.land.log.includes("github update from main"));
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+});
+
+test("Re-carry: a carry whose reads before the update outlast the one wait sends no update and ends CI_TIMEOUT", async () => {
+  // Green and behind at 2 polls, inside a wait of 2.5; the carry's own read
+  // of main then takes a whole poll, so the wait has ended before the update.
+  let mainReads = 0;
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, checks: ["pending", "pending", "green"],
+    onCompareMain: (land, h) => { mainReads += 1; if (mainReads === 2) h.clock += LAND_LIMITS.pollMs; } });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs: 2.5 * LAND_LIMITS.pollMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /wait ended before main was carried/);
+  assert.equal(host.land.updates, 0, "no update is sent after the wait");
   assert.ok(!host.land.log.includes("github update from main"));
   assert.equal(host.land.merges, 0);
   noLandingWrites(host);

@@ -1563,8 +1563,8 @@ const CASES = [
   {
     name: "M224 land a head behind main without updating it",
     file: "service/card-land.mjs",
-    from: "        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead,",
-    to: "        void ({ repo, number: pr.number, branch, passed: head, current: landHead, // SHU86-M224",
+    from: "        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead, limits, deadline: waitUntil });",
+    to: "        // SHU86-M224",
     pattern: "M15 W4: with two workers a landing behind main",
   },
   {
@@ -2051,6 +2051,13 @@ const CASES = [
     from: "`Merge not confirmed: ${where.join(\"; \")}; this landing did not confirm a merge.`",
     to: "`Merge not confirmed: ${where.join(\"; \")} stays open and unmerged.`",
     pattern: "Report: \"Landed:\" is written only for a merge",
+  },
+  {
+    name: "M349 send a carry's update after the one wait has ended",
+    file: "service/card-land.mjs",
+    from: "  if (deadline !== undefined && io.now().getTime() >= deadline) {",
+    to: "  if (false) { // SHU86-M349",
+    pattern: "Re-carry: a carry whose reads before the update outlast the one wait",
   },
   {
     name: "M344 report an unmerged landing as landed",
