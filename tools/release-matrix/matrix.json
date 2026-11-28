@@ -788,10 +788,18 @@
     "O-10": {
       "lane": "recruit",
       "subject": "`/organization/:orgId/interviews`",
+      "served": [
+        {
+          "route": "/organization/:orgId/interviews",
+          "test": "apps/gateway/test/organization-interviews-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-22): per-request interviews page /recruit/requests/:requestId/interviews only; no organization-wide interviews list"
+          "state": "done",
+          "evidence": "company interviews list through the gateway, proven by checkServed; PR #780 at 0656f0a8",
+          "note": "served at /organization/:orgId/interviews, 100 a page with ?page=; staff and the company's own readers; person, position (linked to /recruit/requests/:requestId/interviews for evaluations), store, Kuwait time, status and outcome only, never a rating, note or location; paused people hidden from the company"
         },
         "verified": {
           "state": "open"
