@@ -12,3 +12,4 @@ export { PostgresAccessStaffViewsStore } from "./postgres-access-staff-views-sto
 export { PostgresAccessRegistrationsStore } from "./postgres-access-registrations-store.js";
 export { PostgresAccessSessionsStore, ACCOUNT_SESSIONS_LIMIT } from "./postgres-access-sessions-store.js";
 export { emailVerifiedSql } from "./email-verification.js";
+export { PostgresStoreDocumentViewsStore, type StoreDocumentView } from "./postgres-store-document-views-store.js";

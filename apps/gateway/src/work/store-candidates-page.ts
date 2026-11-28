@@ -86,6 +86,9 @@ export async function handleStoreCandidatesPage(ctx: GatewayRouteContext): Promi
       const person = people[0]!;
       const rows = person.placements.map((a) => `<tr><th scope="row">${esc(period(a))}</th><td>${status(a, today)}</td></tr>`).join("");
       const body = `<main id="main" class="profile-main">${crumbs(` › <a href="${base}/candidates">Candidates</a>`)}<h1>${esc(person.name)}</h1>`
+        // M-05: the documents page, while the person is working here now or starting later.
+        + (ctx.documents && ctx.login?.storeDocumentViews && person.placements.some((a) => a.endDate === null || a.endDate >= today)
+          ? `<p><a class="text-link" href="${base}/candidates/${esc(encodeURIComponent(person.id))}/documents">Documents</a></p>` : "")
         + `<h2>Placements at ${esc(store)}</h2>${capped ? `<p role="status">Only the ${ASSIGNMENT_LIST_LIMIT} most recent placements are shown; older ones are not listed here.</p>` : ""}<table><thead><tr><th>Period</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></main>`;
       ctx.writeHtml(ctx.response, 200, ctx.pageDocument(person.name, body));
       return true;

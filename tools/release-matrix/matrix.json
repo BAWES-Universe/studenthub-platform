@@ -980,7 +980,7 @@
       "gates": {
         "built": {
           "state": "open",
-          "note": "partly built (audit 2026-11-20): employer document delivery by signed link; no store page"
+          "note": "built in review: /workspace/stores/:storeId/candidates/:id/documents lists the photo and CV of a person placed at the manager's store (now or later) and opens each through a 60-second signed store link, audited on issue and delivery (migration 0411); civil ID images are not offered to stores (decision D1)"
         },
         "verified": {
           "state": "open"

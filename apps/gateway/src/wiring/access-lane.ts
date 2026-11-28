@@ -1,4 +1,4 @@
-import { PostgresAccessAbuseStore, PostgresAccessContactsStore, PostgresAccessGrantsStore, PostgresAccessInvitationsStore, PostgresAccessPausesStore, PostgresAccessRegistrationsStore, PostgresAccessSessionsStore, PostgresAccessStaffViewsStore, PostgresAccessStoreManagersStore } from "@studenthub/db/access";
+import { PostgresAccessAbuseStore, PostgresAccessContactsStore, PostgresAccessGrantsStore, PostgresAccessInvitationsStore, PostgresAccessPausesStore, PostgresAccessRegistrationsStore, PostgresAccessSessionsStore, PostgresAccessStaffViewsStore, PostgresAccessStoreManagersStore, PostgresStoreDocumentViewsStore } from "@studenthub/db/access";
 import { blockListOf, createAccessGrantService, createStoreGrantService, createAccountPauseService, parseTrustedProxies, createCompanyContactsService, createCompanyRegistrationService, createCompanyTeamService } from "../../../../packages/access/src/index.js";
 import type { AccessPorts } from "../access/admin-access.js";
 import type { CompanyTeamPorts } from "../access/company-team.js";
@@ -29,7 +29,7 @@ import type { Wired, WiringSettings } from "./context.js";
  * write's transaction, so they run with or without the key.
  */
 export function wireAccessLane(settings: WiringSettings, access: ReturnType<typeof wireAccess>["services"], env: NodeJS.ProcessEnv = {}): Wired<{
-  readonly application: { readonly access: AccessPorts; readonly team: CompanyTeamPorts; readonly contacts: CompanyContactsPorts; readonly storeManager: StoreManagerPorts; readonly abuse: AbuseGatePorts; readonly staffView: StaffViewPorts; readonly registrations: CompanyRegistrationPorts };
+  readonly application: { readonly access: AccessPorts; readonly team: CompanyTeamPorts; readonly contacts: CompanyContactsPorts; readonly storeManager: StoreManagerPorts; readonly abuse: AbuseGatePorts; readonly staffView: StaffViewPorts; readonly registrations: CompanyRegistrationPorts; readonly storeDocumentViews: PostgresStoreDocumentViewsStore };
   readonly pauses: PostgresAccessPausesStore;
 }> {
   const store = new PostgresAccessGrantsStore({ connectionString: settings.databaseUrl });
@@ -44,6 +44,7 @@ export function wireAccessLane(settings: WiringSettings, access: ReturnType<type
   const views = new PostgresAccessStaffViewsStore({ connectionString: settings.databaseUrl });
   const registrations = new PostgresAccessRegistrationsStore({ connectionString: settings.databaseUrl });
   const accountSessions = new PostgresAccessSessionsStore({ connectionString: settings.databaseUrl });
+  const storeDocumentViews = new PostgresStoreDocumentViewsStore({ connectionString: settings.databaseUrl });
   const abuse = new PostgresAccessAbuseStore({ connectionString: settings.databaseUrl });
   const trustedProxies = blockListOf(parseTrustedProxies(env.GATEWAY_TRUSTED_PROXIES));
   const pauseWrites = settings.safeWriteKey ? createAccountPauseService({ store: pauses }) : undefined;
@@ -56,7 +57,9 @@ export function wireAccessLane(settings: WiringSettings, access: ReturnType<type
       abuse: { sessions: access.loginStore.sessions, store: abuse, reads: store, trustedProxies },
       staffView: { sessions: access.loginStore.sessions, reads: store, views },
       registrations: { sessions: access.loginStore.sessions, reads: store, registrations, service: createCompanyRegistrationService({ store: registrations }) },
+      // M-05: the audit of store document links issued and documents delivered.
+      storeDocumentViews,
     }, pauses },
-    async close() { await Promise.all([store.close(), invitations.close(), contactStore.close(), storeManagers.close(), pauses.close(), abuse.close(), views.close(), registrations.close(), accountSessions.close()]); },
+    async close() { await Promise.all([store.close(), invitations.close(), contactStore.close(), storeManagers.close(), pauses.close(), abuse.close(), views.close(), registrations.close(), accountSessions.close(), storeDocumentViews.close()]); },
   };
 }

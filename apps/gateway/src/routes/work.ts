@@ -5,12 +5,14 @@ import { handleStaffPages } from "../work/staff-pages.js";
 import { handleMyWorkPages, handleStaffTimePages } from "../work/staff-time-pages.js";
 import { handleStandupPages } from "../work/standup-pages.js";
 import { handleStoreCandidatesPage } from "../work/store-candidates-page.js";
+import { handleStoreDocumentsPage } from "../work/store-documents-page.js";
 import type { GatewayRoute } from "./context.js";
 
 export const workRoute: GatewayRoute = {
   name: "work",
   // Staff screens come before the person's so /work/appeals?as=staff reaches them.
-  handle: async (ctx) => await handleStoreCandidatesPage(ctx)
+  handle: async (ctx) => await handleStoreDocumentsPage(ctx)
+    || await handleStoreCandidatesPage(ctx)
     || await handleWork(ctx.request, ctx.response, ctx.login?.work, ctx.login?.web?.origin)
     || await handleMyWorkPages(ctx.request, ctx.response, ctx.login?.work, ctx.login?.web?.origin)
     || await handleStaffTimePages(ctx.request, ctx.response, ctx.login?.work)
