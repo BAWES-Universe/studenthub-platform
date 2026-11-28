@@ -2055,8 +2055,8 @@ const CASES = [
   {
     name: "M349 send a carry's update after the one wait has ended",
     file: "service/card-land.mjs",
-    from: "  if (deadline !== undefined && io.now().getTime() >= deadline) {",
-    to: "  if (false) { // SHU86-M349",
+    from: "  const late = () => deadline !== undefined && io.now().getTime() >= deadline;",
+    to: "  const late = () => false; // SHU86-M349",
     pattern: "Re-carry: a carry whose reads before the update outlast the one wait",
   },
   {
@@ -2074,10 +2074,10 @@ const CASES = [
     pattern: "Re-carry: a carry whose new head is read only after the one wait has ended",
   },
   {
-    name: "M352 wait for green on a carried head after the one wait has ended",
+    name: "M352 read on after a carried head's commit read outlasts the one wait",
     file: "service/card-land.mjs",
-    from: "        if (io.now().getTime() >= waitUntil) return timedOut(\"the pull request moved to main's tip only after the one wait had ended\");",
-    to: "        // SHU86-M352",
+    from: "  const commit = await commitResponse.json();\n  checkedLate();",
+    to: "  const commit = await commitResponse.json(); // SHU86-M352",
     pattern: "Re-carry: a carry whose checks of the new head outlast the one wait",
   },
   {
@@ -2086,6 +2086,20 @@ const CASES = [
     from: "      if (checks && wait.waitMs <= 0) return timedOut(checks.reason);",
     to: "      // SHU86-M353",
     pattern: "Re-carry: a stale behind read paced past the one wait's end",
+  },
+  {
+    name: "M354 read on after an update answered only after the one wait has ended",
+    file: "service/card-land.mjs",
+    from: "  if (late()) {\n    stop(\"CI_TIMEOUT\", `the landing's wait ended while pull request #${number} was being updated from main; nothing more was read`);\n  }",
+    to: "  // SHU86-M354",
+    pattern: "Re-carry: an update whose answer comes back after the one wait has ended",
+  },
+  {
+    name: "M355 start a read for the new head after its wait has ended",
+    file: "service/card-land.mjs",
+    from: "    // No read starts once the wait is over, the first included.\n    if (io.now().getTime() >= until) outlasted();",
+    to: "    // SHU86-M355",
+    pattern: "Re-carry: a wait for the new head that a poll's pause ends",
   },
   {
     name: "M344 report an unmerged landing as landed",
