@@ -8524,7 +8524,60 @@ const RECUT_735_CONTRACTS = Object.fromEntries(Object.entries(RECUT_735).map(([f
   if (!brief.endsWith(`${acceptance0}${requeue}`)) throw new Error(`the re-cut brief for ${to} must end with its acceptance`);
   return [to, Object.freeze({ workspace_mode: base.workspace_mode, initial_build_paths: base.initial_build_paths, revision_paths: base.revision_paths, acceptance: `${acceptance0}${requeue}`, brief })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS, ...RECUT_634_CONTRACTS, ...RECUT_635_CONTRACTS, ...RECUT_640_CONTRACTS, ...RECUT_643_CONTRACTS, ...COMPANY_PAGES_CONTRACTS, ...RECUT_667_CONTRACTS, ...BOX_BATCH_685_CONTRACTS, ...RECRUIT_DETAIL_CONTRACTS, ...RECUT_699_CONTRACTS, ...CERTIFICATE_DETAIL_CONTRACTS, ...LANE1_READ_PAGES_CONTRACTS, ...OVERNIGHT_READ_PAGES_CONTRACTS, ...RECUT_735_CONTRACTS, ...SHU771_CONTRACT });
+// SHU-748, SHU-749 and SHU-755 each passed review, but their landing stopped
+// (CI_TIMEOUT behind main, or red after main's shared 404 fallback changed)
+// and their one landing recovery was spent. A stopped card never runs again
+// under its own id, and Linear's GitHub integration assigned each card when
+// its pull request opened, so every code install's plan check refuses it
+// (CARD_RUN_CARD_OWNED). SHU-784, SHU-785 and SHU-786 re-queue the three
+// contracts under fresh ids and build again from main; the old cards, branches
+// and pull requests stay as they are. SHU-784 also carries the repair of
+// NOTEDET_PASSTHROUGH that SHU-748's red check needed: the browser
+// /notes/receipts request is an unserved path whose HTML 404 the shared
+// fallback negotiates.
+const RECUT_748 = Object.freeze({ "SHU-748": "SHU-784", "SHU-749": "SHU-785", "SHU-755": "SHU-786" });
+const RECUT_748_SOURCES = Object.freeze({ "SHU-748": OVERNIGHT_READ_PAGES_CONTRACTS, "SHU-749": OVERNIGHT_READ_PAGES_CONTRACTS, "SHU-755": RECUT_735_CONTRACTS });
+const RECUT_748_SIBLINGS = Object.freeze({
+  "SHU-748": ["The company pay contracts card (SHU-749) edits apps/gateway/src/pay-contracts-http.ts beside you and shares no path.", "The company pay contracts card (SHU-785) edits apps/gateway/src/pay-contracts-http.ts and the reference data entry card (SHU-786) edits apps/gateway/src/reference-data-page.ts beside you; neither shares a path with you."],
+  "SHU-749": ["The company note page card (SHU-748) edits apps/gateway/src/organizations/notes-page.ts beside you and shares no path.", "The company note page card (SHU-784) edits apps/gateway/src/organizations/notes-page.ts and the reference data entry card (SHU-786) edits apps/gateway/src/reference-data-page.ts beside you; neither shares a path with you."],
+  "SHU-755": ["The certificate detail card (SHU-754) edits apps/gateway/src/reports/certificates-http.ts beside you and shares no path.", "The company note page card (SHU-784) edits apps/gateway/src/organizations/notes-page.ts and the company pay contracts card (SHU-785) edits apps/gateway/src/pay-contracts-http.ts beside you; neither shares a path with you."],
+});
+const RECUT_748_REASONS = Object.freeze({
+  "SHU-748": "because its run passed review but its pull request went red after main's shared 404 fallback changed, its one landing recovery was spent, and its owned card keeps every code install from planning",
+  "SHU-749": "because its run passed review but its landing stopped behind main, its one landing recovery was spent, and its owned card keeps every code install from planning",
+  "SHU-755": "because its run passed review but its landing stopped, its one landing recovery was spent, and its owned card keeps every code install from planning",
+});
+// SHU-755's own re-queue sentence is dropped: SHU-786 names only the card it
+// re-queues.
+const RECUT_748_PRIOR = Object.freeze({ "SHU-755": " SHU-755 is SHU-740's contract re-queued under a fresh id because its run expired before its review after its build pushed coordinator/SHU-740, and that branch's own commit keeps the box from running it again; SHU-740 never lands." });
+// NOTEDET_PASSTHROUGH repair (GPT desk #393, 7230139871): the browser request
+// to /organization/<orgId>/notes/receipts is compared with an ordinary browser
+// 404, an explicit JSON request asserts the JSON fallback, and the receipt API
+// keeps its positive coverage. Nothing in the router or permissions changes.
+const NOTEDET_RECEIPTS_ANCHOR = "apps/gateway/test/organization-notes-page.test.ts passes unchanged; (5) NOTEDET_UNAVAILABLE";
+const NOTEDET_RECEIPTS_REPAIR = "a browser GET /organization/<orgId>/notes/receipts (Accept: text/html) is an unserved path the note path never claims (receipts is not a decimal note id), and its status, content type and body equal those of an ordinary browser GET of an unserved path such as /organization/<orgId>/notes-unknown-path, the shared HTML not-found page; the same /organization/<orgId>/notes/receipts request with an explicit Accept: application/json answers the shared JSON 404 fallback, asserted as application/json; the receipt API GET /organization/notes/<orgId>/receipts/<ref> keeps its positive coverage and answers exactly as at the bound head; no router, route order or permission change is made to make any of these pass; " + "apps/gateway/test/organization-notes-page.test.ts passes unchanged; (5) NOTEDET_UNAVAILABLE";
+const RECUT_748_CONTRACTS = Object.fromEntries(Object.entries(RECUT_748).map(([from, to]) => {
+  const base = RECUT_748_SOURCES[from][from];
+  const prior = RECUT_748_PRIOR[from] ?? "";
+  const strip = (text) => (prior ? replaceOnce(text, prior, "", `${to} prior re-queue`) : text);
+  const recut = (text) => text.replace(new RegExp(`\\b${from}\\b`, "g"), to);
+  let acceptance0 = recut(strip(base.acceptance));
+  let brief = recut(strip(base.brief));
+  if (from === "SHU-748") {
+    const repaired = replaceOnce(acceptance0, NOTEDET_RECEIPTS_ANCHOR, NOTEDET_RECEIPTS_REPAIR, `${to} receipts repair`);
+    brief = replaceOnce(brief, acceptance0, repaired, `${to} repaired acceptance`);
+    acceptance0 = repaired;
+  }
+  const requeue = ` ${to} is ${from}'s contract re-queued under a fresh id ${RECUT_748_REASONS[from]}; ${from} never lands.`;
+  const [siblingOld, siblingNew] = RECUT_748_SIBLINGS[from];
+  brief = replaceOnce(brief, siblingOld, siblingNew, `${to} sibling`);
+  brief = replaceOnce(brief, acceptance0, `${acceptance0}${requeue}`, `${to} acceptance`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  if (!brief.endsWith(`${acceptance0}${requeue}`)) throw new Error(`the re-cut brief for ${to} must end with its acceptance`);
+  if (/\bSHU-(740|754)\b/.test(brief)) throw new Error(`${to}'s brief must not name the older re-queued or landed cards`);
+  return [to, Object.freeze({ workspace_mode: base.workspace_mode, initial_build_paths: base.initial_build_paths, revision_paths: base.revision_paths, acceptance: `${acceptance0}${requeue}`, brief })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS, ...RECUT_634_CONTRACTS, ...RECUT_635_CONTRACTS, ...RECUT_640_CONTRACTS, ...RECUT_643_CONTRACTS, ...COMPANY_PAGES_CONTRACTS, ...RECUT_667_CONTRACTS, ...BOX_BATCH_685_CONTRACTS, ...RECRUIT_DETAIL_CONTRACTS, ...RECUT_699_CONTRACTS, ...CERTIFICATE_DETAIL_CONTRACTS, ...LANE1_READ_PAGES_CONTRACTS, ...OVERNIGHT_READ_PAGES_CONTRACTS, ...RECUT_735_CONTRACTS, ...SHU771_CONTRACT, ...RECUT_748_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run

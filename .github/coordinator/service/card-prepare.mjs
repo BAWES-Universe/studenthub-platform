@@ -563,7 +563,7 @@ export const RUN_OUTCOME_TEXT = Object.freeze({
   DIED: "the run's process died before it finished; the worker's next start reverted it and released its lock",
   REPAIR_TEST_WEAKENED: "the repair skipped, removed or loosened a test, or changed how tests run; nothing was handed off or merged",
   // Landing recovery (card-recover.mjs)
-  LANDING_RECOVERY: "a passed card whose landing stopped was landed again, once, at a head proven to hold exactly the reviewed change",
+  LANDING_RECOVERY: "a passed card whose landing stopped was tried again, once, at a head proven to hold exactly the reviewed change; its Landing line says whether it merged",
 });
 
 // How a held merge recovers: the attempt's HOLD is final, so only a new
@@ -577,7 +577,10 @@ function landingLines(land) {
     Number.isInteger(land.pr) ? `pull request #${land.pr}${land.opened ? " (opened by this run)" : ""}` : null,
     /^[0-9a-f]{40}$/.test(land.merge_commit ?? "") ? `merge commit ${land.merge_commit}` : null,
   ].filter(Boolean);
-  if (where.length) lines.push(`Landed: ${where.join("; ")}.`);
+  // "Landed:" only for a merge. Any other outcome names its pull request
+  // without claiming its state: an error after the merge call can leave it
+  // merged, and only a MERGED outcome is a confirmed merge.
+  if (where.length) lines.push(land.outcome === "MERGED" ? `Landed: ${where.join("; ")}.` : `Merge not confirmed: ${where.join("; ")}; this landing did not confirm a merge.`);
   if (land.reason) lines.push(`Landing reason: ${plainReason(land.reason)}`);
   for (const thread of land.threads?.settled ?? []) {
     lines.push(`Settled review thread: ${plainReason(`${thread.bot} ${thread.severity} ${thread.url}`)}`);
@@ -616,7 +619,7 @@ export function renderRunReport(result) {
   }
   // Landing recovery: which pull request, from which stopped landing.
   if (result.recover) {
-    lines.push(`Landing recovery of pull request #${result.recover.pr}: the PASS of episode ${plainReason(result.recover.recover_of)} at ${result.recover.reviewed_head}, whose landing stopped (${plainReason(result.recover.stopped_land)}), landed from ${result.recover.head}.`);
+    lines.push(`Landing recovery of pull request #${result.recover.pr}: the PASS of episode ${plainReason(result.recover.recover_of)} at ${result.recover.reviewed_head}, whose landing stopped (${plainReason(result.recover.stopped_land)}), tried again from ${result.recover.head}.`);
   }
   if (result.reason) lines.push(`Reason: ${plainReason(result.reason)}`);
   // Self-heal: a refused start whose run was given back says so.
