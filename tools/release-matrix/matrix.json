@@ -1441,8 +1441,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "not started (audit 2026-11-20): platform integrations page"
+          "state": "done",
+          "evidence": "PR #775 at 7c85b7ccdcb34f86642b41e0dfc366853f5a960a"
         },
         "verified": {
           "state": "open"
