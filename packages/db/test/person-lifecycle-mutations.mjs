@@ -17,6 +17,7 @@ const mutations = [
   ["list warnings oldest first", "A02_WARN", "FROM person_warnings w WHERE principal_id = $1::text ORDER BY created_at DESC", "FROM person_warnings w WHERE principal_id = $1::text ORDER BY created_at"],
   ["ignore the version read", "A02_CORRECT", "row.version !== input.expectedVersion", "false"],
   ["correct another person's warning", "A02_CORRECT", "WHERE id = $1::uuid AND principal_id = $2 FOR UPDATE", "WHERE id = $1::uuid AND $2::text IS NOT NULL FOR UPDATE"],
+  ["re-read the grants without a lock", "A02_LOCK", "WHERE principal_id = $1::text ORDER BY id FOR SHARE", "WHERE principal_id = $1::text ORDER BY id"],
   ["list removed tags", "A02_TAGS", "AND removed_at IS NULL ORDER BY created_at DESC, id", "ORDER BY created_at DESC, id"],
   ["remove another person's tag", "A02_TAGS", "WHERE id = $1::uuid AND principal_id = $2 AND removed_at IS NULL", "WHERE id = $1::uuid AND $2::text IS NOT NULL AND removed_at IS NULL"],
 ];

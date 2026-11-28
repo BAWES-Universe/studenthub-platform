@@ -98,6 +98,25 @@ test("A02_TAGS staff add a tag with its reason and remove it; one live tag per v
   await assert.rejects(pool.query("UPDATE person_tags SET reason = 'x' WHERE id = $1", [star]), /removed, once/);
 });
 
+test("A02_LOCK a revocation in flight is waited for: the warning is refused once it commits", async () => {
+  const s = await setup();
+  const revoke = await pool.connect();
+  try {
+    await revoke.query("BEGIN");
+    await revoke.query("DELETE FROM grants WHERE principal_id = $1", [s.staff]);
+    let settled = false;
+    const warning = store.warn(s.staff, s.noor, { title: "T", message: "M" }).finally(() => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(settled, false, "the grant re-check waits for the revocation");
+    await revoke.query("COMMIT");
+    assert.deepEqual(await warning, { kind: "not_found" }, "refused once the revocation commits");
+    assert.equal((await pool.query("SELECT 1 FROM person_warnings WHERE principal_id = $1", [s.noor])).rowCount, 0, "nothing written");
+  } finally {
+    await revoke.query("ROLLBACK").catch(() => undefined);
+    revoke.release();
+  }
+});
+
 test("A02_CASCADE deleting the person's principal removes their warnings, edits and tags with it", async () => {
   const s = await setup();
   const id = (await store.warn(s.staff, s.noor, { title: "T", message: "M" }) as { warningId: string }).warningId;
