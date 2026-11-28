@@ -1148,10 +1148,18 @@
     "A-11": {
       "lane": "recruit",
       "subject": "`/recruiting/interviews`, `/evaluations`",
+      "served": [
+        {
+          "route": "/recruit/staff/interviews",
+          "test": "apps/gateway/test/recruit-staff-interviews.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): interview cancel/evaluate actions; no staff interviews page"
+          "state": "done",
+          "evidence": "staff interviews list through its handler, proven by checkServed; PR #790 at af2a0169",
+          "note": "served at /recruit/staff/interviews (the subject's /recruiting/interviews and /evaluations are not served and not aliased): every company's interviews for operator staff, 100 a page with ?page=, with outcome and latest rating as the evaluation column; notes and recording an evaluation stay on /recruit/requests/:requestId/interviews; paused people hidden before paging for non-internal callers"
         },
         "verified": {
           "state": "open"
