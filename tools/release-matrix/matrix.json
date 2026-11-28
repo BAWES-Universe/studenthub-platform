@@ -1003,10 +1003,17 @@
     "A-02": {
       "lane": "people",
       "subject": "`/people/candidates/:id/lifecycle`",
+      "served": [
+        {
+          "route": "/workspace/people/:personId/lifecycle",
+          "test": "apps/gateway/test/person-lifecycle.test.ts",
+          "via": "handler"
+        }
+      ],
       "gates": {
         "built": {
           "state": "open",
-          "note": "partly built (audit 2026-11-20): pause and resume only"
+          "note": "partly built: pause and resume (audit 2026-11-20); warnings and tags in review, PR #795 at a502e1c1, served at /workspace/people/:personId/lifecycle (the subject's /people/candidates/:id/lifecycle is not served and not aliased) for operator staff and admin: a warning emails the person, corrections keep the earlier wording, tags need a reason and are removed once with the row kept; merge and restore pending (slice 2)"
         },
         "verified": {
           "state": "open"
