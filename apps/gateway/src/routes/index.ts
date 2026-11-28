@@ -1,7 +1,7 @@
 import type { GatewayRoute } from "./context.js";
 import { catalogueRoute, referenceDataPageRoute } from "./catalogue.js";
 import { candidateDocumentsRoute, organizationDocumentsRoute } from "./documents.js";
-import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, languagePreferencePageRoute, languagePreferenceRoute, bankDetailsRoute, profileRecordsRoute, peopleDirectoryRoute, personDetailRoute, civilIdReviewRoute } from "./profile.js";
+import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, languagePreferencePageRoute, languagePreferenceRoute, bankDetailsRoute, profileRecordsRoute, peopleDirectoryRoute, personDetailRoute, personDocumentsRoute, civilIdReviewRoute } from "./profile.js";
 import { organizationProfileRoute, organizationStatusRoute, organizationCommercialTermsRoute, organizationApprovedToHireRoute, organizationNotesRoute, organizationBrandsRoute, organizationStoresRoute, organizationDeletionRoute, organizationCreationRoute, organizationAccountManagerPageRoute, organizationAccountManagerRoute, organizationPagesRoute } from "./organizations.js";
 import { payContractsRoute } from "./pay-contracts.js";
 import { invoicesRoute } from "./billing.js";
@@ -94,6 +94,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   areaRoute,
   peopleDirectoryRoute,
   personDetailRoute,
+  personDocumentsRoute,
   civilIdReviewRoute,
   accessRoute,
   staffViewRoute,
