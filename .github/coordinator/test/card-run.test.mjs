@@ -1900,7 +1900,10 @@ function cardLineage() {
 // blob), badParents (an update's parents come in the other order), behindWhenStale
 // (the pull request reads mergeable_state "behind" while its head does not
 // hold main's tip, as strict branch protection reads it). GitHub's
-// update-branch merges main into the head as a new head.
+// update-branch merges main into the head as a new head; onUpdate(land, host)
+// is called as it is sent, and stallUpdate answers it without moving the head;
+// onCommitRead(land, host) is called on each read of a carried head's commit.
+// land.requests lists every GitHub request with the clock as it was sent.
 function landingHost(options = {}) {
   const external = options.external ?? (options.settle !== undefined ? { required: ["coderabbitai", "sentry"] } : undefined);
   const config = options.settle !== undefined || external !== undefined || options.review !== undefined || options.parallel
@@ -2035,6 +2038,7 @@ function landingHost(options = {}) {
     const prefix = `https://api.github.com/repos/${REPO}`;
     assert.ok(String(url).startsWith(prefix), url);
     const route = String(url).slice(prefix.length);
+    (land.requests ??= []).push({ method: request.method ?? "GET", route, at: host.clock });
     const head = encodeURIComponent(`${REPO.split("/")[0]}:coordinator/SHU-301`);
     if (request.method === "POST" && route === "/pulls") {
       land.posts += 1;
@@ -2049,6 +2053,8 @@ function landingHost(options = {}) {
       land.log.push("github update from main");
       assert.deepEqual(JSON.parse(request.body), { expected_head_sha: land.pr.head }, "the update is conditional on the head");
       if (options.conflict) return respond(422, { message: "merge conflict between base and head" });
+      options.onUpdate?.(land, host);
+      if (options.stallUpdate) { land.updates += 1; return respond(202, { message: "Updating pull request branch." }); }
       land.updates += 1;
       const updated = String(land.updates + 3).repeat(40);
       land.parents.set(updated, options.badParents ? [tips[land.mainAt], land.pr.head] : [land.pr.head, tips[land.mainAt]]);
@@ -2080,6 +2086,7 @@ function landingHost(options = {}) {
       }
       if (route === "/branches/main") return respond(200, { protected: true, commit: { sha: tips[land.mainAt] } });
       const parents = land.parents.get(route.slice("/commits/".length));
+      if (parents) options.onCommitRead?.(land, host);
       if (parents) return respond(200, { sha: route.slice("/commits/".length), parents: parents.map((sha) => ({ sha })), commit: { tree: { sha: TREE } } });
       if (land.parents.has(land.pr.head) && route === `/commits/${land.pr.head}/status?per_page=100`) return respond(200, { state: "success", statuses: [] });
       if (land.parents.has(land.pr.head) && route === `/commits/${land.pr.head}/check-runs?filter=latest&per_page=100`) {
@@ -6863,9 +6870,132 @@ test("Re-carry: a behind read that comes after the one wait has ended starts no 
   const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, checks: ["pending", "pending", "pending", "green"] });
   const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs: 2.5 * LAND_LIMITS.pollMs } });
   assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /mergeable_state behind/, "the landing stops before the carry begins");
   assert.equal(host.land.updates, 0, "no carry starts after the wait");
   assert.ok(!host.land.log.includes("github update from main"));
   assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+});
+
+test("Re-carry: a carry whose reads before the update outlast the one wait sends no update and ends CI_TIMEOUT", async () => {
+  // Green and behind at 2 polls, inside a wait of 2.5; the carry's own read
+  // of main then takes a whole poll, so the wait has ended before the update.
+  let mainReads = 0;
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, checks: ["pending", "pending", "green"],
+    onCompareMain: (land, h) => { mainReads += 1; if (mainReads === 2) h.clock += LAND_LIMITS.pollMs; } });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs: 2.5 * LAND_LIMITS.pollMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /wait ended before main was carried/);
+  assert.equal(host.land.updates, 0, "no update is sent after the wait");
+  assert.ok(!host.land.log.includes("github update from main"));
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+});
+
+test("Re-carry: a carry whose wait for the new head ends exactly with the one wait ends CI_TIMEOUT, not LAND_ERROR", async () => {
+  // The update is sent exactly updateWaitMs before the one wait ends, and the
+  // head never moves: both waits end together, and the landing's wait is the
+  // one that ran out.
+  const waitMs = 10 * LAND_LIMITS.pollMs;
+  let started = null;
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, stallUpdate: true,
+    onChecks: (h, reads) => { if (reads === 1) started = h.clock; },
+    onUpdate: (land, h) => { h.clock = started + waitMs - LAND_LIMITS.updateWaitMs; } });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /did not move from .* within 120 s of its update from main/);
+  assert.equal(host.land.updates, 1);
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+});
+
+test("Re-carry: a carry whose new head is read only after the one wait has ended ends CI_TIMEOUT and goes no further", async () => {
+  // The update is sent one update poll before the wait ends, so the wait caps
+  // the update's own; the read that returns the new head starts before the
+  // wait ends and comes back after it.
+  const waitMs = 10 * LAND_LIMITS.pollMs;
+  let started = null;
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true,
+    onChecks: (h, reads) => { if (reads === 1) started = h.clock; },
+    onUpdate: (land, h) => { h.clock = started + waitMs - LAND_LIMITS.updatePollMs; },
+    onPullRead: (land, h) => { if (land.updates === 1) h.clock = Math.max(h.clock, started + waitMs); } });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /moved from [0-9a-f]{40} only after the landing's wait had ended; nothing more was done/);
+  assert.equal(host.land.updates, 1);
+  assert.equal(host.land.merges, 0);
+  assert.ok(![...host.land.checkedHeads].some((sha) => sha !== PASSED), "no checks are read at the new head");
+  noLandingWrites(host);
+});
+
+// The GitHub requests a landing sent at or after `at`.
+function requestsFrom(host, at) {
+  return (host.land.requests ?? []).filter((request) => request.at >= at).map((request) => `${request.method} ${request.route}`);
+}
+
+test("Re-carry: a carry whose checks of the new head outlast the one wait ends CI_TIMEOUT before any wait for green", async () => {
+  // The new head is read inside the wait; reading its commit takes the rest.
+  const waitMs = 10 * LAND_LIMITS.pollMs;
+  let started = null;
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true,
+    onChecks: (h, reads) => { if (reads === 1) started = h.clock; },
+    onCommitRead: (land, h) => { if (land.updates === 1) h.clock = Math.max(h.clock, started + waitMs); } });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /moved to [0-9a-f]{40}, but the landing's wait ended while that update was being checked; nothing more was done/);
+  assert.deepEqual(requestsFrom(host, started + waitMs), [], "no GitHub request is sent after the one wait ends");
+  assert.equal(host.land.updates, 1);
+  assert.equal(host.land.merges, 0);
+  assert.ok(![...host.land.checkedHeads].some((sha) => sha !== PASSED), "no checks are read at the new head");
+  noLandingWrites(host);
+});
+
+test("Re-carry: an update whose answer comes back after the one wait has ended reads nothing more and ends CI_TIMEOUT", async () => {
+  // The update is sent inside the wait; its answer takes the rest of it.
+  const waitMs = 10 * LAND_LIMITS.pollMs;
+  let started = null;
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true,
+    onChecks: (h, reads) => { if (reads === 1) started = h.clock; },
+    onUpdate: (land, h) => { h.clock = Math.max(h.clock, started + waitMs); } });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /the landing's wait ended while pull request #77 was being updated from main; nothing more was read/);
+  assert.equal(host.land.updates, 1);
+  assert.deepEqual(requestsFrom(host, started + waitMs), [], "no GitHub request is sent after the one wait ends");
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+});
+
+test("Re-carry: a wait for the new head that a poll's pause ends starts no further read and ends CI_TIMEOUT", async () => {
+  // The head never moves; the last pause before the wait's end takes what is
+  // left of it, and no read starts after it.
+  const waitMs = 10 * LAND_LIMITS.pollMs;
+  let started = null;
+  const host = landingHost({ mainSeq: [REV, MAIN2], mainAt: 1, behindWhenStale: true, stallUpdate: true,
+    onChecks: (h, reads) => { if (reads === 1) started = h.clock; },
+    onUpdate: (land, h) => { h.clock = started + waitMs - 1.5 * LAND_LIMITS.updatePollMs; } });
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /did not move from [0-9a-f]{40} within \d+ s of its update from main/);
+  assert.equal(host.land.updates, 1);
+  assert.deepEqual(requestsFrom(host, started + waitMs), [], "no GitHub request is sent after the one wait ends");
+  assert.equal(host.land.merges, 0);
+  noLandingWrites(host);
+});
+
+test("Re-carry: a stale behind read paced past the one wait's end reads and settles nothing more and ends CI_TIMEOUT", async () => {
+  // Behind (stale) for three reads inside a wait of 2.5 polls; the pacing
+  // sleep then passes the wait's end. A fourth read would find the pull
+  // request clean with a settleable bot thread.
+  const options = { mainSeq: [REV], mergeableState: "behind", settle: {}, botThreads: [[["coderabbitai", CR_MINOR]]],
+    onChecks: (h, reads) => { if (reads >= 4) options.mergeableState = "clean"; } };
+  const host = landingHost(options);
+  const result = await oneWorkerLand(host, { limits: { ...LAND_LIMITS, waitMs: 2.5 * LAND_LIMITS.pollMs } });
+  assert.equal(result.outcome, "CI_TIMEOUT", JSON.stringify(result));
+  assert.match(result.reason, /mergeable_state behind/);
+  assert.equal(host.land.checkReads, 3, "no read after the wait's end");
+  assert.deepEqual(settleWrites(host), [], "nothing is settled after the wait's end");
+  assert.equal(host.land.updates, 0);
   noLandingWrites(host);
 });
 
