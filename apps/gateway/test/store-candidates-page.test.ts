@@ -189,7 +189,8 @@ test("STOREDOC_HIDDEN the documents page has the candidates page's gate and the 
     assert.equal(r.status, 404, `STOREDOC_HIDDEN ${who} ${path}`);
     assert.equal(await r.text(), unknown, `${who} ${path}`);
   }
-  assert.equal(f.employerCalls.length, 0, "STOREDOC_HIDDEN no link is issued for a refused caller");
+  assert.equal((await f.request(DOCS, "manager", { method: "HEAD" })).status, 404, "STOREDOC_HIDDEN HEAD issues nothing");
+  assert.equal(f.employerCalls.length, 0, "STOREDOC_HIDDEN no link is issued for a refused caller or a HEAD");
   assert.equal((await f.request(DOCS)).status, 401);
   assert.equal((await f.request(`${DOCS}/x`, "manager")).status, 404);
   assert.equal((await f.request(DOCS, "manager", { method: "POST" })).status, 404);

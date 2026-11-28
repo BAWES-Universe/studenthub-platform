@@ -61,7 +61,8 @@ interface Person { readonly id: string; readonly name: string; readonly placemen
 export async function handleStoreCandidatesPage(ctx: GatewayRouteContext): Promise<boolean> {
   const requestUrl = new URL(ctx.request.url ?? "/", "http://gateway.invalid");
   const match = PAGE.exec(requestUrl.pathname);
-  if (!match || (ctx.request.method !== "GET" && ctx.request.method !== "HEAD")) return false;
+  // The documents subpage issues signed links and writes audit rows, so it answers GET only; HEAD falls through to not found.
+  if (!match || (ctx.request.method !== "GET" && (match[3] !== undefined || ctx.request.method !== "HEAD"))) return false;
   if (requestUrl.searchParams.size !== 0) return error(ctx, 400);
   const storeId = match[1]!;
   let personId: string | undefined;

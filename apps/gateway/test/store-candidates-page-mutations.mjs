@@ -8,6 +8,7 @@ const dist = new URL("../../../dist/", import.meta.url), page = new URL("apps/ga
 const suite = fileURLToPath(new URL("apps/gateway/test/store-candidates-page.test.js", dist)), hook = new URL("./helpers/swap-module.mjs", import.meta.url).href;
 const LIST = "/workspace/stores/123e4567-e89b-42d3-a456-426614174001/candidates";
 const cases = [
+  [page, "let HEAD issue document links", "STOREDOC_HIDDEN", "STOREDOC_HIDDEN HEAD issues nothing", "(match[3] !== undefined || ctx.request.method !== \"HEAD\")", "(ctx.request.method !== \"HEAD\")"],
   [page, "open a person never placed there", "STORECAND_PERSON", `${LIST}/carl`, "if (personId !== undefined && shown.length === 0)\n            return error(ctx, 404);", "if (false)\n            return error(ctx, 404);"],
   [page, "drop the name escaping", "STORECAND_LIST", "STORECAND_LIST rows", "${esc(p.name)}</a></th>`", "${p.name}</a></th>`"],
   [page, "count an ended placement as working now", "STORECAND_LIST", "STORECAND_LIST rows", "const placedNow = (a, today) => a.startDate <= today && (a.endDate === null || a.endDate >= today);", "const placedNow = (a, today) => a.startDate <= today;"],
