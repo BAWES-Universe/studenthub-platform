@@ -12,3 +12,5 @@ export { PostgresAccessStaffViewsStore } from "./postgres-access-staff-views-sto
 export { PostgresAccessRegistrationsStore } from "./postgres-access-registrations-store.js";
 export { PostgresAccessSessionsStore, ACCOUNT_SESSIONS_LIMIT } from "./postgres-access-sessions-store.js";
 export { emailVerifiedSql } from "./email-verification.js";
+export { PostgresPersonLifecycleStore } from "./postgres-person-lifecycle-store.js";
+export type { PersonLifecycle, PersonLifecycleStoreOptions, PersonTagInput, PersonTagRecord, PersonTagRemoveResult, PersonTagResult, PersonWarnResult, PersonWarningCorrectResult, PersonWarningInput, PersonWarningRecord } from "./postgres-person-lifecycle-store.js";
