@@ -13,7 +13,7 @@ const env = {
   OIDC_JWKS_URL: "https://identity.test.invalid/jwks", LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.test.invalid/profile",
 };
 
-const always = ["abuse", "access", "adminJobs", "adminOutbox", "area", "bankResults", "callback", "companies", "contacts", "exports", "financeContracts", "financeSettled", "financeTransfers", "invoices", "logout", "navigation", "organizationAccountManager", "organizationBrands", "organizationCreation", "organizationStores", "payContracts", "payHistory", "people", "platformIntegrations", "platformOperations", "profile", "recruitChecklist", "recruitEmployerView", "recruitFulltimers", "recruitInterviews", "recruitInvitations", "recruitJobs", "recruitPeopleSearch", "recruitPipeline", "recruitRequestApplications", "recruitRequests", "registrations", "staffView", "start", "storeManager", "team", "web"].sort();
+const always = ["abuse", "access", "adminJobs", "adminOutbox", "area", "bankResults", "callback", "companies", "contacts", "exports", "financeContracts", "financeSettled", "financeTransfers", "invoices", "logout", "navigation", "organizationAccountManager", "organizationBrands", "organizationCreation", "organizationStores", "payContracts", "payHistory", "people", "platformIntegrations", "platformOperations", "profile", "recruitChecklist", "recruitEmployerView", "recruitFulltimers", "recruitInterviews", "recruitInvitations", "recruitJobs", "recruitPeopleSearch", "recruitPipeline", "recruitRequestApplications", "recruitRequests", "registrations", "staffView", "start", "storeDocumentViews", "storeManager", "team", "web"].sort();
 const signed = [...always, "bankDetails", "browserEdit", "organizationApprovedToHire", "organizationCommercialTerms", "organizationDeletion", "organizationNotes", "organizationProfile", "organizationStatus", "preferences", "profileEdit"].sort();
 const KEY = Buffer.alloc(32, 7).toString("base64");
 
@@ -68,7 +68,7 @@ test("PREP_WIRING_SOURCE keeps construction out of the login runtime", async () 
 test("PREP_WIRING_COUNT closes every independently constructed pool exactly once", async (t) => {
   const ended = new Map<pg.Pool, number>();
   t.mock.method(pg.Pool.prototype, "end", async function(this: pg.Pool) { ended.set(this, (ended.get(this) ?? 0) + 1); });
-  for (const [environment, expected] of [[env, 33], [{ ...env, SAFE_WRITE_SIGNING_KEY: KEY }, 39]] as const) {
+  for (const [environment, expected] of [[env, 34], [{ ...env, SAFE_WRITE_SIGNING_KEY: KEY }, 40]] as const) {
     ended.clear();
     const runtime = createRuntimeLoginFromEnv(environment)!;
     await runtime.close();
