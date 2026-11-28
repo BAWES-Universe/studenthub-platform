@@ -91,6 +91,10 @@ interface FakeDb {
   staffWorkReady: boolean;
   staffPeople: { id: string; email: string; verified: boolean; operator: boolean }[];
   staffImported: Map<string, Set<string>>;
+  /** Whether the M-5 candidate migrations are applied; legacy candidate id to linked principal; legacy store id to platform store. */
+  candidateWorkReady: boolean;
+  candidateLinks: Map<string, string>;
+  storeMap: Map<string, { storeId: string; orgId: string }>;
   /** The promotion destination recorded on the staging marker row (0662). */
   promotionDestination: { account: string; bucket: string; org: string } | null;
   /** What the promotion was handed: principal, kind, sha256 of the bytes. */
@@ -100,7 +104,8 @@ const fakeDb = (): FakeDb => ({ marker: { environment: "staging", targetId: TARG
   promotionReady: true, pending: [], promoted: new Map(), staged: "0".repeat(64), linkReportReady: true,
   links: { imported: 0, linked: 0, ids: { "link.unlinked": [], "link.notImported": [], "link.multiplePrincipals": [], "link.contactTaken": [], "link.emailMismatch": [] } },
   documentsReady: true, documentBucket: { account: STAGING_ACCOUNT, bucket: STAGING_BUCKET_NAME }, stagedDocuments: new Map(), checkpoints: new Map(), checkpointLoads: 0,
-  docPromotionReady: true, promotionDestination: LIVE_DESTINATION, staffWorkReady: true, staffPeople: [], staffImported: new Map(), docLinks: new Map(), docLedger: new Map(), docOutcomes: new Map(), docPromoted: [] });
+  docPromotionReady: true, promotionDestination: LIVE_DESTINATION, staffWorkReady: true, staffPeople: [], staffImported: new Map(),
+  candidateWorkReady: true, candidateLinks: new Map(), storeMap: new Map(), docLinks: new Map(), docLedger: new Map(), docOutcomes: new Map(), docPromoted: [] });
 
 interface HarnessOptions {
   env?: Record<string, string | undefined>;
@@ -137,7 +142,7 @@ interface Harness {
   readonly err: string[];
   readonly state: { locked: boolean; released: number; closed: number; reads: number; receiptAtRelease: string | undefined; halted: number[] };
   readonly file: (name: string) => string;
-  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote" | "staffwork") => M4Receipt;
+  readonly receipt: (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote" | "staffwork" | "candidatework") => M4Receipt;
 }
 
 function harness(opts: HarnessOptions = {}): Harness {
@@ -259,11 +264,17 @@ function harness(opts: HarnessOptions = {}): Harness {
       return candidates.flatMap((c) => db.staffPeople.filter((p) => p.email === c.email)
         .map((p) => ({ staffId: c.staffId, principalId: p.id, verified: p.verified, operatorStaff: p.operator })));
     },
+    candidateWorkReady: async () => db.candidateWorkReady,
+    candidateLinks: () => async (ids) => {
+      calls.push(`candidatelinks:${ids.length}`);
+      return new Map(ids.filter((i) => db.candidateLinks.has(i)).map((i) => [i, db.candidateLinks.get(i)!]));
+    },
+    storeMap: () => async (ids) => new Map(ids.filter((i) => db.storeMap.has(i)).map((i) => [i, db.storeMap.get(i)!])),
     workImport: () => {
       assert.equal(db.writer, me, "the work store is used only by the lock holder");
-      const write = (table: string) => async (rows: readonly { legacyRef: string }[]) => {
+      const write = (table: string, step = "staffwork") => async (rows: readonly { legacyRef: string }[]) => {
         if (db.sessionLost || db.writer !== me) throw new Error("m4.writerLost");
-        calls.push(`staffwork.${table}:${rows.length}`);
+        calls.push(`${step}.${table}:${rows.length}`);
         const set = db.staffImported.get(table) ?? new Set<string>(); db.staffImported.set(table, set);
         let inserted = 0, unchanged = 0;
         for (const r of rows) { if (set.has(r.legacyRef)) unchanged++; else { set.add(r.legacyRef); inserted++; } }
@@ -272,15 +283,19 @@ function harness(opts: HarnessOptions = {}): Harness {
       return {
         importStandupQuestions: write("work_standup_questions"), importStaffSessions: write("work_staff_sessions"),
         importStandupAnswers: write("work_standup_answers"), importStaffHours: write("work_staff_hours_per_day"),
-        reconcileStaffImport: async (table, refs, reported = [], held = []) => {
-          const here = db.staffImported.get(table) ?? new Set<string>();
-          const missing = refs.filter((r) => !here.has(r) && !reported.includes(r)), skipped = refs.filter((r) => !here.has(r) && reported.includes(r));
-          const h = refs.filter((r) => here.has(r) && held.includes(r)), extra = [...here].filter((r) => !refs.includes(r));
-          const covered = refs.filter((r) => here.has(r)).length;
-          return { table, legacy: refs.length, imported: here.size, missing, skipped, extra, covered, held: h, verified: covered - h.length,
-            clean: !missing.length && !skipped.length && !extra.length && !h.length };
-        },
+        reconcileStaffImport: async (table, refs, reported = [], held = []) => ({ ...reconcile(table, refs, reported, held), table }),
+        importPlacements: write("work_assignments", "candidatework"), importSessions: write("work_sessions", "candidatework"),
+        importDecisions: write("work_decisions", "candidatework"),
+        reconcileCandidateImport: async (table, refs, reported = [], held = []) => ({ ...reconcile(table, refs, reported, held), table }),
       };
+      function reconcile(table: string, refs: readonly string[], reported: readonly string[], held: readonly string[]) {
+        const here = db.staffImported.get(table) ?? new Set<string>();
+        const missing = refs.filter((r) => !here.has(r) && !reported.includes(r)), skipped = refs.filter((r) => !here.has(r) && reported.includes(r));
+        const h = refs.filter((r) => here.has(r) && held.includes(r)), extra = [...here].filter((r) => !refs.includes(r));
+        const covered = refs.filter((r) => here.has(r)).length;
+        return { legacy: refs.length, imported: here.size, missing, skipped, extra, covered, held: h, verified: covered - h.length,
+          clean: !missing.length && !skipped.length && !extra.length && !h.length };
+      }
     },
     stillHeld: async () => db.writer === me && !db.sessionLost,
     lost: () => db.writer === me && db.sessionLost,
@@ -356,7 +371,7 @@ function harness(opts: HarnessOptions = {}): Harness {
       err.push(line);
     },
   };
-  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote" | "staffwork") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
+  const receipt = (mode: "plan" | "write" | "keycheck" | "promote" | "linkreport" | "doccheck" | "doccopy" | "docpromote" | "staffwork" | "candidatework") => JSON.parse(readFileSync(path.join(file("out"), `${invocation}.${mode}.receipt.json`), "utf8")) as M4Receipt;
   return { dir, invocation, deps, calls, out, err, state, file, receipt };
 }
 
@@ -1647,6 +1662,82 @@ test("staffwork is refused before any mirror read or write without its build, op
   assert.equal(await run("operator", { db: { ...staffDb(), operators: new Set() } }), 0);
   assert.equal(await run("schema", { db: { ...staffDb(), staffWorkReady: false } }), 0);
   assert.equal(await run("writerBusy", { db: { ...staffDb(), writer: {} } }), 0);
+  assert.equal(await run("locked", { lockHeld: false }), 0);
+  const plain = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
+  writeFileSync(path.join(plain, "refresh.json"), JSON.stringify(REFRESH));
+  assert.equal(await run("refreshProvenance", { dir: plain }), 0, "a refresh without provenance is not enough");
+  assert.equal(await run("generationMismatch", { markers: ["0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d"] }), 1);
+  assert.ok(await run("inputIncomplete", { countDrift: 1 }) > 1);
+});
+
+// candidatework (M-5 candidate hours). Synthetic rows; links, store map and work store are fakes over the FakeDb.
+const candidateSources = () => ({
+  candidate: [{ candidate_id: 7, store_id: 3, deleted: 0 }, { candidate_id: 8, store_id: 3, deleted: 0 }],
+  candidate_working_hour: [
+    { candidate_working_hour_uuid: "h-7", candidate_id: 7, store_id: 3, date: "2026-11-01", start_time: "2026-11-01 09:00:00", end_time: "2026-11-01 10:00:00",
+      total_time: 3600, start_location_lat: "29.37", start_location_long: "47.97", end_location_lat: "29.37", end_location_long: "47.97", note: `${SECRET} note`, status: 1, via: "App" },
+    { candidate_working_hour_uuid: "h-8", candidate_id: 8, store_id: 3, date: "2026-11-01", start_time: "2026-11-01 09:00:00", end_time: "2026-11-01 10:00:00",
+      total_time: 3600, start_location_lat: "29.37", start_location_long: "47.97", end_location_lat: "29.37", end_location_long: "47.97", note: null, status: 0, via: "App" },
+  ],
+  candidate_work_log_feedback: [{ cwlf_uuid: "f-7", candidate_id: 7, store_id: 3, date: "2026-11-01", candidate_working_hour_uuid: "h-7", status: 1,
+    note: `${SECRET} feedback`, reason: null, is_public: 0, rating: 5, created_by: 4, created_at: "2026-11-01 12:00:00" }],
+  candidate_working_date: [],
+}) as unknown as M4Sources;
+const candidateDb = () => ({ ...fakeDb(), candidateLinks: new Map([["7", "principal-cand-7"]]),
+  storeMap: new Map([["3", { storeId: "0b1c2d3e-4f50-4a6b-8c7d-8e9f0a1b2c3d", orgId: "company-3" }]]) });
+
+test("candidatework imports linked candidates' hours at mapped stores, reports the rest, and publishes counts only", async () => {
+  const db = candidateDb();
+  const h = harness({ dir: provenancedDir(), db, rows: candidateSources(), env: staffEnv });
+  try {
+    assert.equal(await main(["candidatework"], h.deps), 0, h.err.join(" "));
+    const r = h.receipt("candidatework");
+    assert.deepEqual([r.status, r.target, r.operator, r.mirror], ["ok", TARGET, OPERATOR, { generation: GENERATION_ID }]);
+    assert.deepEqual(r.candidateWork!.candidates, { looked: 2, linked: 1, people: 1, unplaced: 0 });
+    assert.deepEqual(r.candidateWork!.stores, { looked: 1, mapped: 1 });
+    const sessions = r.candidateWork!.tables.work_sessions;
+    assert.deepEqual([sessions.legacy, sessions.inserted, sessions.skipped, sessions.missing, sessions.issues], [2, 1, 1, 0, { no_person: 1 }]);
+    assert.equal(r.candidateWork!.tables.work_assignments.inserted, 1);
+    assert.equal(r.candidateWork!.tables.work_decisions.inserted, 1);
+    assert.deepEqual([r.candidateWork!.clean, r.candidateWork!.complete], [false, true], "an unlinked candidate is explained, not clean");
+    const order = ["work_assignments", "work_sessions", "work_decisions"].map((t) => h.calls.indexOf(`candidatework.${t}:1`));
+    assert.ok(order.every((i) => i >= 0) && order[0]! < order[1]! && order[1]! < order[2]!, "placements, then sessions, then decisions");
+    assert.equal(db.writer, null, "the writer lock is released");
+    assert.equal(h.state.locked, false, "the refresh lock is released");
+    const report = JSON.parse(readFileSync(path.join(h.file("out"), `${h.invocation}.candidatework.report.json`), "utf8"));
+    assert.deepEqual(report.tables.work_sessions.skipped, ["cwh:h-8"]);
+    const everything = [JSON.stringify(r), JSON.stringify(report), h.out.join("\n"), h.err.join("\n")].join("\n");
+    assert.ok(!everything.includes(SECRET) && !everything.includes("29.37") && !everything.includes("principal-cand-7"), "no text, place or principal leaves the run");
+    assert.ok(!JSON.stringify(r).includes("h-8"), "the receipt holds no legacy ref");
+    cleanup(h);
+    const again = harness({ dir: provenancedDir(), db, rows: candidateSources(), env: staffEnv });
+    assert.equal(await main(["candidatework"], again.deps), 0, again.err.join(" "));
+    const t = again.receipt("candidatework").candidateWork!.tables;
+    assert.deepEqual([t.work_sessions.inserted, t.work_sessions.unchanged, t.work_assignments.unchanged], [0, 1, 1], "a re-run writes nothing new");
+    cleanup(again);
+  } finally { cleanup(h); }
+});
+
+test("candidatework is refused before any mirror read or write without its build, operator, target, schema, writer lock, refresh provenance or a whole read", async () => {
+  const run = async (code: string, opts: HarnessOptions = {}, exit = 2) => {
+    const db = opts.db ?? candidateDb();
+    const h = harness({ dir: opts.dir ?? provenancedDir(), rows: candidateSources(), ...opts, db, env: { ...staffEnv, ...opts.env } });
+    try {
+      assert.equal(await main(["candidatework"], h.deps), exit, code);
+      const r = h.receipt("candidatework");
+      assert.deepEqual([r.status, r.code, r.candidateWork], [exit === 2 ? "refused" : "failed", code, undefined], code);
+      assert.equal(db.staffImported.size, 0, `${code}: nothing written`);
+      if (code !== "writerBusy") assert.equal(db.writer, null, `${code}: the writer lock is released`);
+      return h.state.reads;
+    } finally { cleanup(h); }
+  };
+  assert.equal(await run("provenance", { provenance: { clean: false } }), 0);
+  assert.equal(await run("destination", { env: { M4_OPERATOR_ORG_ID: undefined } }), 0);
+  assert.equal(await run("destination", { env: { M4_DATABASE_URL: undefined } }), 0);
+  assert.equal(await run("target", { db: { ...candidateDb(), marker: { environment: "staging", targetId: randomUUID() } } }), 0);
+  assert.equal(await run("operator", { db: { ...candidateDb(), operators: new Set() } }), 0);
+  assert.equal(await run("schema", { db: { ...candidateDb(), candidateWorkReady: false } }), 0);
+  assert.equal(await run("writerBusy", { db: { ...candidateDb(), writer: {} } }), 0);
   assert.equal(await run("locked", { lockHeld: false }), 0);
   const plain = mkdtempSync(path.join(tmpdir(), "m4-cli-"));
   writeFileSync(path.join(plain, "refresh.json"), JSON.stringify(REFRESH));
