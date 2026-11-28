@@ -489,8 +489,8 @@ const CASES = [
   {
     name: "M73 write the handoff before green",
     file: "service/card-land.mjs",
-    from: "      checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined);",
-    to: '      await writeHandoffReceipt({ terminal, target: head, decision: { action: "merge-readiness", hold_code: "MISSING_AUTHORITY" }, issueId: issue.id, linearToken, fetchImpl }); checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined); // SHU306-M73',
+    from: "      checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined, true);",
+    to: '      await writeHandoffReceipt({ terminal, target: head, decision: { action: "merge-readiness", hold_code: "MISSING_AUTHORITY" }, issueId: issue.id, linearToken, fetchImpl }); checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined, true); // SHU306-M73',
     pattern: "SHU-306 L5:",
   },
   {
@@ -1563,8 +1563,8 @@ const CASES = [
   {
     name: "M224 land a head behind main without updating it",
     file: "service/card-land.mjs",
-    from: "        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead, limits });",
-    to: "        // SHU86-M224",
+    from: "        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead,",
+    to: "        void ({ repo, number: pr.number, branch, passed: head, current: landHead, // SHU86-M224",
     pattern: "M15 W4: with two workers a landing behind main",
   },
   {
@@ -1591,8 +1591,8 @@ const CASES = [
   {
     name: "M228 update from main with one worker",
     file: "service/card-land.mjs",
-    from: "      if (parallel) {\n        landHead = await updateFromMain(",
-    to: "      if (true) {\n        landHead = await updateFromMain(",
+    from: "    let carry = parallel;",
+    to: "    let carry = true; // SHU86-M228",
     pattern: "M15 W4: one worker lands as before",
   },
   {
@@ -2009,6 +2009,55 @@ const CASES = [
     from: "  if (named !== null && !marked.includes(named) && !failed.some((f) => f.file === named)) failed.push(",
     to: "  if (false) /* SHU86-M341 */ failed.push(",
     pattern: "2026-11-15: a dead run whose named claim is gone",
+  },
+  {
+    name: "M342 wait out the landing bound on a pull request behind main with green checks",
+    file: "service/card-land.mjs",
+    from: "    if (state.behind && carry) return { outcome: \"BEHIND\", reason: state.note };",
+    to: "    // SHU86-M342",
+    pattern: "Re-carry: one worker whose pull request reads behind main",
+  },
+  {
+    name: "M343 carry main without bound while main keeps moving",
+    file: "service/card-land.mjs",
+    from: "        if (round >= limits.baseRounds) return moving();\n        round += 1;\n        parallel = true;",
+    to: "        if (round >= 99) return moving(); // SHU86-M343\n        round += 1;\n        parallel = true;",
+    pattern: "Re-carry: main that keeps moving during the wait",
+  },
+  {
+    name: "M345 spend a round on a stale behind read of a head that holds main",
+    file: "service/card-land.mjs",
+    from: "        if ((await mainAt(gh, repo, landHead)).fresh) {\n          if (io.now().getTime() >= waitUntil) return timedOut(checks.reason);",
+    to: "        if (false) { // SHU86-M345\n          if (io.now().getTime() >= waitUntil) return timedOut(checks.reason);",
+    pattern: "Re-carry: a stale behind read on a head that already holds main",
+  },
+  {
+    name: "M346 let a stale behind read carry main without counting a round",
+    file: "service/card-land.mjs",
+    from: "          io.sleep(limits.pollMs);\n          continue;",
+    to: "          io.sleep(limits.pollMs);\n          carry = parallel; // SHU86-M346\n          continue;",
+    pattern: "Re-carry: a stale behind read never lets a carry go uncounted",
+  },
+  {
+    name: "M347 start a carry after the one wait has ended",
+    file: "service/card-land.mjs",
+    from: "        // No carry starts after the one wait has ended.\n        if (io.now().getTime() >= waitUntil) return timedOut(checks.reason);",
+    to: "        // SHU86-M347",
+    pattern: "Re-carry: a behind read that comes after the one wait has ended",
+  },
+  {
+    name: "M348 say an unconfirmed landing left its pull request open",
+    file: "service/card-prepare.mjs",
+    from: "`Merge not confirmed: ${where.join(\"; \")}; this landing did not confirm a merge.`",
+    to: "`Merge not confirmed: ${where.join(\"; \")} stays open and unmerged.`",
+    pattern: "Report: \"Landed:\" is written only for a merge",
+  },
+  {
+    name: "M344 report an unmerged landing as landed",
+    file: "service/card-prepare.mjs",
+    from: "land.outcome === \"MERGED\" ? `Landed:",
+    to: "true ? `Landed:",
+    pattern: "Report: \"Landed:\" is written only for a merge",
   },
 ];
 
