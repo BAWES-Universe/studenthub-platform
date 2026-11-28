@@ -913,8 +913,8 @@
       ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): store manager sees people through work pages only"
+          "state": "done",
+          "evidence": "PR #782 at 3f870f53192e295ac76867f5e4a85fbc2445e819"
         },
         "verified": {
           "state": "open"
