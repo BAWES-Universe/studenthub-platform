@@ -899,10 +899,22 @@
     "M-02": {
       "lane": "people",
       "subject": "`/store/:storeId/candidates`, `/store/:storeId/candidates/:id`",
+      "served": [
+        {
+          "route": "/workspace/stores/:storeId/candidates",
+          "test": "apps/gateway/test/store-candidates-page.test.ts",
+          "via": "gateway"
+        },
+        {
+          "route": "/workspace/stores/:storeId/candidates/:personId",
+          "test": "apps/gateway/test/store-candidates-page.test.ts",
+          "via": "gateway"
+        }
+      ],
       "gates": {
         "built": {
-          "state": "open",
-          "note": "partly built (audit 2026-11-20): store manager sees people through work pages only"
+          "state": "done",
+          "evidence": "PR #782 at 3f870f53192e295ac76867f5e4a85fbc2445e819"
         },
         "verified": {
           "state": "open"
@@ -973,7 +985,7 @@
       "gates": {
         "built": {
           "state": "open",
-          "note": "partly built (audit 2026-11-22): /workspace/people list only; no candidate detail or full-timer view"
+          "note": "partly built: /workspace/people list (audit 2026-11-22) and /workspace/people/:id detail (PR #781 at c3d54fa5bb0bb75981f66ab6c502e35fe06042cc); no full-timer view"
         },
         "verified": {
           "state": "open"

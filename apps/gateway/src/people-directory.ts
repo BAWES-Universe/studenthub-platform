@@ -21,12 +21,23 @@ const peopleStaffGrant=(grants:Awaited<ReturnType<AuthzStore["listGrantsForPrinc
 export async function isPeopleStaff(authz:Pick<AuthzStore,"listGrantsForPrincipal">,principalId:string):Promise<boolean>{return Boolean(peopleStaffGrant(await authz.listGrantsForPrincipal(principalId)))}
 export type PeopleDirectoryBody={readonly rows:readonly PeopleDirectoryRow[];readonly total:number;readonly page:number;readonly pageSize:number;readonly query:PeopleDirectoryQuery;readonly countries:readonly {id:string;name:string}[];readonly active:{readonly orgId:string;readonly role:"staff"|"admin"}};
 export type PeopleDirectoryResult={status:200;body:PeopleDirectoryBody}|{status:400|401|404|503;body:{error:string}};
-export interface PeopleDirectoryPage{open(session:string|undefined,params:URLSearchParams,html:boolean):Promise<PeopleDirectoryResult>}
+export type PersonDetailResult={status:200;body:{readonly person:PeopleDirectoryRow;readonly active:{readonly orgId:string;readonly role:"staff"|"admin"}}}|{status:401|404|503;body:{error:string}};
+/** Principal ids as the staff person pages take them (the same shape as the message and email log pages). */
+export const PERSON_ID=/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+export interface PeopleDirectoryPage{open(session:string|undefined,params:URLSearchParams,html:boolean):Promise<PeopleDirectoryResult>;person?(session:string|undefined,principalId:string):Promise<PersonDetailResult>}
 export function createPeopleDirectory(options:{sessions:Pick<SessionStore,"get">;authz:Pick<AuthzStore,"listGrantsForPrincipal">;store:PeopleDirectoryStore;choices:()=>Promise<{countries:readonly {id:string;name:string}[]}>;now?:()=>Date}):PeopleDirectoryPage{
   return{async open(sessionId,params,html){
     const session=sessionId?await options.sessions.get(sessionId):undefined;if(!session)return{status:401,body:{error:"unauthorized"}};
     const active=peopleStaffGrant(await options.authz.listGrantsForPrincipal(session.personId));if(!active)return{status:404,body:{error:"not_found"}};
     const query=parsePeopleDirectoryQuery(params);if(!query)return{status:400,body:{error:"invalid_people_query"}};
     try{const [{rows,total},choices]=await Promise.all([options.store.page(query,kuwaitDate((options.now??(()=>new Date()))())),html?options.choices():Promise.resolve({countries:[]})]);return{status:200,body:{rows,total,page:query.page,pageSize:PEOPLE_PAGE_SIZE,query,countries:choices.countries.map(x=>({id:x.id,name:x.name})),active:{orgId:active.orgId,role:active.role as "staff"|"admin"}}}}catch{return{status:503,body:{error:"directory_unavailable"}}}
+  },
+  /** One person's directory facts for operator staff and admin; anyone else, a bad id or no such person is the same 404. */
+  async person(sessionId,principalId){
+    const session=sessionId?await options.sessions.get(sessionId):undefined;if(!session)return{status:401,body:{error:"unauthorized"}};
+    const active=peopleStaffGrant(await options.authz.listGrantsForPrincipal(session.personId));if(!active||!PERSON_ID.test(principalId))return{status:404,body:{error:"not_found"}};
+    if(!options.store.person)return{status:503,body:{error:"directory_unavailable"}};
+    let person;try{person=await options.store.person(principalId,kuwaitDate((options.now??(()=>new Date()))()))}catch{return{status:503,body:{error:"directory_unavailable"}}}
+    return person&&person.principalId===principalId?{status:200,body:{person,active:{orgId:active.orgId,role:active.role as "staff"|"admin"}}}:{status:404,body:{error:"not_found"}};
   }};
 }

@@ -457,6 +457,20 @@ export class PlacementService {
   }
 
   /**
+   * A store manager's people (matrix M-02): the placements at one store the
+   * actor manages now, optionally one person's. Only the store manager grant
+   * opens it (company and staff roles have their own company pages); any other
+   * caller or store is undefined. At most ASSIGNMENT_LIST_LIMIT, newest first.
+   */
+  async forManagedStore(actorId: string, storeId: string, personId?: string): Promise<readonly Assignment[] | undefined> {
+    if (!isUuid(storeId)) return undefined;
+    const id = storeId.toLowerCase();
+    const managed = (await this.#managed(actorId)).find((m) => m.storeId.toLowerCase() === id);
+    if (!managed) return undefined;
+    return this.#store.listAssignments({ orgIds: [managed.orgId], storeId: id, ...(personId ? { personId } : {}) });
+  }
+
+  /**
    * Placement requests at an organization's stores, newest first. Staff and the
    * company see every store (sub-companies only for a subtree grant); a store
    * manager sees the requests for the stores they manage there. Legacy listed
